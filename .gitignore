@@ -1,0 +1,40 @@
+# Python / bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+installer_env/
+
+# Environment files (ignore real secrets, keep the template)
+.env
+.env.*
+!.env.example
+
+
+# Build artifacts
+build/
+dist/
+output/
+*.egg-info/
+
+# PyInstaller temp (keep .spec for transparency)
+# *.spec  <-- intentionally NOT ignored
+
+# Redis binaries downloaded by installer
+redis/
+
+# Debug logs
+*_debug.log
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+services/
