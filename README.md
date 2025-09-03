@@ -80,7 +80,7 @@ cd gary-localhost-installer
 
 # optional but recommended: a local venv
 python -m venv .venv
-./.venv/Scripts/Activate.ps1
+./venv/Scripts/Activate
 
 # install runtime + build deps
 pip install -r requirements.txt
