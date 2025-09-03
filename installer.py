@@ -698,7 +698,7 @@ class Gary4JUCEInstaller:
         
         # FALLBACK TOKEN - Replace with your actual token
         # This provides access to stable-audio-open-small for all users
-        FALLBACK_HF_TOKEN = os.getenv("HF_TOKEN", "")
+        FALLBACK_HF_TOKEN = "token_go_here_idk_why_it_doesnt_recognize_the_env_on_some_machines"
         
         hf_token = None
         
