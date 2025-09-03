@@ -89,7 +89,7 @@ pip install -r requirements-dev.txt
 
 ### environment config
 
-copy `.env.example` to `.env` and adjust anything you need. the control center loads `.env` on start.
+copy `.env.example` to `.env` and add your hf token. make sure you have gone to huggingface and been allowed access to stable-audio-open-small. it's free. (https://huggingface.co/stabilityai/stable-audio-open-small) the control center loads `.env` on start.
 
 ### build
 
