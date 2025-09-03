@@ -6,9 +6,12 @@
 
 there are 3 open source music models (3 separate python environments) contained in here:
 
-musicgen (continuations using finetunes) aka gary: https://github.com/facebookresearch/audiocraft
-melodyflow (transformations) aka terry: https://huggingface.co/spaces/facebook/Melodyflow
-stable-audio-open-small (12 seconds of bpm-aware generations for drums/instrument loops) aka jerry: https://huggingface.co/stabilityai/stable-audio-open-small
+* musicgen (continuations using finetunes) aka gary: https://github.com/facebookresearch/audiocraft
+
+* melodyflow (transformations) aka terry: https://huggingface.co/spaces/facebook/Melodyflow
+
+* stable-audio-open-small (12 seconds of bpm-aware generations for drums/instrument loops) aka jerry: https://huggingface.co/stabilityai/stable-audio-open-small
+
 
 ---
 
