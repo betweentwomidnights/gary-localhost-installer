@@ -12,6 +12,7 @@ installer_env/
 # Environment files (ignore real secrets, keep the template)
 .env
 .env.*
+..env.un~
 !.env.example
 
 

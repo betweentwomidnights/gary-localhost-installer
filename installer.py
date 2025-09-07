@@ -87,35 +87,34 @@ class Gary4JUCEInstaller:
             if store_python.exists():
                 python_candidates.insert(0, str(store_python))
             
-            # Check for system-wide Python installations
-            for version in ["312", "311", "310", "39", "38"]:  # Check recent versions
-                for base_path in [Path("C:/Python" + version), Path(f"C:/Program Files/Python {version[0]}.{version[1:]}")]:
-                    python_exe = base_path / "python.exe"
-                    if python_exe.exists():
-                        python_candidates.insert(0, str(python_exe))
+            # Check for system-wide Python installation of 3.11.9
+            for base_path in [Path.home() / "AppData" / "Local" / "Programs" / "Python" / "Python311"]:
+                python_exe = base_path / "python.exe"
+                if python_exe.exists():
+                    python_candidates.insert(0, str(python_exe))
         
         # Test each candidate
         for candidate in python_candidates:
             try:
                 result = subprocess.run([candidate, "--version"], 
                                       capture_output=True, text=True, timeout=5)
-                if result.returncode == 0 and "Python 3." in result.stdout:
-                    # Verify it's Python 3.10+
+                if result.returncode == 0 and "Python 3.11" in result.stdout:
+                    # Verify it's Python 3.11.x
                     version_line = result.stdout.strip()
                     version_parts = version_line.split()[1].split('.')
                     major, minor = int(version_parts[0]), int(version_parts[1])
                     
-                    if major == 3 and 10 <= minor <= 11:
+                    if major == 3 and minor == 11:
                         self.log(f"✅ Found Python {version_line.split()[1]} at: {candidate}")
                         return candidate
                     else:
-                        self.log(f"⚠️  Python {version_line.split()[1]} too old (need 3.10+)")
+                        self.log(f"⚠️  Python {version_line.split()[1]} found, but needs to be 3.11.x")
                         
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
                 continue
         
         # If we get here, no suitable Python was found — try auto-install
-        self.log("⚠️ No suitable Python 3.10–3.11 found. Attempting to auto-install Python 3.11.8...")
+        self.log("⚠️ No suitable Python 3.11 found. Attempting to auto-install Python 3.11.9...")
 
         try:
             self.auto_install_python_311()
@@ -124,18 +123,20 @@ class Gary4JUCEInstaller:
         except Exception as e:
             raise Exception(
                 f"❌ Auto-install failed: {e}\n"
-                "Please install Python 3.10 or 3.11 manually from:\n"
-                "https://www.python.org/downloads/release/python-3118/\n"
+                "Please install Python 3.11.9 manually from:\n"
+                "https://www.python.org/downloads/release/python-3119/\n"
+                "or\n"
+                "https://www.python.org/ftp/python/3.11.9/\n"
                 "Then rerun this installer."
             )
     
     def auto_install_python_311(self):
         import tempfile, urllib.request, hashlib
 
-        self.log("📥 Downloading Python 3.11.8 installer...")
+        self.log("📥 Downloading Python 3.11.9 installer...")
 
-        url = "https://www.python.org/ftp/python/3.11.8/python-3.11.8-amd64.exe"
-        installer_path = Path(tempfile.gettempdir()) / "python-3.11.8-amd64.exe"
+        url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+        installer_path = Path(tempfile.gettempdir()) / "python-3.11.9-amd64.exe"
 
         # Download with detailed progress
         try:
@@ -216,7 +217,7 @@ class Gary4JUCEInstaller:
                 msi_args = [
                     "msiexec", "/i", str(installer_path),
                     "/quiet", "/norestart",
-                    "TARGETDIR=C:\\Python311",
+                    f"TARGETDIR={Path.home() / 'AppData' / 'Local' / 'Programs' / 'Python' / 'Python311'}",
                     "ALLUSERS=0"
                 ]
                 
@@ -311,7 +312,7 @@ class Gary4JUCEInstaller:
             self.log("⚠️ Could not clean up installer file")
         
         if installation_successful:
-            self.log("✅ Python 3.11.8 installation appears successful.")
+            self.log("✅ Python 3.11.9 installation appears successful.")
             self.log("⏳ Waiting for system to update...")
             time.sleep(5)
         else:
@@ -326,8 +327,11 @@ class Gary4JUCEInstaller:
             
             raise Exception(
                 "Automatic Python installation failed. Please install Python 3.11 manually from:\n"
-                "https://www.python.org/downloads/release/python-3118/\n"
-                "Make sure to check 'Add Python to PATH' during installation."
+                "https://www.python.org/downloads/release/python-3119/\n"
+                "or\n"
+                "https://www.python.org/ftp/python/3.11.9/\n"
+                "Make sure to check 'Add Python to PATH' during installation.\n"
+                "Then rerun this installer."
             )
     
     def check_system_requirements(self):
