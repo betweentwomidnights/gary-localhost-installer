@@ -497,7 +497,7 @@ class Gary4JUCEInstaller:
             ], capture_output=True, check=False)
             
             # Uninstall existing packages
-            packages_to_remove = ["torch", "torchaudio", "torchvision", "audiocraft", "numpy==1.24.0", "safetensors"]
+            packages_to_remove = ["torch", "torchaudio", "torchvision", "av", "audiocraft", "numpy", "safetensors", "xformers"]
             for package in packages_to_remove:
                 subprocess.run([
                     str(venv_python), "-m", "pip", "uninstall", package, "-y"
@@ -521,11 +521,48 @@ class Gary4JUCEInstaller:
             "--force-reinstall", "--no-cache-dir"
         ], check=True)
         
-        # Install other dependencies
+        # Install audiocraft's dependencies manually first
+        self.log("📦 Installing audiocraft dependencies...")
+        audiocraft_deps = [
+            "av==12.3.0",  # Using your pinned version instead of 11.0.0
+            "einops",
+            "flashy>=0.0.1",
+            "hydra-core>=1.1",
+            "hydra_colorlog",
+            "julius",
+            "num2words",
+            "numpy==1.24.0",  # Using your pinned version
+            "sentencepiece",
+            "spacy==3.7.6",
+            "huggingface_hub",
+            "tqdm",
+            "transformers==4.39.3",  # Using your pinned version
+            "demucs",
+            "librosa",
+            "soundfile",
+            "gradio",
+            "torchmetrics",
+            "encodec",
+            "protobuf",
+            "torchvision==0.16.0",
+            "torchtext==0.16.0",
+            "pesq",
+            "pystoi",
+            "torchdiffeq",
+            "xformers<0.0.23"
+        ]
+        subprocess.run([str(venv_python), "-m", "pip", "install"] + audiocraft_deps, check=True)
+        
+        # Now install audiocraft itself WITHOUT dependencies (we already installed them)
+        self.log("🎵 Installing audiocraft (no-deps)...")
+        subprocess.run([
+            str(venv_python), "-m", "pip", "install", "audiocraft", "--no-deps"
+        ], check=True)
+        
+        # Install other Gary dependencies
         self.log("📦 Installing additional Gary dependencies...")
         gary_deps = [
-            "flask", "flask-cors", "redis", "pydantic", "requests", "psutil", "audiocraft", "numpy==1.24.0", "transformers==4.39.3", 
-"torchaudio==2.1.0"
+            "flask", "flask-cors", "redis", "pydantic", "requests", "psutil"
         ]
         subprocess.run([str(venv_python), "-m", "pip", "install"] + gary_deps, check=True)
         
@@ -702,7 +739,7 @@ class Gary4JUCEInstaller:
         
         # FALLBACK TOKEN - Replace with your actual token
         # This provides access to stable-audio-open-small for all users
-        FALLBACK_HF_TOKEN = "token_go_here_idk_why_it_doesnt_recognize_the_env_on_some_machines"
+        FALLBACK_HF_TOKEN = "token_go_here_idk_why_some_machines_dont_pick_it_up_from_env"
         
         hf_token = None
         
