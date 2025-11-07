@@ -644,7 +644,7 @@ class Gary4JUCEInstaller:
         # Install ML dependencies
         ml_deps = [
             "einops", "transformers", "accelerate", "diffusers", 
-            "scipy", "librosa", "soundfile", "huggingface-hub"
+            "scipy", "librosa", "soundfile", "huggingface-hub", "hf_xet"
         ]
         subprocess.run([str(venv_python), "-m", "pip", "install"] + ml_deps, check=True)
         
@@ -739,7 +739,7 @@ class Gary4JUCEInstaller:
         
         # FALLBACK TOKEN - Replace with your actual token
         # This provides access to stable-audio-open-small for all users
-        FALLBACK_HF_TOKEN = "token_go_here_idk_why_some_machines_dont_pick_it_up_from_env"
+        FALLBACK_HF_TOKEN = "token_go_here_still_not_sure_why_it_wont_find_it_in_env"
         
         hf_token = None
         
