@@ -18,6 +18,9 @@ class Gary4JUCEInstaller:
     def __init__(self):
         # Program directory (where the installer executable is)
         self.base_dir = Path.cwd()
+
+        self.use_uv = False  # Will be set to True if uv is available
+        self.uv_cache_dir = None
         
         # IMPORTANT: Move services to user writable directory
         import os
@@ -476,7 +479,7 @@ class Gary4JUCEInstaller:
         self.log(f"📦 Installing {service_name} dependencies...")
         
         # Upgrade pip first
-        subprocess.run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+        self.pip_install(venv_python, ["pip"], extra_args=["--upgrade"])
         
         if service_name == "gary":
             self.install_gary_deps(venv_python)
@@ -485,88 +488,155 @@ class Gary4JUCEInstaller:
         elif service_name == "stable-audio":
             self.install_stable_audio_deps(venv_python)
 
+    def install_uv(self):
+        """Install uv package manager if not available."""
+        try:
+            # Check if uv is already installed
+            result = subprocess.run(["uv", "--version"], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                self.log(f"✅ uv already installed: {result.stdout.strip()}")
+                self.use_uv = True
+                return True
+        except FileNotFoundError:
+            pass
+        
+        # Try to install uv using pip
+        self.log("📦 Installing uv package manager for faster installation...")
+        try:
+            # Use the found Python executable to install uv
+            subprocess.run([
+                self.python_executable, "-m", "pip", "install", "uv"
+            ], check=True, capture_output=True)
+            
+            # Verify installation
+            result = subprocess.run(["uv", "--version"], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                self.log(f"✅ uv installed: {result.stdout.strip()}")
+                self.log("💡 Using uv for 10-100x faster package installation!")
+                self.use_uv = True
+                return True
+        except Exception as e:
+            self.log(f"⚠️ Could not install uv: {e}")
+            self.log("📦 Falling back to pip (slower but reliable)")
+            self.use_uv = False
+            return False
+    
+    def pip_install(self, venv_python, packages, index_url=None, extra_args=None):
+        """
+        Unified install method that uses uv or pip based on availability.
+        
+        Args:
+            venv_python: Path to venv python executable
+            packages: List of package specifiers
+            index_url: Optional PyPI index URL
+            extra_args: Optional extra arguments
+        """
+        if self.use_uv:
+            return self._uv_install(venv_python, packages, index_url, extra_args)
+        else:
+            return self._pip_install(venv_python, packages, index_url, extra_args)
+    
+    def _uv_install(self, venv_python, packages, index_url=None, extra_args=None):
+        """Install packages using uv."""
+        cmd = ["uv", "pip", "install"]
+        
+        # Add packages
+        cmd.extend(packages)
+        
+        # Handle index URL for PyTorch
+        if index_url:
+            cmd.extend(["--index-url", index_url])
+        
+        # Handle extra args (like --no-deps, --force-reinstall)
+        if extra_args:
+            cmd.extend(extra_args)
+        
+        # Specify Python interpreter
+        cmd.extend(["--python", str(venv_python)])
+        
+        # Run with uv
+        subprocess.run(cmd, check=True)
+    
+    def _pip_install(self, venv_python, packages, index_url=None, extra_args=None):
+        """Install packages using pip (fallback)."""
+        cmd = [str(venv_python), "-m", "pip", "install"]
+        
+        # Add packages
+        cmd.extend(packages)
+        
+        # Handle index URL
+        if index_url:
+            cmd.extend(["--index-url", index_url])
+        
+        # Handle extra args
+        if extra_args:
+            cmd.extend(extra_args)
+        
+        # Run with pip
+        subprocess.run(cmd, check=True)
+    
     def install_gary_deps(self, venv_python):
-        """Install Gary service dependencies with safetensors version fix."""
+        """Install Gary service dependencies - UV VERSION."""
         self.log("📦 Installing Gary (MusicGen) dependencies...")
         
         # Clear any existing PyTorch installations first
         self.log("🧹 Ensuring clean PyTorch installation...")
-        try:
+        packages_to_remove = ["torch", "torchaudio", "torchvision", "av", 
+                             "audiocraft", "numpy", "safetensors", "xformers"]
+        
+        if self.use_uv:
             subprocess.run([
-                str(venv_python), "-m", "pip", "cache", "purge"
-            ], capture_output=True, check=False)
-            
-            # Uninstall existing packages
-            packages_to_remove = ["torch", "torchaudio", "torchvision", "av", "audiocraft", "numpy", "safetensors", "xformers"]
+                "uv", "pip", "uninstall", "--python", str(venv_python)
+            ] + packages_to_remove + ["-y"], capture_output=True, check=False)
+        else:
             for package in packages_to_remove:
                 subprocess.run([
                     str(venv_python), "-m", "pip", "uninstall", package, "-y"
                 ], capture_output=True, check=False)
-        except:
-            pass
         
         # Install torch 2.1.0 with CUDA support
         self.log("⚡ Installing PyTorch 2.1.0 with CUDA support...")
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install",
-            "torch==2.1.0", "torchaudio==2.1.0", 
-            "--index-url", "https://download.pytorch.org/whl/cu121",
-            "--force-reinstall", "--no-cache-dir"
-        ], check=True)
+        self.pip_install(
+            venv_python,
+            ["torch==2.1.0", "torchaudio==2.1.0"],
+            index_url="https://download.pytorch.org/whl/cu121",
+            extra_args=["--force-reinstall", "--no-cache-dir"]
+        )
         
-        # CRITICAL: Install compatible safetensors version for PyTorch 2.1.0
-        self.log("🔒 Installing safetensors<0.6.0 for PyTorch 2.1.0 compatibility...")
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install", "safetensors<0.6.0",
-            "--force-reinstall", "--no-cache-dir"
-        ], check=True)
+        # Install safetensors
+        self.log("🔒 Installing safetensors<0.6.0...")
+        self.pip_install(
+            venv_python,
+            ["safetensors<0.6.0"],
+            extra_args=["--force-reinstall", "--no-cache-dir"]
+        )
         
-        # Install audiocraft's dependencies manually first
+        # Install audiocraft dependencies
         self.log("📦 Installing audiocraft dependencies...")
         audiocraft_deps = [
-            "av==12.3.0",  # Using your pinned version instead of 11.0.0
-            "einops",
-            "flashy>=0.0.1",
-            "hydra-core>=1.1",
-            "hydra_colorlog",
-            "julius",
-            "num2words",
-            "numpy==1.24.0",  # Using your pinned version
-            "sentencepiece",
-            "spacy==3.7.6",
-            "huggingface_hub",
-            "tqdm",
-            "transformers==4.39.3",  # Using your pinned version
-            "demucs",
-            "librosa",
-            "soundfile",
-            "gradio",
-            "torchmetrics",
-            "encodec",
-            "protobuf",
-            "torchvision==0.16.0",
-            "torchtext==0.16.0",
-            "pesq",
-            "pystoi",
-            "torchdiffeq",
-            "xformers<0.0.23"
+            "av==12.3.0", "einops", "flashy>=0.0.1", "hydra-core>=1.1",
+            "hydra_colorlog", "julius", "num2words", "numpy==1.24.0",
+            "sentencepiece", "spacy==3.7.6", "huggingface_hub", "tqdm",
+            "transformers==4.39.3", "demucs", "librosa", "soundfile",
+            "gradio", "torchmetrics", "encodec", "protobuf",
+            "torchvision==0.16.0", "torchtext==0.16.0", "pesq",
+            "pystoi", "torchdiffeq", "xformers<0.0.23"
         ]
-        subprocess.run([str(venv_python), "-m", "pip", "install"] + audiocraft_deps, check=True)
+        self.pip_install(venv_python, audiocraft_deps)
         
-        # Now install audiocraft itself WITHOUT dependencies (we already installed them)
+        # Install audiocraft itself
         self.log("🎵 Installing audiocraft (no-deps)...")
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install", "audiocraft", "--no-deps"
-        ], check=True)
+        self.pip_install(venv_python, ["audiocraft"], extra_args=["--no-deps"])
         
         # Install other Gary dependencies
         self.log("📦 Installing additional Gary dependencies...")
-        gary_deps = [
-            "flask", "flask-cors", "redis", "pydantic", "requests", "psutil"
-        ]
-        subprocess.run([str(venv_python), "-m", "pip", "install"] + gary_deps, check=True)
+        gary_deps = ["flask", "flask-cors", "redis", "pydantic", "requests", "psutil"]
+        self.pip_install(venv_python, gary_deps)
         
-        # Verify PyTorch installation
+        # Verify installations
+        # Verify PyTorch installation - UNCHANGED, KEEP AS-IS
         self.log("🔍 Verifying PyTorch installation...")
         try:
             result = subprocess.run([
@@ -580,7 +650,7 @@ class Gary4JUCEInstaller:
             self.log(f"❌ PyTorch verification failed: {e}")
             raise Exception("PyTorch verification failed")
         
-        # Final audiocraft test
+        # Final audiocraft test - UNCHANGED, KEEP AS-IS
         self.log("🎵 Verifying audiocraft integration...")
         try:
             result = subprocess.run([
@@ -597,66 +667,61 @@ class Gary4JUCEInstaller:
             raise Exception("Audiocraft integration failed")
         
         self.log("✅ Gary dependencies installed and verified")
-
+    
     def install_melodyflow_deps(self, venv_python):
-        """Install MelodyFlow dependencies."""
+        """Install MelodyFlow dependencies - UV VERSION."""
         self.log("📦 Installing MelodyFlow dependencies...")
         
-        # Install torch 2.4.0 with compatible versions
-        torch_deps = [
-            "torch==2.4.0", 
-            "torchaudio==2.4.0"
-        ]
+        # Install torch 2.4.0
+        self.pip_install(
+            venv_python,
+            ["torch==2.4.0", "torchaudio==2.4.0"],
+            index_url="https://download.pytorch.org/whl/cu121"
+        )
         
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install"
-        ] + torch_deps + [
-            "--index-url", "https://download.pytorch.org/whl/cu121"
-        ], check=True)
-        
-        # Install ML dependencies (removed torchvision, torchtext since they're above)
+        # Install ML dependencies
         ml_deps = [
             "av", "einops", "flashy>=0.0.1", "hydra-core>=1.1", "hydra_colorlog",
             "julius", "num2words", "numpy==1.25.2", "sentencepiece", "spacy>=3.6.1",
             "huggingface_hub", "tqdm", "transformers>=4.31.0",
-            "demucs", "librosa", "soundfile", "torchmetrics==1.8.0", "encodec", 
+            "demucs", "librosa", "soundfile", "torchmetrics==1.8.0", "encodec",
             "protobuf", "pesq", "pystoi", "xformers==0.0.27.post2"
         ]
-        subprocess.run([str(venv_python), "-m", "pip", "install"] + ml_deps, check=True)
+        self.pip_install(venv_python, ml_deps)
         
-        # Install web dependencies  
+        # Install web dependencies
         web_deps = ["flask", "flask-cors", "redis", "psutil"]
-        subprocess.run([str(venv_python), "-m", "pip", "install"] + web_deps, check=True)
+        self.pip_install(venv_python, web_deps)
         
         self.log("✅ MelodyFlow dependencies installed")
-
+    
     def install_stable_audio_deps(self, venv_python):
-        """Install Stable Audio dependencies.""" 
+        """Install Stable Audio dependencies - UV VERSION."""
         self.log("📦 Installing Stable Audio dependencies...")
         
         # Install torch 2.5.0+
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install", 
-            "torch>=2.5.0", "torchaudio>=2.5.0",
-            "--index-url", "https://download.pytorch.org/whl/cu121"
-        ], check=True)
+        self.pip_install(
+            venv_python,
+            ["torch>=2.5.0", "torchaudio>=2.5.0"],
+            index_url="https://download.pytorch.org/whl/cu121"
+        )
         
         # Install ML dependencies
         ml_deps = [
-            "einops", "transformers", "accelerate", "diffusers", 
+            "einops", "transformers", "accelerate", "diffusers",
             "scipy", "librosa", "soundfile", "huggingface-hub", "hf_xet"
         ]
-        subprocess.run([str(venv_python), "-m", "pip", "install"] + ml_deps, check=True)
+        self.pip_install(venv_python, ml_deps)
         
         # Install web dependencies
-        subprocess.run([str(venv_python), "-m", "pip", "install", "flask", "flask-cors"], check=True)
+        self.pip_install(venv_python, ["flask", "flask-cors"])
         
-        # Clone and install stable-audio-tools
+        # Install stable-audio-tools from git
         self.log("📦 Installing stable-audio-tools...")
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install",
-            "git+https://github.com/Stability-AI/stable-audio-tools.git"
-        ], check=True)
+        self.pip_install(
+            venv_python,
+            ["git+https://github.com/Stability-AI/stable-audio-tools.git"]
+        )
         
         self.log("✅ Stable Audio dependencies installed")
 
@@ -892,6 +957,9 @@ class Gary4JUCEInstaller:
                     self.log(f"   {icon} {step}")
             
             self.log("🚀 Starting Gary4JUCE installation...")
+
+            # NEW: Try to install UV for faster installation
+            self.install_uv()  # ADD THIS LINE
             
             # Verify we have everything we need
             self.verify_launcher_exists()  # NEW: Check launcher.py exists
