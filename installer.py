@@ -737,10 +737,6 @@ class Gary4JUCEInstaller:
         """Setup HuggingFace token for Stable Audio."""
         self.log("🔑 Setting up HuggingFace token...")
         
-        # FALLBACK TOKEN - Replace with your actual token
-        # This provides access to stable-audio-open-small for all users
-        FALLBACK_HF_TOKEN = "token_go_here_still_not_sure_why_it_wont_find_it_in_env"
-        
         hf_token = None
         
         # First check system environment
@@ -748,25 +744,55 @@ class Gary4JUCEInstaller:
         if hf_token:
             self.log("✅ Found HF_TOKEN in system environment")
         
-        # If not in system env, check .env file
+        # If not in system env, check bundled .env file
         if not hf_token:
-            env_file = self.base_dir / ".env"
-            if env_file.exists():
-                try:
-                    with open(env_file, 'r') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line.startswith('HF_TOKEN='):
-                                hf_token = line.split('=', 1)[1].strip()
-                                self.log("✅ Found HF_TOKEN in .env file")
-                                break
-                except Exception as e:
-                    self.log(f"⚠️ Error reading .env file: {e}")
+            # When running as executable, PyInstaller extracts bundled files to temp dir
+            # We need to check both the extracted location and the current directory
+            
+            possible_env_locations = [
+                self.base_dir / ".env",  # Current directory (when running as script)
+            ]
+            
+            # Add PyInstaller's temporary extraction directory
+            if getattr(sys, 'frozen', False):
+                # Running as compiled executable
+                bundle_dir = Path(sys._MEIPASS)  # PyInstaller's temp extraction dir
+                possible_env_locations.insert(0, bundle_dir / ".env")
+                self.log(f"🔍 Running as executable, checking bundled .env")
+            
+            for env_file in possible_env_locations:
+                if env_file.exists():
+                    try:
+                        self.log(f"🔍 Checking for HF_TOKEN in: {env_file}")
+                        with open(env_file, 'r') as f:
+                            for line in f:
+                                line = line.strip()
+                                # Skip comments and empty lines
+                                if not line or line.startswith('#'):
+                                    continue
+                                
+                                if line.startswith('HF_TOKEN='):
+                                    token_value = line.split('=', 1)[1].strip()
+                                    # Skip placeholder values
+                                    if token_value and token_value not in ["your_token_here", ""]:
+                                        hf_token = token_value
+                                        self.log(f"✅ Found HF_TOKEN in .env file")
+                                        break
+                    except Exception as e:
+                        self.log(f"⚠️ Error reading {env_file}: {e}")
+                
+                if hf_token:
+                    break
         
-        # If still no token, use the built-in fallback (no user prompt needed!)
+        # If still no token found, inform user but don't fail
         if not hf_token:
-            self.log("✅ Using built-in HuggingFace token for stable-audio access")
-            hf_token = FALLBACK_HF_TOKEN
+            self.log("⚠️  No HuggingFace token found in environment or .env file")
+            self.log("💡 Stable Audio may not work without a valid HF token")
+            self.log("💡 Get a token from: https://huggingface.co/settings/tokens")
+            self.log("💡 Add HF_TOKEN=your_token to .env file before building installer")
+            
+            # Return None - let the service handle the missing token
+            return None
         
         # Always save token to .env file for services to use
         # (This ensures services can find it in AppData location)
@@ -788,7 +814,7 @@ class Gary4JUCEInstaller:
         if hf_token and hf_token.startswith('hf_') and len(hf_token) > 10:
             self.log("✅ HuggingFace token appears valid")
         else:
-            self.log("⚠️ HuggingFace token may be invalid - check format")
+            self.log("⚠️ HuggingFace token may be invalid - check format (should start with hf_)")
             
         return hf_token
 

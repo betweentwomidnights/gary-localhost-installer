@@ -35,6 +35,32 @@ def verify_files():
     print("✅ All required files found")
     return True
 
+def create_env_template():
+    """Create a template .env file for distribution if it doesn't exist."""
+    env_file = Path(".env")
+    
+    if not env_file.exists():
+        print("⚠️  No .env file found - creating template...")
+        with open(env_file, "w") as f:
+            f.write("# HuggingFace Token for Stable Audio Open Small\n")
+            f.write("# Get your token from: https://huggingface.co/settings/tokens\n")
+            f.write("HF_TOKEN=your_token_here\n")
+        print("✅ Template .env created - UPDATE IT with your actual HF token before building!")
+        return False
+    else:
+        # Check if it has a valid token
+        with open(env_file, "r") as f:
+            content = f.read()
+            if "your_token_here" in content or "HF_TOKEN=" not in content:
+                print("⚠️  .env file exists but may not have a valid token")
+                print("💡 Make sure HF_TOKEN=hf_... is set with your actual token")
+                response = input("Continue anyway? (y/n): ").lower().strip()
+                if response != 'y':
+                    return False
+        
+        print("✅ .env file found and will be included in build")
+        return True
+
 def create_support_files():
     """Create README and LICENSE files for the installer."""
     
@@ -117,6 +143,10 @@ def build_executables():
     if not verify_files():
         return False
     
+    # Check/create .env file
+    if not create_env_template():
+        return False
+    
     install_pyinstaller()
     create_support_files()
     
@@ -137,6 +167,7 @@ def build_executables():
         "--name=gary4juce-installer",
         "--add-data=launcher.py;.",
         "--add-data=icon.ico;.",
+        "--add-data=.env;.",  # ← NEW: Include .env file!
         "installer.py"
     ]
     
@@ -145,7 +176,7 @@ def build_executables():
     
     try:
         subprocess.run(installer_cmd, check=True)
-        print("✅ Service installer built")
+        print("✅ Service installer built (with .env included)")
     except subprocess.CalledProcessError as e:
         print(f"❌ Installer build failed: {e}")
         return False

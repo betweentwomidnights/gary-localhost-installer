@@ -5,7 +5,7 @@ a = Analysis(
     ['installer.py'],
     pathex=[],
     binaries=[],
-    datas=[('launcher.py', '.'), ('icon.ico', '.'), ('icon.png', '.')],
+    datas=[('launcher.py', '.'), ('icon.ico', '.'), ('.env', '.'), ('icon.png', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

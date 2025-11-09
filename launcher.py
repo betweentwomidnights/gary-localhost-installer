@@ -687,13 +687,22 @@ class Gary4JUCEControlCenter(QMainWindow):
             label = QLabel(config["name"])
             label.setStyleSheet("color: #FFFFFF; font-weight: bold;")
             
+            # Stop button - NEW!
+            stop_btn = QPushButton("stop")
+            stop_btn.clicked.connect(lambda checked, svc=name: self.stop_service(svc))
+            stop_btn.setMinimumWidth(80)
+            stop_btn.setMinimumHeight(30)
+            
+            # Restart button
             restart_btn = QPushButton("restart")
             restart_btn.clicked.connect(lambda checked, svc=name: self.restart_service(svc))
-            restart_btn.setMinimumWidth(100)  # Ensure button is wide enough
+            restart_btn.setMinimumWidth(80)
             restart_btn.setMinimumHeight(30)
             
             service_layout.addWidget(label)
             service_layout.addStretch()
+            service_layout.addWidget(stop_btn)
+            service_layout.addSpacing(8)  # Space between buttons
             service_layout.addWidget(restart_btn)
             
             service_frame.setLayout(service_layout)
@@ -1437,6 +1446,35 @@ class Gary4JUCEControlCenter(QMainWindow):
         self.services_running = False
         self.add_log("system", "✅ All services stopped!")
         return True
+    
+    def stop_service(self, service_name):
+        """Stop a specific service without restarting."""
+        if service_name not in self.services:
+            return
+            
+        config = self.services[service_name]
+        self.add_log("system", f"⏹️ stopping {config['name']}...")
+        
+        # Stop the specific service
+        if service_name in self.processes:
+            process = self.processes[service_name]
+            if process and process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=5)
+                    self.add_log("system", f"🛑 stopped {config['name']}")
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+                    self.add_log("system", f"🛑 force stopped {config['name']}")
+                except Exception as e:
+                    self.add_log("system", f"❌ error stopping {config['name']}: {e}")
+            
+            # Remove from processes dict
+            del self.processes[service_name]
+            self.add_log("system", f"✅ {config['name']} stopped successfully")
+        else:
+            self.add_log("system", f"⚠️ {config['name']} is not running")
         
     def restart_service(self, service_name):
         """Restart a specific service."""
