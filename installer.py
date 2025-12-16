@@ -694,6 +694,46 @@ class Gary4JUCEInstaller:
         self.pip_install(venv_python, web_deps)
         
         self.log("✅ MelodyFlow dependencies installed")
+
+    def patch_stable_audio(self, venv_python):
+        """Run patch_generation.py to extend stable-audio-tools."""
+        self.log("🧩 Patching Stable Audio (patch_generation.py)...")
+
+        stable_audio_dir = self.stable_audio_dir  # already cloned
+        patch_script = stable_audio_dir / "patch_generation.py"
+
+        if not patch_script.exists():
+            raise Exception("patch_generation.py not found in stable-audio repo")
+
+        result = subprocess.run(
+            [str(venv_python), "-X", "utf8", str(patch_script)],
+            cwd=str(stable_audio_dir),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            self.log(result.stdout)
+            self.log(result.stderr)
+            raise Exception("patch_generation.py failed")
+
+        self.log("✅ Stable Audio patched successfully")
+
+    def enforce_cuda_pytorch_stack(self, venv_python):
+        self.log("🧱 Enforcing CUDA PyTorch stack (torch/torchaudio/torchvision cu121)...")
+        subprocess.run(
+            [
+                str(venv_python), "-m", "pip", "install",
+                "--upgrade", "--force-reinstall", "--no-cache-dir",
+                "--index-url", "https://download.pytorch.org/whl/cu121",
+                "torch==2.5.1+cu121",
+                "torchaudio==2.5.1+cu121",
+                "torchvision==0.20.1+cu121",
+                "numpy==1.24.1"
+            ],
+            check=True
+        )
+
     
     def install_stable_audio_deps(self, venv_python):
         """Install Stable Audio dependencies - UV VERSION."""
@@ -722,6 +762,29 @@ class Gary4JUCEInstaller:
             venv_python,
             ["git+https://github.com/Stability-AI/stable-audio-tools.git"]
         )
+
+        self.enforce_cuda_pytorch_stack(venv_python)
+
+        self.log("🔎 Verifying torch CUDA support...")
+        code = (
+            "import torch; "
+            "print(torch.__version__); "
+            "print('cuda_version', torch.version.cuda); "
+            "print('cuda_available', torch.cuda.is_available()); "
+            "print('device_count', torch.cuda.device_count());"
+        )
+        result = subprocess.run([str(venv_python), "-c", code], capture_output=True, text=True)
+        self.log("Torch check:\n" + result.stdout.strip())
+
+        # Parse / enforce
+        if "cuda_version None" in result.stdout or "cuda_available False" in result.stdout:
+            raise Exception(
+                "Stable Audio venv has CPU-only torch installed. "
+                "CUDA torch install failed or was overwritten. "
+                "Try reinstalling torch==2.5.1+cu121 from the PyTorch cu121 index."
+            )
+
+        self.patch_stable_audio(venv_python)
         
         self.log("✅ Stable Audio dependencies installed")
 
