@@ -38,4 +38,20 @@ Thumbs.db
 .vscode/
 .idea/
 
-services/
+# Service runtime artifacts (venvs, models, caches - not source code)
+services/**/env/
+services/**/.venv/
+services/**/venv/
+services/**/__pycache__/
+services/**/*.egg-info/
+services/**/.cache/
+services/**/outputs/
+services/**/checkpoints/
+services/**/models/
+services/**/*.safetensors
+services/**/*.bin
+services/**/*.pt
+services/**/*.ckpt
+
+# Reference folder (local-only context, not shipped)
+reference/

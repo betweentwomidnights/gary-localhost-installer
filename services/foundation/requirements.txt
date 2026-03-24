@@ -1,0 +1,19 @@
+# Foundation-1 localhost backend requirements
+# Requires RC fork of stable-audio-tools installed as editable package:
+#   pip install -e ./RC-stable-audio-tools
+
+# Core web framework
+flask
+flask-cors
+
+# Audio processing
+librosa
+soundfile
+pyrubberband
+
+# Model downloading
+huggingface_hub
+
+# PyTorch (CUDA) - installed separately with index-url
+# torch
+# torchaudio

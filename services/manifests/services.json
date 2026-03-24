@@ -1,0 +1,153 @@
+{
+  "version": "2.0",
+  "services": [
+    {
+      "id": "gary",
+      "displayName": "Gary (MusicGen)",
+      "description": "MusicGen continuation and generation service",
+      "port": 8000,
+      "entryPoint": "g4l_localhost.py",
+      "workingDir": "services/gary",
+      "pythonVersion": "3.11",
+      "torchVersion": "2.1.0",
+      "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "requirementsFile": "requirements.txt",
+      "editableInstall": true,
+      "editablePackagePath": ".",
+      "healthCheck": {
+        "endpoint": "/health",
+        "intervalSeconds": 15,
+        "timeoutSeconds": 5,
+        "startupGraceSeconds": 60
+      },
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONLEGACYWINDOWSSTDIO": "1"
+      },
+      "dependsOn": ["redis"]
+    },
+    {
+      "id": "melodyflow",
+      "displayName": "Terry (MelodyFlow)",
+      "description": "Audio editing and continuation with MelodyFlow",
+      "port": 8002,
+      "entryPoint": "localhost_melodyflow.py",
+      "workingDir": "services/melodyflow",
+      "pythonVersion": "3.11",
+      "torchVersion": "2.4.0",
+      "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "requirementsFile": "requirements.txt",
+      "healthCheck": {
+        "endpoint": "/health",
+        "intervalSeconds": 15,
+        "timeoutSeconds": 5,
+        "startupGraceSeconds": 90
+      },
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONLEGACYWINDOWSSTDIO": "1",
+        "XFORMERS_DISABLED": "1",
+        "FLASH_ATTENTION_DISABLED": "1"
+      },
+      "dependsOn": ["redis"]
+    },
+    {
+      "id": "stable-audio",
+      "displayName": "Jerry (Stable Audio)",
+      "description": "Text-to-audio synthesis with Stable Audio Open Small",
+      "port": 8005,
+      "entryPoint": "api.py",
+      "workingDir": "services/stable-audio",
+      "pythonVersion": "3.11",
+      "torchVersion": "2.5.0",
+      "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "requirementsFile": null,
+      "editableInstall": true,
+      "editablePackagePath": ".",
+      "healthCheck": {
+        "endpoint": "/health",
+        "intervalSeconds": 15,
+        "timeoutSeconds": 5,
+        "startupGraceSeconds": 120
+      },
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "HF_TOKEN": "${HF_TOKEN}"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "carey",
+      "displayName": "Carey (ACE-Step 1.5)",
+      "description": "Stem generation (lego), continuation (complete), and remix (cover) with ACE-Step",
+      "port": 8001,
+      "wrapperPort": 8002,
+      "entryPoint": "acestep/api_server.py",
+      "workingDir": "services/carey",
+      "pythonVersion": "3.11",
+      "torchVersion": "2.7.1",
+      "torchIndex": "https://download.pytorch.org/whl/cu128",
+      "requirementsFile": "requirements-acestep.txt",
+      "healthCheck": {
+        "endpoint": "/health",
+        "intervalSeconds": 15,
+        "timeoutSeconds": 5,
+        "startupGraceSeconds": 120
+      },
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "ACESTEP_NO_INIT": "false",
+        "ACESTEP_INIT_LLM": "false"
+      },
+      "dependsOn": [],
+      "notes": "Uses ace-lego fork with lego/complete/cover mode fixes. GPU queue service not needed for localhost."
+    },
+    {
+      "id": "foundation",
+      "displayName": "Foundation-1",
+      "description": "RoyalCities Foundation-1 text-to-sample generation with RC-stable-audio-tools",
+      "port": 8015,
+      "entryPoint": "api_foundation.py",
+      "workingDir": "services/foundation",
+      "pythonVersion": "3.11",
+      "torchVersion": "2.6.0",
+      "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "requirementsFile": "requirements.txt",
+      "editableInstall": true,
+      "editablePackagePath": "./RC-stable-audio-tools",
+      "healthCheck": {
+        "endpoint": "/health",
+        "intervalSeconds": 15,
+        "timeoutSeconds": 5,
+        "startupGraceSeconds": 180
+      },
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "HF_TOKEN": "${HF_TOKEN}",
+        "FOUNDATION_MODEL_DIR": "${MODELS_DIR}/foundation-1",
+        "FOUNDATION_CKPT_PATH": "${MODELS_DIR}/foundation-1/Foundation_1.safetensors",
+        "FOUNDATION_CONFIG_PATH": "${MODELS_DIR}/foundation-1/model_config.json"
+      },
+      "dependsOn": [],
+      "notes": "Requires RC-stable-audio-tools fork (not standard stable-audio-tools). Model must be downloaded separately."
+    }
+  ],
+  "infrastructure": {
+    "redis": {
+      "displayName": "Redis",
+      "port": 6379,
+      "executable": "redis/redis-server.exe",
+      "healthCheck": {
+        "type": "tcp",
+        "intervalSeconds": 10,
+        "timeoutSeconds": 3
+      }
+    }
+  },
+  "defaults": {
+    "pythonVersion": "3.11",
+    "modelsDir": "${APPDATA}/Gary4JUCE/models",
+    "logsDir": "${APPDATA}/Gary4JUCE/logs",
+    "servicesDir": "${APPDATA}/Gary4JUCE/services"
+  }
+}

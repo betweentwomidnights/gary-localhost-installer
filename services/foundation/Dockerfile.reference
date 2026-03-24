@@ -1,0 +1,87 @@
+# ====================================================================
+# Foundation-1 API for DGX Spark (sm_121)
+#
+# Inference service for RoyalCities Foundation-1 text-to-sample model.
+# Base image has: PyTorch 2.6 + CUDA 13.0 + cuDNN 9.12 + FA2
+# We install the RC fork of stable-audio-tools on top.
+#
+# Build:
+#   docker build -f Dockerfile.spark \
+#     -t thecollabagepatch/foundation-api:spark .
+#
+# Download model (first time, with mounted volume):
+#   docker run --rm \
+#     -v $HOME/foundation/models:/models \
+#     thecollabagepatch/foundation-api:spark \
+#     python3 /app/download_model.py
+#
+# Run:
+#   docker run -d --gpus all \
+#     --name foundation-api \
+#     --restart unless-stopped \
+#     -p 8015:8015 \
+#     -v $HOME/foundation/models:/models \
+#     -v $HOME/foundation/outputs:/app/outputs \
+#     thecollabagepatch/foundation-api:spark
+# ====================================================================
+FROM thecollabagepatch/stable-audio-inference:cuda13-sm121
+
+ENV PYTHONUNBUFFERED=1
+ENV CUDA_VISIBLE_DEVICES=0
+ENV HF_HOME=/app/.cache/huggingface
+ENV FOUNDATION_MODEL_DIR=/models/foundation-1
+ENV FOUNDATION_CKPT_PATH=/models/foundation-1/Foundation_1.safetensors
+ENV FOUNDATION_CONFIG_PATH=/models/foundation-1/model_config.json
+ENV PORT=8015
+
+WORKDIR /app
+
+# Cache / output directories
+RUN mkdir -p /app/.cache/huggingface /app/outputs /models && chmod -R 777 /app/.cache /models
+
+# Pin torch so pip won't replace our CUDA build with a CPU wheel
+RUN python3 - <<'PY' > /tmp/constraints.txt
+import torch, numpy as np
+print(f"torch=={torch.__version__}")
+print(f"numpy=={np.__version__}")
+PY
+ENV PIP_CONSTRAINT=/tmp/constraints.txt
+
+# API dependencies (torch/torchaudio already in base image)
+RUN pip install --no-cache-dir \
+      flask flask-cors \
+      librosa \
+      soundfile \
+      huggingface_hub
+
+# Install the RC fork of stable-audio-tools
+COPY RC-stable-audio-tools/ /app/RC-stable-audio-tools/
+RUN cd /app/RC-stable-audio-tools && \
+    pip install --no-cache-dir -e . 2>&1 | tail -5
+
+# Install pyrubberband for time-stretching (plus system rubberband lib)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends rubberband-cli librubberband-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir pyrubberband
+
+# Copy API code
+COPY api.py /app/
+COPY download_model.py /app/
+
+# Verify CUDA torch survived pip installs
+RUN python3 -c "\
+import torch; \
+print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); \
+assert torch.version.cuda is not None, 'CUDA torch was replaced by CPU wheel!'; \
+import flask; \
+from stable_audio_tools.models.factory import create_model_from_config; \
+from stable_audio_tools.inference.generation import generate_diffusion_cond; \
+print('All imports OK')"
+
+EXPOSE 8015
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=180s \
+    CMD curl -f http://localhost:8015/health || exit 1
+
+CMD ["python3", "api.py"]

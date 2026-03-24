@@ -1,0 +1,17 @@
+
+# Simplified requirements for gary4juce localhost backend
+# Removes WebSocket, MongoDB, and deployment complexity
+
+# Core web framework
+flask
+flask_cors
+
+# Data storage and validation  
+redis
+pydantic
+
+# PyTorch for musicgen (same version as remote backend)
+torch==2.1.0
+torchaudio
+
+# Note: audiocraft will be installed separately with: pip install -e ./audiocraft
