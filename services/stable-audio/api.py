@@ -29,11 +29,7 @@ import soundfile as sf
 
 from stable_audio_tools.inference.utils import prepare_audio
 from stable_audio_tools.inference import generation as sa_generation
-try:
-    from stable_audio_tools.inference.sampling import sample_rf_guided
-except ImportError:
-    sample_rf_guided = None
-    print("[WARN] sample_rf_guided not available - guided RF generation disabled")
+from stable_audio_tools.inference.sampling import sample_rf_guided
 
 import numpy as np
 
