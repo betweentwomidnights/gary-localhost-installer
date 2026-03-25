@@ -212,7 +212,7 @@ def build_latent_guidance_from_audio(
     }
 
     print(
-        f"🎛 Latent guidance: z_y shape={z_y.shape}, "
+        f"[KNOB] Latent guidance: z_y shape={z_y.shape}, "
         f"mask_mode={mask_mode}, {mask_desc}, "
         f"fade={ramp_desc}, strength={strength}"
     )
@@ -346,13 +346,13 @@ def resource_cleanup():
 #     """Load model if not already loaded."""
 #     with model_lock:
 #         if 'model' not in model_cache:
-#             print("🔄 Loading stable-audio-open-small model...")
+#             print("[RELOAD] Loading stable-audio-open-small model...")
             
 #             # Authenticate with HF
 #             hf_token = os.getenv('HF_TOKEN')
 #             if hf_token:
 #                 login(token=hf_token)
-#                 print(f"✅ HF authenticated ({hf_token[:10]}...)")
+#                 print(f"[OK] HF authenticated ({hf_token[:10]}...)")
 #             else:
 #                 raise ValueError("HF_TOKEN environment variable required")
             
@@ -366,7 +366,7 @@ def resource_cleanup():
 #             model_cache['model'] = model
 #             model_cache['config'] = config
 #             model_cache['device'] = device
-#             print(f"✅ Model loaded on {device}")
+#             print(f"[OK] Model loaded on {device}")
 #             print(f"   Sample rate: {config['sample_rate']}")
 #             print(f"   Sample size: {config['sample_size']}")
 #             print(f"   Diffusion objective: {getattr(model, 'diffusion_objective', 'unknown')}")
@@ -407,7 +407,7 @@ def process_input_audio(audio_file, target_sr):
         if waveform.shape[0] == 1:
             waveform = waveform.repeat(2, 1)
         
-        print(f"📁 Processed input audio: {waveform.shape} at {target_sr}Hz")
+        print(f"[FILE] Processed input audio: {waveform.shape} at {target_sr}Hz")
         return sample_rate, waveform
     
     except Exception as e:
@@ -930,7 +930,7 @@ def generate_audio():
         actual_samples = output.shape[1]
         if requested_samples < actual_samples:
             output = output[:, :requested_samples]
-            print(f"   ✂️  Trimmed from {actual_samples/sample_rate:.1f}s to {seconds_total}s")
+            print(f"   [TRIM]  Trimmed from {actual_samples/sample_rate:.1f}s to {seconds_total}s")
 
         output_int16 = output.mul(32767).to(torch.int16).cpu()
 
@@ -955,7 +955,7 @@ def generate_audio():
             metadata["gpu_memory_peak"] = round(memory_peak, 2)
             torch.cuda.reset_peak_memory_stats()
 
-        print(f"✅ Generated in {generation_time:.2f}s ({metadata['realtime_factor']:.1f}x RT)")
+        print(f"[OK] Generated in {generation_time:.2f}s ({metadata['realtime_factor']:.1f}x RT)")
 
         if return_format == "file":
             buffer = io.BytesIO()
@@ -973,7 +973,7 @@ def generate_audio():
             return jsonify({"success": True, "audio_base64": audio_b64, "metadata": metadata})
 
     except Exception as e:
-        print(f"❌ Generation error: {str(e)}")
+        print(f"[ERROR] Generation error: {str(e)}")
         import traceback; traceback.print_exc()
         with resource_cleanup():
             pass
@@ -1061,7 +1061,7 @@ def generate_style_transfer():
                 "seconds_total": 12
             }]
         
-        print(f"🎨 Style transfer generation:")
+        print(f"[CONFIG] Style transfer generation:")
         print(f"   Input audio: {input_audio.shape}")
         print(f"   Prompt: {prompt}")
         print(f"   Negative: {negative_prompt or 'None'}")
@@ -1127,7 +1127,7 @@ def generate_style_transfer():
                 # Reset peak stats for next generation
                 torch.cuda.reset_peak_memory_stats()
             
-            print(f"✅ Style transfer complete in {generation_time:.2f}s ({metadata['realtime_factor']:.1f}x RT)")
+            print(f"[OK] Style transfer complete in {generation_time:.2f}s ({metadata['realtime_factor']:.1f}x RT)")
             
             if return_format == "file":
                 # Return as WAV file download
@@ -1167,7 +1167,7 @@ def generate_style_transfer():
                 })
         
     except Exception as e:
-        print(f"❌ Style transfer error: {str(e)}")
+        print(f"[ERROR] Style transfer error: {str(e)}")
         import traceback
         traceback.print_exc()
         
@@ -1263,7 +1263,7 @@ def generate_loop():
                     bars = bar_count
                     break
             
-            print(f"🎵 Auto-selected {bars} bars ({bars * seconds_per_bar:.2f}s) for {detected_bpm} BPM")
+            print(f"[AUDIO] Auto-selected {bars} bars ({bars * seconds_per_bar:.2f}s) for {detected_bpm} BPM")
         
         # Validate parameters
         if bars not in [1, 2, 4, 8]:
@@ -1276,11 +1276,11 @@ def generate_loop():
         
         # Warn if loop might be too long
         if calculated_loop_duration > max_duration:
-            print(f"⚠️  Warning: {bars} bars at {detected_bpm}bpm = {calculated_loop_duration:.2f}s (may exceed generated audio)")
+            print(f"[WARN]  Warning: {bars} bars at {detected_bpm}bpm = {calculated_loop_duration:.2f}s (may exceed generated audio)")
             if calculated_loop_duration > max_duration + 1.0:
                 bars = max(1, bars // 2)
                 calculated_loop_duration = seconds_per_bar * bars
-                print(f"🔧 Auto-reduced to {bars} bars ({calculated_loop_duration:.2f}s)")
+                print(f"[FIX] Auto-reduced to {bars} bars ({calculated_loop_duration:.2f}s)")
         
         # Enhance prompt based on loop_type
         enhanced_prompt = prompt
@@ -1295,7 +1295,7 @@ def generate_loop():
                 enhanced_prompt = prompt.replace("drum", "").replace("drums", "").strip()
             negative_prompt = "drums, percussion, kick, snare, hi-hat"
         
-        print(f"🔄 Loop generation:")
+        print(f"[RELOAD] Loop generation:")
         print(f"   BPM: {detected_bpm}, Bars: {bars}")
         print(f"   Type: {loop_type}")
         print(f"   Model: {model_type}")
@@ -1394,7 +1394,7 @@ def generate_loop():
             available_duration = available_samples / sample_rate
             
             if loop_samples > available_samples:
-                print(f"⚠️  Requested loop ({loop_duration:.2f}s) exceeds available audio ({available_duration:.2f}s)")
+                print(f"[WARN]  Requested loop ({loop_duration:.2f}s) exceeds available audio ({available_duration:.2f}s)")
                 print(f"   Using maximum available: {available_duration:.2f}s")
                 loop_samples = available_samples
                 loop_duration = available_duration
@@ -1426,7 +1426,7 @@ def generate_loop():
                 "device": device
             }
             
-            print(f"✅ Loop generated: {loop_duration:.2f}s ({bars} bars at {detected_bpm}bpm)")
+            print(f"[OK] Loop generated: {loop_duration:.2f}s ({bars} bars at {detected_bpm}bpm)")
             
             if return_format == "file":
                 buffer = io.BytesIO()
@@ -1468,7 +1468,7 @@ def generate_loop():
                 })
     
     except Exception as e:
-        print(f"❌ Loop generation error: {str(e)}")
+        print(f"[ERROR] Loop generation error: {str(e)}")
         import traceback
         traceback.print_exc()
         
@@ -1610,7 +1610,7 @@ def generate_loop_guided():
                 torch.cuda.empty_cache()
             if seed == -1:
                 seed = np.random.randint(0, 2**32 - 1)
-            print(f"🎛 guided loop seed: {seed}")
+            print(f"[KNOB] guided loop seed: {seed}")
 
             with torch.cuda.amp.autocast(enabled=(device == "cuda")):
                 output = generate_diffusion_cond_guided(
@@ -1732,7 +1732,7 @@ def generate_loop_with_riff():
         if not detected_bpm:
             return jsonify({"error": "BPM must be specified in prompt (e.g., '120bpm')"}), 400
         
-        print(f"🎸 Riff-based generation request:")
+        print(f"[RIFF] Riff-based generation request:")
         print(f"   Key: {key}")
         print(f"   Target BPM: {detected_bpm}")
         print(f"   Prompt: {prompt}")
@@ -1771,7 +1771,7 @@ def generate_loop_with_riff():
                         bars = bar_count
                         break
                 
-                print(f"🎵 Auto-selected {bars} bars for {detected_bpm} BPM")
+                print(f"[AUDIO] Auto-selected {bars} bars for {detected_bpm} BPM")
             
             # Enhance prompt based on loop_type
             enhanced_prompt = prompt
@@ -1810,7 +1810,7 @@ def generate_loop_with_riff():
                     "seconds_total": 12
                 }]
             
-            print(f"🎨 Starting style transfer with {key} riff...")
+            print(f"[CONFIG] Starting style transfer with {key} riff...")
             
             # Generate audio with style transfer
             start_time = time.time()
@@ -1880,7 +1880,7 @@ def generate_loop_with_riff():
                     "source": "personal_riff_library"
                 }
                 
-                print(f"✅ Riff-based loop generated: {loop_duration:.2f}s ({bars} bars at {detected_bpm}bpm)")
+                print(f"[OK] Riff-based loop generated: {loop_duration:.2f}s ({bars} bars at {detected_bpm}bpm)")
                 
                 if return_format == "file":
                     buffer = io.BytesIO()
@@ -1923,10 +1923,10 @@ def generate_loop_with_riff():
             # Always clean up the temp riff file
             if os.path.exists(riff_temp_path):
                 os.unlink(riff_temp_path)
-                print(f"🧹 Cleaned up temp riff file")
+                print(f"[CLEANUP] Cleaned up temp riff file")
     
     except Exception as e:
-        print(f"❌ Riff generation error: {str(e)}")
+        print(f"[ERROR] Riff generation error: {str(e)}")
         import traceback
         traceback.print_exc()
         
@@ -1981,7 +1981,7 @@ def process_input_audio_from_path(file_path, target_sr):
         if waveform.shape[0] == 1:
             waveform = waveform.repeat(2, 1)
         
-        print(f"📁 Processed riff audio: {waveform.shape} at {target_sr}Hz")
+        print(f"[FILE] Processed riff audio: {waveform.shape} at {target_sr}Hz")
         return sample_rate, waveform
     
     except Exception as e:
@@ -2016,22 +2016,22 @@ def debug_checkpoint_structure():
             results["debug_info"].append(message)
             print(message)  # Also log to console
         
-        add_log("🔍 Starting checkpoint structure analysis...")
+        add_log("[SEARCH] Starting checkpoint structure analysis...")
         
         # Authenticate
         hf_token = os.getenv('HF_TOKEN')
         if hf_token:
             login(token=hf_token)
-            add_log(f"✅ HF authenticated")
+            add_log(f"[OK] HF authenticated")
         
         # Download files
-        add_log("📥 Downloading base_model_config.json...")
+        add_log("[DOWNLOAD] Downloading base_model_config.json...")
         config_path = hf_hub_download(
             repo_id="stabilityai/stable-audio-open-small",
             filename="base_model_config.json"
         )
         
-        add_log("📥 Downloading finetune checkpoint...")
+        add_log("[DOWNLOAD] Downloading finetune checkpoint...")
         ckpt_path = hf_hub_download(
             repo_id="S3Sound/am_saos1",
             filename="am_saos1_e18_s4800.ckpt"
@@ -2041,7 +2041,7 @@ def debug_checkpoint_structure():
         with open(config_path, 'r') as f:
             config = json.load(f)
         
-        add_log("🔧 Creating model from base config...")
+        add_log("[FIX] Creating model from base config...")
         model = create_model_from_config(config)
         
         # Get expected model keys
@@ -2060,7 +2060,7 @@ def debug_checkpoint_structure():
         
         checkpoint_structure = list(checkpoint.keys())
         results["checkpoint_structure"] = checkpoint_structure
-        add_log(f"🔍 Checkpoint top-level keys: {checkpoint_structure}")
+        add_log(f"[SEARCH] Checkpoint top-level keys: {checkpoint_structure}")
         
         # Find the actual state dict
         if 'state_dict' in checkpoint:
@@ -2088,7 +2088,7 @@ def debug_checkpoint_structure():
             add_log(f"   {key}")
         
         # Analyze key patterns
-        add_log("🔍 Key Pattern Analysis:")
+        add_log("[SEARCH] Key Pattern Analysis:")
         
         # Check for common prefixes in checkpoint keys
         checkpoint_prefixes = set()
@@ -2149,7 +2149,7 @@ def debug_checkpoint_structure():
             add_log(f"   Unexpected: {len(unexpected)}")
             
             if len(matching) > len(model_keys) * 0.8:  # If > 80% match
-                add_log(f"   ✅ Good strategy! Sample matches:")
+                add_log(f"   [OK] Good strategy! Sample matches:")
                 sample_matches = []
                 for i, key in enumerate(sorted(matching)):
                     if i < 5:
@@ -2165,7 +2165,7 @@ def debug_checkpoint_structure():
                 strategy_info["sample_matches"] = sample_matches
                 
                 if len(missing) > 0:
-                    add_log(f"   ❌ Sample missing keys:")
+                    add_log(f"   [ERROR] Sample missing keys:")
                     sample_missing = sorted(missing)[:5]
                     strategy_info["sample_missing"] = sample_missing
                     for key in sample_missing:
@@ -2177,13 +2177,13 @@ def debug_checkpoint_structure():
         
         # Check for exact matches
         if checkpoint_keys == model_keys:
-            add_log("✅ Keys match exactly - this shouldn't be happening!")
+            add_log("[OK] Keys match exactly - this shouldn't be happening!")
             results["keys_match_exactly"] = True
         else:
             results["keys_match_exactly"] = False
         
         # Summary and recommendation
-        add_log("🔍 Analysis Summary:")
+        add_log("[SEARCH] Analysis Summary:")
         best_strategy = None
         best_match_rate = 0
         
@@ -2199,7 +2199,7 @@ def debug_checkpoint_structure():
             add_log(f"🎯 RECOMMENDATION: Use '{best_strategy}' strategy ({best_match_rate:.1f}% match)")
             results["recommendation"] = f"Use '{best_strategy}' strategy"
         else:
-            add_log("❌ No strategy achieved >80% match. This checkpoint may be incompatible.")
+            add_log("[ERROR] No strategy achieved >80% match. This checkpoint may be incompatible.")
             results["recommendation"] = "No compatible strategy found"
         
         results["success"] = True
@@ -2232,7 +2232,7 @@ def debug_pretransform():
             results["debug_info"].append(message)
             print(message)
         
-        add_log("🔍 Analyzing pretransform weights...")
+        add_log("[SEARCH] Analyzing pretransform weights...")
         
         # Authenticate
         hf_token = os.getenv('HF_TOKEN')
@@ -2240,7 +2240,7 @@ def debug_pretransform():
             login(token=hf_token)
         
         # Load the standard model for comparison
-        add_log("📥 Loading standard SAOS model...")
+        add_log("[DOWNLOAD] Loading standard SAOS model...")
         standard_model, standard_config = get_pretrained_model("stabilityai/stable-audio-open-small")
         standard_keys = set(standard_model.state_dict().keys())
         
@@ -2267,7 +2267,7 @@ def debug_pretransform():
             add_log(f"   {key}")
         
         # Load finetune checkpoint
-        add_log("📥 Loading finetune checkpoint...")
+        add_log("[DOWNLOAD] Loading finetune checkpoint...")
         ckpt_path = hf_hub_download(
             repo_id="S3Sound/am_saos1",
             filename="am_saos1_e18_s4800.ckpt"
@@ -2296,12 +2296,12 @@ def debug_pretransform():
         
         # Check if finetune has pretransform weights
         if len(finetune_pretransform_keys) == 0:
-            add_log("❌ PROBLEM FOUND: Finetune checkpoint has NO pretransform weights!")
+            add_log("[ERROR] PROBLEM FOUND: Finetune checkpoint has NO pretransform weights!")
             add_log("   This explains the static drone - pretransform has random weights")
             results["has_pretransform_weights"] = False
             results["problem_identified"] = "Missing pretransform weights in finetune checkpoint"
         else:
-            add_log("✅ Finetune checkpoint has pretransform weights")
+            add_log("[OK] Finetune checkpoint has pretransform weights")
             results["has_pretransform_weights"] = True
         
         # Compare key coverage
@@ -2309,11 +2309,11 @@ def debug_pretransform():
         missing_main_model = non_pretransform_keys - finetune_non_pretransform_keys
         
         if missing_pretransform:
-            add_log(f"❌ Missing {len(missing_pretransform)} pretransform keys from finetune")
+            add_log(f"[ERROR] Missing {len(missing_pretransform)} pretransform keys from finetune")
             results["missing_pretransform_count"] = len(missing_pretransform)
         
         if missing_main_model:
-            add_log(f"❌ Missing {len(missing_main_model)} main model keys from finetune")
+            add_log(f"[ERROR] Missing {len(missing_main_model)} main model keys from finetune")
             results["missing_main_model_count"] = len(missing_main_model)
         
         # Recommendation
@@ -2355,7 +2355,7 @@ def debug_weight_comparison():
             results["debug_info"].append(message)
             print(message)
         
-        add_log("🔍 Comparing pretransform weight values...")
+        add_log("[SEARCH] Comparing pretransform weight values...")
         
         # Authenticate
         hf_token = os.getenv('HF_TOKEN')
@@ -2363,12 +2363,12 @@ def debug_weight_comparison():
             login(token=hf_token)
         
         # Load standard model
-        add_log("📥 Loading standard SAOS pretransform weights...")
+        add_log("[DOWNLOAD] Loading standard SAOS pretransform weights...")
         standard_model, _ = get_pretrained_model("stabilityai/stable-audio-open-small")
         standard_state = standard_model.state_dict()
         
         # Load finetune checkpoint
-        add_log("📥 Loading finetune checkpoint...")
+        add_log("[DOWNLOAD] Loading finetune checkpoint...")
         ckpt_path = hf_hub_download(
             repo_id="S3Sound/am_saos1",
             filename="am_saos1_e18_s4800.ckpt"
@@ -2412,7 +2412,7 @@ def debug_weight_comparison():
                     "finetune_std": round(ft_std, 6)
                 }
                 
-                add_log(f"🔍 Key: {key}")
+                add_log(f"[SEARCH] Key: {key}")
                 add_log(f"   Shapes match: {shapes_match}")
                 add_log(f"   Weights identical: {weights_identical}")
                 add_log(f"   Standard: mean={std_mean:.6f}, std={std_std:.6f}")
@@ -2444,13 +2444,13 @@ def debug_weight_comparison():
         
         # Recommendation
         if identical_percentage > 95:
-            add_log("✅ Pretransform weights are nearly identical - issue elsewhere")
+            add_log("[OK] Pretransform weights are nearly identical - issue elsewhere")
             results["recommendation"] = "pretransform_weights_good"
         elif identical_percentage < 5:
-            add_log("❌ Pretransform weights completely different - use hybrid loading")
+            add_log("[ERROR] Pretransform weights completely different - use hybrid loading")
             results["recommendation"] = "use_hybrid_loading"
         else:
-            add_log("⚠️  Pretransform weights partially different - investigate further")
+            add_log("[WARN]  Pretransform weights partially different - investigate further")
             results["recommendation"] = "investigate_partial_difference"
         
         results["success"] = True
@@ -2476,11 +2476,11 @@ def debug_loading_process():
             results["debug_info"].append(message)
             print(message)
         
-        add_log("🔍 Analyzing model loading processes...")
+        add_log("[SEARCH] Analyzing model loading processes...")
         
         # Get both models from our cache
         if len(model_manager.model_cache) < 2:
-            add_log("❌ Need both models loaded in cache first")
+            add_log("[ERROR] Need both models loaded in cache first")
             return jsonify({
                 "error": "Both models need to be loaded first. Call /test/finetune to load both.",
                 "debug_info": results["debug_info"]
@@ -2496,7 +2496,7 @@ def debug_loading_process():
                 break
         
         if not finetune_key:
-            add_log("❌ Finetune model not found in cache")
+            add_log("[ERROR] Finetune model not found in cache")
             return jsonify({"error": "Finetune model not in cache"}), 400
         
         standard_data = model_manager.model_cache[standard_key]
@@ -2514,7 +2514,7 @@ def debug_loading_process():
         std_training = std_model.training
         ft_training = ft_model.training
         
-        add_log(f"🔍 Model states:")
+        add_log(f"[SEARCH] Model states:")
         add_log(f"   Standard training mode: {std_training}")
         add_log(f"   Finetune training mode: {ft_training}")
         
@@ -2527,7 +2527,7 @@ def debug_loading_process():
         std_type = type(std_model).__name__
         ft_type = type(ft_model).__name__
         
-        add_log(f"🔍 Model types:")
+        add_log(f"[SEARCH] Model types:")
         add_log(f"   Standard: {std_type}")
         add_log(f"   Finetune: {ft_type}")
         
@@ -2540,7 +2540,7 @@ def debug_loading_process():
         std_modules = list(std_model.named_modules())
         ft_modules = list(ft_model.named_modules())
         
-        add_log(f"🔍 Model structure:")
+        add_log(f"[SEARCH] Model structure:")
         add_log(f"   Standard modules: {len(std_modules)}")
         add_log(f"   Finetune modules: {len(ft_modules)}")
         
@@ -2558,7 +2558,7 @@ def debug_loading_process():
                 "match": std_val == ft_val
             }
             
-            add_log(f"🔍 Attribute {attr}:")
+            add_log(f"[SEARCH] Attribute {attr}:")
             add_log(f"   Standard: {std_val}")
             add_log(f"   Finetune: {ft_val}")
             add_log(f"   Match: {std_val == ft_val}")
@@ -2570,10 +2570,10 @@ def debug_loading_process():
         ft_config = finetune_data["config"]
         
         config_match = std_config == ft_config
-        add_log(f"🔍 Configs identical: {config_match}")
+        add_log(f"[SEARCH] Configs identical: {config_match}")
         
         if not config_match:
-            add_log("❌ Configs differ - this could be the issue!")
+            add_log("[ERROR] Configs differ - this could be the issue!")
             # Show key differences
             for key in set(std_config.keys()) | set(ft_config.keys()):
                 std_val = std_config.get(key, "MISSING")
@@ -2592,7 +2592,7 @@ def debug_loading_process():
         add_log("   Even with identical weights, initialization/setup could differ")
         
         # Recommendation
-        add_log("\n🔧 RECOMMENDED TEST:")
+        add_log("\n[FIX] RECOMMENDED TEST:")
         add_log("   Try loading finetune using get_pretrained_model() approach")
         add_log("   Or try loading standard using create_model_from_config() approach")
         add_log("   This will isolate whether the issue is loading method vs weights")
@@ -2621,7 +2621,7 @@ def debug_inference_params():
             results["debug_info"].append(message)
             print(message)
         
-        add_log("🔍 Analyzing inference parameters for different diffusion objectives...")
+        add_log("[SEARCH] Analyzing inference parameters for different diffusion objectives...")
         
         # Load both models
         if len(model_manager.model_cache) < 2:
@@ -2658,7 +2658,7 @@ def debug_inference_params():
         std_obj = getattr(std_model, 'diffusion_objective', 'NOT_FOUND')
         ft_obj = getattr(ft_model, 'diffusion_objective', 'NOT_FOUND')
         
-        add_log(f"🔍 Model diffusion_objective attributes:")
+        add_log(f"[SEARCH] Model diffusion_objective attributes:")
         add_log(f"   Standard model.diffusion_objective: {std_obj}")
         add_log(f"   Finetune model.diffusion_objective: {ft_obj}")
         
@@ -2699,7 +2699,7 @@ def debug_inference_params():
         sig = inspect.signature(generate_diffusion_cond)
         params = list(sig.parameters.keys())
         
-        add_log(f"🔧 generate_diffusion_cond parameters:")
+        add_log(f"[FIX] generate_diffusion_cond parameters:")
         for param in params:
             add_log(f"   - {param}")
         
@@ -2729,12 +2729,12 @@ def debug_inference_params():
 
 if __name__ == '__main__':
     # Pre-load model on startup
-    print("🚀 Starting Enhanced Stable Audio API...")
+    print("[START] Starting Enhanced Stable Audio API...")
     try:
         load_model()
-        print("✅ Model pre-loaded successfully")
+        print("[OK] Model pre-loaded successfully")
     except Exception as e:
-        print(f"❌ Failed to pre-load model: {e}")
+        print(f"[ERROR] Failed to pre-load model: {e}")
         print("Will attempt to load on first request...")
     
     # Run server

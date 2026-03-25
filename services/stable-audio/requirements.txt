@@ -1,11 +1,11 @@
-# Foundation-1 localhost backend requirements
+# Stable Audio (Jerry) localhost backend requirements
 #
 # Install order:
 #   1. pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
-#   2. pip install -e ./RC-stable-audio-tools --no-deps  (RC fork of stable-audio-tools)
+#   2. pip install -e . --no-deps          (stable-audio-tools editable)
 #   3. pip install -r requirements.txt     (this file)
 #   4. pip install --force-reinstall --no-deps torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-#      ^ step 4: restore CUDA torch if transitive deps pulled CPU version
+#      ^ step 4 is critical: some deps pull CPU torch as transitive dep, this restores CUDA
 #
 # Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
 
@@ -13,23 +13,32 @@
 flask
 flask-cors
 
-# Audio processing
-librosa
-soundfile
-
 # Model loading and inference
+diffusers
+accelerate
 huggingface_hub
 safetensors
 transformers
-diffusers
-accelerate
 k-diffusion
-einops
-scipy
-numpy==1.26.4
-tqdm
 
-# RC-SAT declared deps
-vector-quantize-pytorch<=1.9.14
-webdataset<=0.2.48
-x-transformers<1.27.0
+# Audio
+librosa
+soundfile
+
+# ML deps
+einops
+numpy==1.26.4
+scipy
+tqdm
+pydantic
+
+# stable-audio-tools declared deps
+prefigure
+pytorch_lightning
+PyWavelets
+sentencepiece
+torchmetrics
+v-diffusion-pytorch
+vector-quantize-pytorch
+webdataset
+wandb

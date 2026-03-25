@@ -46,7 +46,7 @@ class ModelManager:
         # Find least recently used model
         for model_key in self.model_usage_order:
             if model_key in self.model_cache:
-                print(f"🧹 Evicting LRU model: {model_key}")
+                print(f"[CLEANUP] Evicting LRU model: {model_key}")
                 del self.model_cache[model_key]
                 self.model_usage_order.remove(model_key)
                 
@@ -75,14 +75,14 @@ class ModelManager:
         
         Returns: config_path (local or downloaded), or None if should use base_repo
         """
-        print(f"🔍 Detecting config for checkpoint: {checkpoint_name}")
+        print(f"[SEARCH] Detecting config for checkpoint: {checkpoint_name}")
         
         # Extract version prefix for pattern matching
         version_match = re.match(r'(acid_v\d+)_', checkpoint_name)
         
         if version_match:
             version_prefix = version_match.group(1)
-            print(f"   ✅ Detected version prefix: {version_prefix}")
+            print(f"   [OK] Detected version prefix: {version_prefix}")
             
             # Try multiple naming patterns in order of specificity
             checkpoint_base = checkpoint_name.replace('.ckpt', '')
@@ -103,41 +103,41 @@ class ModelManager:
             
             for i, pattern in enumerate(patterns_to_try, 1):
                 try:
-                    print(f"   🔍 Try {i}/{len(patterns_to_try)}: {pattern}")
+                    print(f"   [SEARCH] Try {i}/{len(patterns_to_try)}: {pattern}")
                     config_path = hf_hub_download(
                         repo_id=finetune_repo,
                         filename=pattern
                     )
-                    print(f"   ✅ Config found and downloaded: {pattern}")
+                    print(f"   [OK] Config found and downloaded: {pattern}")
                     return config_path
                 except Exception as e:
-                    print(f"   ❌ Not found: {pattern}")
+                    print(f"   [ERROR] Not found: {pattern}")
                     continue
             
-            print(f"   ⚠️  No versioned config found for {version_prefix}")
+            print(f"   [WARN]  No versioned config found for {version_prefix}")
         
         # FIXED: Fallback 1 - Try both naming conventions
         for config_name in ["base_model_config.json", "model_config.json"]:
             try:
-                print(f"   🔍 Trying {config_name} from {finetune_repo}...")
+                print(f"   [SEARCH] Trying {config_name} from {finetune_repo}...")
                 config_path = hf_hub_download(
                     repo_id=finetune_repo,
                     filename=config_name
                 )
-                print(f"   ✅ Config downloaded from HF repo: {config_path}")
+                print(f"   [OK] Config downloaded from HF repo: {config_path}")
                 return config_path
             except Exception as e:
-                print(f"   ⚠️  No {config_name} in finetune repo")
+                print(f"   [WARN]  No {config_name} in finetune repo")
                 continue
         
         # Fallback 2: Check for local base_model_config.json (backward compat)
         local_config = os.path.abspath("./base_model_config.json")
         if os.path.exists(local_config):
-            print(f"   ⚠️  Using local config as fallback: {local_config}")
+            print(f"   [WARN]  Using local config as fallback: {local_config}")
             return local_config
         
         # Fallback 3: Return None to signal using base_repo config
-        print(f"   ⚠️  No config detected, will use base_repo config")
+        print(f"   [WARN]  No config detected, will use base_repo config")
         return None
     
     def _fetch_prompts_for_repo(self, repo_id: str, checkpoint: str | None = None):
@@ -169,13 +169,13 @@ class ModelManager:
 
             # Cached?
             if cache_key in self.model_cache:
-                print(f"🎯 Using cached model: {cache_key}")
+                print(f"[TARGET] Using cached model: {cache_key}")
                 self._update_usage(cache_key)
                 return self.model_cache[cache_key]
 
             # Evict LRU if needed
             self._evict_lru_model()
-            print(f"🔄 Loading model: {cache_key}")
+            print(f"[RELOAD] Loading model: {cache_key}")
 
             try:
                 if model_spec == "standard":
@@ -186,12 +186,12 @@ class ModelManager:
                 self.model_cache[cache_key] = model_data
                 self._update_usage(cache_key)
 
-                print(f"✅ Model loaded and cached: {cache_key}")
-                print(f"📊 Cache status: {len(self.model_cache)}/{self.max_models} models loaded")
+                print(f"[OK] Model loaded and cached: {cache_key}")
+                print(f"[STATUS] Cache status: {len(self.model_cache)}/{self.max_models} models loaded")
                 return model_data
 
             except Exception as e:
-                print(f"❌ Failed to load model {cache_key}: {e}")
+                print(f"[ERROR] Failed to load model {cache_key}: {e}")
                 raise
     
     def _load_standard_model(self):
@@ -213,7 +213,7 @@ class ModelManager:
         model.eval()
 
         obj = getattr(model, "diffusion_objective", None)
-        print(f"✅ Standard SAOS ready | objective: {obj} | device: {device}")
+        print(f"[OK] Standard SAOS ready | objective: {obj} | device: {device}")
         print(f"   Sample rate: {config.get('sample_rate')}")
         print(f"   Sample size: {config.get('sample_size')}")
 
@@ -254,32 +254,32 @@ class ModelManager:
             
             if config_path is None:
                 # Fallback: use base_repo config
-                print(f"📥 Downloading config from base_repo: {base_repo}")
+                print(f"[DOWNLOAD] Downloading config from base_repo: {base_repo}")
                 config_path = hf_hub_download(repo_id=base_repo, filename="base_model_config.json")
 
-            print(f"📥 Downloading base_model.ckpt from {base_repo}")
+            print(f"[DOWNLOAD] Downloading base_model.ckpt from {base_repo}")
             base_ckpt_path = hf_hub_download(repo_id=base_repo, filename="base_model.ckpt")
 
-            print(f"📥 Downloading finetune checkpoint {checkpoint_name} from {repo}")
+            print(f"[DOWNLOAD] Downloading finetune checkpoint {checkpoint_name} from {repo}")
             ft_ckpt_path = hf_hub_download(repo_id=repo, filename=checkpoint_name)
 
             # Build model from config
             with open(config_path, "r") as f:
                 config = json.load(f)
 
-            print("🔧 Creating model from config…")
+            print("[FIX] Creating model from config…")
             print(f"   Config path: {config_path}")
             print(f"   Config keys: {list(config.keys())}")
             model = create_model_from_config(config)
 
             # Load base weights using copy_state_dict (like test script)
-            print("🎯 Loading base_model.ckpt using copy_state_dict")
+            print("[TARGET] Loading base_model.ckpt using copy_state_dict")
             base_sd = load_ckpt_state_dict(base_ckpt_path)
             copy_state_dict(model, base_sd)
-            print(f"   ✅ Base weights loaded")
+            print(f"   [OK] Base weights loaded")
 
             # Load finetune checkpoint
-            print("🎯 Loading finetune checkpoint...")
+            print("[TARGET] Loading finetune checkpoint...")
             ckpt = torch.load(ft_ckpt_path, map_location="cpu")
             state_dict = ckpt.get("state_dict", ckpt)
             
@@ -287,7 +287,7 @@ class ModelManager:
             ema_keys = [k for k in state_dict.keys() if k.startswith("diffusion_ema.ema_model.")]
             
             if ema_keys:
-                print(f"   🔍 Found EMA weights ({len(ema_keys)} keys)")
+                print(f"   [SEARCH] Found EMA weights ({len(ema_keys)} keys)")
                 # Create new state dict with EMA weights, stripping the prefix
                 ema_state = {}
                 for key in ema_keys:
@@ -296,20 +296,20 @@ class ModelManager:
                     ema_state[new_key] = state_dict[key]
                 
                 # Also include pretransform weights from base (not EMA'd)
-                print(f"   🔍 Keeping pretransform weights from base model")
+                print(f"   [SEARCH] Keeping pretransform weights from base model")
                 for key in state_dict.keys():
                     if key.startswith("diffusion.pretransform"):
                         ema_state[key] = state_dict[key]
                 
                 # Use EMA state
-                print(f"   ✅ Using {len(ema_state)} EMA-remapped weights")
+                print(f"   [OK] Using {len(ema_state)} EMA-remapped weights")
                 copy_state_dict(model, ema_state)
             else:
-                print(f"   ℹ️  No EMA weights found, using regular state_dict")
+                print(f"   [INFO]  No EMA weights found, using regular state_dict")
                 # Filter out pretransform to preserve base model's pretransform
                 filtered_state = {k: v for k, v in state_dict.items() 
                                 if not k.startswith("pretransform.")}
-                print(f"   ✅ Using {len(filtered_state)} regular weights (excluding pretransform)")
+                print(f"   [OK] Using {len(filtered_state)} regular weights (excluding pretransform)")
                 copy_state_dict(model, filtered_state)
 
             # Device, dtype, eval()
@@ -320,7 +320,7 @@ class ModelManager:
             model.eval()
 
             obj = getattr(model, "diffusion_objective", None)
-            print(f"✅ Finetune model ready | objective: {obj} | device: {device}")
+            print(f"[OK] Finetune model ready | objective: {obj} | device: {device}")
             print(f"   Config: {os.path.basename(config_path)}")
             print(f"   Checkpoint: {checkpoint_name}")
             print(f"   Sample rate: {config.get('sample_rate')}")
@@ -343,7 +343,7 @@ class ModelManager:
             }
 
         except Exception as e:
-            print(f"❌ Error loading finetune: {str(e)}")
+            print(f"[ERROR] Error loading finetune: {str(e)}")
             import traceback
             traceback.print_exc()
             raise
@@ -360,12 +360,12 @@ class ModelManager:
     def clear_cache(self):
         """Clear all cached models"""
         with self.model_lock:
-            print("🧹 Clearing all cached models...")
+            print("[CLEANUP] Clearing all cached models...")
             self.model_cache.clear()
             self.model_usage_order.clear()
             with self.resource_cleanup():
                 pass
-            print("✅ Model cache cleared")
+            print("[OK] Model cache cleared")
 
 # Global model manager instance
 model_manager = ModelManager(max_models=2)
@@ -412,7 +412,7 @@ def load_model(model_type="standard", finetune_repo=None, finetune_checkpoint=No
 # Test function
 def test_versioned_checkpoints():
     """Test loading different versioned checkpoints"""
-    print("🧪 Testing versioned checkpoint loading...\n")
+    print("[TEST] Testing versioned checkpoint loading...\n")
     
     test_cases = [
         {
@@ -444,14 +444,14 @@ def test_versioned_checkpoints():
                 finetune_checkpoint=test["checkpoint"]
             )
             
-            print(f"✅ {test['name']} loaded successfully!")
+            print(f"[OK] {test['name']} loaded successfully!")
             print(f"   Device: {device}")
             print(f"   Sample rate: {config['sample_rate']}")
             print(f"   Sample size: {config['sample_size']}")
             print(f"   Max duration: {config['sample_size'] / config['sample_rate']:.1f}s")
             
         except Exception as e:
-            print(f"❌ {test['name']} failed: {e}")
+            print(f"[ERROR] {test['name']} failed: {e}")
     
     # Show cache status
     print(f"\n{'='*60}")

@@ -1,0 +1,52 @@
+# Carey (ACE-Step 1.5) localhost backend requirements
+#
+# Install order:
+#   1. pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#   2. pip install -r requirements.txt     (this file)
+#   3. pip install -e acestep/third_parts/nano-vllm  (bundled nano-vllm with triton-windows + flash-attn)
+#   4. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#      ^ step 4: restore CUDA torch if transitive deps pulled CPU version
+#
+# Known Windows notes:
+#   - torchcodec installs but fails at runtime (no FFmpeg DLLs) — soundfile fallback handles it
+#   - torchao cpp extensions skipped for torch 2.7.1 — pure Python fallback works
+#   - bitsandbytes not available on Windows — standard AdamW used for training
+#   - torch.distributed redirects not supported on Windows — harmless warning
+#
+# Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
+
+# Core ML
+transformers>=4.51.0,<4.58.0
+diffusers
+accelerate>=1.12.0
+einops>=0.8.1
+safetensors==0.7.0
+peft>=0.18.0
+
+# Inference
+scipy>=1.10.1
+soundfile>=0.13.1
+loguru>=0.7.3
+numba>=0.63.1
+vector-quantize-pytorch>=1.27.15
+torchao>=0.14.1,<0.16.0
+toml
+diskcache
+
+# API server
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+gradio==6.2.0
+
+# Training (needed for imports even in inference mode)
+lycoris-lora
+lightning>=2.0.0
+tensorboard>=2.0.0
+matplotlib>=3.7.5
+
+# Optional (installs but may fail at runtime on Windows)
+torchcodec>=0.9.1
+
+# Model downloading
+modelscope
+typer-slim>=0.21.1

@@ -1,17 +1,41 @@
-
-# Simplified requirements for gary4juce localhost backend
-# Removes WebSocket, MongoDB, and deployment complexity
+# Gary (MusicGen) localhost backend requirements
+#
+# Install order:
+#   1. pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
+#   2. pip install -e . --no-deps          (audiocraft editable, skip its pinned torch==2.1.0)
+#   3. pip install -r requirements.txt     (this file)
+#   4. Install xformers SDPA shim          (see setup script — creates fake xformers package)
+#
+# Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
 
 # Core web framework
 flask
-flask_cors
+flask-cors
 
-# Data storage and validation  
+# Data storage and validation
 redis
 pydantic
 
-# PyTorch for musicgen (same version as remote backend)
-torch==2.1.0
-torchaudio
-
-# Note: audiocraft will be installed separately with: pip install -e ./audiocraft
+# Audio/ML runtime deps (audiocraft needs these but we manage them ourselves)
+numpy==1.26.4
+av
+encodec
+hydra-core<1.4
+omegaconf<2.4
+antlr4-python3-runtime==4.9.3
+torchmetrics
+num2words
+flashy<0.2
+treetable==0.2.6
+colorlog
+transformers==4.39.3
+huggingface_hub
+protobuf
+spacy==3.7.6
+librosa<0.11
+pesq
+pystoi
+demucs
+sentencepiece
+soundfile
+einops

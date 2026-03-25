@@ -25,11 +25,11 @@ from torch.utils.checkpoint import checkpoint as torch_checkpoint
 try:
     from xformers import ops
     _has_xformers = True
-    print("✓ xformers available - using memory efficient attention when requested")
+    print("[OK] xformers available - using memory efficient attention when requested")
 except ImportError:
     ops = None
     _has_xformers = False
-    print("⚠️ xformers not available - falling back to PyTorch scaled_dot_product_attention")
+    print("[WARN] xformers not available - falling back to PyTorch scaled_dot_product_attention")
 
 from .rope import RotaryEmbedding
 from .streaming import StreamingModule
@@ -42,7 +42,7 @@ def set_efficient_attention_backend(backend: str = 'torch'):
     global _efficient_attention_backend
     assert backend in ['xformers', 'torch']
     if backend == 'xformers' and not _has_xformers:
-        print("⚠️ xformers backend requested but not available - falling back to torch")
+        print("[WARN] xformers backend requested but not available - falling back to torch")
         backend = 'torch'
     _efficient_attention_backend = backend
 
@@ -729,7 +729,7 @@ class StreamingTransformer(StreamingModule):
             return torch_checkpoint(layer, *args, use_reentrant=False, **kwargs)
         elif method.startswith('xformers'):
             if not _has_xformers:
-                print("⚠️ xformers checkpointing requested but xformers not available - falling back to torch")
+                print("[WARN] xformers checkpointing requested but xformers not available - falling back to torch")
                 return torch_checkpoint(layer, *args, use_reentrant=False, **kwargs)
             try:
                 from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy
@@ -754,7 +754,7 @@ class StreamingTransformer(StreamingModule):
                 policy_fn = _get_default_policy(allow_list)
                 return checkpoint(layer, *args, policy_fn=policy_fn, **kwargs)
             except ImportError:
-                print("⚠️ xformers checkpointing requested but fairinternal xformers not available - falling back to torch")
+                print("[WARN] xformers checkpointing requested but fairinternal xformers not available - falling back to torch")
                 return torch_checkpoint(layer, *args, use_reentrant=False, **kwargs)
         else:
             raise ValueError(f"Checkpointing method {method} is unknown.")
@@ -801,27 +801,27 @@ class StreamingTransformer(StreamingModule):
 def _verify_xformers_memory_efficient_compat():
     """Verify xformers memory efficient attention compatibility - now gracefully handles missing xformers."""
     if not _has_xformers:
-        print("⚠️ Memory efficient attention requested, but xformers not installed. Using PyTorch scaled_dot_product_attention.")
+        print("[WARN] Memory efficient attention requested, but xformers not installed. Using PyTorch scaled_dot_product_attention.")
         return
     
     try:
         from xformers.ops import memory_efficient_attention, LowerTriangularMask  # noqa
-        print("✓ xformers memory efficient attention available")
+        print("[OK] xformers memory efficient attention available")
     except ImportError:
-        print("⚠️ xformers installed but memory_efficient_attention not available - using torch fallback")
+        print("[WARN] xformers installed but memory_efficient_attention not available - using torch fallback")
 
 
 def _verify_xformers_internal_compat():
     """Verify xformers internal checkpointing compatibility - now gracefully handles missing xformers."""
     if not _has_xformers:
-        print("⚠️ xformers checkpointing requested, but xformers not installed. Using PyTorch checkpointing.")
+        print("[WARN] xformers checkpointing requested, but xformers not installed. Using PyTorch checkpointing.")
         return
         
     try:
         from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy  # noqa
-        print("✓ xformers fairinternal checkpointing available")
+        print("[OK] xformers fairinternal checkpointing available")
     except ImportError:
-        print("⚠️ xformers installed but fairinternal checkpointing not available - using torch fallback")
+        print("[WARN] xformers installed but fairinternal checkpointing not available - using torch fallback")
 
 
 def _is_custom(custom: bool, memory_efficient: bool):

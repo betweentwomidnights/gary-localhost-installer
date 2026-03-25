@@ -1,17 +1,25 @@
-# Core web server
+# MelodyFlow (Terry) localhost backend requirements
+#
+# Install order:
+#   1. pip install torch==2.4.0 torchaudio==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121
+#   2. pip install -r requirements.txt     (this file)
+#   3. Install xformers SDPA shim          (see setup script)
+#
+# Note: audiocraft is NOT installed as a package. It lives in ./audiocraft/
+# and is imported via sys.path / PYTHONPATH from the working directory.
+#
+# Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
+
+# Core web framework
 flask
-flask_cors
+flask-cors
 psutil
 
-# Redis for progress tracking only (no RQ)
+# Redis for progress tracking
 redis
 
-# Audio processing core
-torch==2.4.0
-torchaudio
-torchvision
-
-# AudioCraft dependencies
+# Audio/ML runtime deps
+numpy==1.26.4
 av
 einops
 flashy>=0.0.1
@@ -19,18 +27,14 @@ hydra-core>=1.1
 hydra_colorlog
 julius
 num2words
-numpy
 sentencepiece
 spacy>=3.6.1
 huggingface_hub
 tqdm
-transformers>=4.31.0
-xformers
-demucs
+transformers>=4.31.0,<5.0.0
 librosa
 soundfile
 torchmetrics
 encodec
 protobuf
-pesq
-pystoi
+pyloudnorm
