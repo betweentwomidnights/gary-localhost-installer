@@ -13,7 +13,7 @@ import psutil
 import logging
 from contextlib import contextmanager
 
-import redis
+import sys
 
 # In both g4l_localhost.py AND localhost_melodyflow.py
 import tempfile
@@ -22,7 +22,10 @@ import tempfile
 SHARED_TEMP_DIR = os.path.join(tempfile.gettempdir(), "gary4juce_shared")
 os.makedirs(SHARED_TEMP_DIR, exist_ok=True)
 
-redis_client = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
+# Use in-memory session store instead of Redis for localhost
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from local_session_store import LocalSessionStore
+redis_client = LocalSessionStore()
 
 # Add progress callback that writes to Redis
 def redis_progress_callback(session_id, current, total):

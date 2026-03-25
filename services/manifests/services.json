@@ -9,11 +9,22 @@
       "entryPoint": "g4l_localhost.py",
       "workingDir": "services/gary",
       "pythonVersion": "3.11",
-      "torchVersion": "2.1.0",
+      "torchVersion": "2.4.0",
       "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "torchPackages": ["torch==2.4.0", "torchaudio==2.4.0"],
       "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": ".",
+      "editableInstallFlags": "--no-deps",
+      "xformersShim": true,
+      "forceTorchReinstall": true,
+      "buildSteps": [
+        "pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121",
+        "pip install -e . --no-deps",
+        "pip install -r requirements.txt",
+        "install_xformers_shim",
+        "pip install --force-reinstall --no-deps torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121"
+      ],
       "healthCheck": {
         "endpoint": "/health",
         "intervalSeconds": 15,
@@ -24,7 +35,7 @@
         "PYTHONIOENCODING": "utf-8",
         "PYTHONLEGACYWINDOWSSTDIO": "1"
       },
-      "dependsOn": ["redis"]
+      "dependsOn": []
     },
     {
       "id": "melodyflow",
@@ -36,7 +47,16 @@
       "pythonVersion": "3.11",
       "torchVersion": "2.4.0",
       "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "torchPackages": ["torch==2.4.0", "torchaudio==2.4.0", "torchvision==0.19.0"],
       "requirementsFile": "requirements.txt",
+      "xformersShim": true,
+      "forceTorchReinstall": true,
+      "buildSteps": [
+        "pip install torch==2.4.0 torchaudio==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121",
+        "pip install -r requirements.txt",
+        "install_xformers_shim",
+        "pip install --force-reinstall --no-deps torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121"
+      ],
       "healthCheck": {
         "endpoint": "/health",
         "intervalSeconds": 15,
@@ -45,11 +65,10 @@
       },
       "env": {
         "PYTHONIOENCODING": "utf-8",
-        "PYTHONLEGACYWINDOWSSTDIO": "1",
-        "XFORMERS_DISABLED": "1",
-        "FLASH_ATTENTION_DISABLED": "1"
+        "PYTHONLEGACYWINDOWSSTDIO": "1"
       },
-      "dependsOn": ["redis"]
+      "dependsOn": [],
+      "notes": "audiocraft is NOT installed as a package. It lives in ./audiocraft/ and is imported via sys.path from the working directory."
     },
     {
       "id": "stable-audio",
@@ -59,11 +78,20 @@
       "entryPoint": "api.py",
       "workingDir": "services/stable-audio",
       "pythonVersion": "3.11",
-      "torchVersion": "2.5.0",
-      "torchIndex": "https://download.pytorch.org/whl/cu121",
-      "requirementsFile": null,
+      "torchVersion": "2.6.0",
+      "torchIndex": "https://download.pytorch.org/whl/cu124",
+      "torchPackages": ["torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0"],
+      "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": ".",
+      "editableInstallFlags": "--no-deps",
+      "forceTorchReinstall": true,
+      "buildSteps": [
+        "pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124",
+        "pip install -e . --no-deps",
+        "pip install -r requirements.txt",
+        "pip install --force-reinstall --no-deps torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124"
+      ],
       "healthCheck": {
         "endpoint": "/health",
         "intervalSeconds": 15,
@@ -87,7 +115,18 @@
       "pythonVersion": "3.11",
       "torchVersion": "2.7.1",
       "torchIndex": "https://download.pytorch.org/whl/cu128",
-      "requirementsFile": "requirements-acestep.txt",
+      "torchPackages": ["torch==2.7.1", "torchvision==0.22.1", "torchaudio==2.7.1"],
+      "requirementsFile": "requirements.txt",
+      "extraInstalls": [
+        {"command": "pip install -e acestep/third_parts/nano-vllm", "description": "Bundled nano-vllm with triton-windows + flash-attn"}
+      ],
+      "forceTorchReinstall": true,
+      "buildSteps": [
+        "pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip install -r requirements.txt",
+        "pip install -e acestep/third_parts/nano-vllm",
+        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
+      ],
       "healthCheck": {
         "endpoint": "/health",
         "intervalSeconds": 15,
@@ -100,7 +139,7 @@
         "ACESTEP_INIT_LLM": "false"
       },
       "dependsOn": [],
-      "notes": "Uses ace-lego fork with lego/complete/cover mode fixes. GPU queue service not needed for localhost."
+      "notes": "Uses ace-lego fork with lego/complete/cover mode fixes. torchcodec installs but fails at runtime on Windows (no FFmpeg DLLs) — soundfile fallback handles it. GPU queue service not needed for localhost."
     },
     {
       "id": "foundation",
@@ -111,10 +150,19 @@
       "workingDir": "services/foundation",
       "pythonVersion": "3.11",
       "torchVersion": "2.6.0",
-      "torchIndex": "https://download.pytorch.org/whl/cu121",
+      "torchIndex": "https://download.pytorch.org/whl/cu124",
+      "torchPackages": ["torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0"],
       "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": "./RC-stable-audio-tools",
+      "editableInstallFlags": "--no-deps",
+      "forceTorchReinstall": true,
+      "buildSteps": [
+        "pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124",
+        "pip install -e ./RC-stable-audio-tools --no-deps",
+        "pip install -r requirements.txt",
+        "pip install --force-reinstall --no-deps torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124"
+      ],
       "healthCheck": {
         "endpoint": "/health",
         "intervalSeconds": 15,
@@ -132,18 +180,7 @@
       "notes": "Requires RC-stable-audio-tools fork (not standard stable-audio-tools). Model must be downloaded separately."
     }
   ],
-  "infrastructure": {
-    "redis": {
-      "displayName": "Redis",
-      "port": 6379,
-      "executable": "redis/redis-server.exe",
-      "healthCheck": {
-        "type": "tcp",
-        "intervalSeconds": 10,
-        "timeoutSeconds": 3
-      }
-    }
-  },
+  "infrastructure": {},
   "defaults": {
     "pythonVersion": "3.11",
     "modelsDir": "${APPDATA}/Gary4JUCE/models",

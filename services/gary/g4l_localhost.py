@@ -15,11 +15,15 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
+import sys
 import torch
-import redis
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pydantic import BaseModel, ValidationError, Field
+
+# Use in-memory session store instead of Redis for localhost
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from local_session_store import LocalSessionStore
 
 # Import our audio processing functions (Gary/MusicGen only)
 from g4laudio import process_audio, continue_music
@@ -38,8 +42,8 @@ os.makedirs(SHARED_TEMP_DIR, exist_ok=True)
 app = Flask(__name__)
 CORS(app)
 
-# Redis connection (same as remote backend for compatibility)
-redis_client = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
+# In-memory session store (replaces Redis for localhost)
+redis_client = LocalSessionStore()
 
 # =============================================================================
 # PYDANTIC MODELS (Keep existing models for validation)
@@ -347,12 +351,12 @@ def health_check():
     """Comprehensive health check endpoint (matches remote backend format)."""
     health_status = {"status": "live", "service": "gary4juce-localhost"}
 
-    # Check Redis (essential for session storage)
+    # Check session store
     try:
         redis_client.ping()
-        health_status['redis'] = 'live'
+        health_status['session_store'] = 'live'
     except Exception as e:
-        health_status['redis'] = f'down: {str(e)}'
+        health_status['session_store'] = f'down: {str(e)}'
         health_status['status'] = 'degraded'
 
     # Check PyTorch/CUDA (essential for audio processing)
@@ -866,12 +870,12 @@ def get_available_models():
 # =============================================================================
 
 if __name__ == '__main__':
-    print("🎵 Starting gary4juce localhost backend...")
-    print("🔧 Redis connection:", "OK" if redis_client.ping() else "FAILED")
-    print("🎯 CUDA available:", torch.cuda.is_available())
+    print("Starting gary4juce localhost backend...")
+    print("Session store: in-memory (OK)")
+    print("CUDA available:", torch.cuda.is_available())
     if torch.cuda.is_available():
-        print(f"🚀 GPU: {torch.cuda.get_device_name(0)}")
-        print(f"💾 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
     
     # Start Flask app
     app.run(host='0.0.0.0', port=8000, debug=False, threaded=True)
