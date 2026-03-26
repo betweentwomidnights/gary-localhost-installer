@@ -355,6 +355,198 @@ def get_variations():
     except Exception as e:
         return jsonify({'error': f'Failed to fetch variations: {str(e)}'}), 500
 
+# =============================================================================
+# JUCE-COMPATIBLE ASYNC ENDPOINTS
+# Direct session management — JUCE plugin talks to MelodyFlow directly,
+# no proxy through Gary.
+# =============================================================================
+
+import uuid
+import base64
+import threading
+import json
+from datetime import datetime, timezone
+
+_juce_sessions = {}
+_juce_session_lock = threading.Lock()
+
+def _generate_session_id():
+    return str(uuid.uuid4())
+
+def _get_session(session_id):
+    with _juce_session_lock:
+        return _juce_sessions.get(session_id, {}).copy()
+
+def _update_session(session_id, **kwargs):
+    with _juce_session_lock:
+        if session_id not in _juce_sessions:
+            _juce_sessions[session_id] = {}
+        _juce_sessions[session_id].update(kwargs)
+
+def _write_base64_audio_to_file(audio_base64, session_id):
+    filename = f"input_{session_id}_{uuid.uuid4().hex[:8]}.wav"
+    file_path = os.path.join(SHARED_TEMP_DIR, filename)
+    audio_data = base64.b64decode(audio_base64)
+    with open(file_path, 'wb') as f:
+        f.write(audio_data)
+    return file_path
+
+def _queue_transform_job(session_id, audio_base64, variation, flowstep, solver, custom_prompt):
+    def worker():
+        input_path = None
+        output_path = None
+        try:
+            _update_session(session_id, status="warming", progress=0,
+                            queue_status={"status": "warming",
+                                          "message": "loading terry (first run / model warmup)",
+                                          "source": "localhost"})
+
+            input_path = _write_base64_audio_to_file(audio_base64, session_id)
+            input_waveform = load_audio_from_file(input_path)
+
+            _update_session(session_id, status="processing",
+                            queue_status={"status": "processing",
+                                          "message": "transforming...",
+                                          "source": "localhost"})
+
+            def progress_cb(sid, current, total):
+                pct = int((current / total) * 100)
+                _update_session(sid, progress=pct)
+
+            processed_waveform = process_audio(
+                input_waveform, variation, flowstep, solver, custom_prompt,
+                session_id=session_id, progress_callback=progress_cb
+            )
+
+            output_filename = f"output_{session_id}_{uuid.uuid4().hex[:8]}.wav"
+            output_path = os.path.join(SHARED_TEMP_DIR, output_filename)
+            torchaudio.save(output_path, processed_waveform.cpu(), 32000)
+
+            with open(output_path, 'rb') as f:
+                result_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+            _update_session(session_id, status="completed", progress=100,
+                            audio_data=result_b64,
+                            queue_status={"status": "completed", "message": "done",
+                                          "source": "localhost"})
+            print(f"[SUCCESS] Transform completed for {session_id}")
+
+            del input_waveform, processed_waveform
+
+        except Exception as e:
+            print(f"[ERROR] Transform failed for {session_id}: {e}")
+            _update_session(session_id, status="failed", error=str(e),
+                            queue_status={"status": "failed", "message": str(e),
+                                          "source": "localhost"})
+        finally:
+            for p in (input_path, output_path):
+                try:
+                    if p and os.path.exists(p):
+                        os.remove(p)
+                except Exception:
+                    pass
+
+            AGGRESSIVE_UNLOAD = os.environ.get("MELODYFLOW_UNLOAD_EACH_REQUEST", "1") == "1"
+            if AGGRESSIVE_UNLOAD:
+                unload_model()
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+@app.route('/api/juce/transform_audio', methods=['POST'])
+def juce_transform_audio():
+    """JUCE-compatible async transform endpoint. Returns session_id for polling."""
+    try:
+        data = request.json or {}
+        audio_data = data.get('audio_data')
+        if not audio_data:
+            return jsonify({'success': False, 'error': 'audio_data is required'}), 400
+
+        variation = data.get('variation')
+        if not variation:
+            return jsonify({'success': False, 'error': 'variation is required'}), 400
+
+        session_id = data.get('session_id') or _generate_session_id()
+        flowstep = data.get('flowstep')
+        if flowstep is not None:
+            flowstep = float(flowstep)
+        solver = (data.get('solver') or 'euler').lower()
+        custom_prompt = data.get('custom_prompt')
+
+        _update_session(session_id,
+                        original_audio=audio_data,
+                        status="queued", progress=0,
+                        created_at=datetime.now(timezone.utc).isoformat())
+
+        _queue_transform_job(session_id, audio_data, variation, flowstep, solver, custom_prompt)
+
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "message": "Audio transform started",
+            "note": "Poll /api/juce/poll_status/{session_id} for progress and results"
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/juce/poll_status/<session_id>', methods=['GET'])
+def juce_poll_status(session_id):
+    """Poll transform progress. Returns status, progress, and audio_data when complete."""
+    try:
+        sess = _get_session(session_id)
+        if not sess:
+            return jsonify({"success": False, "error": "Session not found"}), 404
+
+        status = sess.get("status", "unknown")
+        response = {
+            "success": True,
+            "status": status,
+            "progress": sess.get("progress", 0),
+            "queue_status": sess.get("queue_status", {}),
+            "transform_in_progress": status in ("warming", "processing", "queued"),
+        }
+
+        if status == "completed":
+            response["transform_in_progress"] = False
+            audio = sess.get("audio_data")
+            if audio:
+                response["audio_data"] = audio
+        elif status == "failed":
+            response["transform_in_progress"] = False
+            response["error"] = sess.get("error", "Unknown error")
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/juce/undo_transform', methods=['POST'])
+def juce_undo_transform():
+    """Undo last transform by returning original audio."""
+    try:
+        data = request.json or {}
+        session_id = data.get('session_id')
+        if not session_id:
+            return jsonify({'success': False, 'error': 'session_id is required'}), 400
+
+        sess = _get_session(session_id)
+        original = sess.get('original_audio')
+        if not original:
+            return jsonify({'success': False, 'error': 'No original audio found for undo'}), 404
+
+        return jsonify({
+            'success': True,
+            'audio_data': original,
+            'message': 'Transform undone successfully'
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
