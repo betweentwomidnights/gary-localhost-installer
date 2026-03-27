@@ -12,9 +12,10 @@
     env_exists: boolean;
   }
 
-  let { services, selectedServiceId, onSelect, onShowModels }: {
+  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
+    hfTokenConfigured: boolean;
     onSelect: (id: string) => void;
     onShowModels: (id: string) => void;
   } = $props();
@@ -41,7 +42,7 @@
       {service}
       selected={selectedServiceId === service.id}
       onSelect={() => onSelect(service.id)}
-      hasModels={servicesWithModels.has(service.id)}
+      hasModels={servicesWithModels.has(service.id) && (service.id !== "stable-audio" || hfTokenConfigured)}
       onShowModels={() => onShowModels(service.id)}
     />
   {/each}

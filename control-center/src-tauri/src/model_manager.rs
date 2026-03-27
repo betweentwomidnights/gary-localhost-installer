@@ -623,13 +623,16 @@ except Exception as e:
         )
     };
 
-    let mut child = tokio::process::Command::new(python_exe.to_str().unwrap())
-        .args(["-u", "-c", &script])
+    let mut cmd = tokio::process::Command::new(python_exe.to_str().unwrap());
+    cmd.args(["-u", "-c", &script])
         .env("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    if let Some(token) = crate::read_hf_token() {
+        cmd.env("HF_TOKEN", &token);
+    }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
     // Read stdout for our JSON progress lines
@@ -875,13 +878,16 @@ except Exception as e:
         prefix_filter = prefix_filter,
     );
 
-    let mut child = tokio::process::Command::new(python_exe.to_str().unwrap())
-        .args(["-u", "-c", &script])
+    let mut cmd = tokio::process::Command::new(python_exe.to_str().unwrap());
+    cmd.args(["-u", "-c", &script])
         .env("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    if let Some(token) = crate::read_hf_token() {
+        cmd.env("HF_TOKEN", &token);
+    }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
     // Read stdout for JSON progress
@@ -1059,12 +1065,16 @@ except Exception as e:
         model_dir = model_dir_str,
     );
 
-    let mut child = tokio::process::Command::new(python_exe.to_str().unwrap())
-        .args(["-u", "-c", &script])
+    let mut cmd = tokio::process::Command::new(python_exe.to_str().unwrap());
+    cmd.args(["-u", "-c", &script])
+        .env("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    if let Some(token) = crate::read_hf_token() {
+        cmd.env("HF_TOKEN", &token);
+    }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
     // Read stdout for JSON progress

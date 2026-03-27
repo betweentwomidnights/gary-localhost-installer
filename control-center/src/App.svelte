@@ -5,6 +5,7 @@
   import ServiceList from "./lib/ServiceList.svelte";
   import LogViewer from "./lib/LogViewer.svelte";
   import ModelPanel from "./lib/ModelPanel.svelte";
+  import TokenBanner from "./lib/TokenBanner.svelte";
 
   interface ServiceInfo {
     id: string;
@@ -25,6 +26,9 @@
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
   let modelServiceId: string | null = $state(null);
+
+  // HF token state — gates Jerry's Models button
+  let hfTokenConfigured: boolean = $state(false);
 
   async function loadServices() {
     try {
@@ -59,8 +63,20 @@
     if (selectedServiceId) fetchLog(selectedServiceId);
   }
 
+  async function checkToken() {
+    try {
+      const token = await invoke<string | null>("get_hf_token");
+      hfTokenConfigured = !!token;
+    } catch (_) {}
+  }
+
+  function onTokenChange(configured: boolean) {
+    hfTokenConfigured = configured;
+  }
+
   onMount(() => {
     loadServices();
+    checkToken();
 
     const unlisten = listen<ServiceInfo[]>("services-updated", (event) => {
       services = event.payload;
@@ -98,6 +114,7 @@
       <ServiceList
         {services}
         {selectedServiceId}
+        {hfTokenConfigured}
         onSelect={selectService}
         onShowModels={showModels}
       />
@@ -107,6 +124,9 @@
       {#if rightPanel === "models" && modelServiceId}
         <ModelPanel serviceId={modelServiceId} onBack={backToLogs} />
       {:else}
+        {#if selectedServiceId === "stable-audio"}
+          <TokenBanner {onTokenChange} />
+        {/if}
         <LogViewer
           serviceId={selectedServiceId}
           {logText}

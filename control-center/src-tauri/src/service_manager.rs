@@ -76,9 +76,11 @@ impl ServiceManager {
             result = result.replace("${APPDATA}", &appdata);
         }
 
-        // Resolve ${HF_TOKEN}
-        if let Ok(hf_token) = std::env::var("HF_TOKEN") {
-            result = result.replace("${HF_TOKEN}", &hf_token);
+        // Resolve ${HF_TOKEN} — check stored file first, then system env
+        if result.contains("${HF_TOKEN}") {
+            if let Some(hf_token) = crate::read_hf_token() {
+                result = result.replace("${HF_TOKEN}", &hf_token);
+            }
         }
 
         // Resolve ${MODELS_DIR} — defaults to %APPDATA%/Gary4JUCE/models
@@ -281,6 +283,10 @@ impl ServiceManager {
         }
     }
 
+    pub fn is_running(&self, service_id: &str) -> bool {
+        self.running.contains_key(service_id)
+    }
+
     pub fn stop_all(&mut self) {
         let ids: Vec<String> = self.running.keys().cloned().collect();
         for id in ids {
@@ -384,11 +390,10 @@ impl ServiceManager {
         // 4. Otherwise -> empty
 
         if is_building {
-            if let Some(build_status) = self.build_statuses.get(service_id) {
-                if !build_status.log.is_empty() {
-                    return Ok(build_status.log.clone());
-                }
-            }
+            let log = self.build_statuses.get(service_id)
+                .map(|b| b.log.clone())
+                .unwrap_or_default();
+            return Ok(log);
         }
 
         let log_path = self.service_dir(svc).join(format!("{}.log", svc.id));

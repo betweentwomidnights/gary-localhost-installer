@@ -1,12 +1,13 @@
 # Gary (MusicGen) localhost backend requirements
 #
 # Install order:
-#   1. pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
+#   1. pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 #   2. pip install -e . --no-deps          (audiocraft editable, skip its pinned torch==2.1.0)
 #   3. pip install -r requirements.txt     (this file)
-#   4. Install xformers SDPA shim          (see setup script — creates fake xformers package)
-#   5. pip install --force-reinstall --no-deps torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
-#      ^ step 5: restore CUDA torch if transitive deps pulled CPU version
+#   4. pip install flash-attn (prebuilt wheel for Windows cu128+torch2.7.1)
+#   5. Install xformers SDPA shim          (see setup script — creates fake xformers package)
+#   6. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#      ^ step 6: restore CUDA torch if transitive deps pulled CPU version
 #
 # Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
 

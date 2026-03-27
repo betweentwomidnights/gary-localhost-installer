@@ -8,21 +8,33 @@
 
   let logContainer: HTMLPreElement;
   let autoScroll = $state(true);
+  let isAutoScrolling = false;
 
   // Auto-scroll when log content changes
   $effect(() => {
     if (logText && logContainer && autoScroll) {
+      // Mark that we're programmatically scrolling so handleScroll ignores it
+      isAutoScrolling = true;
       tick().then(() => {
-        logContainer.scrollTop = logContainer.scrollHeight;
+        if (logContainer) {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        // Small delay to let the scroll event fire before we re-enable detection
+        requestAnimationFrame(() => { isAutoScrolling = false; });
       });
     }
   });
 
   function handleScroll() {
-    if (!logContainer) return;
+    if (!logContainer || isAutoScrolling) return;
     const { scrollTop, scrollHeight, clientHeight } = logContainer;
     // If user scrolled up more than 50px from bottom, pause auto-scroll
-    autoScroll = scrollHeight - scrollTop - clientHeight < 50;
+    const nearBottom = scrollHeight - scrollTop - clientHeight < 50;
+    // Only turn OFF auto-scroll here (user scrolling up).
+    // Re-enabling is only done by the "Scroll to bottom" button.
+    if (!nearBottom) {
+      autoScroll = false;
+    }
   }
 </script>
 

@@ -9,9 +9,9 @@
       "entryPoint": "g4l_localhost.py",
       "workingDir": "services/gary",
       "pythonVersion": "3.11",
-      "torchVersion": "2.4.0",
-      "torchIndex": "https://download.pytorch.org/whl/cu121",
-      "torchPackages": ["torch==2.4.0", "torchaudio==2.4.0"],
+      "torchVersion": "2.7.1",
+      "torchIndex": "https://download.pytorch.org/whl/cu128",
+      "torchPackages": ["torch==2.7.1", "torchaudio==2.7.1"],
       "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": ".",
@@ -19,11 +19,12 @@
       "xformersShim": true,
       "forceTorchReinstall": true,
       "buildSteps": [
-        "pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121",
+        "pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
         "pip install -e . --no-deps",
         "pip install -r requirements.txt",
+        "pip install https://github.com/sdbds/flash-attention-for-windows/releases/download/2.8.2/flash_attn-2.8.2+cu128torch2.7.1cxx11abiFALSEfullbackward-cp311-cp311-win_amd64.whl",
         "install_xformers_shim",
-        "pip install --force-reinstall --no-deps torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121"
+        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
       ],
       "healthCheck": {
         "endpoint": "/health",

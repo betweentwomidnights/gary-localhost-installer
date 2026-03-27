@@ -6,13 +6,36 @@ use model_manager::ModelManager;
 use service_manager::ServiceManager;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, IconMenuItemBuilder, PredefinedMenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconId};
 use tauri::image::Image;
 use tokio::sync::Mutex;
 
 type ManagerState = Arc<Mutex<ServiceManager>>;
 type ModelState = Arc<Mutex<ModelManager>>;
+
+/// Get the path to the stored HF token file.
+fn hf_token_path() -> std::path::PathBuf {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+        format!("{}\\AppData\\Roaming", home)
+    });
+    std::path::PathBuf::from(appdata).join("Gary4JUCE").join("hf_token.txt")
+}
+
+/// Read the HF token from our stored file, falling back to system env.
+fn read_hf_token() -> Option<String> {
+    // Try our stored file first
+    let path = hf_token_path();
+    if let Ok(token) = std::fs::read_to_string(&path) {
+        let trimmed = token.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    // Fall back to system environment variable
+    std::env::var("HF_TOKEN").ok().filter(|t| !t.is_empty())
+}
 
 /// Load a PNG file and decode it to RGBA for Tauri Image
 fn load_png_as_image(path: &std::path::Path) -> Option<Image<'static>> {
@@ -37,6 +60,92 @@ fn load_png_as_image(path: &std::path::Path) -> Option<Image<'static>> {
     };
 
     Some(Image::new_owned(rgba, info.width, info.height))
+}
+
+/// Generate a small colored circle image (16x16 RGBA) for tray menu icons.
+fn make_dot_icon(r: u8, g: u8, b: u8) -> Image<'static> {
+    const SIZE: u32 = 16;
+    const CENTER: f32 = 7.5;
+    const RADIUS: f32 = 6.0;
+    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
+
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - CENTER;
+            let dy = y as f32 - CENTER;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = ((y * SIZE + x) * 4) as usize;
+            if dist <= RADIUS {
+                // Smooth edge with 1px anti-aliasing
+                let alpha = if dist > RADIUS - 1.0 {
+                    ((RADIUS - dist) * 255.0) as u8
+                } else {
+                    255
+                };
+                rgba[idx] = r;
+                rgba[idx + 1] = g;
+                rgba[idx + 2] = b;
+                rgba[idx + 3] = alpha;
+            }
+        }
+    }
+
+    Image::new_owned(rgba, SIZE, SIZE)
+}
+
+/// Get the dot icon for a service status.
+fn status_dot_icon(status: &str) -> Image<'static> {
+    match status {
+        "running" => make_dot_icon(0x4C, 0xAF, 0x50),   // green
+        "starting" => make_dot_icon(0xFF, 0xC1, 0x07),   // amber/yellow
+        "failed" => make_dot_icon(0xF4, 0x43, 0x36),     // red
+        _ => make_dot_icon(0x9E, 0x9E, 0x9E),            // grey
+    }
+}
+
+/// Rebuild the system tray menu to reflect current service statuses.
+/// Call this after acquiring service info (avoids locking the mutex here).
+async fn rebuild_tray_menu(app_handle: &tauri::AppHandle, manager: &ManagerState) {
+    let services = {
+        let mgr = manager.lock().await;
+        mgr.get_service_info()
+    };
+    rebuild_tray_menu_with_info(app_handle, &services);
+}
+
+/// Inner sync function that builds the tray menu from pre-fetched service info.
+fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[service_manager::ServiceInfo]) {
+    let show_item = MenuItemBuilder::with_id("show", "Show Control Center")
+        .build(app_handle).unwrap();
+    let quit_item = MenuItemBuilder::with_id("quit", "Quit (stop all services)")
+        .build(app_handle).unwrap();
+    let sep1 = PredefinedMenuItem::separator(app_handle).unwrap();
+    let sep2 = PredefinedMenuItem::separator(app_handle).unwrap();
+
+    let mut menu_builder = MenuBuilder::new(app_handle)
+        .item(&show_item)
+        .item(&sep1);
+
+    for svc in services {
+        let is_running = svc.status == "running" || svc.status == "starting";
+        let action = if is_running { "Stop" } else { "Start" };
+        let label = format!("{} — {}", svc.display_name, action);
+        let item_id = format!("svc_{}", svc.id);
+        let icon = status_dot_icon(&svc.status);
+        let item = IconMenuItemBuilder::with_id(item_id, label)
+            .icon(icon)
+            .build(app_handle).unwrap();
+        menu_builder = menu_builder.item(&item);
+    }
+
+    let menu = menu_builder
+        .item(&sep2)
+        .item(&quit_item)
+        .build().unwrap();
+
+    if let Some(tray) = app_handle.tray_by_id(&TrayIconId::new("main-tray")) {
+        let _ = tray.set_menu(Some(menu));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -82,7 +191,7 @@ pub fn run() {
             // Store repo_root for model downloads
             app.manage(repo_root.clone());
 
-            // --- System tray with Gary icon ---
+            // --- System tray with Gary icon + per-service controls ---
             let handle = app.handle().clone();
             let tray_manager = manager.clone();
 
@@ -93,20 +202,42 @@ pub fn run() {
                 None
             };
 
+            // Build tray menu with per-service items
             let show_item = MenuItemBuilder::with_id("show", "Show Control Center").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit (stop all services)").build(app)?;
 
-            let tray_menu = MenuBuilder::new(app)
+            let mut menu_builder = MenuBuilder::new(app)
                 .item(&show_item)
-                .separator()
+                .item(&PredefinedMenuItem::separator(app)?);
+
+            // Add a menu item for each service
+            {
+                let mgr = manager.blocking_lock();
+                let services = mgr.get_service_info();
+                for svc in &services {
+                    let is_running = svc.status == "running" || svc.status == "starting";
+                    let action = if is_running { "Stop" } else { "Start" };
+                    let label = format!("{} — {}", svc.display_name, action);
+                    let item_id = format!("svc_{}", svc.id);
+                    let icon = status_dot_icon(&svc.status);
+                    let item = IconMenuItemBuilder::with_id(item_id, label)
+                        .icon(icon)
+                        .build(app)?;
+                    menu_builder = menu_builder.item(&item);
+                }
+            }
+
+            let tray_menu = menu_builder
+                .item(&PredefinedMenuItem::separator(app)?)
                 .item(&quit_item)
                 .build()?;
 
-            let mut tray_builder = TrayIconBuilder::new()
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .tooltip("gary4juce control center")
                 .menu(&tray_menu)
-                .on_menu_event(move |app_handle, event| {
-                    match event.id().as_ref() {
+                .on_menu_event(move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
+                    let event_id = event.id().as_ref().to_string();
+                    match event_id.as_str() {
                         "show" => {
                             if let Some(window) = app_handle.get_webview_window("main") {
                                 let _ = window.show();
@@ -122,6 +253,26 @@ pub fn run() {
                                 handle.exit(0);
                             });
                         }
+                        id if id.starts_with("svc_") => {
+                            let service_id = id.strip_prefix("svc_").unwrap().to_string();
+                            let mgr = tray_manager.clone();
+                            let handle = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let mut m = mgr.lock().await;
+                                let is_running = m.is_running(&service_id);
+                                if is_running {
+                                    let _ = m.stop(&service_id);
+                                } else {
+                                    let _ = m.start(&service_id);
+                                }
+                                // Emit updated status
+                                let info = m.get_service_info();
+                                drop(m);
+                                let _ = handle.emit("services-updated", &info);
+                                // Rebuild tray menu to reflect new state
+                                rebuild_tray_menu(&handle, &mgr).await;
+                            });
+                        }
                         _ => {}
                     }
                 });
@@ -131,6 +282,22 @@ pub fn run() {
             }
 
             tray_builder.build(app)?;
+
+            // --- Window close: hide to tray instead of quitting ---
+            let close_handle = handle.clone();
+            {
+                let window = app.get_webview_window("main").unwrap();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Prevent the window from actually closing
+                        api.prevent_close();
+                        // Just hide — services keep running, tray stays active
+                        if let Some(w) = close_handle.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                    }
+                });
+            }
 
             // --- Background: health check + crash detection polling ---
             let poll_manager = manager.clone();
@@ -164,6 +331,9 @@ pub fn run() {
                     let info = mgr.get_service_info();
                     drop(mgr);
                     let _ = poll_handle.emit("services-updated", &info);
+
+                    // Keep tray menu in sync with service statuses
+                    rebuild_tray_menu(&poll_handle, &poll_manager).await;
                 }
             });
 
@@ -181,6 +351,10 @@ pub fn run() {
             download_model,
             get_download_progress,
             fetch_jerry_checkpoints,
+            get_hf_token,
+            save_hf_token,
+            delete_hf_token,
+            open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -782,4 +956,54 @@ async fn get_download_progress(
 ) -> Result<Vec<model_manager::DownloadProgress>, String> {
     let mgr = model_mgr.lock().await;
     Ok(mgr.get_download_progress())
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace token management
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn get_hf_token() -> Result<Option<String>, String> {
+    Ok(read_hf_token())
+}
+
+#[tauri::command]
+fn save_hf_token(token: String) -> Result<(), String> {
+    let path = hf_token_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create config dir: {}", e))?;
+    }
+    std::fs::write(&path, token.trim())
+        .map_err(|e| format!("Cannot save token: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_hf_token() -> Result<(), String> {
+    let path = hf_token_path();
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Cannot delete token: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    Ok(())
 }

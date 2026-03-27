@@ -4,22 +4,11 @@ import os
 # On Linux/Mac: ~/.cache/huggingface
 # Previously pointed at /tmp/huggingface_cache from the remote backend.
 
-# --- begin Torch/Transformers compat shim (for PyTorch 2.1.x) ---
-try:
-    import torch
-    # only import if torch is present (it is), then alias _register→register for 2.1.x
-    from torch.utils import _pytree as _torch_pytree  # type: ignore
-    if (hasattr(_torch_pytree, "_register_pytree_node")
-            and not hasattr(_torch_pytree, "register_pytree_node")):
-        # mimic the newer API expected by recent transformers
-        _torch_pytree.register_pytree_node = _torch_pytree._register_pytree_node  # type: ignore[attr-defined]
-except Exception:
-    # don't hard-crash if anything is odd; worst case we fall back to the original error
-    pass
 import torchaudio
 import torch
 import numpy as np
 from audiocraft.models import MusicGen
+from musicgen_fast import optimize_model
 import base64
 import io
 import uuid
@@ -475,7 +464,13 @@ def get_model(model_name, device_id=0):
         print(f"[KERNEL] Kernels should be cached for {model_name} - expecting faster startup")
     
     model = MusicGen.get_pretrained(model_name)
-    
+
+    # Apply musicgen_fast optimizations (FP16 + static KV cache + FA2)
+    try:
+        model = optimize_model(model, enable_compile=False)
+    except Exception as e:
+        print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
+
     # If this is first load, do a dummy forward pass to force kernel compilation
     if not is_warmed:
         print(f"[KERNEL] Warming up kernels for {model_name}...")
@@ -582,10 +577,9 @@ def safe_musicgen_continuation_v2(
                     torch.cuda.empty_cache()  # Just clear cache, no sync
                 gc.collect()
                 
-                # Try to force float32 on model components (for dtype errors)
+                # Try to force float32 on LM for dtype errors
+                # (don't touch compression_model — it runs in FP16 intentionally)
                 try:
-                    if hasattr(model, 'compression_model') and hasattr(model.compression_model, 'to'):
-                        model.compression_model = model.compression_model.to(torch.float32)
                     if hasattr(model, 'lm') and hasattr(model.lm, 'to'):
                         model.lm = model.lm.to(torch.float32)
                 except Exception as e:
@@ -751,9 +745,13 @@ def _process_audio_impl_v2(
             
             # Initialize model
             model = MusicGen.get_pretrained(model_name)
+            try:
+                model = optimize_model(model, enable_compile=False)
+            except Exception as e:
+                print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
             if progress_callback:
                 model.set_custom_progress_callback(progress_callback)
-            
+
             model.set_generation_params(
                 use_sampling=True,
                 top_k=config.top_k,
@@ -762,9 +760,9 @@ def _process_audio_impl_v2(
                 duration=config.output_duration,
                 cfg_coef=config.cfg_coef
             )
-            
+
             final_description = get_model_description(model_name, description)
-            
+
             # Generate - safe_musicgen_continuation_v2 handles retries
             output = safe_musicgen_continuation_v2(
                 model,
@@ -840,9 +838,13 @@ def _continue_music_impl_v2(
             
             # Initialize model
             model = MusicGen.get_pretrained(model_name)
+            try:
+                model = optimize_model(model, enable_compile=False)
+            except Exception as e:
+                print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
             if progress_callback:
                 model.set_custom_progress_callback(progress_callback)
-            
+
             model.set_generation_params(
                 use_sampling=True,
                 top_k=config.top_k,
@@ -851,11 +853,11 @@ def _continue_music_impl_v2(
                 duration=config.output_duration,
                 cfg_coef=config.cfg_coef
             )
-            
+
             final_description = get_model_description(model_name, description)
-            
+
             print(f"Generating continuation with description: {final_description}")
-            
+
             # Generate continuation - safe_musicgen_continuation_v2 handles retries
             output = safe_musicgen_continuation_v2(
                 model,
