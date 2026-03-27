@@ -62,3 +62,9 @@ services/**/*.ckpt
 
 # Reference folder (local-only context, not shipped)
 reference/
+
+# Stable-audio training/dev files (not used in inference)
+services/stable-audio/run_gradio.py
+services/stable-audio/train.py
+services/stable-audio/unwrap_model.py
+services/stable-audio/scripts/
