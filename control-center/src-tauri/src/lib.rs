@@ -472,9 +472,9 @@ async fn rebuild_tray_menu(app_handle: &tauri::AppHandle, manager: &ManagerState
 
 /// Inner sync function that builds the tray menu from pre-fetched service info.
 fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[service_manager::ServiceInfo]) {
-    let show_item = MenuItemBuilder::with_id("show", "Show Control Center")
+    let show_item = MenuItemBuilder::with_id("show", "show control center")
         .build(app_handle).unwrap();
-    let quit_item = MenuItemBuilder::with_id("quit", "Quit (stop all services)")
+    let quit_item = MenuItemBuilder::with_id("quit", "quit (stop all services)")
         .build(app_handle).unwrap();
     let sep1 = PredefinedMenuItem::separator(app_handle).unwrap();
     let sep2 = PredefinedMenuItem::separator(app_handle).unwrap();
@@ -485,8 +485,8 @@ fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[servic
 
     for svc in services {
         let is_running = svc.status == "running" || svc.status == "starting";
-        let action = if is_running { "Stop" } else { "Start" };
-        let label = format!("{} — {}", svc.display_name, action);
+        let action = if is_running { "stop" } else { "start" };
+        let label = format!("{} - {}", svc.display_name, action);
         let item_id = format!("svc_{}", svc.id);
         let icon = status_dot_icon(&svc.status);
         let item = IconMenuItemBuilder::with_id(item_id, label)
@@ -580,8 +580,8 @@ pub fn run() {
             };
 
             // Build tray menu with per-service items
-            let show_item = MenuItemBuilder::with_id("show", "Show Control Center").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit (stop all services)").build(app)?;
+            let show_item = MenuItemBuilder::with_id("show", "show control center").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "quit (stop all services)").build(app)?;
 
             let mut menu_builder = MenuBuilder::new(app)
                 .item(&show_item)
@@ -593,8 +593,8 @@ pub fn run() {
                 let services = mgr.get_service_info();
                 for svc in &services {
                     let is_running = svc.status == "running" || svc.status == "starting";
-                    let action = if is_running { "Stop" } else { "Start" };
-                    let label = format!("{} — {}", svc.display_name, action);
+                    let action = if is_running { "stop" } else { "start" };
+                    let label = format!("{} - {}", svc.display_name, action);
                     let item_id = format!("svc_{}", svc.id);
                     let icon = status_dot_icon(&svc.status);
                     let item = IconMenuItemBuilder::with_id(item_id, label)

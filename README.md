@@ -1,10 +1,10 @@
 # gary4local
 
-Local Windows control center and bundled backend services for `gary4juce`.
+local Windows control center and bundled backend services for [gary4juce v3](https://github.com/betweentwomidnights/gary4juce).
 
 This branch is the `v2-refactor` Tauri/Rust implementation. The old PyInstaller/Inno Setup flow is intentionally not part of this branch anymore; that legacy path stays preserved on the old branch history.
 
-## What Lives Here
+## what lives here
 
 - `control-center/`
   Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into `%APPDATA%\Gary4JUCE`.
@@ -13,15 +13,15 @@ This branch is the `v2-refactor` Tauri/Rust implementation. The old PyInstaller/
 - `keygen_music_for_installer.wav`
   Source loop used to generate the tiny installer music asset.
 
-## Services
+## services
 
-- `gary` / MusicGen: `http://localhost:8000`
-- `terry` / MelodyFlow: `http://localhost:8002`
-- `carey` / ACE-Step: `http://localhost:8003`
-- `jerry` / Stable Audio: `http://localhost:8005`
-- `foundation-1`: `http://localhost:8015`
+- `gary` / MusicGen: `http://localhost:8000` via [audiocraft](https://github.com/facebookresearch/audiocraft)
+- `terry` / MelodyFlow: `http://localhost:8002` via [MelodyFlow](https://huggingface.co/spaces/facebook/MelodyFlow)
+- `carey` / ACE-Step: `http://localhost:8003` via [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) with localhost `lego`, `complete`, and `cover` mode changes from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
+- `jerry` / Stable Audio: `http://localhost:8005` via [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and [stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools)
+- `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
 
-## Gary Localhost Optimizations
+## gary localhost optimizations
 
 The local `gary` service applies several MusicGen inference optimizations that are specific to the localhost deployment:
 
@@ -32,16 +32,16 @@ The local `gary` service applies several MusicGen inference optimizations that a
 
 For localhost we intentionally do **not** enable `torch.compile` by default. Gary unloads models after generation so we can support many finetunes on smaller GPUs without keeping large model instances resident, and that model lifecycle usually makes compile overhead a poor tradeoff.
 
-## Carey Localhost Notes
+## carey localhost notes
 
-The local `carey` service includes a small-GPU decode strategy that differs from upstream `ace-lego` behavior:
+The local `carey` service includes a small-GPU decode strategy that differs from upstream [ace-lego](https://github.com/betweentwomidnights/ace-lego) behavior:
 
 - During decode, localhost Carey can temporarily offload the DiT model so the VAE decode step has more VRAM available.
 - The decode path falls back through progressively safer modes, including tiled decode, CPU-offloaded decode, and full CPU decode, instead of hard-failing immediately on lower-memory GPUs.
 
 This helps ACE-Step remain usable on consumer cards where generation may fit in VRAM but decode is the step that would otherwise tip the process into an out-of-memory failure.
 
-## Terry Localhost Optimizations
+## terry localhost optimizations
 
 The local `terry` service now supports an optional Flash Attention 2 path for MelodyFlow on CUDA:
 
@@ -50,15 +50,15 @@ The local `terry` service now supports an optional Flash Attention 2 path for Me
 - Cross-attention stays on the existing AudioCraft attention path because those blocks can carry masks, so the FA2 patch stays focused on the large self-attention passes over audio latents.
 - The optimization is disabled by default and can be enabled with `MELODYFLOW_USE_FLASH_ATTN=1` or from the `gary4local` Terry panel when that feature is included in the build.
 
-## Repo Layout Notes
+## repo layout notes
 
 - Development runs directly from the repo.
 - Production syncs the bundled service source into `%APPDATA%\Gary4JUCE\services`.
 - Mutable runtime data such as logs, virtual environments, caches, and models live under `%APPDATA%\Gary4JUCE`, not inside the installed app folder.
 
-## Development
+## development
 
-Prerequisites:
+prerequisites:
 
 - Windows 10 or 11
 - Node.js 20+
@@ -66,7 +66,7 @@ Prerequisites:
 - WebView2
 - `ffmpeg` if you want to regenerate the installer audio asset
 
-Run the app in development:
+run the app in development:
 
 ```powershell
 cd control-center
@@ -74,9 +74,9 @@ npm install
 npm run tauri dev
 ```
 
-## Production Build
+## production build
 
-Build the installer:
+build the installer:
 
 ```powershell
 cd control-center
@@ -84,7 +84,7 @@ npm ci
 npm run tauri build
 ```
 
-If you want a build that hides the experimental Terry Flash Attention toggle entirely, set the feature flag before building:
+if you want a build that hides the experimental Terry Flash Attention toggle entirely, set the feature flag before building:
 
 ```powershell
 cd control-center
@@ -94,33 +94,34 @@ npm run tauri build
 Remove-Item Env:VITE_ENABLE_MELODYFLOW_FA2_TOGGLE
 ```
 
-Notes:
+notes:
 
 - `VITE_ENABLE_MELODYFLOW_FA2_TOGGLE` is a build-time flag, not a runtime toggle.
 - When this flag is set to `0`, the Terry Flash Attention setting is removed from the UI and the packaged app forces MelodyFlow to stay on the standard attention path.
 - Leaving the flag unset keeps the Terry Flash Attention panel available, but the optimization itself still defaults to off unless the user enables it.
 
-Artifacts land in:
+artifacts land in:
 
 - `control-center/src-tauri/target/release/bundle/nsis/`
 - `control-center/src-tauri/target/release/bundle/msi/`
 
-The current preferred Windows artifact is the NSIS setup executable.
+the current preferred Windows artifact is the NSIS setup executable.
 
-## Unsigned Builds
+## unsigned builds
 
-The installers are currently unsigned. The intended verification flow is:
+the installers are currently unsigned. The intended verification flow is:
 
 1. Build the installer locally from this branch with one of the commands above.
 2. Compare the generated hash against the release artifact hash.
 
-Example:
+example:
 
 ```powershell
 certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.0_x64-setup.exe SHA256
 ```
 
-## Related Repos
+## related repos
 
-- Plugin frontend: <https://github.com/betweentwomidnights/gary4juce>
-- Combined backend alternative: <https://github.com/betweentwomidnights/gary-backend-combined>
+- plugin frontend: <https://github.com/betweentwomidnights/gary4juce>
+- macOS version of `gary4local`: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
+- combined backend alternative: <https://github.com/betweentwomidnights/gary-backend-combined>
