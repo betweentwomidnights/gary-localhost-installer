@@ -1045,7 +1045,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gary4juce-control-center"
+name = "gary4local"
 version = "0.1.0"
 dependencies = [
  "log",

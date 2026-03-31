@@ -4,6 +4,8 @@ mod service_manager;
 
 use model_manager::ModelManager;
 use service_manager::ServiceManager;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, IconMenuItemBuilder, PredefinedMenuItem};
@@ -14,6 +16,9 @@ use tokio::sync::Mutex;
 type ManagerState = Arc<Mutex<ServiceManager>>;
 type ModelState = Arc<Mutex<ModelManager>>;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Get the path to the stored HF token file.
 fn hf_token_path() -> std::path::PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
@@ -21,6 +26,261 @@ fn hf_token_path() -> std::path::PathBuf {
         format!("{}\\AppData\\Roaming", home)
     });
     std::path::PathBuf::from(appdata).join("Gary4JUCE").join("hf_token.txt")
+}
+
+fn gary4juce_runtime_root() -> PathBuf {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+        format!("{}\\AppData\\Roaming", home)
+    });
+    PathBuf::from(appdata).join("Gary4JUCE")
+}
+
+fn runtime_services_dir(runtime_root: &Path) -> PathBuf {
+    runtime_root.join("services")
+}
+
+fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf, String> {
+    let direct_root = resource_dir.to_path_buf();
+    if direct_root.join("services").is_dir() {
+        return Ok(direct_root);
+    }
+
+    let nested_root = resource_dir.join("resources");
+    if nested_root.join("services").is_dir() {
+        return Ok(nested_root);
+    }
+
+    Err(format!(
+        "Bundled services not found under {} or {}",
+        direct_root.join("services").display(),
+        nested_root.join("services").display()
+    ))
+}
+
+fn hide_console_window(cmd: &mut tokio::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut entries = Vec::new();
+    let reader = std::fs::read_dir(dir)
+        .map_err(|e| format!("Cannot read {}: {}", dir.display(), e))?;
+
+    for entry in reader {
+        let entry = entry.map_err(|e| format!("Cannot read entry in {}: {}", dir.display(), e))?;
+        entries.push(entry.path());
+    }
+
+    entries.sort_by(|a, b| {
+        a.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .cmp(&b.file_name().unwrap_or_default().to_string_lossy())
+    });
+    Ok(entries)
+}
+
+fn hash_dir_recursive(dir: &Path, base: &Path, hasher: &mut impl Hasher) -> Result<(), String> {
+    for entry in read_dir_sorted(dir)? {
+        let relative = entry
+            .strip_prefix(base)
+            .map_err(|e| format!("Cannot relativize {}: {}", entry.display(), e))?;
+        relative.to_string_lossy().hash(hasher);
+
+        if entry.is_dir() {
+            "dir".hash(hasher);
+            hash_dir_recursive(&entry, base, hasher)?;
+        } else if entry.is_file() {
+            "file".hash(hasher);
+            let bytes = std::fs::read(&entry)
+                .map_err(|e| format!("Cannot read {}: {}", entry.display(), e))?;
+            bytes.hash(hasher);
+        }
+    }
+
+    Ok(())
+}
+
+fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+
+    let services_dir = bundle_root.join("services");
+    if !services_dir.is_dir() {
+        return Err(format!(
+            "Bundled services directory is missing: {}",
+            services_dir.display()
+        ));
+    }
+
+    hash_dir_recursive(&services_dir, &services_dir, &mut hasher)?;
+
+    let icon_path = bundle_root.join("icon.png");
+    if icon_path.is_file() {
+        "icon.png".hash(&mut hasher);
+        let icon_bytes = std::fs::read(&icon_path)
+            .map_err(|e| format!("Cannot read {}: {}", icon_path.display(), e))?;
+        icon_bytes.hash(&mut hasher);
+    }
+
+    Ok(format!("{}-{:016x}", env!("CARGO_PKG_VERSION"), hasher.finish()))
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+            .map_err(|e| format!("Cannot remove directory {}: {}", path.display(), e))?;
+    } else {
+        std::fs::remove_file(path)
+            .map_err(|e| format!("Cannot remove file {}: {}", path.display(), e))?;
+    }
+
+    Ok(())
+}
+
+fn clear_dir_except(dir: &Path, preserve_names: &[&str]) -> Result<(), String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("Cannot create {}: {}", dir.display(), e))?;
+
+    for entry in read_dir_sorted(dir)? {
+        let name = entry
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        if preserve_names.iter().any(|preserve| *preserve == name) {
+            continue;
+        }
+
+        remove_path(&entry)?;
+    }
+
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("Cannot create {}: {}", dst.display(), e))?;
+
+    for entry in read_dir_sorted(src)? {
+        let name = entry.file_name().unwrap_or_default().to_os_string();
+        let dst_entry = dst.join(name);
+
+        if entry.is_dir() {
+            copy_dir_recursive(&entry, &dst_entry)?;
+        } else if entry.is_file() {
+            if let Some(parent) = dst_entry.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+            }
+            std::fs::copy(&entry, &dst_entry).map_err(|e| {
+                format!(
+                    "Cannot copy {} to {}: {}",
+                    entry.display(),
+                    dst_entry.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> Result<(), String> {
+    const PRESERVED_RUNTIME_NAMES: &[&str] = &["env", "checkpoints", ".cache", "gradio_outputs", "riffs"];
+
+    let bundle_services = bundle_root.join("services");
+    let runtime_services = runtime_services_dir(runtime_root);
+    let stamp_path = runtime_root.join(".services_bundle_stamp");
+    let desired_stamp = compute_bundle_sync_stamp(bundle_root)?;
+    let current_stamp = std::fs::read_to_string(&stamp_path).ok();
+
+    if current_stamp.as_deref() == Some(desired_stamp.as_str())
+        && runtime_services.join("manifests").join("services.json").exists()
+    {
+        log::info!("Runtime services already match bundled resources");
+        return Ok(());
+    }
+
+    log::info!(
+        "Refreshing runtime services at {} from bundled resources {}",
+        runtime_services.display(),
+        bundle_services.display()
+    );
+
+    std::fs::create_dir_all(runtime_root)
+        .map_err(|e| format!("Cannot create runtime root {}: {}", runtime_root.display(), e))?;
+    std::fs::create_dir_all(&runtime_services)
+        .map_err(|e| format!("Cannot create runtime services dir {}: {}", runtime_services.display(), e))?;
+
+    let bundle_entries = read_dir_sorted(&bundle_services)?;
+    let bundle_names: std::collections::HashSet<String> = bundle_entries
+        .iter()
+        .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+        .collect();
+
+    for existing in read_dir_sorted(&runtime_services)? {
+        let name = existing
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !bundle_names.contains(&name) {
+            remove_path(&existing)?;
+        }
+    }
+
+    for src in bundle_entries {
+        let name = src.file_name().unwrap_or_default().to_os_string();
+        let dst = runtime_services.join(name);
+
+        if src.is_dir() {
+            let preserve = if src.file_name().unwrap_or_default() == "manifests" {
+                &[][..]
+            } else {
+                PRESERVED_RUNTIME_NAMES
+            };
+            clear_dir_except(&dst, preserve)?;
+            copy_dir_recursive(&src, &dst)?;
+        } else if src.is_file() {
+            std::fs::copy(&src, &dst).map_err(|e| {
+                format!(
+                    "Cannot copy {} to {}: {}",
+                    src.display(),
+                    dst.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    let bundle_icon = bundle_root.join("icon.png");
+    let runtime_icon = runtime_root.join("icon.png");
+    if bundle_icon.is_file() {
+        std::fs::copy(&bundle_icon, &runtime_icon).map_err(|e| {
+            format!(
+                "Cannot copy {} to {}: {}",
+                bundle_icon.display(),
+                runtime_icon.display(),
+                e
+            )
+        })?;
+    }
+
+    std::fs::write(&stamp_path, desired_stamp)
+        .map_err(|e| format!("Cannot write {}: {}", stamp_path.display(), e))?;
+
+    Ok(())
 }
 
 /// Read the HF token from our stored file, falling back to system env.
@@ -160,18 +420,38 @@ pub fn run() {
                 )?;
             }
 
-            // --- Resolve repo root ---
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+            // --- Resolve runtime root ---
+            // In dev, run directly from the repo.
+            // In production, sync bundled services into %APPDATA%\Gary4JUCE
+            // and run from there so logs/envs/source live in a writable location.
+            let bundle_root = if cfg!(debug_assertions) {
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+                exe_dir
+                    .as_ref()
+                    .and_then(|d| d.ancestors().find(|a| a.join("services").is_dir()))
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::env::current_dir().unwrap())
+            } else {
+                let resource_dir = app
+                    .path()
+                    .resource_dir()
+                    .map_err(std::io::Error::other)?;
+                resolve_bundle_root_from_resource_dir(&resource_dir)
+                    .map_err(std::io::Error::other)?
+            };
 
-            let repo_root = exe_dir
-                .as_ref()
-                .and_then(|d| d.ancestors().find(|a| a.join("services").is_dir()))
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| std::env::current_dir().unwrap());
+            let runtime_root = if cfg!(debug_assertions) {
+                bundle_root.clone()
+            } else {
+                let runtime_root = gary4juce_runtime_root();
+                sync_bundled_services_to_runtime(&bundle_root, &runtime_root)
+                    .map_err(std::io::Error::other)?;
+                runtime_root
+            };
 
-            let manifest_path = repo_root.join("services").join("manifests").join("services.json");
+            let manifest_path = runtime_root.join("services").join("manifests").join("services.json");
             log::info!("Loading manifest from: {}", manifest_path.display());
 
             let services = match manifest::load_manifest(&manifest_path) {
@@ -182,20 +462,20 @@ pub fn run() {
                 }
             };
 
-            let manager = Arc::new(Mutex::new(ServiceManager::new(services, repo_root.clone())));
+            let manager = Arc::new(Mutex::new(ServiceManager::new(services, runtime_root.clone())));
             app.manage(manager.clone());
 
-            let model_mgr = Arc::new(Mutex::new(ModelManager::new(repo_root.clone())));
+            let model_mgr = Arc::new(Mutex::new(ModelManager::new(runtime_root.clone())));
             app.manage(model_mgr.clone());
 
-            // Store repo_root for model downloads
-            app.manage(repo_root.clone());
+            // Store runtime_root for model downloads
+            app.manage(runtime_root.clone());
 
             // --- System tray with Gary icon + per-service controls ---
             let handle = app.handle().clone();
             let tray_manager = manager.clone();
 
-            let icon_path = repo_root.join("icon.png");
+            let icon_path = runtime_root.join("icon.png");
             let tray_icon = if icon_path.exists() {
                 load_png_as_image(&icon_path)
             } else {
@@ -233,7 +513,7 @@ pub fn run() {
                 .build()?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                .tooltip("gary4juce control center")
+                .tooltip("gary4local")
                 .menu(&tray_menu)
                 .on_menu_event(move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
                     let event_id = event.id().as_ref().to_string();
@@ -445,31 +725,37 @@ async fn rebuild_all_envs(
         mgr.get_all_build_infos()
     };
 
-    for info in build_infos {
-        let sid = info.service_id.clone();
-        {
-            let mut mgr = manager.lock().await;
-            let total = info.build_steps.len() + 2;
-            mgr.set_build_started(&sid, total);
-        }
+    let mgr_clone = manager.inner().clone();
+    let handle = app_handle.clone();
 
-        let mgr_clone = manager.inner().clone();
-        let handle = app_handle.clone();
-        let sid_clone = sid.clone();
+    // Run builds sequentially in a single background task,
+    // selecting each service in the UI as it starts building.
+    tauri::async_runtime::spawn(async move {
+        for info in build_infos {
+            let sid = info.service_id.clone();
 
-        tauri::async_runtime::spawn(async move {
-            let result = run_build(info, mgr_clone.clone(), handle.clone()).await;
+            // Tell the UI to select/highlight this service
+            let _ = handle.emit("select-service", &sid);
 
-            let mut mgr = mgr_clone.lock().await;
-            match result {
-                Ok(()) => mgr.set_build_done(&sid_clone, None),
-                Err(e) => mgr.set_build_done(&sid_clone, Some(e)),
+            {
+                let mut mgr = mgr_clone.lock().await;
+                let total = info.build_steps.len() + 2;
+                mgr.set_build_started(&sid, total);
             }
 
-            let info = mgr.get_service_info();
-            let _ = handle.emit("services-updated", &info);
-        });
-    }
+            let result = run_build(info, mgr_clone.clone(), handle.clone()).await;
+
+            {
+                let mut mgr = mgr_clone.lock().await;
+                match result {
+                    Ok(()) => mgr.set_build_done(&sid, None),
+                    Err(e) => mgr.set_build_done(&sid, Some(e.clone())),
+                }
+                let info = mgr.get_service_info();
+                let _ = handle.emit("services-updated", &info);
+            }
+        }
+    });
 
     Ok(())
 }
@@ -492,10 +778,10 @@ async fn ensure_uv(
     emit_status(manager, handle).await;
 
     // Check if uv is already on PATH
-    let check = tokio::process::Command::new("uv")
-        .arg("--version")
-        .output()
-        .await;
+    let mut check_cmd = tokio::process::Command::new("uv");
+    check_cmd.arg("--version");
+    hide_console_window(&mut check_cmd);
+    let check = check_cmd.output().await;
 
     if let Ok(output) = &check {
         if output.status.success() {
@@ -515,10 +801,10 @@ async fn ensure_uv(
 
     for path in &[&cargo_uv, &local_uv] {
         if std::path::Path::new(path).exists() {
-            let check = tokio::process::Command::new(path)
-                .arg("--version")
-                .output()
-                .await;
+            let mut check_cmd = tokio::process::Command::new(path);
+            check_cmd.arg("--version");
+            hide_console_window(&mut check_cmd);
+            let check = check_cmd.output().await;
             if let Ok(output) = check {
                 if output.status.success() {
                     let version = String::from_utf8_lossy(&output.stdout);
@@ -540,9 +826,16 @@ async fn ensure_uv(
     }
     emit_status(manager, handle).await;
 
-    let install = tokio::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-               "irm https://astral.sh/uv/install.ps1 | iex"])
+    let mut install_cmd = tokio::process::Command::new("powershell");
+    install_cmd.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "irm https://astral.sh/uv/install.ps1 | iex",
+    ]);
+    hide_console_window(&mut install_cmd);
+    let install = install_cmd
         .output()
         .await
         .map_err(|e| format!("Failed to run PowerShell uv installer: {}", e))?;
@@ -571,10 +864,10 @@ async fn ensure_uv(
     }
 
     // Try PATH again (installer may have updated it)
-    let recheck = tokio::process::Command::new("uv")
-        .arg("--version")
-        .output()
-        .await;
+    let mut recheck_cmd = tokio::process::Command::new("uv");
+    recheck_cmd.arg("--version");
+    hide_console_window(&mut recheck_cmd);
+    let recheck = recheck_cmd.output().await;
     if let Ok(output) = recheck {
         if output.status.success() {
             return Ok("uv".to_string());
@@ -624,13 +917,16 @@ async fn run_build(
         // Create the venv
         {
             let mut mgr = manager.lock().await;
-            mgr.append_build_log(&service_id, &format!("\n$ {} venv --python 3.11 env", uv));
+            mgr.append_build_log(&service_id, &format!("\n$ {} venv --python 3.11 --seed env", uv));
         }
         emit_status(&manager, &handle).await;
 
-        let venv_output = tokio::process::Command::new(&uv)
-            .args(["venv", "--python", "3.11", "env"])
-            .current_dir(work_dir)
+        let mut venv_cmd = tokio::process::Command::new(&uv);
+        venv_cmd
+            .args(["venv", "--python", "3.11", "--seed", "env"])
+            .current_dir(work_dir);
+        hide_console_window(&mut venv_cmd);
+        let venv_output = venv_cmd
             .output()
             .await
             .map_err(|e| format!("Failed to create venv: {}", e))?;
@@ -721,12 +1017,15 @@ async fn run_build(
         emit_status(&manager, &handle).await;
 
         // Run the command with streamed output
-        let mut child = tokio::process::Command::new(&program)
+        let mut child_cmd = tokio::process::Command::new(&program);
+        child_cmd
             .args(&args)
             .current_dir(work_dir)
             .env("PYTHONIOENCODING", "utf-8")
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        hide_console_window(&mut child_cmd);
+        let mut child = child_cmd
             .spawn()
             .map_err(|e| format!("Build step failed '{}': {}", uv_command_str, e))?;
 
@@ -802,9 +1101,10 @@ async fn run_command_streamed(
     service_id: &str,
     manager: &Arc<Mutex<ServiceManager>>,
 ) -> Result<(), String> {
-    let output = tokio::process::Command::new(program)
-        .args(args)
-        .current_dir(work_dir)
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args).current_dir(work_dir);
+    hide_console_window(&mut cmd);
+    let output = cmd
         .output()
         .await
         .map_err(|e| format!("Failed to run {} {:?}: {}", program, args, e))?;

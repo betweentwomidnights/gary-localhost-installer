@@ -3,7 +3,6 @@
 from typing import Any, Dict
 
 import torch
-from acestep.models.mlx.dit_generate import mlx_generate_diffusion
 
 
 class DiffusionMixin:
@@ -115,6 +114,7 @@ class DiffusionMixin:
             else:
                 ts_list = list(timesteps)
 
+        from acestep.models.mlx.dit_generate import mlx_generate_diffusion
         result = mlx_generate_diffusion(
             mlx_decoder=self.mlx_decoder,
             encoder_hidden_states_np=enc_np,

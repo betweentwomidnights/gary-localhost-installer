@@ -82,6 +82,11 @@
       services = event.payload;
     });
 
+    // When "Rebuild All" is running, the backend tells us which service to focus on
+    const unlistenSelect = listen<string>("select-service", (event) => {
+      selectService(event.payload);
+    });
+
     pollTimer = setInterval(() => {
       if (selectedServiceId && rightPanel === "logs") fetchLog(selectedServiceId);
     }, 2000);
@@ -89,6 +94,7 @@
     return () => {
       clearInterval(pollTimer);
       unlisten.then((fn) => fn());
+      unlistenSelect.then((fn) => fn());
     };
   });
 
@@ -99,7 +105,7 @@
 <main>
   <header>
     <div class="header-left">
-      <h1>gary4juce control center</h1>
+      <h1>gary4local</h1>
     </div>
     <div class="header-right">
       <span class="status-summary">

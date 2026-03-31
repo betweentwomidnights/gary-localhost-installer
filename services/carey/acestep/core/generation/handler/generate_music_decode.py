@@ -117,6 +117,31 @@ class GenerateMusicDecodeMixin:
             progress(0.8, desc="Decoding audio...")
         logger.info("[generate_music] Decoding latents with VAE...")
         start_time = time.time()
+
+        # Temporarily offload DiT to CPU if it's persistently on GPU, so VAE
+        # gets the full VRAM budget for tiled GPU decode.
+        dit_was_on_gpu = False
+        dit_model = getattr(self, "model", None)
+        if dit_model is not None and not getattr(self, "offload_dit_to_cpu", True):
+            try:
+                dit_device = next(dit_model.parameters()).device
+                if dit_device.type != "cpu":
+                    logger.info(
+                        "[generate_music] Temporarily offloading DiT to CPU for VAE decode "
+                        f"(was on {dit_device})..."
+                    )
+                    self._recursive_to_device(dit_model, "cpu")
+                    if hasattr(self, "silence_latent") and self.silence_latent.device.type != "cpu":
+                        self.silence_latent = self.silence_latent.cpu()
+                    self._empty_cache()
+                    dit_was_on_gpu = True
+                    logger.info(
+                        "[generate_music] DiT offloaded. Free VRAM now: "
+                        f"{get_effective_free_vram_gb():.2f} GB"
+                    )
+            except StopIteration:
+                pass
+
         with torch.inference_mode():
             with self._load_model_context("vae"):
                 pred_latents_cpu = pred_latents.detach().cpu()
@@ -194,6 +219,14 @@ class GenerateMusicDecodeMixin:
                 if torch.any(peak > 1.0):
                     pred_wavs = pred_wavs / peak.clamp(min=1.0)
                 self._empty_cache()
+        # Restore DiT to GPU if we temporarily offloaded it
+        if dit_was_on_gpu and dit_model is not None:
+            logger.info("[generate_music] Restoring DiT to GPU after VAE decode...")
+            self._recursive_to_device(dit_model, self.device, self.dtype)
+            if hasattr(self, "silence_latent"):
+                self.silence_latent = self.silence_latent.to(self.device).to(self.dtype)
+            logger.info("[generate_music] DiT restored to GPU.")
+
         end_time = time.time()
         time_costs["vae_decode_time_cost"] = end_time - start_time
         time_costs["total_time_cost"] = time_costs["total_time_cost"] + time_costs["vae_decode_time_cost"]

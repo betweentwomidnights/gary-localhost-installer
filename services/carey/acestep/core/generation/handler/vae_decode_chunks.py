@@ -14,6 +14,13 @@ class VaeDecodeChunksMixin:
         """Run tiled decode with adaptive overlap and OOM fallbacks."""
         bsz, _channels, latent_frames = latents.shape
 
+        vae_device = next(self.vae.parameters()).device
+        logger.info(
+            f"[tiled_decode_inner] latents.device={latents.device}, latents.shape={latents.shape}, "
+            f"vae_device={vae_device}, chunk_size={chunk_size}, overlap={overlap}, "
+            f"offload_wav_to_cpu={offload_wav_to_cpu}, latent_frames={latent_frames}"
+        )
+
         # Batch-sequential decode keeps peak VRAM stable across batch sizes.
         if bsz > 1:
             logger.info(f"[tiled_decode] Batch size {bsz} > 1; decoding samples sequentially to save VRAM")
@@ -39,7 +46,10 @@ class VaeDecodeChunksMixin:
 
         if latent_frames <= chunk_size:
             try:
+                logger.info(f"[tiled_decode_inner] Direct decode (latent_frames={latent_frames} <= chunk_size={chunk_size}), calling vae.decode()...")
+                import time as _time; _t0 = _time.time()
                 decoder_output = self.vae.decode(latents)
+                logger.info(f"[tiled_decode_inner] vae.decode() returned in {_time.time()-_t0:.1f}s")
                 result = decoder_output.sample
                 del decoder_output
                 return result
@@ -84,7 +94,9 @@ class VaeDecodeChunksMixin:
         """Decode chunks and keep decoded audio tensors on GPU."""
         decoded_audio_list = []
         upsample_factor = None
+        import time as _time
 
+        logger.info(f"[_tiled_decode_gpu] Starting {num_steps} chunks, stride={stride}, overlap={overlap}")
         for i in tqdm(range(num_steps), desc="Decoding audio chunks", disable=self.disable_tqdm):
             core_start = i * stride
             core_end = min(core_start + stride, latents.shape[-1])
@@ -92,7 +104,10 @@ class VaeDecodeChunksMixin:
             win_end = min(latents.shape[-1], core_end + overlap)
 
             latent_chunk = latents[:, :, win_start:win_end]
+            _t0 = _time.time()
+            logger.info(f"[_tiled_decode_gpu] chunk {i+1}/{num_steps}: shape={latent_chunk.shape}, device={latent_chunk.device}")
             decoder_output = self.vae.decode(latent_chunk)
+            logger.info(f"[_tiled_decode_gpu] chunk {i+1}/{num_steps} decoded in {_time.time()-_t0:.1f}s")
             audio_chunk = decoder_output.sample
             del decoder_output
 
@@ -113,10 +128,23 @@ class VaeDecodeChunksMixin:
 
     def _tiled_decode_offload_cpu(self, latents, bsz, latent_frames, stride, overlap, num_steps):
         """Decode chunks on GPU and copy trimmed audio cores to a CPU buffer."""
+        import time as _time
+
+        logger.info(
+            f"[_tiled_decode_offload_cpu] Starting: {num_steps} chunks, stride={stride}, "
+            f"overlap={overlap}, latent_frames={latent_frames}, latents.device={latents.device}"
+        )
+
         first_core_end = min(stride, latent_frames)
         first_win_end = min(latent_frames, first_core_end + overlap)
         first_latent_chunk = latents[:, :, 0:first_win_end]
+        logger.info(
+            f"[_tiled_decode_offload_cpu] chunk 1/{num_steps}: shape={first_latent_chunk.shape}, "
+            f"device={first_latent_chunk.device}, calling vae.decode()..."
+        )
+        _t0 = _time.time()
         first_decoder_output = self.vae.decode(first_latent_chunk)
+        logger.info(f"[_tiled_decode_offload_cpu] chunk 1/{num_steps} decoded in {_time.time()-_t0:.1f}s")
         first_audio_chunk = first_decoder_output.sample
         del first_decoder_output
 
@@ -144,7 +172,13 @@ class VaeDecodeChunksMixin:
             win_end = min(latent_frames, core_end + overlap)
 
             latent_chunk = latents[:, :, win_start:win_end]
+            logger.info(
+                f"[_tiled_decode_offload_cpu] chunk {i+1}/{num_steps}: shape={latent_chunk.shape}, "
+                f"device={latent_chunk.device}, calling vae.decode()..."
+            )
+            _t0 = _time.time()
             decoder_output = self.vae.decode(latent_chunk)
+            logger.info(f"[_tiled_decode_offload_cpu] chunk {i+1}/{num_steps} decoded in {_time.time()-_t0:.1f}s")
             audio_chunk = decoder_output.sample
             del decoder_output
 
@@ -163,4 +197,5 @@ class VaeDecodeChunksMixin:
 
             del audio_chunk, audio_core, latent_chunk
 
+        logger.info(f"[_tiled_decode_offload_cpu] All {num_steps} chunks decoded, audio_write_pos={audio_write_pos}")
         return final_audio[:, :, :audio_write_pos]

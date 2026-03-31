@@ -1,6 +1,7 @@
 use crate::manifest::ServiceDef;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
@@ -224,6 +225,13 @@ impl ServiceManager {
             .try_clone()
             .map_err(|e| format!("Cannot clone log handle: {}", e))?;
 
+        let mut python_paths = vec![work_dir.clone()];
+        if let Some(shared_services_dir) = work_dir.parent() {
+            python_paths.push(shared_services_dir.to_path_buf());
+        }
+        let python_path = std::env::join_paths(&python_paths)
+            .map_err(|e| format!("Failed to construct PYTHONPATH: {}", e))?;
+
         let mut cmd = Command::new(&python);
         cmd.arg(&svc.entry_point)
             .current_dir(&work_dir)
@@ -231,10 +239,10 @@ impl ServiceManager {
             .stderr(Stdio::from(log_file_err))
             .env("PYTHONIOENCODING", "utf-8")
             .env("PYTHONUNBUFFERED", "1")
-            // Ensure the working directory is on Python's import path.
-            // Critical for services like Carey where the entry point is in a
-            // subdirectory (acestep/api_server.py) but imports the parent package.
-            .env("PYTHONPATH", &work_dir);
+            // Include both the service directory and the shared services root
+            // on Python's import path so packaged builds can resolve helpers
+            // like local_session_store.py alongside per-service packages.
+            .env("PYTHONPATH", python_path);
 
         // Set service-specific env vars (with template resolution)
         for (k, v) in &svc.env {
@@ -274,7 +282,13 @@ impl ServiceManager {
     pub fn stop(&mut self, service_id: &str) -> Result<(), String> {
         if let Some(mut running) = self.running.remove(service_id) {
             log::info!("Stopping {}", service_id);
-            let _ = running.process.kill();
+            // Use taskkill /T to kill the entire process tree on Windows.
+            // This ensures subprocesses (e.g. carey_wrapper -> api_server.py) are also killed.
+            let pid = running.process.id();
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .output();
             let _ = running.process.wait();
             self.errors.remove(service_id);
             Ok(())
@@ -382,12 +396,13 @@ impl ServiceManager {
 
         let is_running = self.running.contains_key(service_id);
         let is_building = self.build_statuses.get(service_id).map_or(false, |b| b.building);
+        let has_failed = self.errors.contains_key(service_id);
 
         // Priority:
         // 1. If actively building -> show build log
-        // 2. If running (or was running and has a runtime log) -> show runtime log
-        // 3. If build completed and no runtime log -> show build log
-        // 4. Otherwise -> empty
+        // 2. If running or failed -> show runtime log (crash output is critical)
+        // 3. If stopped with build log -> show build log
+        // 4. Otherwise -> show runtime log file if it exists
 
         if is_building {
             let log = self.build_statuses.get(service_id)
@@ -398,18 +413,24 @@ impl ServiceManager {
 
         let log_path = self.service_dir(svc).join(format!("{}.log", svc.id));
 
-        if log_path.exists() && (is_running || !is_building) {
+        // If running or just crashed, the runtime log is what the user needs
+        if (is_running || has_failed) && log_path.exists() {
             let runtime_log = self.read_log_file(&log_path)?;
             if !runtime_log.is_empty() {
                 return Ok(runtime_log);
             }
         }
 
-        // Fall back to build log if available
+        // Service is stopped (not failed) — prefer build log over stale runtime log
         if let Some(build_status) = self.build_statuses.get(service_id) {
             if !build_status.log.is_empty() {
                 return Ok(build_status.log.clone());
             }
+        }
+
+        // Last resort: show runtime log even if stopped (e.g. no build has happened this session)
+        if log_path.exists() {
+            return self.read_log_file(&log_path);
         }
 
         Ok(String::new())

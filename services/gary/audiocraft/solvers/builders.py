@@ -19,6 +19,7 @@ import omegaconf
 import torch
 from torch import nn
 from torch.optim import Optimizer
+
 # LRScheduler was renamed in some torch versions
 try:
     from torch.optim.lr_scheduler import LRScheduler  # type: ignore

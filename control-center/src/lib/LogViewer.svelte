@@ -9,10 +9,25 @@
   let logContainer: HTMLPreElement;
   let autoScroll = $state(true);
   let isAutoScrolling = false;
+  let isSelecting = false;
+
+  // Track mouse-based text selection — suppress auto-scroll while selecting
+  function handleMouseDown() { isSelecting = true; }
+  function handleMouseUp() {
+    // Delay clearing so the scroll handler doesn't re-enable during click release
+    setTimeout(() => { isSelecting = false; }, 100);
+  }
 
   // Auto-scroll when log content changes
   $effect(() => {
     if (logText && logContainer && autoScroll) {
+      // Don't yank the view while user is selecting text
+      if (isSelecting) return;
+      // Also suppress if the user has any active text selection inside the log
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed && logContainer.contains(sel.anchorNode)) {
+        return;
+      }
       // Mark that we're programmatically scrolling so handleScroll ignores it
       isAutoScrolling = true;
       tick().then(() => {
@@ -53,6 +68,8 @@
       class="log-content"
       bind:this={logContainer}
       onscroll={handleScroll}
+      onmousedown={handleMouseDown}
+      onmouseup={handleMouseUp}
     >{logText || "No output yet."}</pre>
   {:else}
     <div class="no-selection">
@@ -65,7 +82,8 @@
   .log-viewer {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
   .log-header {
     display: flex;

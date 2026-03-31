@@ -4,6 +4,21 @@ Stable Audio API - Enhanced with Style Transfer capabilities
 Designed to be called alongside existing websockets backend
 """
 
+# --- pkg_resources shim (uv venvs don't include setuptools) ---
+# OpenAI's clip package does `from pkg_resources import packaging` at import
+# time.  Rather than fighting uv, just shim the module before anything
+# triggers the import chain.
+import sys
+try:
+    import pkg_resources  # noqa: F401 — already available, nothing to do
+except ImportError:
+    import types
+    import packaging
+    import packaging.version
+    _pkg_resources = types.ModuleType("pkg_resources")
+    _pkg_resources.packaging = packaging
+    sys.modules["pkg_resources"] = _pkg_resources
+
 from flask import Flask, request, jsonify, send_file
 import torch
 import torchaudio

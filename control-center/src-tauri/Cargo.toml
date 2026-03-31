@@ -1,7 +1,7 @@
 [package]
-name = "gary4juce-control-center"
+name = "gary4local"
 version = "0.1.0"
-description = "Gary4JUCE Control Center"
+description = "gary4local control center"
 authors = ["betweentwomidnights"]
 license = "MIT"
 edition = "2021"

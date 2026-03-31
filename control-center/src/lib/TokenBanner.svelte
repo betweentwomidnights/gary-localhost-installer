@@ -65,7 +65,7 @@
 
 <div class="token-banner" class:configured={hfTokenConfigured}>
   {#if !hfTokenConfigured}
-    <div class="banner-title">⚠ HuggingFace token required for Stable Audio</div>
+    <div class="banner-title">⚠ huggingface token required for stable audio</div>
     <div class="steps">
       <div class="step">
         <span class="num">1</span>
@@ -99,7 +99,7 @@
     </div>
   {:else}
     <div class="configured-row">
-      <span class="banner-title">✓ HuggingFace token configured</span>
+      <span class="banner-title">✓ huggingface token configured</span>
       <span class="masked">{maskedToken}</span>
       <button class="remove-btn" onclick={removeToken}>Remove</button>
     </div>

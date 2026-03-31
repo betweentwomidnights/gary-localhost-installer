@@ -1,18 +1,18 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Gary4JUCE Control Center",
+  "productName": "gary4local",
   "version": "0.1.0",
-  "identifier": "com.betweentwomidnights.gary4juce.controlcenter",
+  "identifier": "com.betweentwomidnights.gary4local",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "bash src-tauri/scripts/stage_runtime_resources.sh && npm run build"
   },
   "app": {
     "windows": [
       {
-        "title": "gary4juce control center",
+        "title": "gary4local",
         "width": 1100,
         "height": 700,
         "minWidth": 900,
@@ -28,6 +28,23 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "./windows/nsis-hooks.nsh",
+        "installerIcon": "./icons/icon.ico",
+        "headerImage": "./windows/installer-header.bmp",
+        "sidebarImage": "./windows/installer-sidebar.bmp",
+        "languages": ["English"],
+        "customLanguageFiles": {
+          "English": "./windows/installer-english.nsh"
+        }
+      }
+    },
+    "resources": [
+      "resources/services/**/*",
+      "resources/icon.png"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

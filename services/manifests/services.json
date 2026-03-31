@@ -3,7 +3,7 @@
   "services": [
     {
       "id": "gary",
-      "displayName": "Gary (MusicGen)",
+      "displayName": "gary (musicgen)",
       "description": "MusicGen continuation and generation service",
       "port": 8000,
       "entryPoint": "g4l_localhost.py",
@@ -40,23 +40,23 @@
     },
     {
       "id": "melodyflow",
-      "displayName": "Terry (MelodyFlow)",
+      "displayName": "terry (melodyflow)",
       "description": "Audio editing and continuation with MelodyFlow",
       "port": 8002,
       "entryPoint": "localhost_melodyflow.py",
       "workingDir": "services/melodyflow",
       "pythonVersion": "3.11",
-      "torchVersion": "2.4.0",
-      "torchIndex": "https://download.pytorch.org/whl/cu121",
-      "torchPackages": ["torch==2.4.0", "torchaudio==2.4.0", "torchvision==0.19.0"],
+      "torchVersion": "2.4.1",
+      "torchIndex": "https://download.pytorch.org/whl/cu124",
+      "torchPackages": ["torch==2.4.1", "torchaudio==2.4.1", "torchvision==0.19.1"],
       "requirementsFile": "requirements.txt",
       "xformersShim": true,
       "forceTorchReinstall": true,
       "buildSteps": [
-        "pip install torch==2.4.0 torchaudio==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121",
+        "pip install torch==2.4.1 torchaudio==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu124",
         "pip install -r requirements.txt",
         "install_xformers_shim",
-        "pip install --force-reinstall --no-deps torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121"
+        "pip install --force-reinstall --no-deps torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124"
       ],
       "healthCheck": {
         "endpoint": "/health",
@@ -73,25 +73,25 @@
     },
     {
       "id": "stable-audio",
-      "displayName": "Jerry (Stable Audio)",
+      "displayName": "jerry (stable audio)",
       "description": "Text-to-audio synthesis with Stable Audio Open Small",
       "port": 8005,
       "entryPoint": "api.py",
       "workingDir": "services/stable-audio",
       "pythonVersion": "3.11",
-      "torchVersion": "2.6.0",
-      "torchIndex": "https://download.pytorch.org/whl/cu124",
-      "torchPackages": ["torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0"],
+      "torchVersion": "2.7.1",
+      "torchIndex": "https://download.pytorch.org/whl/cu128",
+      "torchPackages": ["torch==2.7.1", "torchaudio==2.7.1", "torchvision==0.22.1"],
       "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": ".",
       "editableInstallFlags": "--no-deps",
       "forceTorchReinstall": true,
       "buildSteps": [
-        "pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124",
+        "pip install torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128",
         "pip install -e . --no-deps",
         "pip install -r requirements.txt",
-        "pip install --force-reinstall --no-deps torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124"
+        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
       ],
       "healthCheck": {
         "endpoint": "/health",
@@ -107,11 +107,10 @@
     },
     {
       "id": "carey",
-      "displayName": "Carey (ACE-Step 1.5)",
+      "displayName": "carey (ace-step 1.5)",
       "description": "Stem generation (lego), continuation (complete), and remix (cover) with ACE-Step",
-      "port": 8001,
-      "wrapperPort": 8002,
-      "entryPoint": "acestep/api_server.py",
+      "port": 8003,
+      "entryPoint": "carey_wrapper.py",
       "workingDir": "services/carey",
       "pythonVersion": "3.11",
       "torchVersion": "2.7.1",
@@ -137,7 +136,6 @@
       },
       "env": {
         "PYTHONIOENCODING": "utf-8",
-        "ACESTEP_NO_INIT": "true",
         "ACESTEP_INIT_LLM": "false",
         "ACESTEP_CONFIG_PATH": "acestep-v15-base"
       },
@@ -146,25 +144,26 @@
     },
     {
       "id": "foundation",
-      "displayName": "Foundation-1",
+      "displayName": "foundation-1",
       "description": "RoyalCities Foundation-1 text-to-sample generation with RC-stable-audio-tools",
       "port": 8015,
       "entryPoint": "api_foundation.py",
       "workingDir": "services/foundation",
       "pythonVersion": "3.11",
-      "torchVersion": "2.6.0",
-      "torchIndex": "https://download.pytorch.org/whl/cu124",
-      "torchPackages": ["torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0"],
+      "torchVersion": "2.7.1",
+      "torchIndex": "https://download.pytorch.org/whl/cu128",
+      "torchPackages": ["torch==2.7.1", "torchaudio==2.7.1", "torchvision==0.22.1"],
       "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": "./RC-stable-audio-tools",
       "editableInstallFlags": "--no-deps",
       "forceTorchReinstall": true,
       "buildSteps": [
-        "pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124",
+        "pip install torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip install setuptools",
         "pip install -e ./RC-stable-audio-tools --no-deps",
         "pip install -r requirements.txt",
-        "pip install --force-reinstall --no-deps torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124"
+        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
       ],
       "healthCheck": {
         "endpoint": "/health",

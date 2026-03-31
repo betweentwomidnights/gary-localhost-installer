@@ -134,10 +134,10 @@
 
   // Derive service display name
   let serviceLabel = $derived(
-    serviceId === "gary" ? "Gary (MusicGen)" :
-    serviceId === "stable-audio" ? "Jerry (Stable Audio)" :
-    serviceId === "carey" ? "Carey (ACE-Step)" :
-    serviceId === "foundation" ? "Foundation-1" :
+    serviceId === "gary" ? "gary (musicgen)" :
+    serviceId === "stable-audio" ? "jerry (stable audio)" :
+    serviceId === "carey" ? "carey (ace-step)" :
+    serviceId === "foundation" ? "foundation-1" :
     serviceId
   );
 
@@ -162,7 +162,7 @@
       <button class="back-btn" onclick={onBack}>&larr; Back to logs</button>
     </div>
     <div class="header-info">
-      <h2>{serviceLabel} Models</h2>
+      <h2>{serviceLabel} models</h2>
       <span class="count">{downloadedCount}/{serviceModels.length} downloaded</span>
       {#if activeDownloads > 0}
         <span class="active-badge">{activeDownloads} downloading</span>
@@ -266,7 +266,7 @@
         {:else if !fetchingCheckpoints}
           <div class="finetune-hint">
             Enter a HuggingFace repo ID and click "Fetch Checkpoints" to see available .ckpt files.
-            Jerry must be running to fetch checkpoints.
+            jerry must be running to fetch checkpoints.
           </div>
         {/if}
       </div>
@@ -276,7 +276,7 @@
       <div class="size-group">
         <div class="size-label">base model components</div>
         <div class="carey-hint">
-          Download all three components before starting Carey.
+          download all three components before starting carey.
           Models are stored in services/carey/checkpoints/.
         </div>
         {#each serviceModels as model}

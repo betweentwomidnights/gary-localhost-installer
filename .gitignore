@@ -7,19 +7,16 @@ __pycache__/
 # Virtual envs
 .venv/
 venv/
-installer_env/
 
-# Environment files (ignore real secrets, keep the template)
+# Environment files
 .env
 .env.*
 ..env.un~
-!.env.example
 
 
 # Build artifacts
 build/
 dist/
-output/
 *.egg-info/
 
 # Node / Tauri
@@ -28,12 +25,6 @@ control-center/src-tauri/target/
 
 # Claude worktrees and project data
 .claude/
-
-# PyInstaller temp (keep .spec for transparency)
-# *.spec  <-- intentionally NOT ignored
-
-# Redis binaries downloaded by installer
-redis/
 
 # Debug logs
 *_debug.log
@@ -55,6 +46,7 @@ services/**/.cache/
 services/**/outputs/
 services/**/checkpoints/
 services/**/models/
+!services/gary/audiocraft/
 services/**/*.safetensors
 services/**/*.bin
 services/**/*.pt
