@@ -252,6 +252,14 @@ impl ServiceManager {
             }
         }
 
+        if svc.id == "melodyflow" {
+            let use_flash_attn = crate::melodyflow_use_flash_attn_enabled();
+            cmd.env(
+                "MELODYFLOW_USE_FLASH_ATTN",
+                if use_flash_attn { "1" } else { "0" },
+            );
+        }
+
         // Prevent console window on Windows
         #[cfg(target_os = "windows")]
         {

@@ -6,6 +6,8 @@
   import LogViewer from "./lib/LogViewer.svelte";
   import ModelPanel from "./lib/ModelPanel.svelte";
   import TokenBanner from "./lib/TokenBanner.svelte";
+  import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
+  import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
 
   interface ServiceInfo {
     id: string;
@@ -18,10 +20,25 @@
     health_endpoint: string | null;
   }
 
+  interface AppSettings {
+    melodyflowUseFlashAttn: boolean;
+    closeActionOnX: "ask" | "tray" | "quit";
+  }
+
+  const showMelodyflowFlashBanner =
+    import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
+
   let services: ServiceInfo[] = $state([]);
   let selectedServiceId: string | null = $state(null);
   let logText: string = $state("");
   let pollTimer: number;
+  let appSettings: AppSettings = $state({
+    melodyflowUseFlashAttn: false,
+    closeActionOnX: "ask",
+  });
+  let closeRequestModalOpen = $state(false);
+  let rememberCloseChoice = $state(false);
+  let resolvingCloseRequest = $state(false);
 
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
@@ -70,13 +87,56 @@
     } catch (_) {}
   }
 
+  async function loadAppSettings() {
+    try {
+      appSettings = await invoke<AppSettings>("get_app_settings");
+    } catch (e) {
+      console.error("Failed to load app settings:", e);
+    }
+  }
+
   function onTokenChange(configured: boolean) {
     hfTokenConfigured = configured;
+  }
+
+  function onMelodyflowFlashSettingUpdated(enabled: boolean) {
+    appSettings = { ...appSettings, melodyflowUseFlashAttn: enabled };
+  }
+
+  function onCloseRequestEvent() {
+    closeRequestModalOpen = true;
+    rememberCloseChoice = false;
+  }
+
+  function cancelCloseRequest() {
+    if (resolvingCloseRequest) return;
+    closeRequestModalOpen = false;
+    rememberCloseChoice = false;
+  }
+
+  async function resolveCloseRequest(action: "tray" | "quit") {
+    if (resolvingCloseRequest) return;
+    resolvingCloseRequest = true;
+
+    try {
+      const updated = await invoke<AppSettings>("resolve_close_request", {
+        action,
+        rememberChoice: rememberCloseChoice,
+      });
+      appSettings = updated;
+      closeRequestModalOpen = false;
+      rememberCloseChoice = false;
+    } catch (e) {
+      console.error("Failed to resolve close request:", e);
+    } finally {
+      resolvingCloseRequest = false;
+    }
   }
 
   onMount(() => {
     loadServices();
     checkToken();
+    loadAppSettings();
 
     const unlisten = listen<ServiceInfo[]>("services-updated", (event) => {
       services = event.payload;
@@ -87,6 +147,10 @@
       selectService(event.payload);
     });
 
+    const unlistenCloseRequest = listen("app-close-requested", () => {
+      onCloseRequestEvent();
+    });
+
     pollTimer = setInterval(() => {
       if (selectedServiceId && rightPanel === "logs") fetchLog(selectedServiceId);
     }, 2000);
@@ -95,11 +159,13 @@
       clearInterval(pollTimer);
       unlisten.then((fn) => fn());
       unlistenSelect.then((fn) => fn());
+      unlistenCloseRequest.then((fn) => fn());
     };
   });
 
   let runningCount = $derived(services.filter((s) => s.status === "running").length);
   let totalCount = $derived(services.length);
+  let selectedService = $derived(services.find((s) => s.id === selectedServiceId) ?? null);
 </script>
 
 <main>
@@ -132,6 +198,12 @@
       {:else}
         {#if selectedServiceId === "stable-audio"}
           <TokenBanner {onTokenChange} />
+        {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
+          <MelodyflowFlashBanner
+            enabled={appSettings.melodyflowUseFlashAttn}
+            serviceStatus={selectedService?.status ?? "stopped"}
+            onUpdated={onMelodyflowFlashSettingUpdated}
+          />
         {/if}
         <LogViewer
           serviceId={selectedServiceId}
@@ -140,6 +212,14 @@
       {/if}
     </div>
   </div>
+  <CloseBehaviorModal
+    open={closeRequestModalOpen}
+    rememberChoice={rememberCloseChoice}
+    busy={resolvingCloseRequest}
+    onRememberChange={(value) => rememberCloseChoice = value}
+    onChoose={resolveCloseRequest}
+    onCancel={cancelCloseRequest}
+  />
 </main>
 
 <style>

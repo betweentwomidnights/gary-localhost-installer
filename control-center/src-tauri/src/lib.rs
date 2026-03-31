@@ -3,6 +3,7 @@ mod model_manager;
 mod service_manager;
 
 use model_manager::ModelManager;
+use serde::{Deserialize, Serialize};
 use service_manager::ServiceManager;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -19,6 +20,47 @@ type ModelState = Arc<Mutex<ModelManager>>;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    #[serde(default)]
+    melodyflow_use_flash_attn: bool,
+    #[serde(default)]
+    close_action_on_x: CloseActionOnX,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            melodyflow_use_flash_attn: false,
+            close_action_on_x: CloseActionOnX::Ask,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum CloseActionOnX {
+    Ask,
+    Tray,
+    Quit,
+}
+
+impl Default for CloseActionOnX {
+    fn default() -> Self {
+        Self::Ask
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettingsPatch {
+    #[serde(default)]
+    melodyflow_use_flash_attn: Option<bool>,
+    #[serde(default)]
+    close_action_on_x: Option<CloseActionOnX>,
+}
+
 /// Get the path to the stored HF token file.
 fn hf_token_path() -> std::path::PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
@@ -26,6 +68,10 @@ fn hf_token_path() -> std::path::PathBuf {
         format!("{}\\AppData\\Roaming", home)
     });
     std::path::PathBuf::from(appdata).join("Gary4JUCE").join("hf_token.txt")
+}
+
+fn app_settings_path() -> std::path::PathBuf {
+    gary4juce_runtime_root().join("app_settings.json")
 }
 
 fn gary4juce_runtime_root() -> PathBuf {
@@ -297,6 +343,57 @@ fn read_hf_token() -> Option<String> {
     std::env::var("HF_TOKEN").ok().filter(|t| !t.is_empty())
 }
 
+fn read_app_settings() -> AppSettings {
+    let path = app_settings_path();
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(_) => return AppSettings::default(),
+    };
+
+    serde_json::from_str::<AppSettings>(&raw).unwrap_or_default()
+}
+
+fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
+    let path = app_settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create config dir: {}", e))?;
+    }
+
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Cannot serialize app settings: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Cannot save app settings: {}", e))?;
+    Ok(())
+}
+
+fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
+    let mut current = read_app_settings();
+
+    if let Some(melodyflow_use_flash_attn) = patch.melodyflow_use_flash_attn {
+        current.melodyflow_use_flash_attn = melodyflow_use_flash_attn;
+    }
+
+    if let Some(close_action_on_x) = patch.close_action_on_x {
+        current.close_action_on_x = close_action_on_x;
+    }
+
+    current
+}
+
+async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
+    let mut m = manager.lock().await;
+    m.stop_all();
+    handle.exit(0);
+}
+
+pub(crate) fn melodyflow_use_flash_attn_enabled() -> bool {
+    if option_env!("VITE_ENABLE_MELODYFLOW_FA2_TOGGLE").unwrap_or("1") == "0" {
+        return false;
+    }
+    read_app_settings().melodyflow_use_flash_attn
+}
+
 /// Load a PNG file and decode it to RGBA for Tauri Image
 fn load_png_as_image(path: &std::path::Path) -> Option<Image<'static>> {
     let file = std::fs::File::open(path).ok()?;
@@ -528,9 +625,7 @@ pub fn run() {
                             let mgr = tray_manager.clone();
                             let handle = app_handle.clone();
                             tauri::async_runtime::spawn(async move {
-                                let mut m = mgr.lock().await;
-                                m.stop_all();
-                                handle.exit(0);
+                                quit_application(&handle, &mgr).await;
                             });
                         }
                         id if id.starts_with("svc_") => {
@@ -563,17 +658,31 @@ pub fn run() {
 
             tray_builder.build(app)?;
 
-            // --- Window close: hide to tray instead of quitting ---
+            // --- Window close: ask whether to quit or minimize to tray ---
             let close_handle = handle.clone();
+            let close_manager = manager.clone();
             {
                 let window = app.get_webview_window("main").unwrap();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        // Prevent the window from actually closing
                         api.prevent_close();
-                        // Just hide — services keep running, tray stays active
-                        if let Some(w) = close_handle.get_webview_window("main") {
-                            let _ = w.hide();
+
+                        match read_app_settings().close_action_on_x {
+                            CloseActionOnX::Tray => {
+                                if let Some(w) = close_handle.get_webview_window("main") {
+                                    let _ = w.hide();
+                                }
+                            }
+                            CloseActionOnX::Quit => {
+                                let handle = close_handle.clone();
+                                let manager = close_manager.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    quit_application(&handle, &manager).await;
+                                });
+                            }
+                            CloseActionOnX::Ask => {
+                                let _ = close_handle.emit("app-close-requested", ());
+                            }
                         }
                     }
                 });
@@ -634,6 +743,9 @@ pub fn run() {
             get_hf_token,
             save_hf_token,
             delete_hf_token,
+            get_app_settings,
+            save_app_settings,
+            resolve_close_request,
             open_url,
         ])
         .run(tauri::generate_context!())
@@ -1287,6 +1399,58 @@ fn delete_hf_token() -> Result<(), String> {
             .map_err(|e| format!("Cannot delete token: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn get_app_settings() -> Result<AppSettings, String> {
+    Ok(read_app_settings())
+}
+
+#[tauri::command]
+fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> {
+    let merged = merge_app_settings(settings);
+    save_app_settings_file(&merged)?;
+    Ok(merged)
+}
+
+#[tauri::command]
+async fn resolve_close_request(
+    action: String,
+    remember_choice: bool,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<AppSettings, String> {
+    let close_action = match action.as_str() {
+        "tray" => CloseActionOnX::Tray,
+        "quit" => CloseActionOnX::Quit,
+        "ask" => CloseActionOnX::Ask,
+        other => return Err(format!("Unknown close action: {}", other)),
+    };
+
+    let settings = if remember_choice {
+        let merged = merge_app_settings(AppSettingsPatch {
+            close_action_on_x: Some(close_action),
+            ..Default::default()
+        });
+        save_app_settings_file(&merged)?;
+        merged
+    } else {
+        read_app_settings()
+    };
+
+    match close_action {
+        CloseActionOnX::Tray => {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.hide();
+            }
+        }
+        CloseActionOnX::Quit => {
+            quit_application(&app_handle, manager.inner()).await;
+        }
+        CloseActionOnX::Ask => {}
+    }
+
+    Ok(settings)
 }
 
 #[tauri::command]

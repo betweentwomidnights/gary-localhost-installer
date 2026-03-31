@@ -46,6 +46,10 @@ services/**/.cache/
 services/**/outputs/
 services/**/checkpoints/
 services/**/models/
+!services/**/audiocraft/models/
+!services/**/audiocraft/models/**
+services/**/audiocraft/models/**/__pycache__/
+services/**/audiocraft/models/**/*.pyc
 !services/gary/audiocraft/
 services/**/*.safetensors
 services/**/*.bin

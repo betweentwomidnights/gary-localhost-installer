@@ -12,6 +12,7 @@ from variations import VARIATIONS
 import psutil
 import logging
 from contextlib import contextmanager
+from melodyflow_fast import optimize_model as optimize_melodyflow_model
 
 import sys
 
@@ -94,6 +95,8 @@ def load_model():
     if model is None:
         print("Loading MelodyFlow model...")
         model = MelodyFlow.get_pretrained('facebook/melodyflow-t24-30secs', device=DEVICE)
+        if os.environ.get("MELODYFLOW_USE_FLASH_ATTN", "0") == "1":
+            model = optimize_melodyflow_model(model)
     return model
 
 def load_audio_from_file(file_path: str, target_sr: int = 32000) -> torch.Tensor:
