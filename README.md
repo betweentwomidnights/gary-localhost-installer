@@ -2,6 +2,8 @@
 
 local Windows control center and bundled backend services for [gary4juce v3](https://github.com/betweentwomidnights/gary4juce).
 
+find the macOS version here: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
+
 This branch is the `v2-refactor` Tauri/Rust implementation. The old PyInstaller/Inno Setup flow is intentionally not part of this branch anymore; that legacy path stays preserved on the old branch history.
 
 ## preview
@@ -17,7 +19,7 @@ install and startup flow:
 - `services/`
   The Python backends and model-specific code for Gary, Terry, Jerry, Carey, and Foundation.
 - `keygen_music_for_installer.wav`
-  Source loop used to generate the tiny installer music asset.
+  Source loop used to generate the tiny installer music asset. cuz why not?
 
 ## services
 
@@ -129,5 +131,4 @@ certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4lo
 ## related repos
 
 - plugin frontend: <https://github.com/betweentwomidnights/gary4juce>
-- macOS version of `gary4local`: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
 - combined backend alternative: <https://github.com/betweentwomidnights/gary-backend-combined>
