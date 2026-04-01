@@ -4,6 +4,12 @@ local Windows control center and bundled backend services for [gary4juce v3](htt
 
 This branch is the `v2-refactor` Tauri/Rust implementation. The old PyInstaller/Inno Setup flow is intentionally not part of this branch anymore; that legacy path stays preserved on the old branch history.
 
+## preview
+
+install and startup flow:
+
+![gary4local install and startup preview](docs/gary4local-install-startup.gif)
+
 ## what lives here
 
 - `control-center/`

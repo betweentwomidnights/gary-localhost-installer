@@ -92,6 +92,7 @@
         "pip install torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128",
         "pip install -e . --no-deps",
         "pip install -r requirements.txt",
+        "pip install https://github.com/sdbds/flash-attention-for-windows/releases/download/2.8.2/flash_attn-2.8.2+cu128torch2.7.1cxx11abiFALSEfullbackward-cp311-cp311-win_amd64.whl",
         "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
       ],
       "healthCheck": {
@@ -163,6 +164,7 @@
         "pip install setuptools",
         "pip install -e ./RC-stable-audio-tools --no-deps",
         "pip install -r requirements.txt",
+        "pip install https://github.com/sdbds/flash-attention-for-windows/releases/download/2.8.2/flash_attn-2.8.2+cu128torch2.7.1cxx11abiFALSEfullbackward-cp311-cp311-win_amd64.whl",
         "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
       ],
       "healthCheck": {

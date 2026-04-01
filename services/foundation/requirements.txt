@@ -4,8 +4,9 @@
 #   1. pip install torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
 #   2. pip install -e ./RC-stable-audio-tools --no-deps  (RC fork of stable-audio-tools)
 #   3. pip install -r requirements.txt     (this file)
-#   4. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-#      ^ step 4: restore CUDA torch if transitive deps pulled CPU version
+#   4. pip install flash-attn (prebuilt wheel for Windows cu128+torch2.7.1)
+#   5. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#      ^ step 5: restore CUDA torch if transitive deps pulled CPU version
 #
 # Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
 

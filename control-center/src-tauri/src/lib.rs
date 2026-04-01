@@ -460,6 +460,14 @@ fn status_dot_icon(status: &str) -> Image<'static> {
     }
 }
 
+fn tray_menu_signature(services: &[service_manager::ServiceInfo]) -> String {
+    services
+        .iter()
+        .map(|svc| format!("{}:{}:{}", svc.id, svc.status, svc.display_name))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 /// Rebuild the system tray menu to reflect current service statuses.
 /// Call this after acquiring service info (avoids locking the mutex here).
 async fn rebuild_tray_menu(app_handle: &tauri::AppHandle, manager: &ManagerState) {
@@ -695,6 +703,11 @@ pub fn run() {
                 let client = reqwest::Client::builder()
                     .build()
                     .unwrap();
+                let initial_info = {
+                    let mgr = poll_manager.lock().await;
+                    mgr.get_service_info()
+                };
+                let mut last_tray_signature = tray_menu_signature(&initial_info);
 
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -725,8 +738,14 @@ pub fn run() {
                     drop(mgr);
                     let _ = poll_handle.emit("services-updated", &info);
 
-                    // Keep tray menu in sync with service statuses
-                    rebuild_tray_menu(&poll_handle, &poll_manager).await;
+                    // Only rebuild the tray menu when the visible tray state changes.
+                    // Replacing the menu every poll tick makes the popup close before
+                    // the user can click a service action.
+                    let current_tray_signature = tray_menu_signature(&info);
+                    if current_tray_signature != last_tray_signature {
+                        rebuild_tray_menu_with_info(&poll_handle, &info);
+                        last_tray_signature = current_tray_signature;
+                    }
                 }
             });
 
