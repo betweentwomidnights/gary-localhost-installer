@@ -131,4 +131,3 @@ certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4lo
 ## related repos
 
 - plugin frontend: <https://github.com/betweentwomidnights/gary4juce>
-- combined backend alternative: <https://github.com/betweentwomidnights/gary-backend-combined>
