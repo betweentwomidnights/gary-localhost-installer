@@ -4,6 +4,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn hide_console_window(cmd: &mut tokio::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 /// A single model that can be downloaded
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
@@ -286,11 +296,6 @@ impl ModelManager {
         self.finetune_checkpoints.insert(repo.to_string(), entries);
     }
 
-    /// Get stored finetune checkpoints
-    pub fn get_finetune_checkpoints(&self) -> &HashMap<String, Vec<CheckpointEntry>> {
-        &self.finetune_checkpoints
-    }
-
     /// Check if a specific file from a finetune repo is cached
     fn is_finetune_file_cached(repo: &str, filename: &str) -> bool {
         let cache_dir = Self::hf_cache_dir();
@@ -402,11 +407,6 @@ impl ModelManager {
     /// Get all current download progress
     pub fn get_download_progress(&self) -> Vec<DownloadProgress> {
         self.downloads.values().cloned().collect()
-    }
-
-    /// Refresh cached statuses from disk
-    pub fn refresh_statuses(&mut self) {
-        self.model_cache.clear();
     }
 }
 
@@ -632,6 +632,8 @@ except Exception as e:
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
+    hide_console_window(&mut cmd);
+
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
@@ -887,6 +889,8 @@ except Exception as e:
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
+    hide_console_window(&mut cmd);
+
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
@@ -1074,6 +1078,8 @@ except Exception as e:
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
+    hide_console_window(&mut cmd);
+
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 

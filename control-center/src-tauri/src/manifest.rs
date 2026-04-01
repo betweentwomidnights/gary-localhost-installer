@@ -19,8 +19,6 @@ pub struct ServiceDef {
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
     pub health_check: Option<HealthCheck>,
-    #[serde(default)]
-    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,10 +29,13 @@ pub struct HealthCheck {
     pub interval_seconds: u64,
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
+    #[serde(default = "default_startup_grace")]
+    pub startup_grace_seconds: u64,
 }
 
 fn default_interval() -> u64 { 15 }
 fn default_timeout() -> u64 { 5 }
+fn default_startup_grace() -> u64 { 0 }
 
 pub fn load_manifest(path: &Path) -> Result<Vec<ServiceDef>, String> {
     let content = std::fs::read_to_string(path)

@@ -693,27 +693,31 @@ pub fn run() {
             let poll_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(3))
                     .build()
                     .unwrap();
 
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
                     let mut mgr = poll_manager.lock().await;
                     mgr.check_processes();
-                    let targets = mgr.get_health_targets();
+                    let targets = mgr.take_due_health_targets(std::time::Instant::now());
                     drop(mgr);
 
-                    for (id, port, endpoint) in &targets {
-                        let url = format!("http://localhost:{}{}", port, endpoint);
-                        let healthy = match client.get(&url).send().await {
+                    for target in &targets {
+                        let url = format!("http://localhost:{}{}", target.port, target.endpoint);
+                        let healthy = match client
+                            .get(&url)
+                            .timeout(std::time::Duration::from_secs(target.timeout_seconds))
+                            .send()
+                            .await
+                        {
                             Ok(resp) => resp.status().is_success(),
                             Err(_) => false,
                         };
 
                         let mut mgr = poll_manager.lock().await;
-                        mgr.set_health(id, healthy);
+                        mgr.set_health(&target.id, healthy);
                     }
 
                     let mgr = poll_manager.lock().await;

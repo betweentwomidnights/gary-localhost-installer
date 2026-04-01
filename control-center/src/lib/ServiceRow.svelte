@@ -90,28 +90,28 @@
       <span class="build-label">{service.build_status?.step_label}</span>
     </div>
   {:else if service.build_status?.error}
-    <div class="error">Build failed: {service.build_status.error}</div>
+    <div class="error">build failed: {service.build_status.error}</div>
   {:else if service.build_status && !service.build_status.building && service.build_status.current_step > 0}
-    <div class="build-done">Build complete</div>
+    <div class="build-done">build complete</div>
   {/if}
 
   <div class="controls">
     {#if service.status === "stopped" || service.status === "failed"}
-      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={!service.env_exists || isBuilding}>Start</button>
+      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={!service.env_exists || isBuilding}>start</button>
     {:else}
-      <button onclick={(e) => { e.stopPropagation(); stopService(); }}>Stop</button>
-      <button onclick={(e) => { e.stopPropagation(); restartService(); }}>Restart</button>
+      <button onclick={(e) => { e.stopPropagation(); stopService(); }}>stop</button>
+      <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
     {/if}
     <button onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
       {#if isBuilding}
-        Building...
+        building...
       {:else}
-        {service.env_exists ? "Rebuild Env" : "Build Env"}
+        {service.env_exists ? "rebuild env" : "build env"}
       {/if}
     </button>
     {#if hasModels}
       <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={!service.env_exists}>
-        Models
+        models
       </button>
     {/if}
   </div>

@@ -34,8 +34,8 @@
 
 <div class="service-list">
   <div class="list-header">
-    <span class="label">Services</span>
-    <button onclick={rebuildAll}>Rebuild All Envs</button>
+    <span class="label">services</span>
+    <button onclick={rebuildAll}>rebuild all envs</button>
   </div>
   {#each services as service (service.id)}
     <ServiceRow
@@ -47,7 +47,7 @@
     />
   {/each}
   {#if services.length === 0}
-    <div class="empty">Loading services...</div>
+    <div class="empty">loading services...</div>
   {/if}
 </div>
 

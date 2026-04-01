@@ -8,6 +8,8 @@
 #   5. Install xformers SDPA shim          (see setup script — creates fake xformers package)
 #   6. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 #      ^ step 6: restore CUDA torch if transitive deps pulled CPU version
+#   7. pip uninstall torchvision
+#      ^ Gary does not need torchvision, and removing it avoids stray binary mismatches on some machines
 #
 # Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
 

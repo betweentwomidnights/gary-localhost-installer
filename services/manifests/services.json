@@ -24,7 +24,8 @@
         "pip install -r requirements.txt",
         "pip install https://github.com/sdbds/flash-attention-for-windows/releases/download/2.8.2/flash_attn-2.8.2+cu128torch2.7.1cxx11abiFALSEfullbackward-cp311-cp311-win_amd64.whl",
         "install_xformers_shim",
-        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
+        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip uninstall torchvision"
       ],
       "healthCheck": {
         "endpoint": "/health",
@@ -69,8 +70,7 @@
         "PYTHONIOENCODING": "utf-8",
         "PYTHONLEGACYWINDOWSSTDIO": "1"
       },
-      "dependsOn": [],
-      "notes": "audiocraft is NOT installed as a package. It lives in ./audiocraft/ and is imported via sys.path from the working directory."
+      "dependsOn": []
     },
     {
       "id": "stable-audio",
@@ -140,8 +140,7 @@
         "ACESTEP_INIT_LLM": "false",
         "ACESTEP_CONFIG_PATH": "acestep-v15-base"
       },
-      "dependsOn": [],
-      "notes": "Uses ace-lego fork with lego/complete/cover mode fixes. torchcodec installs but fails at runtime on Windows (no FFmpeg DLLs) — soundfile fallback handles it. GPU queue service not needed for localhost."
+      "dependsOn": []
     },
     {
       "id": "foundation",
@@ -179,8 +178,7 @@
         "FOUNDATION_CKPT_PATH": "${MODELS_DIR}/foundation-1/Foundation_1.safetensors",
         "FOUNDATION_CONFIG_PATH": "${MODELS_DIR}/foundation-1/model_config.json"
       },
-      "dependsOn": [],
-      "notes": "Requires RC-stable-audio-tools fork (not standard stable-audio-tools). Model must be downloaded separately."
+      "dependsOn": []
     }
   ],
   "infrastructure": {},

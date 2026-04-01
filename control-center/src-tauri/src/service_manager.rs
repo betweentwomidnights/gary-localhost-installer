@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceInfo {
@@ -31,6 +32,15 @@ pub struct BuildStatus {
 struct RunningService {
     process: Child,
     healthy: bool,
+    started_at: Instant,
+    last_health_check_at: Option<Instant>,
+}
+
+pub struct HealthTarget {
+    pub id: String,
+    pub port: u16,
+    pub endpoint: String,
+    pub timeout_seconds: u64,
 }
 
 pub struct ServiceManager {
@@ -135,22 +145,41 @@ impl ServiceManager {
         }
     }
 
-    /// Get list of running services with their health endpoints for polling
-    pub fn get_health_targets(&self) -> Vec<(String, u16, String)> {
-        self.services
-            .iter()
-            .filter_map(|svc| {
-                if !self.running.contains_key(&svc.id) {
-                    return None;
+    /// Get running services that are due for a health check now.
+    pub fn take_due_health_targets(&mut self, now: Instant) -> Vec<HealthTarget> {
+        let services = self.services.clone();
+        let mut targets = Vec::new();
+
+        for svc in services {
+            let Some(health) = svc.health_check.as_ref() else {
+                continue;
+            };
+            let Some(running) = self.running.get_mut(&svc.id) else {
+                continue;
+            };
+
+            let startup_grace = Duration::from_secs(health.startup_grace_seconds);
+            if now.duration_since(running.started_at) < startup_grace {
+                continue;
+            }
+
+            let interval = Duration::from_secs(health.interval_seconds.max(1));
+            if let Some(last_health_check_at) = running.last_health_check_at {
+                if now.duration_since(last_health_check_at) < interval {
+                    continue;
                 }
-                let endpoint = svc
-                    .health_check
-                    .as_ref()
-                    .map(|h| h.endpoint.clone())
-                    .unwrap_or_else(|| "/health".to_string());
-                Some((svc.id.clone(), svc.port, endpoint))
-            })
-            .collect()
+            }
+
+            running.last_health_check_at = Some(now);
+            targets.push(HealthTarget {
+                id: svc.id,
+                port: svc.port,
+                endpoint: health.endpoint.clone(),
+                timeout_seconds: health.timeout_seconds.max(1),
+            });
+        }
+
+        targets
     }
 
     pub fn get_service_info(&self) -> Vec<ServiceInfo> {
@@ -281,6 +310,8 @@ impl ServiceManager {
             RunningService {
                 process: child,
                 healthy: false,
+                started_at: Instant::now(),
+                last_health_check_at: None,
             },
         );
 
@@ -468,14 +499,6 @@ impl ServiceManager {
             std::fs::read_to_string(log_path)
                 .map_err(|e| format!("Cannot read log: {}", e))
         }
-    }
-
-    pub fn running_count(&self) -> usize {
-        self.running.len()
-    }
-
-    pub fn service_count(&self) -> usize {
-        self.services.len()
     }
 }
 

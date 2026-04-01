@@ -6,7 +6,7 @@
     logText: string;
   } = $props();
 
-  let logContainer: HTMLPreElement;
+  let logContainer: HTMLPreElement | null = $state(null);
   let autoScroll = $state(true);
   let isAutoScrolling = false;
   let isSelecting = false;
@@ -64,13 +64,18 @@
         }}>Scroll to bottom</button>
       {/if}
     </div>
-    <pre
-      class="log-content"
-      bind:this={logContainer}
-      onscroll={handleScroll}
+    <div
+      class="log-content-wrap"
+      role="presentation"
       onmousedown={handleMouseDown}
       onmouseup={handleMouseUp}
-    >{logText || "No output yet."}</pre>
+    >
+      <pre
+        class="log-content"
+        bind:this={logContainer}
+        onscroll={handleScroll}
+      >{logText || "No output yet."}</pre>
+    </div>
   {:else}
     <div class="no-selection">
       <p>Select a service to view logs</p>
