@@ -1,0 +1,76 @@
+<script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import ServiceRow from "./ServiceRow.svelte";
+
+  interface ServiceInfo {
+    id: string;
+    display_name: string;
+    port: number;
+    status: "stopped" | "starting" | "running" | "unhealthy" | "failed";
+    pid: number | null;
+    error: string | null;
+    env_exists: boolean;
+  }
+
+  let { services, selectedServiceId, onSelect, onShowModels }: {
+    services: ServiceInfo[];
+    selectedServiceId: string | null;
+    onSelect: (id: string) => void;
+    onShowModels: (id: string) => void;
+  } = $props();
+
+  async function rebuildAll() {
+    try {
+      await invoke("rebuild_all_envs");
+    } catch (e) {
+      console.error("Rebuild all failed:", e);
+    }
+  }
+
+  // Services that have downloadable models
+  const servicesWithModels = new Set(["gary", "stable-audio", "carey", "foundation"]);
+</script>
+
+<div class="service-list">
+  <div class="list-header">
+    <span class="label">Services</span>
+    <button onclick={rebuildAll}>Rebuild All Envs</button>
+  </div>
+  {#each services as service (service.id)}
+    <ServiceRow
+      {service}
+      selected={selectedServiceId === service.id}
+      onSelect={() => onSelect(service.id)}
+      hasModels={servicesWithModels.has(service.id)}
+      onShowModels={() => onShowModels(service.id)}
+    />
+  {/each}
+  {#if services.length === 0}
+    <div class="empty">Loading services...</div>
+  {/if}
+</div>
+
+<style>
+  .service-list {
+    padding: 8px;
+  }
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+  }
+  .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+  .empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+</style>

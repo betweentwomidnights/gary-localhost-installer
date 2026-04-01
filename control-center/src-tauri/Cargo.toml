@@ -1,0 +1,25 @@
+[package]
+name = "gary4juce-control-center"
+version = "0.1.0"
+description = "Gary4JUCE Control Center"
+authors = ["betweentwomidnights"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.6", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.10.3", features = ["tray-icon"] }
+tauri-plugin-log = "2"
+tokio = { version = "1", features = ["process", "fs", "io-util", "time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+png = "0.17"

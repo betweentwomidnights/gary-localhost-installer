@@ -1,0 +1,80 @@
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #1a1a1a;
+  --bg-panel: #222222;
+  --bg-hover: #2a2a2a;
+  --border: #333333;
+  --text-primary: #e0e0e0;
+  --text-secondary: #888888;
+  --text-muted: #555555;
+  --accent: #bb0000;
+  --accent-hover: #dd2222;
+  --green: #44cc44;
+  --orange: #ffaa00;
+  --yellow: #cccc44;
+  --red: #ff4444;
+  --gray: #666666;
+  --font-mono: "Cascadia Code", "Consolas", "JetBrains Mono", monospace;
+  --font-sans: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+button {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 6px 14px;
+  font-size: 12px;
+  transition: background 0.15s, border-color 0.15s;
+}
+button:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+button:active {
+  background: var(--border);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button.accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+button.accent:hover {
+  background: var(--accent-hover);
+}

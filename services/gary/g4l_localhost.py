@@ -542,9 +542,6 @@ def get_available_models():
                 'thepatch/gary_orchestra_2',
                 'thepatch/keygen-gary-v2-small-8',
                 'thepatch/keygen-gary-v2-small-12',
-                'thepatch/keygen-gary-small-6',
-                'thepatch/keygen-gary-small-12',
-                'thepatch/keygen-gary-small-20',  # Your upcoming one
             ],
             'medium': [
                 'thepatch/bleeps-medium',
@@ -557,9 +554,6 @@ def get_available_models():
                 'thepatch/bleeps-large-10',
                 'thepatch/bleeps-large-14',
                 'thepatch/bleeps-large-20',
-                'thepatch/keygen-gary-large-6',
-                'thepatch/keygen-gary-large-12',
-                'thepatch/keygen-gary-large-20',
                 'thepatch/keygen-gary-v2-large-12',
                 'thepatch/keygen-gary-v2-large-16',
             ]

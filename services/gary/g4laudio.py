@@ -1,6 +1,8 @@
 import os
-os.environ['HF_HOME'] = '/tmp/huggingface_cache'
-os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache'
+# Use the standard HuggingFace cache location (no custom override).
+# On Windows: C:\Users\<user>\.cache\huggingface
+# On Linux/Mac: ~/.cache/huggingface
+# Previously pointed at /tmp/huggingface_cache from the remote backend.
 
 # --- begin Torch/Transformers compat shim (for PyTorch 2.1.x) ---
 try:

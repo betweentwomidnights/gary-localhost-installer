@@ -123,6 +123,7 @@
       "forceTorchReinstall": true,
       "buildSteps": [
         "pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip install -e . --no-deps",
         "pip install -r requirements.txt",
         "pip install -e acestep/third_parts/nano-vllm",
         "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
@@ -135,8 +136,9 @@
       },
       "env": {
         "PYTHONIOENCODING": "utf-8",
-        "ACESTEP_NO_INIT": "false",
-        "ACESTEP_INIT_LLM": "false"
+        "ACESTEP_NO_INIT": "true",
+        "ACESTEP_INIT_LLM": "false",
+        "ACESTEP_CONFIG_PATH": "acestep-v15-base"
       },
       "dependsOn": [],
       "notes": "Uses ace-lego fork with lego/complete/cover mode fixes. torchcodec installs but fails at runtime on Windows (no FFmpeg DLLs) — soundfile fallback handles it. GPU queue service not needed for localhost."
