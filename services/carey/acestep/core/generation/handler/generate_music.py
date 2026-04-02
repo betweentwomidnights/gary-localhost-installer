@@ -12,6 +12,25 @@ from loguru import logger
 from acestep.constants import DEFAULT_DIT_INSTRUCTION
 
 
+def _resolve_repaint_injection_ratio(
+    mode: str = "balanced",
+    strength: float = 0.5,
+) -> float:
+    """Convert repaint mode/strength into the source-latent remix ratio.
+
+    The remote turbo container's useful behavior is the global source-latent
+    blend during cover generation. We keep the mapping small and deterministic
+    here so the higher-risk repaint stack stays off unless we intentionally
+    extend it later.
+    """
+    strength = max(0.0, min(1.0, strength))
+    if mode == "aggressive":
+        return 0.0
+    if mode == "conservative":
+        return 1.0
+    return 1.0 - strength
+
+
 class GenerateMusicMixin:
     """Coordinate request prep, service execution, decode, and payload assembly.
 
@@ -41,6 +60,8 @@ class GenerateMusicMixin:
         instruction: str = DEFAULT_DIT_INSTRUCTION,
         audio_cover_strength: float = 1.0,
         cover_noise_strength: float = 0.0,
+        repaint_mode: str = "balanced",
+        repaint_strength: float = 0.5,
         task_type: str = "text2music",
         use_adg: bool = False,
         cfg_interval_start: float = 0.0,
@@ -134,6 +155,10 @@ class GenerateMusicMixin:
                 repainting_start=repainting_start,
                 repainting_end=repainting_end,
             )
+            repaint_injection_ratio = _resolve_repaint_injection_ratio(
+                repaint_mode,
+                repaint_strength,
+            )
             service_run = self._run_generate_music_service_with_progress(
                 progress=progress,
                 actual_batch_size=actual_batch_size,
@@ -146,6 +171,7 @@ class GenerateMusicMixin:
                 actual_seed_list=actual_seed_list,
                 audio_cover_strength=audio_cover_strength,
                 cover_noise_strength=cover_noise_strength,
+                repaint_injection_ratio=repaint_injection_ratio,
                 use_adg=use_adg,
                 cfg_interval_start=cfg_interval_start,
                 cfg_interval_end=cfg_interval_end,

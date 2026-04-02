@@ -9,6 +9,15 @@
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
 
+  interface BuildStatus {
+    building: boolean;
+    current_step: number;
+    total_steps: number;
+    step_label: string;
+    log: string;
+    error: string | null;
+  }
+
   interface ServiceInfo {
     id: string;
     display_name: string;
@@ -18,6 +27,7 @@
     error: string | null;
     env_exists: boolean;
     health_endpoint: string | null;
+    build_status: BuildStatus | null;
   }
 
   interface AppSettings {

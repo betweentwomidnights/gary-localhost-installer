@@ -32,6 +32,7 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
             "refer_audio_acoustic_hidden_states_packed": torch.zeros(1, 2),
             "refer_audio_order_mask": torch.zeros(1, dtype=torch.long),
             "src_latents": torch.zeros(1, 4, 4),
+            "target_latents": torch.ones(1, 4, 4),
             "chunk_mask": torch.ones(1, 4, dtype=torch.bool),
             "is_covers": torch.tensor([True]),
             "non_cover_text_hidden_states": None,
@@ -45,6 +46,7 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
             guidance_scale=7.0,
             audio_cover_strength=1.0,
             cover_noise_strength=0.0,
+            repaint_injection_ratio=0.5,
             infer_method="ode",
             use_adg=False,
             cfg_interval_start=0.0,
@@ -58,6 +60,46 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
         self.assertEqual(kwargs["infer_steps"], 16)
         self.assertEqual(kwargs["timesteps"].dtype, torch.float32)
         self.assertEqual(kwargs["timesteps"].device.type, "cpu")
+        self.assertIs(kwargs["clean_src_latents"], payload["target_latents"])
+        self.assertEqual(kwargs["repaint_injection_ratio"], 0.5)
+
+    def test_build_generate_kwargs_disables_repaint_anchor_for_non_cover(self):
+        """Lego/complete payloads should never receive source-latent remix kwargs."""
+        host = _Host()
+        payload = {
+            "text_hidden_states": torch.zeros(1, 2),
+            "text_attention_mask": torch.ones(1, 2),
+            "lyric_hidden_states": torch.zeros(1, 2),
+            "lyric_attention_mask": torch.ones(1, 2),
+            "refer_audio_acoustic_hidden_states_packed": torch.zeros(1, 2),
+            "refer_audio_order_mask": torch.zeros(1, dtype=torch.long),
+            "src_latents": torch.zeros(1, 4, 4),
+            "target_latents": torch.ones(1, 4, 4),
+            "chunk_mask": torch.ones(1, 4, dtype=torch.bool),
+            "is_covers": torch.tensor([False]),
+            "non_cover_text_hidden_states": None,
+            "non_cover_text_attention_masks": None,
+            "precomputed_lm_hints_25Hz": None,
+        }
+
+        kwargs = host._build_service_generate_kwargs(
+            payload=payload,
+            seed_param=456,
+            infer_steps=8,
+            guidance_scale=7.0,
+            audio_cover_strength=1.0,
+            cover_noise_strength=0.0,
+            repaint_injection_ratio=0.5,
+            infer_method="ode",
+            use_adg=False,
+            cfg_interval_start=0.0,
+            cfg_interval_end=1.0,
+            shift=1.0,
+            timesteps=None,
+        )
+
+        self.assertIsNone(kwargs["clean_src_latents"])
+        self.assertEqual(kwargs["repaint_injection_ratio"], 0.0)
 
     def test_attach_service_outputs_persists_required_fields(self):
         """Attached payload fields should be available to downstream handlers."""

@@ -2798,10 +2798,15 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         """Health check endpoint for service status."""
+        current_model = None
+        if getattr(app.state, "_initialized", False):
+            current_model = getattr(app.state, "_config_path", None)
         return _wrap_response({
             "status": "ok",
             "service": "ACE-Step API",
             "version": "1.0",
+            "initialized": getattr(app.state, "_initialized", False),
+            "current_model": current_model,
         })
 
     @app.get("/v1/stats")
@@ -3228,14 +3233,24 @@ def create_app() -> FastAPI:
     )
 
     @app.post("/v1/load")
-    async def load_model(_: None = Depends(verify_api_key)):
+    async def load_model(config_path: Optional[str] = None, _: None = Depends(verify_api_key)):
         """Load the DiT model onto the GPU. No-op if already loaded.
         Used by the T4 wrapper to load on demand before generation."""
         handler: AceStepHandler = app.state.handler
+        requested_config_path = (config_path or "").strip() or None
         if getattr(app.state, "_initialized", False):
-            return _wrap_response({"status": "already_loaded"})
-        params = getattr(handler, "last_init_params", None)
-        if params is None:
+            current_config_path = getattr(app.state, "_config_path", None)
+            if requested_config_path and current_config_path and requested_config_path != current_config_path:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Model '{current_config_path}' is already loaded. "
+                        f"Unload it before loading '{requested_config_path}'."
+                    ),
+                )
+            return _wrap_response({"status": "already_loaded", "model": current_config_path})
+        params = dict(getattr(handler, "last_init_params", None) or {})
+        if not params:
             # Fall back to env vars (first-ever load after ACESTEP_NO_INIT=true)
             project_root = _get_project_root()
             gpu_config = getattr(app.state, "gpu_config", get_gpu_config())
@@ -3251,6 +3266,10 @@ def create_app() -> FastAPI:
                 "offload_dit_to_cpu": _env_bool("ACESTEP_OFFLOAD_DIT_TO_CPU", False),
                 "quantization": os.getenv("ACESTEP_QUANTIZATION"),
             }
+        if requested_config_path is not None:
+            params["config_path"] = requested_config_path
+        resolved_config_path = params.get("config_path") or os.getenv("ACESTEP_CONFIG_PATH", "acestep-v15-base")
+        params["config_path"] = resolved_config_path
         status_msg, ok = handler.initialize_service(**{
             k: v for k, v in params.items()
             if k in ("project_root", "config_path", "device", "use_flash_attention",
@@ -3259,7 +3278,8 @@ def create_app() -> FastAPI:
         if not ok:
             raise HTTPException(status_code=500, detail=f"Model load failed: {status_msg}")
         app.state._initialized = True
-        return _wrap_response({"status": "loaded", "model": params.get("config_path")})
+        app.state._config_path = resolved_config_path
+        return _wrap_response({"status": "loaded", "model": resolved_config_path})
 
     @app.post("/v1/unload")
     async def unload_model(_: None = Depends(verify_api_key)):

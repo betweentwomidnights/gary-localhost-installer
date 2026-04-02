@@ -10,6 +10,8 @@
   let autoScroll = $state(true);
   let isAutoScrolling = false;
   let isSelecting = false;
+  let lastServiceId: string | null = $state(null);
+  let lastLogLength = $state(0);
 
   // Track mouse-based text selection — suppress auto-scroll while selecting
   function handleMouseDown() { isSelecting = true; }
@@ -17,6 +19,21 @@
     // Delay clearing so the scroll handler doesn't re-enable during click release
     setTimeout(() => { isSelecting = false; }, 100);
   }
+
+  $effect(() => {
+    if (serviceId !== lastServiceId) {
+      lastServiceId = serviceId;
+      autoScroll = true;
+    }
+  });
+
+  $effect(() => {
+    const currentLength = logText.length;
+    if (currentLength < lastLogLength) {
+      autoScroll = true;
+    }
+    lastLogLength = currentLength;
+  });
 
   // Auto-scroll when log content changes
   $effect(() => {
@@ -116,7 +133,11 @@
     opacity: 0.8;
   }
   .log-content {
+    display: block;
     flex: 1;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
     overflow-y: auto;
     padding: 12px 16px;
     font-family: var(--font-mono);
@@ -130,6 +151,12 @@
     user-select: text;
     -webkit-user-select: text;
     cursor: text;
+  }
+  .log-content-wrap {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
   .no-selection {
     display: flex;

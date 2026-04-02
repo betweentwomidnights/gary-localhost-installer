@@ -130,13 +130,15 @@ class ServiceGenerateMixinTests(unittest.TestCase):
         custom_timesteps = [1.0, 0.5, 0.0]
         host.service_generate(
             captions="cap", lyrics="lyr", guidance_scale=9.5, audio_cover_strength=0.7,
-            cover_noise_strength=0.2, use_adg=True, cfg_interval_start=0.1, cfg_interval_end=0.9,
+            cover_noise_strength=0.2, repaint_injection_ratio=0.35,
+            use_adg=True, cfg_interval_start=0.1, cfg_interval_end=0.9,
             shift=1.3, infer_method="sde", timesteps=custom_timesteps, return_intermediate=False,
         )
         build_kwargs = host.calls["_build_service_generate_kwargs"]
         self.assertEqual(build_kwargs["guidance_scale"], 9.5)
         self.assertEqual(build_kwargs["audio_cover_strength"], 0.7)
         self.assertEqual(build_kwargs["cover_noise_strength"], 0.2)
+        self.assertEqual(build_kwargs["repaint_injection_ratio"], 0.35)
         self.assertTrue(build_kwargs["use_adg"])
         self.assertEqual(build_kwargs["timesteps"], custom_timesteps)
         self.assertFalse(host.calls["_attach_service_generate_outputs"]["return_intermediate"])

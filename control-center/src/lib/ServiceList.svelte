@@ -2,6 +2,15 @@
   import { invoke } from "@tauri-apps/api/core";
   import ServiceRow from "./ServiceRow.svelte";
 
+  interface BuildStatus {
+    building: boolean;
+    current_step: number;
+    total_steps: number;
+    step_label: string;
+    log: string;
+    error: string | null;
+  }
+
   interface ServiceInfo {
     id: string;
     display_name: string;
@@ -10,6 +19,7 @@
     pid: number | null;
     error: string | null;
     env_exists: boolean;
+    build_status: BuildStatus | null;
   }
 
   let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels }: {

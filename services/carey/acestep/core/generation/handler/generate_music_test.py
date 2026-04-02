@@ -162,11 +162,14 @@ class GenerateMusicMixinTests(unittest.TestCase):
             guidance_scale=6.5,
             use_random_seed=False,
             seed=77,
+            repaint_mode="balanced",
+            repaint_strength=0.25,
             task_type="text2music",
         )
         self.assertEqual(out, host._final_payload)
         self.assertEqual(host.calls["_prepare_generate_music_runtime"]["seed"], 77)
         self.assertEqual(host.calls["_run_generate_music_service_with_progress"]["guidance_scale"], 6.5)
+        self.assertEqual(host.calls["_run_generate_music_service_with_progress"]["repaint_injection_ratio"], 0.75)
         self.assertEqual(host.calls["_prepare_generate_music_decode_state"]["infer_steps_for_progress"], 8)
 
     def test_generate_music_returns_readiness_error_when_components_missing(self):
