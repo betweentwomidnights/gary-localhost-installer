@@ -125,7 +125,7 @@ the installers are currently unsigned. The intended verification flow is:
 example:
 
 ```powershell
-certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.0_x64-setup.exe SHA256
+certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.1_x64-setup.exe SHA256
 ```
 
 ## related repos
