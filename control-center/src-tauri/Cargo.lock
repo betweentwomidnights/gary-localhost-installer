@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "gary4local"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "log",
  "png",
