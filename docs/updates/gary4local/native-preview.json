@@ -1,11 +1,11 @@
 {
-    "version":  "0.1.2-preview.1",
-    "notes":  "Phase 2 updater preview",
-    "pub_date":  "2026-04-04T06:25:29.2389575Z",
+    "version":  "0.1.4",
+    "notes":  "Preview lane temporarily mirrors stable v0.1.4 so older preview-targeted builds can recover.\nStable releases keep the built-in update check and in-app install flow.\nSource builders can still disable the updater flow at build time if needed.",
+    "pub_date":  "2026-04-04T10:17:00.8264242Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMExuYS9ZS21VcFMvVVZpbDMyQ2VBNFoxQVhWTG1yZUxsVW1sc2lsU3JUUjdoN3c1enNMVC9lc0pFUUxvTVk5TERVallaZVRsTXdySWROK0dtRGlPQlFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1MjgzMTMwCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMi1wcmV2aWV3LjFfeDY0LXNldHVwLmV4ZQozWmdBUVVJV1NQdkUzYTVhR09UZjgwMFoxdFByWnpoeC9scStySy9DU1U2dkltcGFsNUZrR2Zlalhlb2gzWTNrbjBVS21XUElSSUhZOFMzQ1FZZ1dDQT09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.2-preview.1/gary4local_0.1.2-preview.1_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMERpS1FkblZGZWwrZHdzWDFYY3dnc0xaSlBSQ0RHV1dWWU9tSlZ5WC8wZ2hHRWhlTHlRL0Iyd0VVZHJQQkdleWY5TFJzTk9vSGtCaGN4bFZTdVA4RVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1Mjk2ODQ4CWZpbGU6Z2FyeTRsb2NhbF8wLjEuNF94NjQtc2V0dXAuZXhlCkZRRVFjWVFheXI5N3JrYUJKdEJyY2hQWEplUTdXbGNhc0ZJQmY1a2U2VWFGVTV3TFZHblBZUThrcVVubUh6bnR3a3BQdHZOdkx0SDNQUmZzcnNsY0RnPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe"
                                          }
                   }
 }

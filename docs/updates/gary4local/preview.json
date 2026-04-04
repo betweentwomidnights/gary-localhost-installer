@@ -1,12 +1,12 @@
 {
-  "channel": "preview",
-  "latest_version": "0.1.2-preview.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.2-preview.1/gary4local_0.1.2-preview.1_x64-setup.exe",
-  "sha256": null,
-  "published_at": "2026-04-04T06:25:29Z",
-  "notes": [
-    "Phase 2 updater preview for in-app install testing.",
-    "This preview should offer install update when the native updater feed is configured.",
-    "The fallback browser download still targets the exact prerelease installer asset."
-  ]
+    "channel":  "preview",
+    "latest_version":  "0.1.4",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe",
+    "sha256":  "b55521f9f3747ff7754a395ea5a67d51fd52864d24749587d5b461708eaff032",
+    "published_at":  "2026-04-04T10:17:00.8264242Z",
+    "notes":  [
+                  "Preview lane temporarily mirrors stable v0.1.4 so older preview-targeted builds can recover.",
+                  "Stable releases keep the built-in update check and in-app install flow.",
+                  "Source builders can still disable the updater flow at build time if needed."
+              ]
 }
