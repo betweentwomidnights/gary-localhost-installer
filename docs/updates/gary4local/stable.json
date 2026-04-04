@@ -1,12 +1,12 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.1.3",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.3/gary4local_0.1.3_x64-setup.exe",
-    "sha256":  "e743eda4e3fb551d559e8ce799c784489d8ddf106a50585abc10ddec1c5c19b8",
-    "published_at":  "2026-04-04T09:05:25.8979736Z",
+    "latest_version":  "0.1.4",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe",
+    "sha256":  "b55521f9f3747ff7754a395ea5a67d51fd52864d24749587d5b461708eaff032",
+    "published_at":  "2026-04-04T10:03:57.1611782Z",
     "notes":  [
-                  "gary4local can now check for and install updates from inside the app.",
-                  "Release notes and update actions now appear directly in the updater modal.",
+                  "Hardens updater configuration so preview override URLs are runtime-only.",
+                  "Stable releases keep the built-in update check and in-app install flow.",
                   "Source builders can still disable the updater flow at build time if needed."
               ]
 }

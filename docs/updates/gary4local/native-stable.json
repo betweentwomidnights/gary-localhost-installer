@@ -1,11 +1,11 @@
 {
-    "version":  "0.1.3",
-    "notes":  "gary4local can now check for and install updates from inside the app.\nRelease notes and update actions now appear directly in the updater modal.\nSource builders can still disable the updater flow at build time if needed.",
-    "pub_date":  "2026-04-04T09:05:25.8979736Z",
+    "version":  "0.1.4",
+    "notes":  "Hardens updater configuration so preview override URLs are runtime-only.\nStable releases keep the built-in update check and in-app install flow.\nSource builders can still disable the updater flow at build time if needed.",
+    "pub_date":  "2026-04-04T10:03:57.1611782Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElZU0Y1QS9kYmo2OEUxbnZVWUN1L1B0YkZoRlRRUlNNLy92S1FoclUxTjRra1ZlV1hqNHFQT09xTzBFL2NVcU1GdHltMEE2WDgrQlpjVTAwdTJqSGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1MjkxNzU4CWZpbGU6Z2FyeTRsb2NhbF8wLjEuM194NjQtc2V0dXAuZXhlCjl1QzYyc09xbi85cXVnby9TV1Zpc3RJMmlGeFU3SFZPRy8xUU9XUmNIYXpaR1oxMTlDRlFoQlN2QlFjdCtFMnhla3RDUEdBU3orbHJRWEVXanJiaEN3PT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.3/gary4local_0.1.3_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMERpS1FkblZGZWwrZHdzWDFYY3dnc0xaSlBSQ0RHV1dWWU9tSlZ5WC8wZ2hHRWhlTHlRL0Iyd0VVZHJQQkdleWY5TFJzTk9vSGtCaGN4bFZTdVA4RVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1Mjk2ODQ4CWZpbGU6Z2FyeTRsb2NhbF8wLjEuNF94NjQtc2V0dXAuZXhlCkZRRVFjWVFheXI5N3JrYUJKdEJyY2hQWEplUTdXbGNhc0ZJQmY1a2U2VWFGVTV3TFZHblBZUThrcVVubUh6bnR3a3BQdHZOdkx0SDNQUmZzcnNsY0RnPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe"
                                          }
                   }
 }
