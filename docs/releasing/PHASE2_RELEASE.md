@@ -49,7 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
   -InstallerPath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.3_x64-setup.exe" `
   -SignaturePath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.3_x64-setup.exe.sig" `
   -Channel "stable" `
-  -Notes @("Release note one.", "Release note two.")
+  -NotesText "Release note one.||Release note two."
 ```
 
 6. Review the generated files:
@@ -74,7 +74,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
   -InstallerPath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.2-preview.1_x64-setup.exe" `
   -SignaturePath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.2-preview.1_x64-setup.exe.sig" `
   -Channel "preview" `
-  -Notes @("Phase 2 updater preview")
+  -NotesText "Phase 2 updater preview"
 ```
 
 That writes:

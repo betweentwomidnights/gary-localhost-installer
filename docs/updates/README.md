@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
   -InstallerPath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.3_x64-setup.exe" `
   -SignaturePath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.3_x64-setup.exe.sig" `
   -Channel "stable" `
-  -Notes @("Real release note one.", "Real release note two.")
+  -NotesText "Real release note one.||Real release note two."
 ```
 
 That writes:

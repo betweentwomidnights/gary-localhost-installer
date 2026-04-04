@@ -1,12 +1,12 @@
 {
-  "channel": "stable",
-  "latest_version": "0.1.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.1/gary4local_0.1.1_x64-setup.exe",
-  "sha256": "4885d54acccd4116ab2058ad1228e5049373acde43ad3ea65cbb84a49c131b83",
-  "published_at": "2026-04-02T00:00:00Z",
-  "notes": [
-    "Carey cover mode now uses turbo locally.",
-    "Carey progress reporting is smoother.",
-    "Carey log viewer scrolling is fixed."
-  ]
+    "channel":  "stable",
+    "latest_version":  "0.1.3",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.3/gary4local_0.1.3_x64-setup.exe",
+    "sha256":  "e743eda4e3fb551d559e8ce799c784489d8ddf106a50585abc10ddec1c5c19b8",
+    "published_at":  "2026-04-04T09:05:25.8979736Z",
+    "notes":  [
+                  "gary4local can now check for and install updates from inside the app.",
+                  "Release notes and update actions now appear directly in the updater modal.",
+                  "Source builders can still disable the updater flow at build time if needed."
+              ]
 }
