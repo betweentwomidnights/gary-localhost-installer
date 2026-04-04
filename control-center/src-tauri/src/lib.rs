@@ -1,6 +1,7 @@
 mod manifest;
 mod model_manager;
 mod service_manager;
+mod update;
 
 use model_manager::ModelManager;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,12 @@ struct AppSettings {
     melodyflow_use_flash_attn: bool,
     #[serde(default)]
     close_action_on_x: CloseActionOnX,
+    #[serde(default = "default_auto_check_updates")]
+    auto_check_updates: bool,
+    #[serde(default)]
+    skipped_update_version: Option<String>,
+    #[serde(default)]
+    last_update_check_epoch_ms: Option<u64>,
 }
 
 impl Default for AppSettings {
@@ -34,8 +41,15 @@ impl Default for AppSettings {
         Self {
             melodyflow_use_flash_attn: false,
             close_action_on_x: CloseActionOnX::Ask,
+            auto_check_updates: default_auto_check_updates(),
+            skipped_update_version: None,
+            last_update_check_epoch_ms: None,
         }
     }
+}
+
+fn default_auto_check_updates() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,6 +73,10 @@ struct AppSettingsPatch {
     melodyflow_use_flash_attn: Option<bool>,
     #[serde(default)]
     close_action_on_x: Option<CloseActionOnX>,
+    #[serde(default)]
+    auto_check_updates: Option<bool>,
+    #[serde(default)]
+    skipped_update_version: Option<Option<String>>,
 }
 
 /// Get the path to the stored HF token file.
@@ -376,6 +394,16 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(close_action_on_x) = patch.close_action_on_x {
         current.close_action_on_x = close_action_on_x;
+    }
+
+    if let Some(auto_check_updates) = patch.auto_check_updates {
+        current.auto_check_updates = auto_check_updates;
+    }
+
+    if let Some(skipped_update_version) = patch.skipped_update_version {
+        current.skipped_update_version = skipped_update_version
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
     }
 
     current
@@ -768,6 +796,7 @@ pub fn run() {
             delete_hf_token,
             get_app_settings,
             save_app_settings,
+            check_for_app_update,
             resolve_close_request,
             open_url,
         ])
@@ -1434,6 +1463,23 @@ fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> 
     let merged = merge_app_settings(settings);
     save_app_settings_file(&merged)?;
     Ok(merged)
+}
+
+#[tauri::command]
+async fn check_for_app_update(include_skipped: bool) -> Result<update::AppUpdateCheck, String> {
+    let current_settings = read_app_settings();
+    let result = update::check_for_update(
+        env!("CARGO_PKG_VERSION"),
+        current_settings.skipped_update_version.as_deref(),
+        include_skipped,
+    )
+    .await?;
+
+    let mut updated_settings = current_settings;
+    updated_settings.last_update_check_epoch_ms = Some(result.checked_at_epoch_ms);
+    save_app_settings_file(&updated_settings)?;
+
+    Ok(result)
 }
 
 #[tauri::command]

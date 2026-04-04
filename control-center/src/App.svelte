@@ -8,6 +8,7 @@
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
+  import AppUpdateModal from "./lib/AppUpdateModal.svelte";
 
   interface BuildStatus {
     building: boolean;
@@ -33,6 +34,24 @@
   interface AppSettings {
     melodyflowUseFlashAttn: boolean;
     closeActionOnX: "ask" | "tray" | "quit";
+    autoCheckUpdates: boolean;
+    skippedUpdateVersion: string | null;
+    lastUpdateCheckEpochMs: number | null;
+  }
+
+  interface AppUpdateCheck {
+    currentVersion: string;
+    manifestUrl: string;
+    checkedAtEpochMs: number;
+    channel: string;
+    latestVersion: string;
+    updateAvailable: boolean;
+    shouldPrompt: boolean;
+    releaseNotesUrl: string | null;
+    downloadUrl: string | null;
+    sha256: string | null;
+    publishedAt: string | null;
+    notes: string[];
   }
 
   const showMelodyflowFlashBanner =
@@ -45,10 +64,18 @@
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
     closeActionOnX: "ask",
+    autoCheckUpdates: true,
+    skippedUpdateVersion: null,
+    lastUpdateCheckEpochMs: null,
   });
   let closeRequestModalOpen = $state(false);
   let rememberCloseChoice = $state(false);
   let resolvingCloseRequest = $state(false);
+  let updateCheckBusy = $state(false);
+  let updateModalBusy = $state(false);
+  let updateModalOpen = $state(false);
+  let updateResult: AppUpdateCheck | null = $state(null);
+  let updateCheckError: string | null = $state(null);
 
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
@@ -103,6 +130,111 @@
     } catch (e) {
       console.error("Failed to load app settings:", e);
     }
+    return appSettings;
+  }
+
+  function formatError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  async function runUpdateCheck(options: {
+    includeSkipped: boolean;
+    openModalWhenCurrent: boolean;
+    openModalOnError: boolean;
+  }) {
+    updateCheckBusy = true;
+
+    try {
+      const result = await invoke<AppUpdateCheck>("check_for_app_update", {
+        includeSkipped: options.includeSkipped,
+      });
+
+      if (options.openModalWhenCurrent || result.shouldPrompt) {
+        updateResult = result;
+        updateCheckError = null;
+        updateModalOpen = true;
+      } else if (result.updateAvailable) {
+        updateResult = result;
+        updateCheckError = null;
+      }
+    } catch (e) {
+      const message = formatError(e);
+      if (options.openModalOnError) {
+        updateResult = null;
+        updateCheckError = message;
+        updateModalOpen = true;
+      } else {
+        console.warn("Update check failed:", message);
+      }
+    } finally {
+      updateCheckBusy = false;
+    }
+  }
+
+  async function checkForUpdatesManually() {
+    await runUpdateCheck({
+      includeSkipped: true,
+      openModalWhenCurrent: true,
+      openModalOnError: true,
+    });
+  }
+
+  function closeUpdateModal() {
+    updateModalOpen = false;
+    updateCheckError = null;
+  }
+
+  async function setAutoCheckUpdates(enabled: boolean) {
+    updateModalBusy = true;
+    try {
+      appSettings = await invoke<AppSettings>("save_app_settings", {
+        settings: { autoCheckUpdates: enabled },
+      });
+    } catch (e) {
+      console.error("Failed to save update settings:", e);
+    } finally {
+      updateModalBusy = false;
+    }
+  }
+
+  async function skipCurrentUpdate() {
+    if (!updateResult?.updateAvailable) return;
+
+    updateModalBusy = true;
+    try {
+      appSettings = await invoke<AppSettings>("save_app_settings", {
+        settings: { skippedUpdateVersion: updateResult.latestVersion },
+      });
+      updateModalOpen = false;
+      updateCheckError = null;
+      updateResult = null;
+    } catch (e) {
+      console.error("Failed to skip update version:", e);
+    } finally {
+      updateModalBusy = false;
+    }
+  }
+
+  async function resumeUpdateReminders() {
+    updateModalBusy = true;
+    try {
+      appSettings = await invoke<AppSettings>("save_app_settings", {
+        settings: { skippedUpdateVersion: null },
+      });
+    } catch (e) {
+      console.error("Failed to resume update reminders:", e);
+    } finally {
+      updateModalBusy = false;
+    }
+  }
+
+  async function openUpdateUrl(url: string | null) {
+    if (!url) return;
+    try {
+      await invoke("open_url", { url });
+    } catch (e) {
+      console.error("Failed to open update URL:", e);
+    }
   }
 
   function onTokenChange(configured: boolean) {
@@ -144,9 +276,21 @@
   }
 
   onMount(() => {
-    loadServices();
-    checkToken();
-    loadAppSettings();
+    let disposed = false;
+
+    void (async () => {
+      loadServices();
+      checkToken();
+      const settings = await loadAppSettings();
+
+      if (!disposed && settings.autoCheckUpdates) {
+        await runUpdateCheck({
+          includeSkipped: false,
+          openModalWhenCurrent: false,
+          openModalOnError: false,
+        });
+      }
+    })();
 
     const unlisten = listen<ServiceInfo[]>("services-updated", (event) => {
       services = event.payload;
@@ -166,6 +310,7 @@
     }, 2000);
 
     return () => {
+      disposed = true;
       clearInterval(pollTimer);
       unlisten.then((fn) => fn());
       unlistenSelect.then((fn) => fn());
@@ -184,6 +329,19 @@
       <h1>gary4local</h1>
     </div>
     <div class="header-right">
+      <button
+        class:accent={!!updateResult?.updateAvailable}
+        onclick={checkForUpdatesManually}
+        disabled={updateCheckBusy}
+      >
+        {#if updateCheckBusy}
+          checking...
+        {:else if updateResult?.updateAvailable}
+          update {updateResult.latestVersion}
+        {:else}
+          check updates
+        {/if}
+      </button>
       <span class="status-summary">
         {#if totalCount > 0}
           {runningCount}/{totalCount} running
@@ -230,6 +388,20 @@
     onChoose={resolveCloseRequest}
     onCancel={cancelCloseRequest}
   />
+  <AppUpdateModal
+    open={updateModalOpen}
+    result={updateResult}
+    error={updateCheckError}
+    autoCheckEnabled={appSettings.autoCheckUpdates}
+    isSkipped={appSettings.skippedUpdateVersion === updateResult?.latestVersion}
+    busy={updateModalBusy}
+    onClose={closeUpdateModal}
+    onDownload={() => openUpdateUrl(updateResult?.downloadUrl ?? null)}
+    onViewReleaseNotes={() => openUpdateUrl(updateResult?.releaseNotesUrl ?? null)}
+    onSkipVersion={skipCurrentUpdate}
+    onResumeReminders={resumeUpdateReminders}
+    onAutoCheckChange={setAutoCheckUpdates}
+  />
 </main>
 
 <style>
@@ -255,6 +427,9 @@
   }
   .header-right {
     -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
   .status-summary {
     font-size: 11px;

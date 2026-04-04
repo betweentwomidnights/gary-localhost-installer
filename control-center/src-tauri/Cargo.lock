@@ -1051,6 +1051,7 @@ dependencies = [
  "log",
  "png",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

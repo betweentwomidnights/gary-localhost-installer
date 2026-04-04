@@ -64,6 +64,10 @@ The local `terry` service now supports an optional Flash Attention 2 path for Me
 - Production syncs the bundled service source into `%APPDATA%\Gary4JUCE\services`.
 - Mutable runtime data such as logs, virtual environments, caches, and models live under `%APPDATA%\Gary4JUCE`, not inside the installed app folder.
 
+## TODO
+
+- [ ] add auto-update functionality (see [AUTO_UPDATE_PLAN.md](AUTO_UPDATE_PLAN.md))
+
 ## development
 
 prerequisites:
