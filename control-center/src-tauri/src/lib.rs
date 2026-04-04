@@ -1467,6 +1467,10 @@ fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> 
 
 #[tauri::command]
 async fn check_for_app_update(include_skipped: bool) -> Result<update::AppUpdateCheck, String> {
+    if !update::app_updater_enabled() {
+        return Err("App updater is disabled in this build".to_string());
+    }
+
     let current_settings = read_app_settings();
     let result = update::check_for_update(
         env!("CARGO_PKG_VERSION"),

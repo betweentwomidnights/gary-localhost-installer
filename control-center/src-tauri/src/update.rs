@@ -5,6 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub const DEFAULT_UPDATE_MANIFEST_URL: &str =
     "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json";
 
+pub fn app_updater_enabled() -> bool {
+    option_env!("VITE_ENABLE_APP_UPDATER").unwrap_or("1") != "0"
+}
+
 fn default_channel() -> String {
     "stable".to_string()
 }
@@ -14,8 +18,6 @@ pub struct UpdateManifest {
     #[serde(default = "default_channel")]
     pub channel: String,
     pub latest_version: String,
-    #[serde(default)]
-    pub release_notes_url: Option<String>,
     #[serde(default)]
     pub download_url: Option<String>,
     #[serde(default)]
@@ -36,7 +38,6 @@ pub struct AppUpdateCheck {
     pub latest_version: String,
     pub update_available: bool,
     pub should_prompt: bool,
-    pub release_notes_url: Option<String>,
     pub download_url: Option<String>,
     pub sha256: Option<String>,
     pub published_at: Option<String>,
@@ -130,7 +131,6 @@ pub async fn check_for_update(
         latest_version: manifest.latest_version,
         update_available,
         should_prompt,
-        release_notes_url: manifest.release_notes_url,
         download_url: manifest.download_url,
         sha256: manifest.sha256,
         published_at: manifest.published_at,

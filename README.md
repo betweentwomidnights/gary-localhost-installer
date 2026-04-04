@@ -64,9 +64,36 @@ The local `terry` service now supports an optional Flash Attention 2 path for Me
 - Production syncs the bundled service source into `%APPDATA%\Gary4JUCE\services`.
 - Mutable runtime data such as logs, virtual environments, caches, and models live under `%APPDATA%\Gary4JUCE`, not inside the installed app folder.
 
-## TODO
+## auto-update
 
-- [ ] add auto-update functionality (see [AUTO_UPDATE_PLAN.md](AUTO_UPDATE_PLAN.md))
+`gary4local` now includes a lightweight updater UI:
+
+- checks a static HTTPS manifest on startup
+- shows in-app release notes from the manifest
+- offers `download update`, `not now`, and `skip this version`
+
+The default manifest points at the GitHub Pages JSON in `docs/updates/gary4local/stable.json`.
+
+For local preview testing, you can override the manifest URL:
+
+```powershell
+$env:GARY4LOCAL_UPDATE_MANIFEST_URL="https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/preview.json"
+npm run tauri dev
+```
+
+If you are compiling from source and do not want your build to check the public updater manifest, disable the updater UI at build time:
+
+```powershell
+$env:VITE_ENABLE_APP_UPDATER='0'
+npm run tauri dev
+Remove-Item Env:VITE_ENABLE_APP_UPDATER
+```
+
+notes:
+
+- `VITE_ENABLE_APP_UPDATER` is a build-time flag, not a runtime toggle.
+- When this flag is set to `0`, the `check updates` UI is removed and backend update checks are disabled for that build.
+- This is useful for forks, local-only builds, and source builds that should not advertise public GitHub releases.
 
 ## development
 
@@ -106,11 +133,22 @@ npm run tauri build
 Remove-Item Env:VITE_ENABLE_MELODYFLOW_FA2_TOGGLE
 ```
 
+if you want a source build without the updater UI, set the updater flag before building:
+
+```powershell
+cd control-center
+npm ci
+$env:VITE_ENABLE_APP_UPDATER='0'
+npm run tauri build
+Remove-Item Env:VITE_ENABLE_APP_UPDATER
+```
+
 notes:
 
 - `VITE_ENABLE_MELODYFLOW_FA2_TOGGLE` is a build-time flag, not a runtime toggle.
 - When this flag is set to `0`, the Terry Flash Attention setting is removed from the UI and the packaged app forces MelodyFlow to stay on the standard attention path.
 - Leaving the flag unset keeps the Terry Flash Attention panel available, but the optimization itself still defaults to off unless the user enables it.
+- `VITE_ENABLE_APP_UPDATER` is also a build-time flag. When set to `0`, packaged builds omit the updater UI and skip manifest checks entirely.
 
 artifacts land in:
 

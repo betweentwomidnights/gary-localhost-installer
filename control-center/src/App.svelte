@@ -47,7 +47,6 @@
     latestVersion: string;
     updateAvailable: boolean;
     shouldPrompt: boolean;
-    releaseNotesUrl: string | null;
     downloadUrl: string | null;
     sha256: string | null;
     publishedAt: string | null;
@@ -56,6 +55,7 @@
 
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
+  const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
 
   let services: ServiceInfo[] = $state([]);
   let selectedServiceId: string | null = $state(null);
@@ -142,6 +142,8 @@
     openModalWhenCurrent: boolean;
     openModalOnError: boolean;
   }) {
+    if (!showAppUpdater) return;
+
     updateCheckBusy = true;
 
     try {
@@ -283,7 +285,7 @@
       checkToken();
       const settings = await loadAppSettings();
 
-      if (!disposed && settings.autoCheckUpdates) {
+      if (!disposed && showAppUpdater && settings.autoCheckUpdates) {
         await runUpdateCheck({
           includeSkipped: false,
           openModalWhenCurrent: false,
@@ -329,19 +331,21 @@
       <h1>gary4local</h1>
     </div>
     <div class="header-right">
-      <button
-        class:accent={!!updateResult?.updateAvailable}
-        onclick={checkForUpdatesManually}
-        disabled={updateCheckBusy}
-      >
-        {#if updateCheckBusy}
-          checking...
-        {:else if updateResult?.updateAvailable}
-          update {updateResult.latestVersion}
-        {:else}
-          check updates
-        {/if}
-      </button>
+      {#if showAppUpdater}
+        <button
+          class:accent={!!updateResult?.updateAvailable}
+          onclick={checkForUpdatesManually}
+          disabled={updateCheckBusy}
+        >
+          {#if updateCheckBusy}
+            checking...
+          {:else if updateResult?.updateAvailable}
+            update {updateResult.latestVersion}
+          {:else}
+            check updates
+          {/if}
+        </button>
+      {/if}
       <span class="status-summary">
         {#if totalCount > 0}
           {runningCount}/{totalCount} running
@@ -389,7 +393,7 @@
     onCancel={cancelCloseRequest}
   />
   <AppUpdateModal
-    open={updateModalOpen}
+    open={showAppUpdater && updateModalOpen}
     result={updateResult}
     error={updateCheckError}
     autoCheckEnabled={appSettings.autoCheckUpdates}
@@ -397,7 +401,6 @@
     busy={updateModalBusy}
     onClose={closeUpdateModal}
     onDownload={() => openUpdateUrl(updateResult?.downloadUrl ?? null)}
-    onViewReleaseNotes={() => openUpdateUrl(updateResult?.releaseNotesUrl ?? null)}
     onSkipVersion={skipCurrentUpdate}
     onResumeReminders={resumeUpdateReminders}
     onAutoCheckChange={setAutoCheckUpdates}

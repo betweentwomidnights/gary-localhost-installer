@@ -39,7 +39,6 @@ So `gary4local` is actually the easier of the two update stories.
   - latest version
   - short release notes
   - `download update` button
-  - `view release notes` button
   - `skip this version` button
 
 ## Phase 2
@@ -55,7 +54,6 @@ So `gary4local` is actually the easier of the two update stories.
 {
   "channel": "stable",
   "latest_version": "0.1.1",
-  "release_notes_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.1.1",
   "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.1/gary4local_0.1.1_x64-setup.exe",
   "sha256": "4885d54acccd4116ab2058ad1228e5049373acde43ad3ea65cbb84a49c131b83",
   "published_at": "2026-04-02T00:00:00Z",

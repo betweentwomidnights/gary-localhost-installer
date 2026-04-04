@@ -7,7 +7,6 @@
     latestVersion: string;
     updateAvailable: boolean;
     shouldPrompt: boolean;
-    releaseNotesUrl: string | null;
     downloadUrl: string | null;
     sha256: string | null;
     publishedAt: string | null;
@@ -23,7 +22,6 @@
     busy = false,
     onClose,
     onDownload,
-    onViewReleaseNotes,
     onSkipVersion,
     onResumeReminders,
     onAutoCheckChange,
@@ -36,7 +34,6 @@
     busy?: boolean;
     onClose: () => void;
     onDownload: () => void;
-    onViewReleaseNotes: () => void;
     onSkipVersion: () => void;
     onResumeReminders: () => void;
     onAutoCheckChange: (value: boolean) => void;
@@ -128,16 +125,10 @@
           {:else}
             <button onclick={onSkipVersion} disabled={busy}>skip this version</button>
           {/if}
-          {#if result.releaseNotesUrl}
-            <button onclick={onViewReleaseNotes} disabled={busy}>release notes</button>
-          {/if}
           <button class="accent" onclick={onDownload} disabled={busy || !result.downloadUrl}>
             download update
           </button>
         {:else}
-          {#if result?.releaseNotesUrl}
-            <button onclick={onViewReleaseNotes} disabled={busy}>release notes</button>
-          {/if}
           <button class="accent" onclick={onClose} disabled={busy}>close</button>
         {/if}
       </div>
