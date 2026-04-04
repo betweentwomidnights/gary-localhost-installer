@@ -1,0 +1,13 @@
+{
+  "channel": "preview",
+  "latest_version": "0.1.2-preview.1",
+  "release_notes_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases",
+  "sha256": null,
+  "published_at": "2026-04-03T00:00:00Z",
+  "notes": [
+    "Preview channel for testing the gary4local updater UI.",
+    "Use this manifest to validate startup prompts and manual update checks before publishing a stable release.",
+    "Replace the version, links, and checksum with real preview artifacts when you want to test the full flow."
+  ]
+}
