@@ -1,6 +1,6 @@
 {
   "name": "gary4local",
-  "version": "0.1.1",
+  "version": "0.1.2-preview.1",
   "private": true,
   "type": "module",
   "scripts": {

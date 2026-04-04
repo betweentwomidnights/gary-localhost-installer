@@ -5,6 +5,10 @@ use tauri_plugin_updater::UpdaterExt;
 
 pub const DEFAULT_UPDATE_MANIFEST_URL: &str =
     "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json";
+pub const DEFAULT_NATIVE_UPDATER_ENDPOINT: &str =
+    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json";
+pub const DEFAULT_NATIVE_UPDATER_PUBKEY: &str =
+    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwQzIzMzA0NTlCQTQ1RkYKUldUL1JicFpCRFBDMEdLaDlQdkJYMmpLZ09FMHNwMjVVZlYrYVNCL0Z5Rmg5Y2JqOXp4am5xWlMK";
 
 pub fn app_updater_enabled() -> bool {
     option_env!("VITE_ENABLE_APP_UPDATER").unwrap_or("1") != "0"
@@ -54,30 +58,53 @@ pub struct AppUpdateCheck {
     pub notes: Vec<String>,
 }
 
+fn configured_value(
+    runtime_env: &str,
+    build_time_value: Option<&'static str>,
+    default_value: &str,
+) -> Option<String> {
+    std::env::var(runtime_env)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            build_time_value
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            let trimmed = default_value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+}
+
 fn native_updater_config() -> Option<NativeUpdaterConfig> {
-    let endpoint = std::env::var("GARY4LOCAL_NATIVE_UPDATER_ENDPOINT")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())?;
-    let pubkey = std::env::var("GARY4LOCAL_NATIVE_UPDATER_PUBKEY")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())?;
+    let endpoint = configured_value(
+        "GARY4LOCAL_NATIVE_UPDATER_ENDPOINT",
+        option_env!("GARY4LOCAL_NATIVE_UPDATER_ENDPOINT"),
+        DEFAULT_NATIVE_UPDATER_ENDPOINT,
+    )?;
+    let pubkey = configured_value(
+        "GARY4LOCAL_NATIVE_UPDATER_PUBKEY",
+        option_env!("GARY4LOCAL_NATIVE_UPDATER_PUBKEY"),
+        DEFAULT_NATIVE_UPDATER_PUBKEY,
+    )?;
 
     Some(NativeUpdaterConfig { endpoint, pubkey })
 }
 
 fn manifest_url() -> String {
-    std::env::var("GARY4LOCAL_UPDATE_MANIFEST_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            option_env!("GARY4LOCAL_UPDATE_MANIFEST_URL")
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| DEFAULT_UPDATE_MANIFEST_URL.to_string())
+    configured_value(
+        "GARY4LOCAL_UPDATE_MANIFEST_URL",
+        option_env!("GARY4LOCAL_UPDATE_MANIFEST_URL"),
+        DEFAULT_UPDATE_MANIFEST_URL,
+    )
+    .unwrap_or_else(|| DEFAULT_UPDATE_MANIFEST_URL.to_string())
 }
 
 fn parse_version(value: &str) -> Result<Version, String> {

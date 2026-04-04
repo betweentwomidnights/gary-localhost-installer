@@ -1,12 +1,12 @@
 {
   "channel": "preview",
   "latest_version": "0.1.2-preview.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.2-preview.1/gary4local_0.1.2-preview.1_x64-setup.exe",
   "sha256": null,
-  "published_at": "2026-04-03T00:00:00Z",
+  "published_at": "2026-04-04T06:25:29Z",
   "notes": [
-    "Preview channel for testing the gary4local updater UI.",
-    "Use this manifest to validate startup prompts and manual update checks before publishing a stable release.",
-    "Replace the version, links, and checksum with real preview artifacts when you want to test the full flow."
+    "Phase 2 updater preview for in-app install testing.",
+    "This preview should offer install update when the native updater feed is configured.",
+    "The fallback browser download still targets the exact prerelease installer asset."
   ]
 }

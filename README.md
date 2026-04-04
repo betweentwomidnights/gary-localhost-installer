@@ -70,15 +70,22 @@ The local `terry` service now supports an optional Flash Attention 2 path for Me
 
 - checks a static HTTPS manifest on startup
 - shows in-app release notes from the manifest
-- offers `download update`, `not now`, and `skip this version`
+- offers `not now` and `skip this version`
+- falls back to `download update` when only the Phase 1 manifest is available
+- offers `install update` when a signed native updater feed is also available
 
-The default manifest points at the GitHub Pages JSON in `docs/updates/gary4local/stable.json`.
+Production builds use baked-in stable updater defaults:
 
-For local preview testing, you can override the manifest URL:
+- `docs/updates/gary4local/stable.json`
+- `docs/updates/gary4local/native-stable.json`
+
+For local preview testing, you can override those defaults:
 
 ```powershell
 $env:GARY4LOCAL_UPDATE_MANIFEST_URL="https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/preview.json"
-npm run tauri dev
+$env:GARY4LOCAL_NATIVE_UPDATER_ENDPOINT="https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-preview.json"
+$env:GARY4LOCAL_NATIVE_UPDATER_PUBKEY = Get-Content C:\path\to\gary4local-updater.key.pub -Raw
+& "$env:LOCALAPPDATA\gary4local\gary4local.exe"
 ```
 
 If you are compiling from source and do not want your build to check the public updater manifest, disable the updater UI at build time:
@@ -94,6 +101,7 @@ notes:
 - `VITE_ENABLE_APP_UPDATER` is a build-time flag, not a runtime toggle.
 - When this flag is set to `0`, the `check updates` UI is removed and backend update checks are disabled for that build.
 - This is useful for forks, local-only builds, and source builds that should not advertise public GitHub releases.
+- Maintainer release instructions live in [docs/releasing/PHASE2_RELEASE.md](docs/releasing/PHASE2_RELEASE.md).
 
 ## development
 
