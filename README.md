@@ -79,7 +79,7 @@ Production builds use baked-in stable updater defaults:
 - `docs/updates/gary4local/stable.json`
 - `docs/updates/gary4local/native-stable.json`
 
-For local preview testing, you can override those defaults:
+For local preview testing, you can override those defaults at runtime:
 
 ```powershell
 $env:GARY4LOCAL_UPDATE_MANIFEST_URL="https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/preview.json"
@@ -99,6 +99,7 @@ Remove-Item Env:VITE_ENABLE_APP_UPDATER
 notes:
 
 - `VITE_ENABLE_APP_UPDATER` is a build-time flag, not a runtime toggle.
+- `GARY4LOCAL_UPDATE_MANIFEST_URL`, `GARY4LOCAL_NATIVE_UPDATER_ENDPOINT`, and `GARY4LOCAL_NATIVE_UPDATER_PUBKEY` are runtime-only overrides and are not baked into production builds.
 - When this flag is set to `0`, the `check updates` UI is removed and backend update checks are disabled for that build.
 - This is useful for forks, local-only builds, and source builds that should not advertise public GitHub releases.
 - Maintainer release instructions live in [docs/releasing/PHASE2_RELEASE.md](docs/releasing/PHASE2_RELEASE.md).

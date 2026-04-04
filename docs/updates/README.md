@@ -29,6 +29,8 @@ $env:GARY4LOCAL_NATIVE_UPDATER_PUBKEY = Get-Content C:\path\to\gary4local-update
 & "$env:LOCALAPPDATA\gary4local\gary4local.exe"
 ```
 
+These preview override vars are runtime-only and are not baked into production builds.
+
 ## Signed Build
 
 Signed updater artifacts are generated with the updater overlay config:

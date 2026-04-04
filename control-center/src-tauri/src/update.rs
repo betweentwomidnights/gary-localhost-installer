@@ -58,21 +58,11 @@ pub struct AppUpdateCheck {
     pub notes: Vec<String>,
 }
 
-fn configured_value(
-    runtime_env: &str,
-    build_time_value: Option<&'static str>,
-    default_value: &str,
-) -> Option<String> {
+fn configured_runtime_value(runtime_env: &str, default_value: &str) -> Option<String> {
     std::env::var(runtime_env)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| {
-            build_time_value
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        })
         .or_else(|| {
             let trimmed = default_value.trim();
             if trimmed.is_empty() {
@@ -84,14 +74,12 @@ fn configured_value(
 }
 
 fn native_updater_config() -> Option<NativeUpdaterConfig> {
-    let endpoint = configured_value(
+    let endpoint = configured_runtime_value(
         "GARY4LOCAL_NATIVE_UPDATER_ENDPOINT",
-        option_env!("GARY4LOCAL_NATIVE_UPDATER_ENDPOINT"),
         DEFAULT_NATIVE_UPDATER_ENDPOINT,
     )?;
-    let pubkey = configured_value(
+    let pubkey = configured_runtime_value(
         "GARY4LOCAL_NATIVE_UPDATER_PUBKEY",
-        option_env!("GARY4LOCAL_NATIVE_UPDATER_PUBKEY"),
         DEFAULT_NATIVE_UPDATER_PUBKEY,
     )?;
 
@@ -99,9 +87,8 @@ fn native_updater_config() -> Option<NativeUpdaterConfig> {
 }
 
 fn manifest_url() -> String {
-    configured_value(
+    configured_runtime_value(
         "GARY4LOCAL_UPDATE_MANIFEST_URL",
-        option_env!("GARY4LOCAL_UPDATE_MANIFEST_URL"),
         DEFAULT_UPDATE_MANIFEST_URL,
     )
     .unwrap_or_else(|| DEFAULT_UPDATE_MANIFEST_URL.to_string())
