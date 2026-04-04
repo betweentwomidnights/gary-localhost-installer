@@ -7,6 +7,7 @@
     latestVersion: string;
     updateAvailable: boolean;
     shouldPrompt: boolean;
+    inAppInstallAvailable: boolean;
     downloadUrl: string | null;
     sha256: string | null;
     publishedAt: string | null;
@@ -17,10 +18,12 @@
     open,
     result,
     error,
+    actionError,
     autoCheckEnabled,
     isSkipped,
     busy = false,
     onClose,
+    onInstall,
     onDownload,
     onSkipVersion,
     onResumeReminders,
@@ -29,10 +32,12 @@
     open: boolean;
     result: AppUpdateCheck | null;
     error: string | null;
+    actionError: string | null;
     autoCheckEnabled: boolean;
     isSkipped: boolean;
     busy?: boolean;
     onClose: () => void;
+    onInstall: () => void;
     onDownload: () => void;
     onSkipVersion: () => void;
     onResumeReminders: () => void;
@@ -102,9 +107,19 @@
         {#if shortHash(result.sha256)}
           <div class="meta">sha256 {shortHash(result.sha256)}</div>
         {/if}
+
+        {#if result.inAppInstallAvailable}
+          <div class="note">
+            in-app install is configured for this build. on Windows, gary4local will close to hand off to the installer.
+          </div>
+        {/if}
       {:else if result}
         <div class="body">gary4local v{result.currentVersion} is already the newest listed stable release.</div>
         <div class="note">manifest source: {result.manifestUrl}</div>
+      {/if}
+
+      {#if actionError}
+        <div class="error-note">{actionError}</div>
       {/if}
 
       <label class="auto-check">
@@ -125,9 +140,13 @@
           {:else}
             <button onclick={onSkipVersion} disabled={busy}>skip this version</button>
           {/if}
-          <button class="accent" onclick={onDownload} disabled={busy || !result.downloadUrl}>
-            download update
-          </button>
+          {#if result.inAppInstallAvailable}
+            <button class="accent" onclick={onInstall} disabled={busy}>install update</button>
+          {:else}
+            <button class="accent" onclick={onDownload} disabled={busy || !result.downloadUrl}>
+              download update
+            </button>
+          {/if}
         {:else}
           <button class="accent" onclick={onClose} disabled={busy}>close</button>
         {/if}
@@ -204,6 +223,13 @@
     color: var(--text-secondary);
     line-height: 1.45;
     word-break: break-word;
+  }
+
+  .error-note {
+    margin-top: 12px;
+    color: #ff8f8f;
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .section-label {

@@ -47,6 +47,7 @@
     latestVersion: string;
     updateAvailable: boolean;
     shouldPrompt: boolean;
+    inAppInstallAvailable: boolean;
     downloadUrl: string | null;
     sha256: string | null;
     publishedAt: string | null;
@@ -76,6 +77,7 @@
   let updateModalOpen = $state(false);
   let updateResult: AppUpdateCheck | null = $state(null);
   let updateCheckError: string | null = $state(null);
+  let updateActionError: string | null = $state(null);
 
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
@@ -154,10 +156,12 @@
       if (options.openModalWhenCurrent || result.shouldPrompt) {
         updateResult = result;
         updateCheckError = null;
+        updateActionError = null;
         updateModalOpen = true;
       } else if (result.updateAvailable) {
         updateResult = result;
         updateCheckError = null;
+        updateActionError = null;
       }
     } catch (e) {
       const message = formatError(e);
@@ -184,6 +188,7 @@
   function closeUpdateModal() {
     updateModalOpen = false;
     updateCheckError = null;
+    updateActionError = null;
   }
 
   async function setAutoCheckUpdates(enabled: boolean) {
@@ -236,6 +241,21 @@
       await invoke("open_url", { url });
     } catch (e) {
       console.error("Failed to open update URL:", e);
+    }
+  }
+
+  async function installUpdate() {
+    if (!updateResult?.inAppInstallAvailable) return;
+
+    updateModalBusy = true;
+    updateActionError = null;
+    try {
+      await invoke("install_app_update");
+    } catch (e) {
+      updateActionError = formatError(e);
+      console.error("Failed to install update:", e);
+    } finally {
+      updateModalBusy = false;
     }
   }
 
@@ -399,7 +419,9 @@
     autoCheckEnabled={appSettings.autoCheckUpdates}
     isSkipped={appSettings.skippedUpdateVersion === updateResult?.latestVersion}
     busy={updateModalBusy}
+    actionError={updateActionError}
     onClose={closeUpdateModal}
+    onInstall={installUpdate}
     onDownload={() => openUpdateUrl(updateResult?.downloadUrl ?? null)}
     onSkipVersion={skipCurrentUpdate}
     onResumeReminders={resumeUpdateReminders}

@@ -544,6 +544,8 @@ fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[servic
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -552,6 +554,8 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            app.manage(update::PendingNativeUpdate::default());
 
             // --- Resolve runtime root ---
             // In dev, run directly from the repo.
@@ -797,6 +801,7 @@ pub fn run() {
             get_app_settings,
             save_app_settings,
             check_for_app_update,
+            install_app_update,
             resolve_close_request,
             open_url,
         ])
@@ -1466,24 +1471,50 @@ fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> 
 }
 
 #[tauri::command]
-async fn check_for_app_update(include_skipped: bool) -> Result<update::AppUpdateCheck, String> {
+async fn check_for_app_update(
+    include_skipped: bool,
+    app_handle: tauri::AppHandle,
+    pending_update: tauri::State<'_, update::PendingNativeUpdate>,
+) -> Result<update::AppUpdateCheck, String> {
     if !update::app_updater_enabled() {
         return Err("App updater is disabled in this build".to_string());
     }
 
     let current_settings = read_app_settings();
-    let result = update::check_for_update(
+    let mut result = update::check_for_update(
         env!("CARGO_PKG_VERSION"),
         current_settings.skipped_update_version.as_deref(),
         include_skipped,
     )
     .await?;
 
+    if result.update_available {
+        match update::check_native_update(&app_handle, pending_update.inner(), &result.latest_version).await {
+            Ok(available) => {
+                result.in_app_install_available = available;
+            }
+            Err(error) => {
+                log::warn!("Native updater check unavailable: {}", error);
+                update::clear_pending_native_update(pending_update.inner());
+            }
+        }
+    } else {
+        update::clear_pending_native_update(pending_update.inner());
+    }
+
     let mut updated_settings = current_settings;
     updated_settings.last_update_check_epoch_ms = Some(result.checked_at_epoch_ms);
     save_app_settings_file(&updated_settings)?;
 
     Ok(result)
+}
+
+#[tauri::command]
+async fn install_app_update(
+    app_handle: tauri::AppHandle,
+    pending_update: tauri::State<'_, update::PendingNativeUpdate>,
+) -> Result<(), String> {
+    update::install_native_update(&app_handle, pending_update.inner()).await
 }
 
 #[tauri::command]
