@@ -90,9 +90,49 @@ MODEL_REPO_MAPPING = {
     "acestep-v15-base": "ACE-Step/acestep-v15-base",
     "acestep-v15-sft": "ACE-Step/acestep-v15-sft",
     "acestep-v15-turbo-shift3": "ACE-Step/acestep-v15-turbo-shift3",
+    "acestep-v15-xl-base": "ACE-Step/acestep-v15-xl-base",
+    "acestep-v15-xl-sft": "ACE-Step/acestep-v15-xl-sft",
+    "acestep-v15-xl-turbo": "ACE-Step/acestep-v15-xl-turbo",
 }
 
 DEFAULT_REPO_ID = "ACE-Step/Ace-Step1.5"
+
+
+def _install_windows_asyncio_exception_filter() -> None:
+    """Suppress the benign Proactor cleanup reset traceback on Windows."""
+    if os.name != "nt":
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    if getattr(loop, "_carey_winreset_filter_installed", False):
+        return
+
+    prior_handler = loop.get_exception_handler()
+
+    def _handler(current_loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        exc = context.get("exception")
+        handle_text = str(context.get("handle") or "")
+        is_benign_reset = (
+            isinstance(exc, ConnectionResetError)
+            and getattr(exc, "winerror", None) == 10054
+            and "_ProactorBasePipeTransport._call_connection_lost" in handle_text
+        )
+
+        if is_benign_reset:
+            return
+
+        if prior_handler is not None:
+            prior_handler(current_loop, context)
+            return
+
+        current_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+    setattr(loop, "_carey_winreset_filter_installed", True)
 
 
 def _can_access_google(timeout: float = 3.0) -> bool:
@@ -167,6 +207,25 @@ def _download_from_modelscope(repo_id: str, local_dir: str, model_name: str) -> 
     return os.path.join(local_dir, model_name)
 
 
+def _sync_local_model_code(model_name: str, checkpoint_dir: str) -> None:
+    """Keep downloaded checkpoint code aligned with our local acestep/models tree."""
+    try:
+        from acestep.model_downloader import _CHECKPOINT_TO_VARIANT, _sync_model_code_files
+    except Exception as exc:
+        print(f"[Model Sync] Warning: could not import model sync helpers: {exc}")
+        return
+
+    if model_name not in _CHECKPOINT_TO_VARIANT:
+        return
+
+    try:
+        synced = _sync_model_code_files(model_name, checkpoint_dir)
+        if synced:
+            print(f"[Model Sync] Synced local code for {model_name}: {', '.join(synced)}")
+    except Exception as exc:
+        print(f"[Model Sync] Warning: failed to sync local code for {model_name}: {exc}")
+
+
 def _ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
     """
     Ensure model is downloaded. Auto-detect source based on network.
@@ -183,6 +242,7 @@ def _ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
     # Check if model already exists
     if os.path.exists(model_path) and os.listdir(model_path):
         print(f"[Model Download] Model {model_name} already exists at {model_path}")
+        _sync_local_model_code(model_name, checkpoint_dir)
         return model_path
 
     # Get repository ID
@@ -207,19 +267,22 @@ def _ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
     if use_huggingface:
         print("[Model Download] Using HuggingFace Hub...")
         try:
-            return _download_from_huggingface(repo_id, checkpoint_dir, model_name)
+            model_path = _download_from_huggingface(repo_id, checkpoint_dir, model_name)
         except Exception as e:
             print(f"[Model Download] HuggingFace download failed: {e}")
             print("[Model Download] Falling back to ModelScope...")
-            return _download_from_modelscope(repo_id, checkpoint_dir, model_name)
+            model_path = _download_from_modelscope(repo_id, checkpoint_dir, model_name)
     else:
         print("[Model Download] Using ModelScope...")
         try:
-            return _download_from_modelscope(repo_id, checkpoint_dir, model_name)
+            model_path = _download_from_modelscope(repo_id, checkpoint_dir, model_name)
         except Exception as e:
             print(f"[Model Download] ModelScope download failed: {e}")
             print("[Model Download] Trying HuggingFace as fallback...")
-            return _download_from_huggingface(repo_id, checkpoint_dir, model_name)
+            model_path = _download_from_huggingface(repo_id, checkpoint_dir, model_name)
+
+    _sync_local_model_code(model_name, checkpoint_dir)
+    return model_path
 
 
 def _get_project_root() -> str:
@@ -1226,6 +1289,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        _install_windows_asyncio_exception_filter()
         # Clear proxy env that may affect downstream libs
         for proxy_var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]:
             os.environ.pop(proxy_var, None)

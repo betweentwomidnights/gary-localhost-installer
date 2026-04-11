@@ -16,14 +16,14 @@ class IoAudioMixin:
     """
 
     def _normalize_audio_to_stereo_48k(self, audio: torch.Tensor, sr: int) -> torch.Tensor:
-        """Normalize audio tensor to stereo at 48kHz.
+        """Normalize audio tensor to stereo at 48kHz with peak normalization.
 
         Args:
             audio: Tensor in [channels, samples] or [samples] format.
             sr: Source sample rate.
 
         Returns:
-            Tensor in [2, samples] at 48kHz, clamped to [-1.0, 1.0].
+            Tensor in [2, samples] at 48kHz, peak-normalized to -1 dB.
         """
         if audio.shape[0] == 1:
             audio = torch.cat([audio, audio], dim=0)
@@ -34,7 +34,14 @@ class IoAudioMixin:
             import torchaudio
             audio = torchaudio.transforms.Resample(sr, 48000)(audio)
 
-        return torch.clamp(audio, -1.0, 1.0)
+        audio = torch.clamp(audio, -1.0, 1.0)
+
+        peak = audio.abs().max()
+        if peak > 1e-6:
+            target_peak = 10 ** (-1.0 / 20.0)
+            audio = audio * (target_peak / peak)
+
+        return audio
 
     def process_target_audio(self, audio_file: Optional[str]) -> Optional[torch.Tensor]:
         """Load and normalize target audio file.

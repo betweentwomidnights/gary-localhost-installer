@@ -118,6 +118,12 @@
   let finetuneModels = $derived(
     serviceModels.filter((m) => m.size_category === "finetune")
   );
+  let careySharedModels = $derived(
+    serviceModels.filter((m) => m.size_category === "shared")
+  );
+  let careyDitModels = $derived(
+    serviceModels.filter((m) => m.size_category === "dit")
+  );
 
   let filteredModels = $derived(
     filterSize === "all"
@@ -272,14 +278,50 @@
       </div>
 
     {:else if isCarey}
-      <!-- Carey: base model components -->
+      <!-- Carey: shared components -->
       <div class="size-group">
-        <div class="size-label">base model components</div>
+        <div class="size-label">shared components</div>
         <div class="carey-hint">
-          download all three components before starting carey.
-          Models are stored in services/carey/checkpoints/.
+          download these once for every carey setup.
+          models are stored in services/carey/checkpoints/.
         </div>
-        {#each serviceModels as model}
+        {#each careySharedModels as model}
+          {@const prog = getProgress(model.id)}
+          <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
+            <div class="model-info">
+              <span class="model-name">{model.display_name}</span>
+              <span class="model-path">{model.id.replace("carey::", "")}</span>
+            </div>
+            {#if model.status === "downloading" && prog}
+              <div class="download-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {Math.round(prog.progress * 100)}%"></div>
+                </div>
+                <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
+              </div>
+            {:else}
+              <button
+                class="dl-btn"
+                class:downloaded={model.status === "downloaded"}
+                class:failed={model.status === "failed"}
+                disabled={model.status === "downloading" || model.status === "downloaded"}
+                onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
+              >
+                {statusLabels[model.status] || "Download"}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      <div class="size-group">
+        <div class="size-label">dit models</div>
+        <div class="carey-hint">
+          base, sft, and turbo cover the regular carey flow.
+          only turbo is fixed to 8 steps and cfg 1.0. sft behaves like base.
+          xl-base, xl-sft, and xl-turbo are optional. we recommend 16 GB of GPU VRAM before enabling xl mode.
+        </div>
+        {#each careyDitModels as model}
           {@const prog = getProgress(model.id)}
           <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
             <div class="model-info">

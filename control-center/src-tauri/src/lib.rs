@@ -9,10 +9,10 @@ use service_manager::ServiceManager;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
-use tauri::menu::{MenuBuilder, MenuItemBuilder, IconMenuItemBuilder, PredefinedMenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconId};
 use tauri::image::Image;
+use tauri::menu::{IconMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconId};
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 type ManagerState = Arc<Mutex<ServiceManager>>;
@@ -27,6 +27,8 @@ struct AppSettings {
     #[serde(default)]
     melodyflow_use_flash_attn: bool,
     #[serde(default)]
+    carey_use_xl_models: bool,
+    #[serde(default)]
     close_action_on_x: CloseActionOnX,
     #[serde(default = "default_auto_check_updates")]
     auto_check_updates: bool,
@@ -40,6 +42,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             melodyflow_use_flash_attn: false,
+            carey_use_xl_models: false,
             close_action_on_x: CloseActionOnX::Ask,
             auto_check_updates: default_auto_check_updates(),
             skipped_update_version: None,
@@ -72,6 +75,8 @@ struct AppSettingsPatch {
     #[serde(default)]
     melodyflow_use_flash_attn: Option<bool>,
     #[serde(default)]
+    carey_use_xl_models: Option<bool>,
+    #[serde(default)]
     close_action_on_x: Option<CloseActionOnX>,
     #[serde(default)]
     auto_check_updates: Option<bool>,
@@ -85,7 +90,9 @@ fn hf_token_path() -> std::path::PathBuf {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Roaming", home)
     });
-    std::path::PathBuf::from(appdata).join("Gary4JUCE").join("hf_token.txt")
+    std::path::PathBuf::from(appdata)
+        .join("Gary4JUCE")
+        .join("hf_token.txt")
 }
 
 fn app_settings_path() -> std::path::PathBuf {
@@ -131,8 +138,8 @@ fn hide_console_window(cmd: &mut tokio::process::Command) {
 
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut entries = Vec::new();
-    let reader = std::fs::read_dir(dir)
-        .map_err(|e| format!("Cannot read {}: {}", dir.display(), e))?;
+    let reader =
+        std::fs::read_dir(dir).map_err(|e| format!("Cannot read {}: {}", dir.display(), e))?;
 
     for entry in reader {
         let entry = entry.map_err(|e| format!("Cannot read entry in {}: {}", dir.display(), e))?;
@@ -191,7 +198,11 @@ fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
         icon_bytes.hash(&mut hasher);
     }
 
-    Ok(format!("{}-{:016x}", env!("CARGO_PKG_VERSION"), hasher.finish()))
+    Ok(format!(
+        "{}-{:016x}",
+        env!("CARGO_PKG_VERSION"),
+        hasher.finish()
+    ))
 }
 
 fn remove_path(path: &Path) -> Result<(), String> {
@@ -211,8 +222,7 @@ fn remove_path(path: &Path) -> Result<(), String> {
 }
 
 fn clear_dir_except(dir: &Path, preserve_names: &[&str]) -> Result<(), String> {
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("Cannot create {}: {}", dir.display(), e))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", dir.display(), e))?;
 
     for entry in read_dir_sorted(dir)? {
         let name = entry
@@ -232,8 +242,7 @@ fn clear_dir_except(dir: &Path, preserve_names: &[&str]) -> Result<(), String> {
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dst)
-        .map_err(|e| format!("Cannot create {}: {}", dst.display(), e))?;
+    std::fs::create_dir_all(dst).map_err(|e| format!("Cannot create {}: {}", dst.display(), e))?;
 
     for entry in read_dir_sorted(src)? {
         let name = entry.file_name().unwrap_or_default().to_os_string();
@@ -261,7 +270,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> Result<(), String> {
-    const PRESERVED_RUNTIME_NAMES: &[&str] = &["env", "checkpoints", ".cache", "gradio_outputs", "riffs"];
+    const PRESERVED_RUNTIME_NAMES: &[&str] =
+        &["env", "checkpoints", ".cache", "gradio_outputs", "riffs"];
 
     let bundle_services = bundle_root.join("services");
     let runtime_services = runtime_services_dir(runtime_root);
@@ -270,7 +280,10 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     let current_stamp = std::fs::read_to_string(&stamp_path).ok();
 
     if current_stamp.as_deref() == Some(desired_stamp.as_str())
-        && runtime_services.join("manifests").join("services.json").exists()
+        && runtime_services
+            .join("manifests")
+            .join("services.json")
+            .exists()
     {
         log::info!("Runtime services already match bundled resources");
         return Ok(());
@@ -282,15 +295,28 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
         bundle_services.display()
     );
 
-    std::fs::create_dir_all(runtime_root)
-        .map_err(|e| format!("Cannot create runtime root {}: {}", runtime_root.display(), e))?;
-    std::fs::create_dir_all(&runtime_services)
-        .map_err(|e| format!("Cannot create runtime services dir {}: {}", runtime_services.display(), e))?;
+    std::fs::create_dir_all(runtime_root).map_err(|e| {
+        format!(
+            "Cannot create runtime root {}: {}",
+            runtime_root.display(),
+            e
+        )
+    })?;
+    std::fs::create_dir_all(&runtime_services).map_err(|e| {
+        format!(
+            "Cannot create runtime services dir {}: {}",
+            runtime_services.display(),
+            e
+        )
+    })?;
 
     let bundle_entries = read_dir_sorted(&bundle_services)?;
     let bundle_names: std::collections::HashSet<String> = bundle_entries
         .iter()
-        .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
         .collect();
 
     for existing in read_dir_sorted(&runtime_services)? {
@@ -318,12 +344,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             copy_dir_recursive(&src, &dst)?;
         } else if src.is_file() {
             std::fs::copy(&src, &dst).map_err(|e| {
-                format!(
-                    "Cannot copy {} to {}: {}",
-                    src.display(),
-                    dst.display(),
-                    e
-                )
+                format!("Cannot copy {} to {}: {}", src.display(), dst.display(), e)
             })?;
         }
     }
@@ -374,14 +395,12 @@ fn read_app_settings() -> AppSettings {
 fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
     let path = app_settings_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create config dir: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create config dir: {}", e))?;
     }
 
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Cannot serialize app settings: {}", e))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Cannot save app settings: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save app settings: {}", e))?;
     Ok(())
 }
 
@@ -390,6 +409,10 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(melodyflow_use_flash_attn) = patch.melodyflow_use_flash_attn {
         current.melodyflow_use_flash_attn = melodyflow_use_flash_attn;
+    }
+
+    if let Some(carey_use_xl_models) = patch.carey_use_xl_models {
+        current.carey_use_xl_models = carey_use_xl_models;
     }
 
     if let Some(close_action_on_x) = patch.close_action_on_x {
@@ -420,6 +443,10 @@ pub(crate) fn melodyflow_use_flash_attn_enabled() -> bool {
         return false;
     }
     read_app_settings().melodyflow_use_flash_attn
+}
+
+pub(crate) fn carey_use_xl_models_enabled() -> bool {
+    read_app_settings().carey_use_xl_models
 }
 
 /// Load a PNG file and decode it to RGBA for Tauri Image
@@ -481,10 +508,10 @@ fn make_dot_icon(r: u8, g: u8, b: u8) -> Image<'static> {
 /// Get the dot icon for a service status.
 fn status_dot_icon(status: &str) -> Image<'static> {
     match status {
-        "running" => make_dot_icon(0x4C, 0xAF, 0x50),   // green
-        "starting" => make_dot_icon(0xFF, 0xC1, 0x07),   // amber/yellow
-        "failed" => make_dot_icon(0xF4, 0x43, 0x36),     // red
-        _ => make_dot_icon(0x9E, 0x9E, 0x9E),            // grey
+        "running" => make_dot_icon(0x4C, 0xAF, 0x50),  // green
+        "starting" => make_dot_icon(0xFF, 0xC1, 0x07), // amber/yellow
+        "failed" => make_dot_icon(0xF4, 0x43, 0x36),   // red
+        _ => make_dot_icon(0x9E, 0x9E, 0x9E),          // grey
     }
 }
 
@@ -507,17 +534,20 @@ async fn rebuild_tray_menu(app_handle: &tauri::AppHandle, manager: &ManagerState
 }
 
 /// Inner sync function that builds the tray menu from pre-fetched service info.
-fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[service_manager::ServiceInfo]) {
+fn rebuild_tray_menu_with_info(
+    app_handle: &tauri::AppHandle,
+    services: &[service_manager::ServiceInfo],
+) {
     let show_item = MenuItemBuilder::with_id("show", "show control center")
-        .build(app_handle).unwrap();
+        .build(app_handle)
+        .unwrap();
     let quit_item = MenuItemBuilder::with_id("quit", "quit (stop all services)")
-        .build(app_handle).unwrap();
+        .build(app_handle)
+        .unwrap();
     let sep1 = PredefinedMenuItem::separator(app_handle).unwrap();
     let sep2 = PredefinedMenuItem::separator(app_handle).unwrap();
 
-    let mut menu_builder = MenuBuilder::new(app_handle)
-        .item(&show_item)
-        .item(&sep1);
+    let mut menu_builder = MenuBuilder::new(app_handle).item(&show_item).item(&sep1);
 
     for svc in services {
         let is_running = svc.status == "running" || svc.status == "starting";
@@ -527,14 +557,12 @@ fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[servic
         let icon = status_dot_icon(&svc.status);
         let item = IconMenuItemBuilder::with_id(item_id, label)
             .icon(icon)
-            .build(app_handle).unwrap();
+            .build(app_handle)
+            .unwrap();
         menu_builder = menu_builder.item(&item);
     }
 
-    let menu = menu_builder
-        .item(&sep2)
-        .item(&quit_item)
-        .build().unwrap();
+    let menu = menu_builder.item(&sep2).item(&quit_item).build().unwrap();
 
     if let Some(tray) = app_handle.tray_by_id(&TrayIconId::new("main-tray")) {
         let _ = tray.set_menu(Some(menu));
@@ -543,10 +571,14 @@ fn rebuild_tray_menu_with_info(app_handle: &tauri::AppHandle, services: &[servic
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+    let builder = tauri::Builder::default().plugin(tauri_plugin_process::init());
+    let builder = if update::app_updater_enabled() {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else {
+        builder
+    };
+
+    builder.setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -571,10 +603,7 @@ pub fn run() {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| std::env::current_dir().unwrap())
             } else {
-                let resource_dir = app
-                    .path()
-                    .resource_dir()
-                    .map_err(std::io::Error::other)?;
+                let resource_dir = app.path().resource_dir().map_err(std::io::Error::other)?;
                 resolve_bundle_root_from_resource_dir(&resource_dir)
                     .map_err(std::io::Error::other)?
             };
@@ -588,7 +617,10 @@ pub fn run() {
                 runtime_root
             };
 
-            let manifest_path = runtime_root.join("services").join("manifests").join("services.json");
+            let manifest_path = runtime_root
+                .join("services")
+                .join("manifests")
+                .join("services.json");
             log::info!("Loading manifest from: {}", manifest_path.display());
 
             let services = match manifest::load_manifest(&manifest_path) {
@@ -599,7 +631,10 @@ pub fn run() {
                 }
             };
 
-            let manager = Arc::new(Mutex::new(ServiceManager::new(services, runtime_root.clone())));
+            let manager = Arc::new(Mutex::new(ServiceManager::new(
+                services,
+                runtime_root.clone(),
+            )));
             app.manage(manager.clone());
 
             let model_mgr = Arc::new(Mutex::new(ModelManager::new(runtime_root.clone())));
@@ -621,7 +656,8 @@ pub fn run() {
 
             // Build tray menu with per-service items
             let show_item = MenuItemBuilder::with_id("show", "show control center").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "quit (stop all services)").build(app)?;
+            let quit_item =
+                MenuItemBuilder::with_id("quit", "quit (stop all services)").build(app)?;
 
             let mut menu_builder = MenuBuilder::new(app)
                 .item(&show_item)
@@ -652,45 +688,47 @@ pub fn run() {
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .tooltip("gary4local")
                 .menu(&tray_menu)
-                .on_menu_event(move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
-                    let event_id = event.id().as_ref().to_string();
-                    match event_id.as_str() {
-                        "show" => {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                        "quit" => {
-                            let mgr = tray_manager.clone();
-                            let handle = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                quit_application(&handle, &mgr).await;
-                            });
-                        }
-                        id if id.starts_with("svc_") => {
-                            let service_id = id.strip_prefix("svc_").unwrap().to_string();
-                            let mgr = tray_manager.clone();
-                            let handle = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let mut m = mgr.lock().await;
-                                let is_running = m.is_running(&service_id);
-                                if is_running {
-                                    let _ = m.stop(&service_id);
-                                } else {
-                                    let _ = m.start(&service_id);
+                .on_menu_event(
+                    move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
+                        let event_id = event.id().as_ref().to_string();
+                        match event_id.as_str() {
+                            "show" => {
+                                if let Some(window) = app_handle.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
                                 }
-                                // Emit updated status
-                                let info = m.get_service_info();
-                                drop(m);
-                                let _ = handle.emit("services-updated", &info);
-                                // Rebuild tray menu to reflect new state
-                                rebuild_tray_menu(&handle, &mgr).await;
-                            });
+                            }
+                            "quit" => {
+                                let mgr = tray_manager.clone();
+                                let handle = app_handle.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    quit_application(&handle, &mgr).await;
+                                });
+                            }
+                            id if id.starts_with("svc_") => {
+                                let service_id = id.strip_prefix("svc_").unwrap().to_string();
+                                let mgr = tray_manager.clone();
+                                let handle = app_handle.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let mut m = mgr.lock().await;
+                                    let is_running = m.is_running(&service_id);
+                                    if is_running {
+                                        let _ = m.stop(&service_id);
+                                    } else {
+                                        let _ = m.start(&service_id);
+                                    }
+                                    // Emit updated status
+                                    let info = m.get_service_info();
+                                    drop(m);
+                                    let _ = handle.emit("services-updated", &info);
+                                    // Rebuild tray menu to reflect new state
+                                    rebuild_tray_menu(&handle, &mgr).await;
+                                });
+                            }
+                            _ => {}
                         }
-                        _ => {}
-                    }
-                });
+                    },
+                );
 
             if let Some(icon) = tray_icon {
                 tray_builder = tray_builder.icon(icon);
@@ -732,9 +770,7 @@ pub fn run() {
             let poll_manager = manager.clone();
             let poll_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
-                let client = reqwest::Client::builder()
-                    .build()
-                    .unwrap();
+                let client = reqwest::Client::builder().build().unwrap();
                 let initial_info = {
                     let mgr = poll_manager.lock().await;
                     mgr.get_service_info()
@@ -979,7 +1015,10 @@ async fn ensure_uv(
                     let version = String::from_utf8_lossy(&output.stdout);
                     {
                         let mut mgr = manager.lock().await;
-                        mgr.append_build_log(service_id, &format!("uv found at {}: {}", path, version.trim()));
+                        mgr.append_build_log(
+                            service_id,
+                            &format!("uv found at {}: {}", path, version.trim()),
+                        );
                     }
                     return Ok(path.to_string());
                 }
@@ -991,7 +1030,10 @@ async fn ensure_uv(
     {
         let mut mgr = manager.lock().await;
         mgr.append_build_log(service_id, "uv not found. Installing via PowerShell...");
-        mgr.append_build_log(service_id, "$ powershell -c \"irm https://astral.sh/uv/install.ps1 | iex\"");
+        mgr.append_build_log(
+            service_id,
+            "$ powershell -c \"irm https://astral.sh/uv/install.ps1 | iex\"",
+        );
     }
     emit_status(manager, handle).await;
 
@@ -1013,12 +1055,18 @@ async fn ensure_uv(
         let mut mgr = manager.lock().await;
         let stdout = String::from_utf8_lossy(&install.stdout);
         let stderr = String::from_utf8_lossy(&install.stderr);
-        if !stdout.is_empty() { mgr.append_build_log(service_id, &stdout); }
-        if !stderr.is_empty() { mgr.append_build_log(service_id, &stderr); }
+        if !stdout.is_empty() {
+            mgr.append_build_log(service_id, &stdout);
+        }
+        if !stderr.is_empty() {
+            mgr.append_build_log(service_id, &stderr);
+        }
     }
 
     if !install.status.success() {
-        return Err("Failed to install uv. Please install manually: https://docs.astral.sh/uv/".to_string());
+        return Err(
+            "Failed to install uv. Please install manually: https://docs.astral.sh/uv/".to_string(),
+        );
     }
 
     // After install, uv should be at ~/.local/bin/uv.exe or ~/.cargo/bin/uv.exe
@@ -1063,7 +1111,11 @@ async fn run_build(
     if !env_dir.exists() {
         {
             let mut mgr = manager.lock().await;
-            mgr.set_build_step(&service_id, 1, "Installing Python 3.11 and creating venv...");
+            mgr.set_build_step(
+                &service_id,
+                1,
+                "Installing Python 3.11 and creating venv...",
+            );
             mgr.append_build_log(&service_id, &format!("\n$ {} python install 3.11", uv));
         }
         emit_status(&manager, &handle).await;
@@ -1075,7 +1127,8 @@ async fn run_build(
             work_dir,
             &service_id,
             &manager,
-        ).await;
+        )
+        .await;
 
         if let Err(e) = py_install {
             let mut mgr = manager.lock().await;
@@ -1086,7 +1139,10 @@ async fn run_build(
         // Create the venv
         {
             let mut mgr = manager.lock().await;
-            mgr.append_build_log(&service_id, &format!("\n$ {} venv --python 3.11 --seed env", uv));
+            mgr.append_build_log(
+                &service_id,
+                &format!("\n$ {} venv --python 3.11 --seed env", uv),
+            );
         }
         emit_status(&manager, &handle).await;
 
@@ -1104,8 +1160,12 @@ async fn run_build(
             let mut mgr = manager.lock().await;
             let stdout = String::from_utf8_lossy(&venv_output.stdout);
             let stderr = String::from_utf8_lossy(&venv_output.stderr);
-            if !stdout.is_empty() { mgr.append_build_log(&service_id, &stdout); }
-            if !stderr.is_empty() { mgr.append_build_log(&service_id, &stderr); }
+            if !stdout.is_empty() {
+                mgr.append_build_log(&service_id, &stdout);
+            }
+            if !stderr.is_empty() {
+                mgr.append_build_log(&service_id, &stderr);
+            }
         }
 
         if !venv_output.status.success() {
@@ -1129,10 +1189,14 @@ async fn run_build(
             {
                 let mut mgr = manager.lock().await;
                 mgr.set_build_step(&service_id, step_num, "Installing xformers SDPA shim...");
-                mgr.append_build_log(&service_id, &format!(
-                    "\n--- Step {}/{}: install_xformers_shim ---",
-                    i + 1, build_info.build_steps.len()
-                ));
+                mgr.append_build_log(
+                    &service_id,
+                    &format!(
+                        "\n--- Step {}/{}: install_xformers_shim ---",
+                        i + 1,
+                        build_info.build_steps.len()
+                    ),
+                );
             }
             emit_status(&manager, &handle).await;
 
@@ -1156,7 +1220,9 @@ async fn run_build(
             (uv.clone(), arg_vec)
         } else {
             let parts: Vec<&str> = step.splitn(2, ' ').collect();
-            let args = parts.get(1).unwrap_or(&"")
+            let args = parts
+                .get(1)
+                .unwrap_or(&"")
                 .split_whitespace()
                 .map(|s| s.to_string())
                 .collect();
@@ -1174,14 +1240,25 @@ async fn run_build(
 
         {
             let mut mgr = manager.lock().await;
-            mgr.set_build_step(&service_id, step_num, &format!(
-                "Step {}/{}: {}",
-                i + 1, build_info.build_steps.len(), short_label
-            ));
-            mgr.append_build_log(&service_id, &format!(
-                "\n--- Step {}/{} ---\n$ {}",
-                i + 1, build_info.build_steps.len(), uv_command_str
-            ));
+            mgr.set_build_step(
+                &service_id,
+                step_num,
+                &format!(
+                    "Step {}/{}: {}",
+                    i + 1,
+                    build_info.build_steps.len(),
+                    short_label
+                ),
+            );
+            mgr.append_build_log(
+                &service_id,
+                &format!(
+                    "\n--- Step {}/{} ---\n$ {}",
+                    i + 1,
+                    build_info.build_steps.len(),
+                    uv_command_str
+                ),
+            );
         }
         emit_status(&manager, &handle).await;
 
@@ -1233,12 +1310,17 @@ async fn run_build(
         let _ = stdout_task.await;
         let _ = stderr_task.await;
 
-        let exit_status = child.wait().await
+        let exit_status = child
+            .wait()
+            .await
             .map_err(|e| format!("Failed to wait for process: {}", e))?;
 
         if !exit_status.success() {
-            let msg = format!("Build step failed (exit code {}): {}",
-                exit_status.code().unwrap_or(-1), uv_command_str);
+            let msg = format!(
+                "Build step failed (exit code {}): {}",
+                exit_status.code().unwrap_or(-1),
+                uv_command_str
+            );
             {
                 let mut mgr = manager.lock().await;
                 mgr.append_build_log(&service_id, &format!("\nERROR: {}", msg));
@@ -1256,7 +1338,10 @@ async fn run_build(
 
     {
         let mut mgr = manager.lock().await;
-        mgr.append_build_log(&service_id, &format!("\n=== Build complete for {} ===", service_id));
+        mgr.append_build_log(
+            &service_id,
+            &format!("\n=== Build complete for {} ===", service_id),
+        );
     }
 
     Ok(())
@@ -1282,14 +1367,21 @@ async fn run_command_streamed(
         let mut mgr = manager.lock().await;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stdout.is_empty() { mgr.append_build_log(service_id, &stdout); }
-        if !stderr.is_empty() { mgr.append_build_log(service_id, &stderr); }
+        if !stdout.is_empty() {
+            mgr.append_build_log(service_id, &stdout);
+        }
+        if !stderr.is_empty() {
+            mgr.append_build_log(service_id, &stderr);
+        }
     }
 
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!("Command failed with exit code {}", output.status.code().unwrap_or(-1)))
+        Err(format!(
+            "Command failed with exit code {}",
+            output.status.code().unwrap_or(-1)
+        ))
     }
 }
 
@@ -1343,8 +1435,12 @@ async fn download_model(
         "foundation" => "foundation",
         _ => "gary",
     };
-    let python_exe = repo_root.join("services").join(env_dir).join("env")
-        .join("Scripts").join("python.exe");
+    let python_exe = repo_root
+        .join("services")
+        .join(env_dir)
+        .join("env")
+        .join("Scripts")
+        .join("python.exe");
 
     if !python_exe.exists() {
         let label = match env_dir {
@@ -1353,7 +1449,10 @@ async fn download_model(
             "foundation" => "Foundation-1",
             _ => "Gary",
         };
-        return Err(format!("{}'s Python environment is not built yet. Build it first.", label));
+        return Err(format!(
+            "{}'s Python environment is not built yet. Build it first.",
+            label
+        ));
     }
 
     {
@@ -1370,8 +1469,13 @@ async fn download_model(
         let checkpoint_dir = root.join("services").join("carey").join("checkpoints");
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_carey_model(
-                model_id, python_exe, checkpoint_dir, mgr_clone, handle,
-            ).await;
+                model_id,
+                python_exe,
+                checkpoint_dir,
+                mgr_clone,
+                handle,
+            )
+            .await;
         });
     } else if model_id.starts_with("foundation::") {
         // Foundation models go to %APPDATA%/Gary4JUCE/models/foundation-1/
@@ -1380,17 +1484,18 @@ async fn download_model(
             format!("{}\\AppData\\Roaming", home)
         });
         let model_dir = std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE").join("models").join("foundation-1");
+            .join("Gary4JUCE")
+            .join("models")
+            .join("foundation-1");
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_foundation_model(
                 model_id, python_exe, model_dir, mgr_clone, handle,
-            ).await;
+            )
+            .await;
         });
     } else {
         tauri::async_runtime::spawn(async move {
-            let _ = model_manager::download_model(
-                model_id, python_exe, mgr_clone, handle,
-            ).await;
+            let _ = model_manager::download_model(model_id, python_exe, mgr_clone, handle).await;
         });
     }
 
@@ -1440,11 +1545,9 @@ fn get_hf_token() -> Result<Option<String>, String> {
 fn save_hf_token(token: String) -> Result<(), String> {
     let path = hf_token_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create config dir: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create config dir: {}", e))?;
     }
-    std::fs::write(&path, token.trim())
-        .map_err(|e| format!("Cannot save token: {}", e))?;
+    std::fs::write(&path, token.trim()).map_err(|e| format!("Cannot save token: {}", e))?;
     Ok(())
 }
 
@@ -1452,8 +1555,7 @@ fn save_hf_token(token: String) -> Result<(), String> {
 fn delete_hf_token() -> Result<(), String> {
     let path = hf_token_path();
     if path.exists() {
-        std::fs::remove_file(&path)
-            .map_err(|e| format!("Cannot delete token: {}", e))?;
+        std::fs::remove_file(&path).map_err(|e| format!("Cannot delete token: {}", e))?;
     }
     Ok(())
 }
@@ -1489,7 +1591,13 @@ async fn check_for_app_update(
     .await?;
 
     if result.update_available {
-        match update::check_native_update(&app_handle, pending_update.inner(), &result.latest_version).await {
+        match update::check_native_update(
+            &app_handle,
+            pending_update.inner(),
+            &result.latest_version,
+        )
+        .await
+        {
             Ok(available) => {
                 result.in_app_install_available = available;
             }

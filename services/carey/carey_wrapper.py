@@ -1,5 +1,6 @@
 """
-ACE-Step wrapper service — lego (stem) + complete (continuation) + cover (remix) modes.
+ACE-Step wrapper service — lego (stem), extract (stem regeneration),
+complete (continuation), and cover (remix) modes.
 
 Localhost version: launches api_server.py as a subprocess, then serves the
 JUCE-compatible wrapper API on port 8003.
@@ -9,6 +10,9 @@ Async submit/poll architecture matching the existing JUCE frontend pattern.
 Endpoints:
   POST /lego                     Submit a lego stem job -> returns task_id
   GET  /lego/status/{task_id}    Poll lego progress/completion
+
+  POST /extract                  Submit a stem extraction job -> returns task_id
+  GET  /extract/status/{task_id} Poll extraction progress/completion
 
   POST /complete                 Submit a continuation job -> returns task_id
   GET  /complete/status/{task_id} Poll continuation progress/completion
@@ -66,10 +70,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 DEFAULT_STARTUP_CONFIG = (os.getenv("ACESTEP_CONFIG_PATH") or "acestep-v15-base").strip()
 ACESTEP_BASE_CONFIG = (os.getenv("ACESTEP_BASE_CONFIG_PATH") or DEFAULT_STARTUP_CONFIG).strip()
+ACESTEP_SFT_CONFIG = (os.getenv("ACESTEP_SFT_CONFIG_PATH") or "acestep-v15-sft").strip()
 ACESTEP_TURBO_CONFIG = (os.getenv("ACESTEP_TURBO_CONFIG_PATH") or "acestep-v15-turbo").strip()
 MANAGE_MODEL_LIFECYCLE = _env_bool("ACESTEP_MANAGE_MODEL_LIFECYCLE", True)
 BACKEND_STARTS_LOADED = not _env_bool("ACESTEP_NO_INIT", False)
 EFFECTIVE_MAX_CONCURRENT = 1 if MANAGE_MODEL_LIFECYCLE else MAX_CONCURRENT
+MODEL_LOAD_TIMEOUT = int(os.getenv("ACESTEP_MODEL_LOAD_TIMEOUT", "1800"))
+CHECKPOINTS_ROOT = Path(__file__).parent / "checkpoints"
 
 # Generation constants
 INFERENCE_STEPS = 50
@@ -190,7 +197,7 @@ class JobStatus(str, Enum):
 @dataclass
 class Job:
     task_id: str
-    task_type: str               # "lego", "complete", or "cover"
+    task_type: str               # "lego", "extract", "complete", or "cover"
     bpm: int
     created_at: float = field(default_factory=time.time)
     status: JobStatus = JobStatus.QUEUED
@@ -201,7 +208,7 @@ class Job:
     audio_format: str = "wav"
     duration: Optional[float] = None       # actual source duration
     target_duration: Optional[float] = None # user-requested output duration (complete)
-    track_name: Optional[str] = None       # lego only
+    track_name: Optional[str] = None       # lego/extract only
     error: Optional[str] = None
 
 
@@ -218,6 +225,43 @@ def _cleanup_old_jobs():
     ]
     for tid in expired:
         del _jobs[tid]
+
+
+def _install_windows_asyncio_exception_filter() -> None:
+    """Suppress the noisy Proactor cleanup reset seen on Windows socket closes."""
+    if os.name != "nt":
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    if getattr(loop, "_carey_winreset_filter_installed", False):
+        return
+
+    prior_handler = loop.get_exception_handler()
+
+    def _handler(current_loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        exc = context.get("exception")
+        handle_text = str(context.get("handle") or "")
+        is_benign_reset = (
+            isinstance(exc, ConnectionResetError)
+            and getattr(exc, "winerror", None) == 10054
+            and "_ProactorBasePipeTransport._call_connection_lost" in handle_text
+        )
+
+        if is_benign_reset:
+            return
+
+        if prior_handler is not None:
+            prior_handler(current_loop, context)
+            return
+
+        current_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+    setattr(loop, "_carey_winreset_filter_installed", True)
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +295,26 @@ class CompleteRequest(BaseModel):
     guidance_scale: float = Field(7.0, description="CFG scale. 7-9 recommended")
     inference_steps: int = Field(50, description="Diffusion steps. 50 default")
     use_src_as_ref: bool = Field(False, description="Pass source as ref_audio for timbre anchoring")
+    time_signature: str = Field("4", description="Time signature numerator")
+    batch_size: int = Field(1, description="Number of candidates")
+    audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
+    model: str = Field(
+        "turbo",
+        description=(
+            "Model variant for complete mode. Accepted values include "
+            "'turbo', 'base', 'sft', 'xl-turbo', 'xl-base', and 'xl-sft'. "
+            "Only turbo is fixed to 8 steps / cfg 1.0."
+        ),
+    )
+
+
+class ExtractRequest(BaseModel):
+    """Extract mode: regenerate a target stem from existing audio."""
+    audio_data: str = Field(..., description="Base64-encoded audio")
+    track_name: str = Field(..., description="Track to extract: vocals, drums, bass, etc.")
+    bpm: int = Field(..., description="BPM of the source audio")
+    guidance_scale: float = Field(10.0, description="CFG scale. 10.0 recommended for extract")
+    inference_steps: int = Field(80, description="Diffusion steps. 80 recommended for extract")
     time_signature: str = Field("4", description="Time signature numerator")
     batch_size: int = Field(1, description="Number of candidates")
     audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
@@ -292,6 +356,7 @@ app.add_middleware(
 async def _init():
     global _generation_semaphore
     _generation_semaphore = asyncio.Semaphore(EFFECTIVE_MAX_CONCURRENT)
+    _install_windows_asyncio_exception_filter()
     _start_backend()
 
     # Wait for backend to be ready
@@ -454,20 +519,66 @@ def _acestep_headers() -> dict[str, str]:
     return {}
 
 
-def _required_model_for_task(task_type: str) -> str:
+def _complete_model_variant(model_name: str) -> str:
+    normalized = (model_name or "").strip().lower()
+    if "turbo" in normalized:
+        return "turbo"
+    if "sft" in normalized:
+        return "sft"
+    return "base"
+
+
+def _display_model_name(model_name: str) -> str:
+    normalized = (model_name or "").strip()
+    if normalized.startswith("acestep-v15-"):
+        return normalized[len("acestep-v15-"):]
+    return normalized or "model"
+
+
+def _is_model_downloaded(model_name: str) -> bool:
+    normalized = (model_name or "").strip()
+    if not normalized:
+        return False
+
+    model_dir = CHECKPOINTS_ROOT / normalized
+    if not model_dir.is_dir():
+        return False
+    if not (model_dir / "config.json").exists():
+        return False
+    return any(model_dir.glob("*.safetensors"))
+
+
+def _loading_status_message(model_name: str) -> str:
+    display_name = _display_model_name(model_name)
+    if _is_model_downloaded(model_name):
+        return f"loading {display_name}..."
+    return f"first use: downloading and loading {display_name}..."
+
+
+def _required_model_for_task(task_type: str, requested_model: str = "") -> str:
     if task_type == "cover":
         return ACESTEP_TURBO_CONFIG
+    if task_type == "complete":
+        variant = _complete_model_variant(requested_model)
+        if variant == "turbo":
+            return ACESTEP_TURBO_CONFIG
+        if variant == "sft":
+            return ACESTEP_SFT_CONFIG
     return ACESTEP_BASE_CONFIG
 
 
-def _effective_guidance_scale(task_type: str, requested_guidance_scale: float) -> float:
+def _effective_guidance_scale(task_type: str, requested_guidance_scale: float, requested_model: str = "") -> float:
     if task_type == "cover":
+        return COVER_GUIDANCE_SCALE
+    if task_type == "complete" and _complete_model_variant(requested_model) == "turbo":
         return COVER_GUIDANCE_SCALE
     return requested_guidance_scale
 
 
-def _effective_inference_steps(task_type: str, requested_inference_steps: int) -> int:
+def _effective_inference_steps(task_type: str, requested_inference_steps: int, requested_model: str = "") -> int:
     if task_type == "cover":
+        return COVER_INFERENCE_STEPS
+    if task_type == "complete" and _complete_model_variant(requested_model) == "turbo":
         return COVER_INFERENCE_STEPS
     return requested_inference_steps
 
@@ -477,7 +588,7 @@ async def _load_model(client: httpx.AsyncClient, config_path: str) -> str:
         f"{ACESTEP_URL}/v1/load",
         params={"config_path": config_path},
         headers=_acestep_headers(),
-        timeout=180,
+        timeout=MODEL_LOAD_TIMEOUT,
     )
     if resp.status_code != 200:
         raise RuntimeError(f"/v1/load failed for {config_path}: {resp.text}")
@@ -495,19 +606,19 @@ async def _unload_model(client: httpx.AsyncClient) -> None:
         raise RuntimeError(f"/v1/unload failed: {resp.text}")
 
 
-async def _ensure_required_model(client: httpx.AsyncClient, job: Job) -> None:
+async def _ensure_required_model(client: httpx.AsyncClient, job: Job, req) -> None:
     global _current_model
 
     if not MANAGE_MODEL_LIFECYCLE:
         return
 
-    required_model = _required_model_for_task(job.task_type)
+    required_model = _required_model_for_task(job.task_type, getattr(req, "model", ""))
     if _current_model == required_model:
         return
 
     job.status = JobStatus.LOADING
     job.progress = max(job.progress, 3)
-    job.progress_text = f"loading {required_model}..."
+    job.progress_text = _loading_status_message(required_model)
 
     if _current_model is not None:
         await _unload_model(client)
@@ -522,10 +633,22 @@ async def _ensure_required_model(client: httpx.AsyncClient, job: Job) -> None:
 
 def _build_form_data(job: Job, req, send_path: str) -> dict:
     """Build the multipart form data dict for /release_task."""
-    effective_guidance_scale = _effective_guidance_scale(job.task_type, req.guidance_scale)
-    effective_inference_steps = _effective_inference_steps(job.task_type, req.inference_steps)
+    requested_model = getattr(req, "model", "")
+    effective_guidance_scale = _effective_guidance_scale(
+        job.task_type,
+        req.guidance_scale,
+        requested_model,
+    )
+    effective_inference_steps = _effective_inference_steps(
+        job.task_type,
+        req.inference_steps,
+        requested_model,
+    )
 
-    if job.task_type == "lego":
+    if job.task_type == "extract":
+        effective_caption = ""
+        audio_duration = str(job.duration)
+    elif job.task_type == "lego":
         effective_caption = req.caption.strip() or TRACK_CAPTIONS.get(req.track_name, "")
         audio_duration = str(job.duration)
     elif job.task_type == "cover":
@@ -536,10 +659,10 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         audio_duration = str(req.audio_duration)
 
     data = {
-        "task_type":        job.task_type,
+        "task_type":        "repaint" if job.task_type == "complete" else job.task_type,
         "caption":          effective_caption,
-        "lyrics":           req.lyrics,
-        "language":         req.language,
+        "lyrics":           getattr(req, "lyrics", ""),
+        "language":         getattr(req, "language", "en"),
         "bpm":              str(req.bpm),
         "time_signature":   req.time_signature,
         "guidance_scale":   str(effective_guidance_scale),
@@ -551,7 +674,12 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         "audio_format":     req.audio_format,
     }
 
-    if job.task_type == "lego":
+    if job.task_type == "extract":
+        data["track_name"] = req.track_name
+        data["caption"] = ""
+        data["lyrics"] = ""
+        data["inference_steps"] = str(effective_inference_steps)
+    elif job.task_type == "lego":
         data["track_name"] = req.track_name
         data["repainting_start"] = "0.0"
         data["repainting_end"] = "-1"
@@ -561,6 +689,8 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         data["audio_cover_strength"] = str(req.audio_cover_strength)
         data["inference_steps"] = str(effective_inference_steps)
     else:  # complete
+        data["repainting_start"] = str(job.duration)
+        data["repainting_end"] = str(req.audio_duration)
         data["inference_steps"] = str(effective_inference_steps)
 
     if hasattr(req, 'key_scale') and req.key_scale.strip():
@@ -599,7 +729,7 @@ async def _run_generation(job: Job, req):
             send_path = raw_audio_path
 
             async with httpx.AsyncClient() as client:
-                await _ensure_required_model(client, job)
+                await _ensure_required_model(client, job, req)
 
                 # --- Submit to ace-step ---
                 job.status = JobStatus.SUBMITTING
@@ -649,6 +779,7 @@ async def _run_generation(job: Job, req):
                 inference_steps = _effective_inference_steps(
                     job.task_type,
                     getattr(req, 'inference_steps', INFERENCE_STEPS),
+                    getattr(req, "model", ""),
                 )
                 est_seconds_per_step = 0.35
 
@@ -752,12 +883,12 @@ def _build_status_response(job: Job) -> JSONResponse:
         JobStatus.SUBMITTING, JobStatus.GENERATING, JobStatus.DOWNLOADING,
     ):
         status_messages = {
-            JobStatus.QUEUED: "queued",
-            JobStatus.LOADING: "loading model...",
-            JobStatus.COMPRESSING: "preparing audio...",
-            JobStatus.SUBMITTING: "submitting...",
+            JobStatus.QUEUED: job.progress_text or "queued",
+            JobStatus.LOADING: job.progress_text or "loading model...",
+            JobStatus.COMPRESSING: job.progress_text or "preparing audio...",
+            JobStatus.SUBMITTING: job.progress_text or "submitting...",
             JobStatus.GENERATING: job.progress_text or "generating...",
-            JobStatus.DOWNLOADING: "downloading result...",
+            JobStatus.DOWNLOADING: job.progress_text or "downloading result...",
         }
 
         return JSONResponse({
@@ -832,6 +963,44 @@ async def lego_submit(req: LegoRequest):
 
 @app.get("/lego/status/{task_id}")
 async def lego_status(task_id: str):
+    job = _jobs.get(task_id)
+    if not job:
+        return JSONResponse({
+            "success": False, "status": "failed", "error": "Unknown task_id",
+        }, status_code=404)
+    return _build_status_response(job)
+
+
+# ---------------------------------------------------------------------------
+# Extract endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/extract")
+async def extract_submit(req: ExtractRequest):
+    if req.track_name not in ALLOWED_TRACKS:
+        raise HTTPException(400, f"track_name must be one of {sorted(ALLOWED_TRACKS)}")
+
+    _cleanup_old_jobs()
+    task_id = str(uuid4())
+    job = Job(
+        task_id=task_id,
+        task_type="extract",
+        bpm=req.bpm,
+        track_name=req.track_name,
+        audio_format=req.audio_format,
+    )
+    _jobs[task_id] = job
+    asyncio.create_task(_run_generation(job, req))
+
+    return JSONResponse({
+        "success": True,
+        "task_id": task_id,
+        "status": "queued",
+    })
+
+
+@app.get("/extract/status/{task_id}")
+async def extract_status(task_id: str):
     job = _jobs.get(task_id)
     if not job:
         return JSONResponse({
@@ -945,12 +1114,15 @@ async def health():
         "acestep_url": ACESTEP_URL,
         "acestep_status": ace_status,
         "manage_model_lifecycle": MANAGE_MODEL_LIFECYCLE,
+        "lazy_model_loading": not BACKEND_STARTS_LOADED,
         "current_model": _current_model,
         "base_model": ACESTEP_BASE_CONFIG,
+        "sft_model": ACESTEP_SFT_CONFIG,
         "turbo_model": ACESTEP_TURBO_CONFIG,
         "active_jobs": active_jobs,
         "max_concurrent": EFFECTIVE_MAX_CONCURRENT,
         "configured_max_concurrent": MAX_CONCURRENT,
+        "model_load_timeout_seconds": MODEL_LOAD_TIMEOUT,
     }
 
 

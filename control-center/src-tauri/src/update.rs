@@ -96,8 +96,7 @@ fn manifest_url() -> String {
 
 fn parse_version(value: &str) -> Result<Version, String> {
     let normalized = value.trim().trim_start_matches('v');
-    Version::parse(normalized)
-        .map_err(|error| format!("Invalid version '{}': {}", value, error))
+    Version::parse(normalized).map_err(|error| format!("Invalid version '{}': {}", value, error))
 }
 
 fn versions_match(a: &str, b: &str) -> bool {
@@ -193,7 +192,10 @@ pub async fn check_for_update(
     let response = client
         .get(&manifest_url)
         .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::USER_AGENT, format!("gary4local/{}", current_version))
+        .header(
+            reqwest::header::USER_AGENT,
+            format!("gary4local/{}", current_version),
+        )
         .send()
         .await
         .map_err(|error| format!("Update check failed: {}", error))?;

@@ -1,11 +1,11 @@
 {
-    "version":  "0.1.4",
-    "notes":  "Hardens updater configuration so preview override URLs are runtime-only.\nStable releases keep the built-in update check and in-app install flow.\nSource builders can still disable the updater flow at build time if needed.",
-    "pub_date":  "2026-04-04T10:03:57.1611782Z",
+    "version":  "0.1.5",
+    "notes":  "Adds Carey XL model toggles to gary4local so localhost users can opt into XL base, SFT, and turbo variants when VRAM allows.\nBrings Carey complete, cover, and extract handling closer to the remote backend, including better complete-mode routing and first-use model warmup messaging.\nKeeps Carey startup lazy so switching the XL toggle does not eagerly preload a model before the first request.",
+    "pub_date":  "2026-04-11T11:37:07.3573419Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMERpS1FkblZGZWwrZHdzWDFYY3dnc0xaSlBSQ0RHV1dWWU9tSlZ5WC8wZ2hHRWhlTHlRL0Iyd0VVZHJQQkdleWY5TFJzTk9vSGtCaGN4bFZTdVA4RVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1Mjk2ODQ4CWZpbGU6Z2FyeTRsb2NhbF8wLjEuNF94NjQtc2V0dXAuZXhlCkZRRVFjWVFheXI5N3JrYUJKdEJyY2hQWEplUTdXbGNhc0ZJQmY1a2U2VWFGVTV3TFZHblBZUThrcVVubUh6bnR3a3BQdHZOdkx0SDNQUmZzcnNsY0RnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME5wUVZPMGxQc3ppMCsxVlNVVExCdXl6ZnFwd0cyVHJwOHIrNDdMMTRJdkF0VTgvRitrSUJpNHBxMTQ0bTlYY1paUW5NN3BBTW1KQnNKL1RGdXdHc3dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1OTA1NTg5CWZpbGU6Z2FyeTRsb2NhbF8wLjEuNV94NjQtc2V0dXAuZXhlCjhLNjZnbUtoZlZZdnhZWGM0dUhGdDVjTnZuTFhwdWlkeFpJZFZOa1ZaOW5kV1VFUUd1T1l1UkhZNU5kcm9LdGlTQXI4K2RTWWNlb1BMNWpJVzUzTUR3PT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.5/gary4local_0.1.5_x64-setup.exe"
                                          }
                   }
 }

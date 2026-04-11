@@ -33,16 +33,22 @@ pub struct HealthCheck {
     pub startup_grace_seconds: u64,
 }
 
-fn default_interval() -> u64 { 15 }
-fn default_timeout() -> u64 { 5 }
-fn default_startup_grace() -> u64 { 0 }
+fn default_interval() -> u64 {
+    15
+}
+fn default_timeout() -> u64 {
+    5
+}
+fn default_startup_grace() -> u64 {
+    0
+}
 
 pub fn load_manifest(path: &Path) -> Result<Vec<ServiceDef>, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
 
-    let manifest: Manifest = serde_json::from_str(&content)
-        .map_err(|e| format!("Invalid manifest JSON: {}", e))?;
+    let manifest: Manifest =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid manifest JSON: {}", e))?;
 
     log::info!("Loaded {} services from manifest", manifest.services.len());
     for svc in &manifest.services {

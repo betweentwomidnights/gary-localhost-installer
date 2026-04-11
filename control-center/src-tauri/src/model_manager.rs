@@ -17,9 +17,9 @@ fn hide_console_window(cmd: &mut tokio::process::Command) {
 /// A single model that can be downloaded
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
-    pub id: String,           // e.g. "thepatch/bleeps-large-6"
-    pub display_name: String, // e.g. "bleeps-large-6"
-    pub service: String,      // e.g. "gary"
+    pub id: String,                    // e.g. "thepatch/bleeps-large-6"
+    pub display_name: String,          // e.g. "bleeps-large-6"
+    pub service: String,               // e.g. "gary"
     pub size_category: Option<String>, // "small", "medium", "large"
     pub group: Option<String>,         // checkpoint group name
     pub epoch: Option<u32>,            // checkpoint epoch number
@@ -38,7 +38,7 @@ pub enum ModelStatus {
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
     pub model_id: String,
-    pub progress: f64,   // 0.0 - 1.0
+    pub progress: f64, // 0.0 - 1.0
     pub status: ModelStatus,
     pub message: String,
     pub error: Option<String>,
@@ -81,37 +81,45 @@ impl ModelManager {
         if let Ok(hf_home) = std::env::var("HF_HOME") {
             PathBuf::from(hf_home)
         } else {
-            PathBuf::from(std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_default())
-                .join(".cache")
-                .join("huggingface")
+            PathBuf::from(
+                std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .unwrap_or_default(),
+            )
+            .join(".cache")
+            .join("huggingface")
         }
     }
 
     /// Get the full list of Gary models with their download status
     pub fn get_gary_models(&self) -> Vec<ModelEntry> {
         let models_by_size: Vec<(&str, &[&str])> = vec![
-            ("small", &[
-                "thepatch/vanya_ai_dnb_0.1",
-                "thepatch/gary_orchestra_2",
-                "thepatch/keygen-gary-v2-small-8",
-                "thepatch/keygen-gary-v2-small-12",
-            ][..]),
-            ("medium", &[
-                "thepatch/bleeps-medium",
-                "thepatch/keygen-gary-medium-12",
-            ][..]),
-            ("large", &[
-                "thepatch/hoenn_lofi",
-                "thepatch/bleeps-large-6",
-                "thepatch/bleeps-large-8",
-                "thepatch/bleeps-large-10",
-                "thepatch/bleeps-large-14",
-                "thepatch/bleeps-large-20",
-                "thepatch/keygen-gary-v2-large-12",
-                "thepatch/keygen-gary-v2-large-16",
-            ][..]),
+            (
+                "small",
+                &[
+                    "thepatch/vanya_ai_dnb_0.1",
+                    "thepatch/gary_orchestra_2",
+                    "thepatch/keygen-gary-v2-small-8",
+                    "thepatch/keygen-gary-v2-small-12",
+                ][..],
+            ),
+            (
+                "medium",
+                &["thepatch/bleeps-medium", "thepatch/keygen-gary-medium-12"][..],
+            ),
+            (
+                "large",
+                &[
+                    "thepatch/hoenn_lofi",
+                    "thepatch/bleeps-large-6",
+                    "thepatch/bleeps-large-8",
+                    "thepatch/bleeps-large-10",
+                    "thepatch/bleeps-large-14",
+                    "thepatch/bleeps-large-20",
+                    "thepatch/keygen-gary-v2-large-12",
+                    "thepatch/keygen-gary-v2-large-16",
+                ][..],
+            ),
         ];
 
         let mut entries = Vec::new();
@@ -123,7 +131,10 @@ impl ModelManager {
                 // Parse checkpoint info
                 let parts: Vec<&str> = name.rsplitn(2, '-').collect();
                 let (group, epoch) = if parts.len() == 2 && parts[0].parse::<u32>().is_ok() {
-                    (Some(parts[1].to_string()), Some(parts[0].parse::<u32>().unwrap()))
+                    (
+                        Some(parts[1].to_string()),
+                        Some(parts[0].parse::<u32>().unwrap()),
+                    )
                 } else {
                     (None, None)
                 };
@@ -182,44 +193,111 @@ impl ModelManager {
         entries
     }
 
-    /// Get Carey (ACE-Step) models — just the base model components.
+    /// Get Carey (ACE-Step) shared components and DiT model checkpoints.
     /// Carey stores models in services/carey/checkpoints/ (not HF cache).
     pub fn get_carey_models(&self) -> Vec<ModelEntry> {
-        let checkpoint_dir = self.repo_root
-            .join("services").join("carey").join("checkpoints");
+        let checkpoint_dir = self
+            .repo_root
+            .join("services")
+            .join("carey")
+            .join("checkpoints");
 
-        // The three components needed for the base model
-        let components: Vec<(&str, &str, &[&str])> = vec![
-            ("carey::acestep-v15-base", "acestep-v15-base (DiT)", &[
-                "acestep-v15-base/config.json",
-                "acestep-v15-base/model.safetensors",
-            ]),
-            ("carey::vae", "VAE (encoder/decoder)", &[
-                "vae/config.json",
-                "vae/diffusion_pytorch_model.safetensors",
-            ]),
-            ("carey::Qwen3-Embedding-0.6B", "Qwen3 Embedding (text)", &[
-                "Qwen3-Embedding-0.6B/config.json",
-                "Qwen3-Embedding-0.6B/tokenizer.json",
-            ]),
+        let components: Vec<(&str, &str, &str, &[&str])> = vec![
+            (
+                "carey::acestep-v15-base",
+                "acestep-v15-base (DiT)",
+                "dit",
+                &[
+                    "acestep-v15-base/config.json",
+                    "acestep-v15-base/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-v15-sft",
+                "acestep-v15-sft (DiT)",
+                "dit",
+                &[
+                    "acestep-v15-sft/config.json",
+                    "acestep-v15-sft/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-v15-turbo",
+                "acestep-v15-turbo (DiT)",
+                "dit",
+                &[
+                    "acestep-v15-turbo/config.json",
+                    "acestep-v15-turbo/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-v15-xl-base",
+                "acestep-v15-xl-base (DiT)",
+                "dit",
+                &[
+                    "acestep-v15-xl-base/config.json",
+                    "acestep-v15-xl-base/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-v15-xl-sft",
+                "acestep-v15-xl-sft (DiT)",
+                "dit",
+                &[
+                    "acestep-v15-xl-sft/config.json",
+                    "acestep-v15-xl-sft/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-v15-xl-turbo",
+                "acestep-v15-xl-turbo (DiT)",
+                "dit",
+                &[
+                    "acestep-v15-xl-turbo/config.json",
+                    "acestep-v15-xl-turbo/model.safetensors",
+                ],
+            ),
+            (
+                "carey::vae",
+                "VAE (encoder/decoder)",
+                "shared",
+                &["vae/config.json", "vae/diffusion_pytorch_model.safetensors"],
+            ),
+            (
+                "carey::Qwen3-Embedding-0.6B",
+                "Qwen3 Embedding (text)",
+                "shared",
+                &[
+                    "Qwen3-Embedding-0.6B/config.json",
+                    "Qwen3-Embedding-0.6B/tokenizer.json",
+                ],
+            ),
         ];
 
-        components.iter().map(|(id, name, check_files)| {
-            let status = self.get_carey_component_status(id, &checkpoint_dir, check_files);
-            ModelEntry {
-                id: id.to_string(),
-                display_name: name.to_string(),
-                service: "carey".to_string(),
-                size_category: Some("base".to_string()),
-                group: None,
-                epoch: None,
-                status,
-            }
-        }).collect()
+        components
+            .iter()
+            .map(|(id, name, category, check_files)| {
+                let status = self.get_carey_component_status(id, &checkpoint_dir, check_files);
+                ModelEntry {
+                    id: id.to_string(),
+                    display_name: name.to_string(),
+                    service: "carey".to_string(),
+                    size_category: Some(category.to_string()),
+                    group: None,
+                    epoch: None,
+                    status,
+                }
+            })
+            .collect()
     }
 
     /// Check if a Carey model component is downloaded by looking in the checkpoints dir
-    fn get_carey_component_status(&self, id: &str, checkpoint_dir: &std::path::Path, check_files: &[&str]) -> ModelStatus {
+    fn get_carey_component_status(
+        &self,
+        id: &str,
+        checkpoint_dir: &std::path::Path,
+        check_files: &[&str],
+    ) -> ModelStatus {
         // Check active downloads first
         if let Some(dl) = self.downloads.get(id) {
             return dl.status.clone();
@@ -262,7 +340,9 @@ impl ModelManager {
             let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
             format!("{}\\AppData\\Roaming", home)
         });
-        std::path::PathBuf::from(appdata).join("Gary4JUCE").join("models")
+        std::path::PathBuf::from(appdata)
+            .join("Gary4JUCE")
+            .join("models")
     }
 
     /// Check if Foundation-1 model files are present
@@ -285,14 +365,17 @@ impl ModelManager {
 
     /// Store fetched checkpoint list for a finetune repo
     pub fn set_finetune_checkpoints(&mut self, repo: &str, filenames: Vec<String>) {
-        let entries: Vec<CheckpointEntry> = filenames.into_iter().map(|f| {
-            let cached = Self::is_finetune_file_cached(repo, &f);
-            CheckpointEntry {
-                repo: repo.to_string(),
-                filename: f,
-                cached,
-            }
-        }).collect();
+        let entries: Vec<CheckpointEntry> = filenames
+            .into_iter()
+            .map(|f| {
+                let cached = Self::is_finetune_file_cached(repo, &f);
+                CheckpointEntry {
+                    repo: repo.to_string(),
+                    filename: f,
+                    cached,
+                }
+            })
+            .collect();
         self.finetune_checkpoints.insert(repo.to_string(), entries);
     }
 
@@ -371,13 +454,16 @@ impl ModelManager {
 
     /// Mark a download as started
     pub fn set_download_started(&mut self, model_id: &str) {
-        self.downloads.insert(model_id.to_string(), DownloadProgress {
-            model_id: model_id.to_string(),
-            progress: 0.0,
-            status: ModelStatus::Downloading,
-            message: "Starting download...".to_string(),
-            error: None,
-        });
+        self.downloads.insert(
+            model_id.to_string(),
+            DownloadProgress {
+                model_id: model_id.to_string(),
+                progress: 0.0,
+                status: ModelStatus::Downloading,
+                message: "Starting download...".to_string(),
+                error: None,
+            },
+        );
     }
 
     /// Update download progress
@@ -391,16 +477,20 @@ impl ModelManager {
     /// Mark download as complete
     pub fn set_download_done(&mut self, model_id: &str, error: Option<String>) {
         if let Some(err) = &error {
-            self.downloads.insert(model_id.to_string(), DownloadProgress {
-                model_id: model_id.to_string(),
-                progress: 0.0,
-                status: ModelStatus::Failed,
-                message: err.clone(),
-                error: Some(err.clone()),
-            });
+            self.downloads.insert(
+                model_id.to_string(),
+                DownloadProgress {
+                    model_id: model_id.to_string(),
+                    progress: 0.0,
+                    status: ModelStatus::Failed,
+                    message: err.clone(),
+                    error: Some(err.clone()),
+                },
+            );
         } else {
             self.downloads.remove(model_id);
-            self.model_cache.insert(model_id.to_string(), ModelStatus::Downloaded);
+            self.model_cache
+                .insert(model_id.to_string(), ModelStatus::Downloaded);
         }
     }
 
@@ -425,8 +515,7 @@ pub async fn download_model(
 ) -> Result<(), String> {
     let cache_dir = ModelManager::hf_cache_dir();
 
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Cannot create cache dir: {}", e))?;
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("Cannot create cache dir: {}", e))?;
 
     // Parse composite ID: "repo::filename" means download a single file
     let (repo_id, single_file) = if model_id.contains("::") {
@@ -634,7 +723,8 @@ except Exception as e:
     }
     hide_console_window(&mut cmd);
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
     // Read stdout for our JSON progress lines
@@ -651,7 +741,8 @@ except Exception as e:
                 // Parse our JSON progress: {"p": 0.45, "m": "Downloading ..."}
                 if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
                     if let Some(pct) = msg.get("p").and_then(|v| v.as_f64()) {
-                        let label = msg.get("m")
+                        let label = msg
+                            .get("m")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
@@ -673,7 +764,9 @@ except Exception as e:
             let mut reader = BufReader::new(stderr);
             let mut buf = [0u8; 4096];
             while let Ok(n) = reader.read(&mut buf).await {
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
             }
         }
     });
@@ -681,7 +774,9 @@ except Exception as e:
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
-    let exit_status = child.wait().await
+    let exit_status = child
+        .wait()
+        .await
         .map_err(|e| format!("Download process error: {}", e))?;
 
     if exit_status.success() {
@@ -702,10 +797,7 @@ except Exception as e:
 
 /// Fetch checkpoint filenames from a HuggingFace repo using the service's API.
 /// Falls back to listing .ckpt files via huggingface_hub if service is not running.
-pub async fn fetch_checkpoints(
-    repo: String,
-    service_port: u16,
-) -> Result<Vec<String>, String> {
+pub async fn fetch_checkpoints(repo: String, service_port: u16) -> Result<Vec<String>, String> {
     // Try the running service first (it has huggingface_hub available)
     let url = format!("http://127.0.0.1:{}/models/checkpoints", service_port);
     let client = reqwest::Client::new();
@@ -717,19 +809,22 @@ pub async fn fetch_checkpoints(
 
     match resp {
         Ok(r) if r.status().is_success() => {
-            let body: serde_json::Value = r.json().await
-                .map_err(|e| format!("Bad response: {}", e))?;
+            let body: serde_json::Value =
+                r.json().await.map_err(|e| format!("Bad response: {}", e))?;
             if let Some(arr) = body.get("checkpoints").and_then(|v| v.as_array()) {
-                let names: Vec<String> = arr.iter()
+                let names: Vec<String> = arr
+                    .iter()
                     .filter_map(|v| v.as_str().map(String::from))
                     .collect();
                 return Ok(names);
             }
-            Err(body.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string())
+            Err(body
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error")
+                .to_string())
         }
-        _ => {
-            Err("Jerry service is not running. Start it first to fetch checkpoints.".to_string())
-        }
+        _ => Err("Jerry service is not running. Start it first to fetch checkpoints.".to_string()),
     }
 }
 
@@ -753,6 +848,11 @@ pub async fn download_carey_model(
     // Map component to HF repo and allow_patterns
     let (repo_id, allow_pattern) = match component {
         "acestep-v15-base" => ("ACE-Step/acestep-v15-base", ""),
+        "acestep-v15-sft" => ("ACE-Step/acestep-v15-sft", ""),
+        "acestep-v15-turbo" => ("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**"),
+        "acestep-v15-xl-base" => ("ACE-Step/acestep-v15-xl-base", ""),
+        "acestep-v15-xl-sft" => ("ACE-Step/acestep-v15-xl-sft", ""),
+        "acestep-v15-xl-turbo" => ("ACE-Step/acestep-v15-xl-turbo", ""),
         "vae" => ("ACE-Step/Ace-Step1.5", "vae/**"),
         "Qwen3-Embedding-0.6B" => ("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**"),
         other => return Err(format!("Unknown Carey component: {}", other)),
@@ -891,7 +991,8 @@ except Exception as e:
     }
     hide_console_window(&mut cmd);
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
     // Read stdout for JSON progress
@@ -907,7 +1008,8 @@ except Exception as e:
             while let Ok(Some(line)) = reader.next_line().await {
                 if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
                     if let Some(pct) = msg.get("p").and_then(|v| v.as_f64()) {
-                        let label = msg.get("m")
+                        let label = msg
+                            .get("m")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
@@ -929,7 +1031,9 @@ except Exception as e:
             let mut reader = BufReader::new(stderr);
             let mut buf = [0u8; 4096];
             while let Ok(n) = reader.read(&mut buf).await {
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
             }
         }
     });
@@ -937,7 +1041,9 @@ except Exception as e:
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
-    let exit_status = child.wait().await
+    let exit_status = child
+        .wait()
+        .await
         .map_err(|e| format!("Download process error: {}", e))?;
 
     if exit_status.success() {
@@ -967,8 +1073,7 @@ pub async fn download_foundation_model(
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(&model_dir)
-        .map_err(|e| format!("Cannot create model dir: {}", e))?;
+    std::fs::create_dir_all(&model_dir).map_err(|e| format!("Cannot create model dir: {}", e))?;
 
     let model_dir_str = model_dir.to_string_lossy().to_string();
 
@@ -1080,7 +1185,8 @@ except Exception as e:
     }
     hide_console_window(&mut cmd);
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start download: {}", e))?;
 
     // Read stdout for JSON progress
@@ -1096,7 +1202,8 @@ except Exception as e:
             while let Ok(Some(line)) = reader.next_line().await {
                 if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
                     if let Some(pct) = msg.get("p").and_then(|v| v.as_f64()) {
-                        let label = msg.get("m")
+                        let label = msg
+                            .get("m")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
@@ -1118,7 +1225,9 @@ except Exception as e:
             let mut reader = BufReader::new(stderr);
             let mut buf = [0u8; 4096];
             while let Ok(n) = reader.read(&mut buf).await {
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
             }
         }
     });
@@ -1126,7 +1235,9 @@ except Exception as e:
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
-    let exit_status = child.wait().await
+    let exit_status = child
+        .wait()
+        .await
         .map_err(|e| format!("Download process error: {}", e))?;
 
     if exit_status.success() {

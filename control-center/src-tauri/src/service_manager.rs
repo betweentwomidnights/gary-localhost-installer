@@ -119,7 +119,10 @@ impl ServiceManager {
                     } else {
                         format!(
                             "Process crashed (exit code: {})",
-                            status.code().map(|c| c.to_string()).unwrap_or("signal".into())
+                            status
+                                .code()
+                                .map(|c| c.to_string())
+                                .unwrap_or("signal".into())
                         )
                     };
                     log::warn!("{}: {}", id, msg);
@@ -191,7 +194,11 @@ impl ServiceManager {
                 let pid = running.and_then(|r| r.process.id().into());
                 let healthy = running.map(|r| r.healthy).unwrap_or(false);
                 let error = self.errors.get(&svc.id).cloned();
-                let env_exists = self.env_dir(svc).join("Scripts").join("python.exe").exists();
+                let env_exists = self
+                    .env_dir(svc)
+                    .join("Scripts")
+                    .join("python.exe")
+                    .exists();
 
                 let health_endpoint = svc
                     .health_check
@@ -289,6 +296,31 @@ impl ServiceManager {
             );
         }
 
+        if svc.id == "carey" {
+            let use_xl_models = crate::carey_use_xl_models_enabled();
+            let base_config = if use_xl_models {
+                "acestep-v15-xl-base"
+            } else {
+                "acestep-v15-base"
+            };
+            let sft_config = if use_xl_models {
+                "acestep-v15-xl-sft"
+            } else {
+                "acestep-v15-sft"
+            };
+            let turbo_config = if use_xl_models {
+                "acestep-v15-xl-turbo"
+            } else {
+                "acestep-v15-turbo"
+            };
+
+            cmd.env("ACESTEP_CONFIG_PATH", base_config)
+                .env("ACESTEP_BASE_CONFIG_PATH", base_config)
+                .env("ACESTEP_SFT_CONFIG_PATH", sft_config)
+                .env("ACESTEP_TURBO_CONFIG_PATH", turbo_config)
+                .env("ACESTEP_NO_INIT", "true");
+        }
+
         // Prevent console window on Windows
         #[cfg(target_os = "windows")]
         {
@@ -296,7 +328,9 @@ impl ServiceManager {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
 
-        let child = cmd.spawn().map_err(|e| format!("Failed to start {}: {}", service_id, e))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to start {}: {}", service_id, e))?;
 
         log::info!(
             "Started {} (PID {}) from {}",
@@ -357,7 +391,11 @@ impl ServiceManager {
             return Err(format!("No build steps defined for {}", service_id));
         }
 
-        if self.build_statuses.get(service_id).map_or(false, |b| b.building) {
+        if self
+            .build_statuses
+            .get(service_id)
+            .map_or(false, |b| b.building)
+        {
             return Err(format!("{} is already building", service_id));
         }
 
@@ -371,14 +409,17 @@ impl ServiceManager {
 
     /// Mark a build as started
     pub fn set_build_started(&mut self, service_id: &str, total_steps: usize) {
-        self.build_statuses.insert(service_id.to_string(), BuildStatus {
-            building: true,
-            current_step: 0,
-            total_steps,
-            step_label: "Creating virtual environment...".to_string(),
-            log: String::new(),
-            error: None,
-        });
+        self.build_statuses.insert(
+            service_id.to_string(),
+            BuildStatus {
+                building: true,
+                current_step: 0,
+                total_steps,
+                step_label: "Creating virtual environment...".to_string(),
+                log: String::new(),
+                error: None,
+            },
+        );
     }
 
     /// Update build progress
@@ -416,16 +457,27 @@ impl ServiceManager {
     }
 
     pub fn get_all_build_infos(&self) -> Vec<BuildInfo> {
-        self.services.iter().filter_map(|svc| {
-            if svc.build_steps.is_empty() { return None; }
-            if self.build_statuses.get(&svc.id).map_or(false, |b| b.building) { return None; }
-            Some(BuildInfo {
-                service_id: svc.id.clone(),
-                work_dir: self.service_dir(svc),
-                env_dir: self.env_dir(svc),
-                build_steps: svc.build_steps.clone(),
+        self.services
+            .iter()
+            .filter_map(|svc| {
+                if svc.build_steps.is_empty() {
+                    return None;
+                }
+                if self
+                    .build_statuses
+                    .get(&svc.id)
+                    .map_or(false, |b| b.building)
+                {
+                    return None;
+                }
+                Some(BuildInfo {
+                    service_id: svc.id.clone(),
+                    work_dir: self.service_dir(svc),
+                    env_dir: self.env_dir(svc),
+                    build_steps: svc.build_steps.clone(),
+                })
             })
-        }).collect()
+            .collect()
     }
 
     pub fn get_log(&self, service_id: &str) -> Result<String, String> {
@@ -434,7 +486,10 @@ impl ServiceManager {
             .ok_or_else(|| format!("Unknown service: {}", service_id))?;
 
         let is_running = self.running.contains_key(service_id);
-        let is_building = self.build_statuses.get(service_id).map_or(false, |b| b.building);
+        let is_building = self
+            .build_statuses
+            .get(service_id)
+            .map_or(false, |b| b.building);
         let has_failed = self.errors.contains_key(service_id);
 
         // Priority:
@@ -444,7 +499,9 @@ impl ServiceManager {
         // 4. Otherwise -> show runtime log file if it exists
 
         if is_building {
-            let log = self.build_statuses.get(service_id)
+            let log = self
+                .build_statuses
+                .get(service_id)
                 .map(|b| b.log.clone())
                 .unwrap_or_default();
             return Ok(log);
@@ -476,15 +533,15 @@ impl ServiceManager {
     }
 
     fn read_log_file(&self, log_path: &std::path::Path) -> Result<String, String> {
-        let metadata = std::fs::metadata(log_path)
-            .map_err(|e| format!("Cannot read log: {}", e))?;
+        let metadata =
+            std::fs::metadata(log_path).map_err(|e| format!("Cannot read log: {}", e))?;
         let file_size = metadata.len();
         let max_read: u64 = 256 * 1024;
 
         if file_size > max_read {
             use std::io::{Read, Seek, SeekFrom};
-            let mut file = std::fs::File::open(log_path)
-                .map_err(|e| format!("Cannot open log: {}", e))?;
+            let mut file =
+                std::fs::File::open(log_path).map_err(|e| format!("Cannot open log: {}", e))?;
             file.seek(SeekFrom::End(-(max_read as i64)))
                 .map_err(|e| format!("Seek error: {}", e))?;
             let mut buf = String::new();
@@ -496,8 +553,7 @@ impl ServiceManager {
                 Ok(buf)
             }
         } else {
-            std::fs::read_to_string(log_path)
-                .map_err(|e| format!("Cannot read log: {}", e))
+            std::fs::read_to_string(log_path).map_err(|e| format!("Cannot read log: {}", e))
         }
     }
 }

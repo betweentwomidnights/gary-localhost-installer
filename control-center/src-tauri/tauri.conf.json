@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "gary4local",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "com.betweentwomidnights.gary4local",
   "build": {
     "frontendDist": "../dist",
@@ -52,5 +52,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwQzIzMzA0NTlCQTQ1RkYKUldUL1JicFpCRFBDMEdLaDlQdkJYMmpLZ09FMHNwMjVVZlYrYVNCL0Z5Rmg5Y2JqOXp4am5xWlMK",
+      "endpoints": [
+        "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

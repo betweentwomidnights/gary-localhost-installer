@@ -7,6 +7,7 @@
   import ModelPanel from "./lib/ModelPanel.svelte";
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
+  import CareyXlBanner from "./lib/CareyXlBanner.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
 
@@ -33,6 +34,7 @@
 
   interface AppSettings {
     melodyflowUseFlashAttn: boolean;
+    careyUseXlModels: boolean;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
     skippedUpdateVersion: string | null;
@@ -64,6 +66,7 @@
   let pollTimer: number;
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
+    careyUseXlModels: false,
     closeActionOnX: "ask",
     autoCheckUpdates: true,
     skippedUpdateVersion: null,
@@ -267,6 +270,10 @@
     appSettings = { ...appSettings, melodyflowUseFlashAttn: enabled };
   }
 
+  function onCareyXlSettingUpdated(enabled: boolean) {
+    appSettings = { ...appSettings, careyUseXlModels: enabled };
+  }
+
   function onCloseRequestEvent() {
     closeRequestModalOpen = true;
     rememberCloseChoice = false;
@@ -390,6 +397,12 @@
       {:else}
         {#if selectedServiceId === "stable-audio"}
           <TokenBanner {onTokenChange} />
+        {:else if selectedServiceId === "carey"}
+          <CareyXlBanner
+            enabled={appSettings.careyUseXlModels}
+            serviceStatus={selectedService?.status ?? "stopped"}
+            onUpdated={onCareyXlSettingUpdated}
+          />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner
             enabled={appSettings.melodyflowUseFlashAttn}

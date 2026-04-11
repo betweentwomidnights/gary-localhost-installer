@@ -34,8 +34,12 @@ _CHECKPOINT_TO_VARIANT: Dict[str, str] = {
     "acestep-v15-turbo-continuous": "turbo",
     "acestep-v15-turbo-fix-inst-shift3": "turbo",
     "acestep-v15-turbo-fix-inst-shift-continous": "turbo",
+    "acestep-v15-turbo-fix-inst-shift-continuous": "turbo",
     "acestep-v15-turbo-fix-inst-shift-dynamic": "turbo",
     "acestep-v15-turbo-rl": "turbo",
+    "acestep-v15-xl-base": "xl_base",
+    "acestep-v15-xl-sft": "xl_sft",
+    "acestep-v15-xl-turbo": "xl_turbo",
 }
 
 
@@ -293,6 +297,9 @@ SUBMODEL_REGISTRY: Dict[str, str] = {
     "acestep-v15-base": "ACE-Step/acestep-v15-base",
     "acestep-v15-turbo-shift1": "ACE-Step/acestep-v15-turbo-shift1",
     "acestep-v15-turbo-continuous": "ACE-Step/acestep-v15-turbo-continuous",
+    "acestep-v15-xl-base": "ACE-Step/acestep-v15-xl-base",
+    "acestep-v15-xl-sft": "ACE-Step/acestep-v15-xl-sft",
+    "acestep-v15-xl-turbo": "ACE-Step/acestep-v15-xl-turbo",
 }
 
 # Components that come from the main model repo (ACE-Step/Ace-Step1.5)

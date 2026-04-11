@@ -139,7 +139,8 @@
       "env": {
         "PYTHONIOENCODING": "utf-8",
         "ACESTEP_INIT_LLM": "false",
-        "ACESTEP_CONFIG_PATH": "acestep-v15-base"
+        "ACESTEP_CONFIG_PATH": "acestep-v15-base",
+        "ACESTEP_NO_INIT": "true"
       },
       "dependsOn": []
     },
