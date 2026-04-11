@@ -25,7 +25,7 @@ install and startup flow:
 
 - `gary` / MusicGen: `http://localhost:8000` via [audiocraft](https://github.com/facebookresearch/audiocraft)
 - `terry` / MelodyFlow: `http://localhost:8002` via [MelodyFlow](https://huggingface.co/spaces/facebook/MelodyFlow)
-- `carey` / ACE-Step: `http://localhost:8003` via [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) with localhost `lego`, `complete`, and `cover` mode changes from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
+- `carey` / ACE-Step: `http://localhost:8003` via [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) with localhost `lego`, `extract`, `complete`, and `cover` mode changes from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
 - `jerry` / Stable Audio: `http://localhost:8005` via [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and [stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools)
 - `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
 
@@ -42,12 +42,18 @@ For localhost we intentionally do **not** enable `torch.compile` by default. Gar
 
 ## carey localhost notes
 
-The local `carey` service includes a small-GPU decode strategy that differs from upstream [ace-lego](https://github.com/betweentwomidnights/ace-lego) behavior:
+The local `carey` service now tracks more of the custom [ace-lego](https://github.com/betweentwomidnights/ace-lego) behavior while still being practical on smaller Windows GPUs:
 
+- `lego`, `extract`, `complete`, and `cover` are all exposed through the localhost wrapper.
+- `cover` always routes to the turbo checkpoint and stays fixed at 8 steps / CFG 1.0.
+- `complete` now accepts `base`, `turbo`, or `sft` from localhost clients. `turbo` stays fixed at 8 steps / CFG 1.0, while `base` and `sft` keep editable steps and CFG.
+- The `gary4local` Carey UI now includes an XL toggle. When enabled, those same localhost model choices map to `acestep-v15-xl-base`, `acestep-v15-xl-sft`, and `acestep-v15-xl-turbo` under the hood instead of the regular checkpoints.
+- We currently recommend 16 GB of VRAM for the XL toggle even though some slower first-use generations may still succeed below that on certain cards.
+- Model startup is intentionally lazy. Switching the XL toggle updates the routing config, but Carey waits until the first request to download or initialize the required checkpoint.
 - During decode, localhost Carey can temporarily offload the DiT model so the VAE decode step has more VRAM available.
 - The decode path falls back through progressively safer modes, including tiled decode, CPU-offloaded decode, and full CPU decode, instead of hard-failing immediately on lower-memory GPUs.
 
-This helps ACE-Step remain usable on consumer cards where generation may fit in VRAM but decode is the step that would otherwise tip the process into an out-of-memory failure.
+This keeps ACE-Step usable on consumer cards where generation may fit in VRAM but decode is the step that would otherwise tip the process into an out-of-memory failure.
 
 ## terry localhost optimizations
 
