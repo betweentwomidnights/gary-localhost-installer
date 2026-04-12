@@ -138,6 +138,8 @@ npm ci
 npm run tauri build
 ```
 
+the build now stages `control-center/src-tauri/resources/services` automatically from the tracked repo `services/` tree, so a clean clone does not need a pre-populated bundled-services folder or extra `bash` / `rsync` tooling just to package the app.
+
 if you want a build that hides the experimental Terry Flash Attention toggle entirely, set the feature flag before building:
 
 ```powershell

@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "bash src-tauri/scripts/stage_runtime_resources.sh && npm run build"
+    "beforeBuildCommand": "node src-tauri/scripts/stage_runtime_resources.mjs && npm run build"
   },
   "app": {
     "windows": [
