@@ -46,6 +46,8 @@ services/**/.cache/
 services/**/outputs/
 services/**/checkpoints/
 services/**/models/
+!services/carey/acestep/models/
+!services/carey/acestep/models/**
 !services/**/audiocraft/models/
 !services/**/audiocraft/models/**
 services/**/audiocraft/models/**/__pycache__/
