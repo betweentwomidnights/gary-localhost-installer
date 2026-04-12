@@ -45,11 +45,19 @@ services/**/*.egg-info/
 services/**/.cache/
 services/**/outputs/
 services/**/checkpoints/
+# Most service-level models/ folders are runtime assets, but a few are
+# source-code trees that define model architectures and loaders.
 services/**/models/
 !services/carey/acestep/models/
 !services/carey/acestep/models/**
+!services/stable-audio/stable_audio_tools/models/
+!services/stable-audio/stable_audio_tools/models/**
+!services/foundation/RC-stable-audio-tools/stable_audio_tools/models/
+!services/foundation/RC-stable-audio-tools/stable_audio_tools/models/**
 !services/**/audiocraft/models/
 !services/**/audiocraft/models/**
+services/**/models/**/__pycache__/
+services/**/models/**/*.pyc
 services/**/audiocraft/models/**/__pycache__/
 services/**/audiocraft/models/**/*.pyc
 !services/gary/audiocraft/
