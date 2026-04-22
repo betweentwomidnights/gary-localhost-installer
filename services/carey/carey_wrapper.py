@@ -29,6 +29,7 @@ import asyncio
 import base64
 import json
 import os
+import random
 import re
 import signal
 import shutil
@@ -45,7 +46,7 @@ from uuid import uuid4
 import httpx
 import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -72,11 +73,20 @@ DEFAULT_STARTUP_CONFIG = (os.getenv("ACESTEP_CONFIG_PATH") or "acestep-v15-base"
 ACESTEP_BASE_CONFIG = (os.getenv("ACESTEP_BASE_CONFIG_PATH") or DEFAULT_STARTUP_CONFIG).strip()
 ACESTEP_SFT_CONFIG = (os.getenv("ACESTEP_SFT_CONFIG_PATH") or "acestep-v15-sft").strip()
 ACESTEP_TURBO_CONFIG = (os.getenv("ACESTEP_TURBO_CONFIG_PATH") or "acestep-v15-turbo").strip()
+ACESTEP_REGULAR_CONFIG = (os.getenv("ACESTEP_REGULAR_CONFIG_PATH") or "acestep-v15-sft").strip()
 MANAGE_MODEL_LIFECYCLE = _env_bool("ACESTEP_MANAGE_MODEL_LIFECYCLE", True)
 BACKEND_STARTS_LOADED = not _env_bool("ACESTEP_NO_INIT", False)
 EFFECTIVE_MAX_CONCURRENT = 1 if MANAGE_MODEL_LIFECYCLE else MAX_CONCURRENT
 MODEL_LOAD_TIMEOUT = int(os.getenv("ACESTEP_MODEL_LOAD_TIMEOUT", "1800"))
 CHECKPOINTS_ROOT = Path(__file__).parent / "checkpoints"
+LORA_REGISTRY_PATH = Path(
+    (os.getenv("CAREY_LORA_REGISTRY") or "").strip()
+    or (Path(__file__).parent / "lora_registry.json")
+)
+CAPTIONS_PATH = Path(
+    (os.getenv("CAREY_CAPTIONS") or "").strip()
+    or (Path(__file__).parent / "captions.json")
+)
 
 # Generation constants
 INFERENCE_STEPS = 50
@@ -85,6 +95,7 @@ GENERATION_TIMEOUT = int(os.getenv("CAREY_GENERATION_TIMEOUT", "600"))
 JOB_TTL = 3600
 COVER_INFERENCE_STEPS = 8
 COVER_GUIDANCE_SCALE = 1.0
+LEGO_REGULAR_TRACKS = {"vocals", "backing_vocals"}
 
 # Default captions per track type (lego mode only)
 TRACK_CAPTIONS = {
@@ -103,6 +114,8 @@ TRACK_CAPTIONS = {
 }
 
 ALLOWED_TRACKS = set(TRACK_CAPTIONS.keys())
+LORA_REGISTRY: dict[str, dict[str, object]] = {}
+_caption_pools: dict[str, list[str]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +124,19 @@ ALLOWED_TRACKS = set(TRACK_CAPTIONS.keys())
 
 _backend_process: Optional[subprocess.Popen] = None
 _current_model: Optional[str] = DEFAULT_STARTUP_CONFIG if BACKEND_STARTS_LOADED else None
+
+
+def _model_family_for_config(config_path: str) -> str:
+    normalized = (config_path or "").strip().lower()
+    return "xl" if "-xl-" in normalized or normalized.startswith("acestep-v15-xl-") else "standard"
+
+
+def _primary_runtime_family() -> str:
+    return _model_family_for_config(ACESTEP_BASE_CONFIG)
+
+
+def _default_captions_path() -> Path:
+    return Path(__file__).resolve().parent / "default_captions.json"
 
 
 def _sync_checkpoint_overrides(script_dir: Optional[Path] = None) -> list[Path]:
@@ -177,6 +203,89 @@ def _stop_backend():
             _backend_process.kill()
         print("[wrapper] api_server.py stopped.")
     _backend_process = None
+
+
+def _sanitize_backend_list(values: object) -> list[str]:
+    allowed = {"base", "turbo", "regular"}
+    if not isinstance(values, list):
+        return ["base", "turbo"]
+    cleaned = []
+    for value in values:
+        text = str(value).strip().lower()
+        if text in allowed and text not in cleaned:
+            cleaned.append(text)
+    return cleaned or ["base", "turbo"]
+
+
+def _load_lora_registry() -> None:
+    LORA_REGISTRY.clear()
+    if not LORA_REGISTRY_PATH.is_file():
+        print(f"[carey] No LoRA registry at {LORA_REGISTRY_PATH}", flush=True)
+        return
+
+    try:
+        data = json.loads(LORA_REGISTRY_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("registry must be a JSON object")
+
+        for name, cfg in data.items():
+            if not isinstance(cfg, dict):
+                continue
+
+            path = str(cfg.get("path") or "").strip()
+            if not path:
+                continue
+
+            LORA_REGISTRY[str(name)] = {
+                "path": path,
+                "scale": float(cfg.get("scale", 1.0)),
+                "backends": _sanitize_backend_list(cfg.get("backends")),
+                "model_family": "xl" if str(cfg.get("model_family", "standard")).strip().lower() == "xl" else "standard",
+            }
+
+        print(f"[carey] Loaded {len(LORA_REGISTRY)} LoRAs from registry", flush=True)
+    except Exception as exc:
+        print(f"[carey] LoRA registry load failed: {exc}", flush=True)
+
+
+def _load_captions() -> None:
+    _caption_pools.clear()
+    loaded_primary = False
+    if CAPTIONS_PATH.is_file():
+        try:
+            data = json.loads(CAPTIONS_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("captions must be a JSON object")
+
+            for pool_name, entries in data.items():
+                if not isinstance(entries, list):
+                    continue
+                cleaned = [str(entry).strip() for entry in entries if str(entry).strip()]
+                if cleaned:
+                    _caption_pools[str(pool_name)] = cleaned
+            loaded_primary = True
+        except Exception as exc:
+            print(f"[carey] captions.json load failed: {exc}", flush=True)
+    else:
+        print(f"[carey] No captions.json at {CAPTIONS_PATH}", flush=True)
+
+    if not _caption_pools.get("default"):
+        default_path = _default_captions_path()
+        if default_path.is_file():
+            try:
+                default_data = json.loads(default_path.read_text(encoding="utf-8"))
+                default_entries = default_data.get("default")
+                if isinstance(default_entries, list):
+                    cleaned = [str(entry).strip() for entry in default_entries if str(entry).strip()]
+                    if cleaned:
+                        _caption_pools["default"] = cleaned
+                        print(f"[carey] Loaded default fallback captions from {default_path}", flush=True)
+            except Exception as exc:
+                print(f"[carey] default captions load failed: {exc}", flush=True)
+
+    summary = ", ".join(f"{name}({len(entries)})" for name, entries in _caption_pools.items())
+    if loaded_primary or _caption_pools:
+        print(f"[carey] Loaded captions: {summary or 'none'}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +390,8 @@ class LegoRequest(BaseModel):
     time_signature: str = Field("4", description="Time signature numerator")
     batch_size: int = Field(1, description="Number of candidates")
     audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
+    lora: str = Field("", description="Optional LoRA adapter name. Empty = no adapter.")
+    lora_scale: float = Field(-1.0, description="Override LoRA scale 0.0-1.0. -1 = use registry default.")
 
 
 class CompleteRequest(BaseModel):
@@ -299,13 +410,15 @@ class CompleteRequest(BaseModel):
     batch_size: int = Field(1, description="Number of candidates")
     audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
     model: str = Field(
-        "turbo",
+        "xl-turbo",
         description=(
             "Model variant for complete mode. Accepted values include "
             "'turbo', 'base', 'sft', 'xl-turbo', 'xl-base', and 'xl-sft'. "
             "Only turbo is fixed to 8 steps / cfg 1.0."
         ),
     )
+    lora: str = Field("", description="Optional LoRA adapter name. Empty = no adapter.")
+    lora_scale: float = Field(-1.0, description="Override LoRA scale 0.0-1.0. -1 = use registry default.")
 
 
 class ExtractRequest(BaseModel):
@@ -336,6 +449,12 @@ class CoverRequest(BaseModel):
     time_signature: str = Field("4", description="Time signature numerator")
     batch_size: int = Field(1, description="Number of candidates")
     audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
+    model: str = Field(
+        "xl-turbo",
+        description="Model variant for cover mode. Use 'xl-turbo' for fast 8-step cover or 'xl-base' for richer slower cover.",
+    )
+    lora: str = Field("", description="Optional LoRA adapter name. Empty = no adapter.")
+    lora_scale: float = Field(-1.0, description="Override LoRA scale 0.0-1.0. -1 = use registry default.")
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +476,8 @@ async def _init():
     global _generation_semaphore
     _generation_semaphore = asyncio.Semaphore(EFFECTIVE_MAX_CONCURRENT)
     _install_windows_asyncio_exception_filter()
+    _load_lora_registry()
+    _load_captions()
     _start_backend()
 
     # Wait for backend to be ready
@@ -528,6 +649,13 @@ def _complete_model_variant(model_name: str) -> str:
     return "base"
 
 
+def _cover_model_variant(model_name: str) -> str:
+    normalized = (model_name or "").strip().lower()
+    if "base" in normalized or "sft" in normalized:
+        return "base"
+    return "turbo"
+
+
 def _display_model_name(model_name: str) -> str:
     normalized = (model_name or "").strip()
     if normalized.startswith("acestep-v15-"):
@@ -555,9 +683,30 @@ def _loading_status_message(model_name: str) -> str:
     return f"first use: downloading and loading {display_name}..."
 
 
-def _required_model_for_task(task_type: str, requested_model: str = "") -> str:
+def _backend_key_for(task_type: str, requested_model: str = "", track_name: str = "") -> str:
+    if task_type == "lego" and track_name in LEGO_REGULAR_TRACKS:
+        return "regular"
     if task_type == "cover":
-        return ACESTEP_TURBO_CONFIG
+        if _cover_model_variant(requested_model) == "turbo":
+            return "turbo"
+        return "base"
+    if task_type == "complete" and _complete_model_variant(requested_model) == "turbo":
+        return "turbo"
+    return "base"
+
+
+def _required_model_family_for_task(task_type: str, requested_model: str = "", track_name: str = "") -> str:
+    required_model = _required_model_for_task(task_type, requested_model, track_name)
+    return _model_family_for_config(required_model)
+
+
+def _required_model_for_task(task_type: str, requested_model: str = "", track_name: str = "") -> str:
+    if task_type == "lego" and track_name in LEGO_REGULAR_TRACKS:
+        return ACESTEP_REGULAR_CONFIG
+    if task_type == "cover":
+        if _cover_model_variant(requested_model) == "turbo":
+            return ACESTEP_TURBO_CONFIG
+        return ACESTEP_BASE_CONFIG
     if task_type == "complete":
         variant = _complete_model_variant(requested_model)
         if variant == "turbo":
@@ -568,7 +717,7 @@ def _required_model_for_task(task_type: str, requested_model: str = "") -> str:
 
 
 def _effective_guidance_scale(task_type: str, requested_guidance_scale: float, requested_model: str = "") -> float:
-    if task_type == "cover":
+    if task_type == "cover" and _cover_model_variant(requested_model) == "turbo":
         return COVER_GUIDANCE_SCALE
     if task_type == "complete" and _complete_model_variant(requested_model) == "turbo":
         return COVER_GUIDANCE_SCALE
@@ -576,7 +725,7 @@ def _effective_guidance_scale(task_type: str, requested_guidance_scale: float, r
 
 
 def _effective_inference_steps(task_type: str, requested_inference_steps: int, requested_model: str = "") -> int:
-    if task_type == "cover":
+    if task_type == "cover" and _cover_model_variant(requested_model) == "turbo":
         return COVER_INFERENCE_STEPS
     if task_type == "complete" and _complete_model_variant(requested_model) == "turbo":
         return COVER_INFERENCE_STEPS
@@ -606,13 +755,54 @@ async def _unload_model(client: httpx.AsyncClient) -> None:
         raise RuntimeError(f"/v1/unload failed: {resp.text}")
 
 
+async def _load_lora(client: httpx.AsyncClient, lora_path: str, scale: float = 1.0) -> None:
+    resp = await client.post(
+        f"{ACESTEP_URL}/v1/lora/load",
+        headers=_acestep_headers(),
+        json={"lora_path": lora_path},
+        timeout=60,
+    )
+    load_ok = False
+    if resp.status_code == 200:
+        load_ok = True
+    elif "already in use" in resp.text.lower():
+        load_ok = True
+    else:
+        raise RuntimeError(f"/v1/lora/load failed: {resp.text}")
+
+    if load_ok and scale != 1.0:
+        scale_resp = await client.post(
+            f"{ACESTEP_URL}/v1/lora/scale",
+            headers=_acestep_headers(),
+            json={"scale": scale},
+            timeout=30,
+        )
+        if scale_resp.status_code != 200:
+            raise RuntimeError(f"/v1/lora/scale failed: {scale_resp.text}")
+
+
+async def _unload_lora(client: httpx.AsyncClient) -> None:
+    try:
+        await client.post(
+            f"{ACESTEP_URL}/v1/lora/unload",
+            headers=_acestep_headers(),
+            timeout=30,
+        )
+    except Exception:
+        pass
+
+
 async def _ensure_required_model(client: httpx.AsyncClient, job: Job, req) -> None:
     global _current_model
 
     if not MANAGE_MODEL_LIFECYCLE:
         return
 
-    required_model = _required_model_for_task(job.task_type, getattr(req, "model", ""))
+    required_model = _required_model_for_task(
+        job.task_type,
+        getattr(req, "model", ""),
+        getattr(req, "track_name", ""),
+    )
     if _current_model == required_model:
         return
 
@@ -702,6 +892,34 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
 async def _run_generation(job: Job, req):
     """Background task: handles the full generation lifecycle for any task type."""
     raw_audio_path = None
+    requested_model = getattr(req, "model", "")
+    track_name = getattr(req, "track_name", "")
+    lora_name = (getattr(req, "lora", "") or "").strip()
+    backend_key = _backend_key_for(job.task_type, requested_model, track_name)
+    required_family = _required_model_family_for_task(job.task_type, requested_model, track_name)
+    lora_config = None
+
+    if lora_name:
+        lora_config = LORA_REGISTRY.get(lora_name)
+        if not lora_config:
+            job.status = JobStatus.FAILED
+            job.error = f"Unknown LoRA '{lora_name}'"
+            job.progress_text = f"failed: unknown LoRA '{lora_name}'"
+            return
+        lora_family = str(lora_config.get("model_family", "standard")).strip().lower() or "standard"
+        if lora_family != required_family:
+            job.status = JobStatus.FAILED
+            job.error = (
+                f"LoRA '{lora_name}' targets the {lora_family} model family "
+                f"but this request needs {required_family}"
+            )
+            job.progress_text = f"failed: LoRA '{lora_name}' targets {lora_family}, not {required_family}"
+            return
+        if backend_key not in list(lora_config.get("backends", ["base", "turbo"])):
+            job.status = JobStatus.FAILED
+            job.error = f"LoRA '{lora_name}' is not supported on the {backend_key} backend"
+            job.progress_text = f"failed: LoRA '{lora_name}' is not supported on {backend_key}"
+            return
 
     async with _generation_semaphore:
         try:
@@ -730,130 +948,141 @@ async def _run_generation(job: Job, req):
 
             async with httpx.AsyncClient() as client:
                 await _ensure_required_model(client, job, req)
+                await _unload_lora(client)
 
-                # --- Submit to ace-step ---
-                job.status = JobStatus.SUBMITTING
-                job.progress = max(job.progress, 15)
-                job.progress_text = "submitting to ace-step..."
+                try:
+                    if lora_config:
+                        req_scale = getattr(req, "lora_scale", -1.0)
+                        scale = req_scale if 0.0 <= req_scale <= 1.0 else float(lora_config.get("scale", 1.0))
+                        job.progress = max(job.progress, 12)
+                        job.progress_text = f"loading LoRA {lora_name}..."
+                        await _load_lora(client, str(lora_config["path"]), scale)
 
-                filename = Path(send_path).name
-                mime = "audio/flac" if filename.endswith(".flac") else \
-                        "audio/ogg" if filename.endswith(".ogg") else "audio/wav"
-                form_data = _build_form_data(job, req, send_path)
+                    # --- Submit to ace-step ---
+                    job.status = JobStatus.SUBMITTING
+                    job.progress = max(job.progress, 15)
+                    job.progress_text = "submitting to ace-step..."
 
-                use_ref = getattr(req, 'use_src_as_ref', False)
+                    filename = Path(send_path).name
+                    mime = "audio/flac" if filename.endswith(".flac") else \
+                            "audio/ogg" if filename.endswith(".ogg") else "audio/wav"
+                    form_data = _build_form_data(job, req, send_path)
 
-                with open(send_path, "rb") as fh:
-                    files = [("ctx_audio", (filename, fh, mime))]
+                    use_ref = getattr(req, 'use_src_as_ref', False)
 
-                    ref_fh = None
-                    if use_ref:
-                        ref_fh = open(send_path, "rb")
-                        files.append(("ref_audio", (filename, ref_fh, mime)))
+                    with open(send_path, "rb") as fh:
+                        files = [("ctx_audio", (filename, fh, mime))]
 
-                    try:
+                        ref_fh = None
+                        if use_ref:
+                            ref_fh = open(send_path, "rb")
+                            files.append(("ref_audio", (filename, ref_fh, mime)))
+
+                        try:
+                            resp = await client.post(
+                                f"{ACESTEP_URL}/release_task",
+                                headers=_acestep_headers(),
+                                data=form_data,
+                                files=files,
+                                timeout=120,
+                            )
+                        finally:
+                            if ref_fh:
+                                ref_fh.close()
+
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"/release_task failed: {resp.text}")
+
+                    body = resp.json()
+                    print(f"[wrapper] /release_task response: {json.dumps(body)[:200]}", flush=True)
+                    job.ace_task_id = body["data"]["task_id"]
+
+                    # --- Poll ace-step for progress ---
+                    job.status = JobStatus.GENERATING
+                    job.progress = max(job.progress, 18)
+                    job.progress_text = "starting generation..."
+
+                    gen_start_time = time.time()
+                    inference_steps = _effective_inference_steps(
+                        job.task_type,
+                        getattr(req, 'inference_steps', INFERENCE_STEPS),
+                        getattr(req, "model", ""),
+                    )
+                    est_seconds_per_step = 0.35
+
+                    deadline = time.time() + GENERATION_TIMEOUT
+                    while time.time() < deadline:
                         resp = await client.post(
-                            f"{ACESTEP_URL}/release_task",
+                            f"{ACESTEP_URL}/query_result",
                             headers=_acestep_headers(),
-                            data=form_data,
-                            files=files,
-                            timeout=120,
+                            json={"task_id_list": [job.ace_task_id]},
+                            timeout=15,
                         )
-                    finally:
-                        if ref_fh:
-                            ref_fh.close()
+                        resp_body = resp.json()
+                        result = resp_body["data"][0]
+                        ace_status = result["status"]
+                        result_entry = _parse_acestep_result_entry(result.get("result"))
+                        stage_text = _strip_ansi(str(result_entry.get("stage") or ""))
+                        raw_progress = _coerce_progress_ratio(result_entry.get("progress"))
+                        progress_text = _strip_ansi(result.get("progress_text") or "")
+                        print(
+                            f"[wrapper] poll: status={ace_status} stage={stage_text or '-'} "
+                            f"progress={raw_progress} text={progress_text[:80]}",
+                            flush=True,
+                        )
 
-                if resp.status_code != 200:
-                    raise RuntimeError(f"/release_task failed: {resp.text}")
+                        resolved_progress, resolved_label = _resolve_generation_progress(result)
+                        if resolved_label:
+                            job.progress_text = resolved_label
+                        if resolved_progress is not None:
+                            job.progress = min(max(job.progress, resolved_progress), 99)
 
-                body = resp.json()
-                print(f"[wrapper] /release_task response: {json.dumps(body)[:200]}", flush=True)
-                job.ace_task_id = body["data"]["task_id"]
+                        if resolved_progress is None and job.status == JobStatus.GENERATING \
+                                and job.task_type == "cover":
+                            elapsed = time.time() - gen_start_time
+                            est_total = inference_steps * est_seconds_per_step
+                            if est_total > 0:
+                                est_pct = min(int((elapsed / est_total) * 75), 75)
+                                if est_pct > 0:
+                                    job.progress = min(max(job.progress, est_pct), 99)
+                                    job.progress_text = f"~{est_pct}% ({inference_steps} steps)"
 
-                # --- Poll ace-step for progress ---
-                job.status = JobStatus.GENERATING
-                job.progress = max(job.progress, 18)
-                job.progress_text = "starting generation..."
+                        if ace_status == 1:
+                            break
+                        if ace_status == 2:
+                            error_msg = result.get("error") or result.get("progress_text") or "generation failed"
+                            print(f"[wrapper] ace-step FAILED, full result: {json.dumps(result, default=str)}", flush=True)
+                            raise RuntimeError(error_msg)
 
-                gen_start_time = time.time()
-                inference_steps = _effective_inference_steps(
-                    job.task_type,
-                    getattr(req, 'inference_steps', INFERENCE_STEPS),
-                    getattr(req, "model", ""),
-                )
-                est_seconds_per_step = 0.35
+                        await asyncio.sleep(POLL_INTERVAL)
+                    else:
+                        raise RuntimeError("Generation timed out")
 
-                deadline = time.time() + GENERATION_TIMEOUT
-                while time.time() < deadline:
-                    resp = await client.post(
-                        f"{ACESTEP_URL}/query_result",
+                    # --- Download audio ---
+                    job.status = JobStatus.DOWNLOADING
+                    job.progress = max(job.progress, 99)
+                    job.progress_text = "downloading audio..."
+
+                    files_list = json.loads(result["result"])
+                    if not files_list:
+                        raise RuntimeError("No audio files in result")
+
+                    file_path = files_list[0]["file"]
+                    resp = await client.get(
+                        f"{ACESTEP_URL}{file_path}",
                         headers=_acestep_headers(),
-                        json={"task_id_list": [job.ace_task_id]},
-                        timeout=15,
+                        timeout=60,
                     )
-                    resp_body = resp.json()
-                    result = resp_body["data"][0]
-                    ace_status = result["status"]
-                    result_entry = _parse_acestep_result_entry(result.get("result"))
-                    stage_text = _strip_ansi(str(result_entry.get("stage") or ""))
-                    raw_progress = _coerce_progress_ratio(result_entry.get("progress"))
-                    progress_text = _strip_ansi(result.get("progress_text") or "")
-                    print(
-                        f"[wrapper] poll: status={ace_status} stage={stage_text or '-'} "
-                        f"progress={raw_progress} text={progress_text[:80]}",
-                        flush=True,
-                    )
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"Failed to download audio: {resp.status_code}")
 
-                    resolved_progress, resolved_label = _resolve_generation_progress(result)
-                    if resolved_label:
-                        job.progress_text = resolved_label
-                    if resolved_progress is not None:
-                        job.progress = min(max(job.progress, resolved_progress), 99)
-
-                    # Time-based estimate for cover mode only
-                    if resolved_progress is None and job.status == JobStatus.GENERATING \
-                            and job.task_type == "cover":
-                        elapsed = time.time() - gen_start_time
-                        est_total = inference_steps * est_seconds_per_step
-                        if est_total > 0:
-                            est_pct = min(int((elapsed / est_total) * 75), 75)
-                            if est_pct > 0:
-                                job.progress = min(max(job.progress, est_pct), 99)
-                                job.progress_text = f"~{est_pct}% ({inference_steps} steps)"
-
-                    if ace_status == 1:
-                        break
-                    if ace_status == 2:
-                        error_msg = result.get("error") or result.get("progress_text") or "generation failed"
-                        print(f"[wrapper] ace-step FAILED, full result: {json.dumps(result, default=str)}", flush=True)
-                        raise RuntimeError(error_msg)
-
-                    await asyncio.sleep(POLL_INTERVAL)
-                else:
-                    raise RuntimeError("Generation timed out")
-
-                # --- Download audio ---
-                job.status = JobStatus.DOWNLOADING
-                job.progress = max(job.progress, 99)
-                job.progress_text = "downloading audio..."
-
-                files_list = json.loads(result["result"])
-                if not files_list:
-                    raise RuntimeError("No audio files in result")
-
-                file_path = files_list[0]["file"]
-                resp = await client.get(
-                    f"{ACESTEP_URL}{file_path}",
-                    headers=_acestep_headers(),
-                    timeout=60,
-                )
-                if resp.status_code != 200:
-                    raise RuntimeError(f"Failed to download audio: {resp.status_code}")
-
-                job.audio_b64 = base64.b64encode(resp.content).decode("utf-8")
-                job.status = JobStatus.COMPLETED
-                job.progress = 100
-                job.progress_text = "complete"
+                    job.audio_b64 = base64.b64encode(resp.content).decode("utf-8")
+                    job.status = JobStatus.COMPLETED
+                    job.progress = 100
+                    job.progress_text = "complete"
+                finally:
+                    if lora_config:
+                        await _unload_lora(client)
 
         except Exception as e:
             import traceback
@@ -933,6 +1162,55 @@ def _build_status_response(job: Job) -> JSONResponse:
     })
 
 
+def _validate_lora_request(task_type: str, req) -> None:
+    lora_name = (getattr(req, "lora", "") or "").strip()
+    if not lora_name:
+        return
+
+    lora_config = LORA_REGISTRY.get(lora_name)
+    if not lora_config:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "invalid_lora",
+                "error": f"Unknown LoRA '{lora_name}'. Available: {sorted(LORA_REGISTRY.keys())}",
+            },
+        )
+
+    backend_key = _backend_key_for(
+        task_type,
+        getattr(req, "model", ""),
+        getattr(req, "track_name", ""),
+    )
+    required_family = _required_model_family_for_task(
+        task_type,
+        getattr(req, "model", ""),
+        getattr(req, "track_name", ""),
+    )
+    lora_family = str(lora_config.get("model_family", "standard")).strip().lower() or "standard"
+    if lora_family != required_family:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "invalid_lora",
+                "error": (
+                    f"LoRA '{lora_name}' targets the {lora_family} model family, "
+                    f"but this request needs {required_family}"
+                ),
+            },
+        )
+
+    backends = list(lora_config.get("backends", ["base", "turbo"]))
+    if backend_key not in backends:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "invalid_lora",
+                "error": f"LoRA '{lora_name}' is not supported on the {backend_key} backend",
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # Lego endpoints
 # ---------------------------------------------------------------------------
@@ -941,6 +1219,7 @@ def _build_status_response(job: Job) -> JSONResponse:
 async def lego_submit(req: LegoRequest):
     if req.track_name not in ALLOWED_TRACKS:
         raise HTTPException(400, f"track_name must be one of {sorted(ALLOWED_TRACKS)}")
+    _validate_lora_request("lego", req)
 
     _cleanup_old_jobs()
     task_id = str(uuid4())
@@ -1019,6 +1298,7 @@ async def complete_submit(req: CompleteRequest):
         raise HTTPException(400, "audio_duration must be at least 5 seconds")
     if req.audio_duration > 300:
         raise HTTPException(400, "audio_duration must be at most 300 seconds (5 min)")
+    _validate_lora_request("complete", req)
 
     _cleanup_old_jobs()
     task_id = str(uuid4())
@@ -1059,6 +1339,7 @@ async def cover_submit(req: CoverRequest):
         raise HTTPException(400, "cover_noise_strength must be 0.0-1.0")
     if req.audio_cover_strength < 0 or req.audio_cover_strength > 1:
         raise HTTPException(400, "audio_cover_strength must be 0.0-1.0")
+    _validate_lora_request("cover", req)
 
     _cleanup_old_jobs()
     task_id = str(uuid4())
@@ -1086,6 +1367,52 @@ async def cover_status(task_id: str):
             "success": False, "status": "failed", "error": "Unknown task_id",
         }, status_code=404)
     return _build_status_response(job)
+
+
+# ---------------------------------------------------------------------------
+# LoRA + captions endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/loras")
+async def list_loras():
+    active_family = _primary_runtime_family()
+    payload = {
+        name: {
+            "scale": float(cfg.get("scale", 1.0)),
+            "backends": list(cfg.get("backends", ["base", "turbo"])),
+        }
+        for name, cfg in sorted(LORA_REGISTRY.items())
+        if str(cfg.get("model_family", "standard")).strip().lower() == active_family
+    }
+    return JSONResponse(payload)
+
+
+@app.get("/captions")
+async def get_caption(lora: str | None = Query(default=None)):
+    pool_name = (lora or "default").strip() or "default"
+    pool = _caption_pools.get(pool_name)
+    if not pool:
+        raise HTTPException(status_code=404, detail=f"No captions for '{pool_name}'")
+    return JSONResponse({
+        "caption": random.choice(pool),
+        "pool": pool_name,
+        "pool_size": len(pool),
+    })
+
+
+@app.get("/captions/pools")
+async def get_caption_pools():
+    return JSONResponse({name: len(entries) for name, entries in sorted(_caption_pools.items())})
+
+
+@app.post("/admin/reload")
+async def admin_reload():
+    _load_lora_registry()
+    _load_captions()
+    return JSONResponse({
+        "loras": len(LORA_REGISTRY),
+        "pools": {name: len(entries) for name, entries in sorted(_caption_pools.items())},
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -1119,6 +1446,10 @@ async def health():
         "base_model": ACESTEP_BASE_CONFIG,
         "sft_model": ACESTEP_SFT_CONFIG,
         "turbo_model": ACESTEP_TURBO_CONFIG,
+        "regular_model": ACESTEP_REGULAR_CONFIG,
+        "active_model_family": _primary_runtime_family(),
+        "loras": len(LORA_REGISTRY),
+        "caption_pools": {name: len(entries) for name, entries in sorted(_caption_pools.items())},
         "active_jobs": active_jobs,
         "max_concurrent": EFFECTIVE_MAX_CONCURRENT,
         "configured_max_concurrent": MAX_CONCURRENT,

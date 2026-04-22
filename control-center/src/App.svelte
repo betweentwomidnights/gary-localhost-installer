@@ -8,6 +8,7 @@
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
+  import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
 
@@ -81,6 +82,7 @@
   let updateResult: AppUpdateCheck | null = $state(null);
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
+  let careyLoraModalOpen = $state(false);
 
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
@@ -115,6 +117,15 @@
     selectedServiceId = serviceId;
     modelServiceId = serviceId;
     rightPanel = "models";
+  }
+
+  function showCareyLoras() {
+    selectedServiceId = "carey";
+    careyLoraModalOpen = true;
+  }
+
+  function closeCareyLoras() {
+    careyLoraModalOpen = false;
   }
 
   function backToLogs() {
@@ -350,6 +361,7 @@
   let runningCount = $derived(services.filter((s) => s.status === "running").length);
   let totalCount = $derived(services.length);
   let selectedService = $derived(services.find((s) => s.id === selectedServiceId) ?? null);
+  let careyService = $derived(services.find((s) => s.id === "carey") ?? null);
 </script>
 
 <main>
@@ -388,6 +400,7 @@
         {hfTokenConfigured}
         onSelect={selectService}
         onShowModels={showModels}
+        onManageCareyLoras={showCareyLoras}
       />
     </div>
     <div class="divider"></div>
@@ -439,6 +452,13 @@
     onSkipVersion={skipCurrentUpdate}
     onResumeReminders={resumeUpdateReminders}
     onAutoCheckChange={setAutoCheckUpdates}
+  />
+  <CareyLoraModal
+    open={careyLoraModalOpen}
+    serviceStatus={careyService?.status ?? "stopped"}
+    serviceEnvExists={careyService?.env_exists ?? false}
+    careyXlEnabled={appSettings.careyUseXlModels}
+    onClose={closeCareyLoras}
   />
 </main>
 

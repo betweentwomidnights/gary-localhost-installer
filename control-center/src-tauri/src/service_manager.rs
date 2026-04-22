@@ -318,6 +318,7 @@ impl ServiceManager {
                 .env("ACESTEP_BASE_CONFIG_PATH", base_config)
                 .env("ACESTEP_SFT_CONFIG_PATH", sft_config)
                 .env("ACESTEP_TURBO_CONFIG_PATH", turbo_config)
+                .env("ACESTEP_REGULAR_CONFIG_PATH", "acestep-v15-sft")
                 .env("ACESTEP_NO_INIT", "true");
         }
 

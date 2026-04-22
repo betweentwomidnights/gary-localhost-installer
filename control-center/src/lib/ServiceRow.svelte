@@ -21,12 +21,22 @@
     build_status: BuildStatus | null;
   }
 
-  let { service, selected, onSelect, hasModels = false, onShowModels = () => {} }: {
+  let {
+    service,
+    selected,
+    onSelect,
+    hasModels = false,
+    onShowModels = () => {},
+    hasCareyLoras = false,
+    onManageCareyLoras = () => {},
+  }: {
     service: ServiceInfo;
     selected: boolean;
     onSelect: () => void;
     hasModels?: boolean;
     onShowModels?: () => void;
+    hasCareyLoras?: boolean;
+    onManageCareyLoras?: () => void;
   } = $props();
 
   const statusColors: Record<string, string> = {
@@ -112,6 +122,11 @@
     {#if hasModels}
       <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={!service.env_exists}>
         models
+      </button>
+    {/if}
+    {#if hasCareyLoras}
+      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onManageCareyLoras(); }}>
+        add lora
       </button>
     {/if}
   </div>

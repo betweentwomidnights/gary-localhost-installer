@@ -48,6 +48,12 @@ The local `carey` service now tracks more of the custom [ace-lego](https://githu
 - `cover` always routes to the turbo checkpoint and stays fixed at 8 steps / CFG 1.0.
 - `complete` now accepts `base`, `turbo`, or `sft` from localhost clients. `turbo` stays fixed at 8 steps / CFG 1.0, while `base` and `sft` keep editable steps and CFG.
 - The `gary4local` Carey UI now includes an XL toggle. When enabled, those same localhost model choices map to `acestep-v15-xl-base`, `acestep-v15-xl-sft`, and `acestep-v15-xl-turbo` under the hood instead of the regular checkpoints.
+- The Carey panel now has a separate `add lora` flow instead of mixing user adapters into the checkpoint download UI.
+- Each local LoRA entry stores a name, `model family` (`standard` or `xl`), a checkpoint folder, and an optional separate captions/source folder. This supports the common Side-Step workflow where the exported adapter and the training sidecars do not live together.
+- If a checkpoint folder includes `metadata.json`, gary4local will read `scale`, `backends`, and `model_family` from it. Accepted backend tags are `base`, `turbo`, and `regular`. If metadata is missing, the app defaults to `scale: 1.0`, `backends: ["base", "turbo"]`, and infers the family from the folder name or current XL mode.
+- Saving entries writes `%APPDATA%\Gary4JUCE\carey\lora_registry.json`. Building captions writes `%APPDATA%\Gary4JUCE\carey\captions.json` by scanning `.txt` sidecars from the chosen captions/source folder or, if omitted, from the checkpoint folder itself.
+- The bundled `default` caption pool is seeded from `services/carey/default_captions.json`. Per-LoRA pools are built from the sidecar `caption:` and `genre:` lines. LoRAs without sidecars still work for generation, but the Gary4JUCE dice button will fall back to the default pool.
+- Gary4JUCE only sees LoRAs whose `model family` matches the current Carey XL toggle. `standard` LoRAs are hidden when XL is on, and `xl` LoRAs are hidden when XL is off.
 - We currently recommend 16 GB of VRAM for the XL toggle even though some slower first-use generations may still succeed below that on certain cards.
 - Model startup is intentionally lazy. Switching the XL toggle updates the routing config, but Carey waits until the first request to download or initialize the required checkpoint.
 - During decode, localhost Carey can temporarily offload the DiT model so the VAE decode step has more VRAM available.
@@ -190,3 +196,4 @@ certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4lo
 ## related repos
 
 - plugin frontend: <https://github.com/betweentwomidnights/gary4juce>
+- lora examples: <https://github.com/betweentwomidnights/gary-lora-examples>

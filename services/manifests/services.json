@@ -140,7 +140,9 @@
         "PYTHONIOENCODING": "utf-8",
         "ACESTEP_INIT_LLM": "false",
         "ACESTEP_CONFIG_PATH": "acestep-v15-base",
-        "ACESTEP_NO_INIT": "true"
+        "ACESTEP_NO_INIT": "true",
+        "CAREY_LORA_REGISTRY": "${APPDATA}/Gary4JUCE/carey/lora_registry.json",
+        "CAREY_CAPTIONS": "${APPDATA}/Gary4JUCE/carey/captions.json"
       },
       "dependsOn": []
     },

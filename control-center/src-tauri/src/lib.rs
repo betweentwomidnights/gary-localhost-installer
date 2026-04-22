@@ -6,6 +6,7 @@ mod update;
 use model_manager::ModelManager;
 use serde::{Deserialize, Serialize};
 use service_manager::ServiceManager;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -84,6 +85,64 @@ struct AppSettingsPatch {
     skipped_update_version: Option<Option<String>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyLoraCatalogEntry {
+    path: String,
+    #[serde(default)]
+    captions_path: Option<String>,
+    #[serde(default = "default_lora_scale")]
+    scale: f64,
+    #[serde(default = "default_lora_backends")]
+    backends: Vec<String>,
+    #[serde(default = "default_lora_model_family")]
+    model_family: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyLoraEntry {
+    name: String,
+    path: String,
+    captions_path: Option<String>,
+    resolved_captions_path: Option<String>,
+    caption_count: usize,
+    scale: f64,
+    backends: Vec<String>,
+    model_family: String,
+    checkpoint_exists: bool,
+    registered: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyLoraState {
+    entries: Vec<CareyLoraEntry>,
+    pools: HashMap<String, usize>,
+    catalog_path: String,
+    registry_path: String,
+    captions_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyCaptionsBuildResult {
+    state: CareyLoraState,
+    output: String,
+}
+
+fn default_lora_scale() -> f64 {
+    1.0
+}
+
+fn default_lora_backends() -> Vec<String> {
+    vec!["base".to_string(), "turbo".to_string()]
+}
+
+fn default_lora_model_family() -> String {
+    "standard".to_string()
+}
+
 /// Get the path to the stored HF token file.
 fn hf_token_path() -> std::path::PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
@@ -109,6 +168,29 @@ fn gary4juce_runtime_root() -> PathBuf {
 
 fn runtime_services_dir(runtime_root: &Path) -> PathBuf {
     runtime_root.join("services")
+}
+
+fn carey_runtime_dir() -> PathBuf {
+    gary4juce_runtime_root().join("carey")
+}
+
+fn carey_lora_catalog_path() -> PathBuf {
+    carey_runtime_dir().join("lora_catalog.json")
+}
+
+fn carey_lora_registry_path() -> PathBuf {
+    carey_runtime_dir().join("lora_registry.json")
+}
+
+fn carey_captions_path() -> PathBuf {
+    carey_runtime_dir().join("captions.json")
+}
+
+fn bundled_default_captions_path(runtime_root: &Path) -> PathBuf {
+    runtime_root
+        .join("services")
+        .join("carey")
+        .join("default_captions.json")
 }
 
 fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf, String> {
@@ -432,6 +514,380 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
     current
 }
 
+fn sanitize_lora_name(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+    {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn sanitize_backend_list(values: Vec<String>) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for value in values {
+        let text = value.trim().to_lowercase();
+        if matches!(text.as_str(), "base" | "turbo" | "regular") && !cleaned.contains(&text) {
+            cleaned.push(text);
+        }
+    }
+    if cleaned.is_empty() {
+        default_lora_backends()
+    } else {
+        cleaned
+    }
+}
+
+fn normalize_lora_model_family(raw: &str) -> String {
+    match raw.trim().to_lowercase().as_str() {
+        "xl" => "xl".to_string(),
+        _ => "standard".to_string(),
+    }
+}
+
+fn infer_lora_model_family_from_path(path: &Path) -> String {
+    let text = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+    if text.contains("xl") {
+        "xl".to_string()
+    } else {
+        "standard".to_string()
+    }
+}
+
+fn looks_like_lora_checkpoint_dir(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    if dir.join("adapter_config.json").exists()
+        || dir.join("adapter_model.safetensors").exists()
+        || dir.join("pytorch_lora_weights.safetensors").exists()
+    {
+        return true;
+    }
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries.flatten().any(|entry| {
+            entry
+                .path()
+                .extension()
+                .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("safetensors"))
+                .unwrap_or(false)
+        }),
+        Err(_) => false,
+    }
+}
+
+fn count_caption_sidecars(dir: &Path) -> usize {
+    if !dir.is_dir() {
+        return 0;
+    }
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_txt = entry
+                    .path()
+                    .extension()
+                    .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("txt"))
+                    .unwrap_or(false);
+                is_txt && !name.contains(".v4bak") && !name.ends_with(".v4bak")
+            })
+            .count(),
+        Err(_) => 0,
+    }
+}
+
+fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
+    let path = carey_lora_catalog_path();
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
+    let mut parsed: BTreeMap<String, CareyLoraCatalogEntry> =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid LoRA catalog JSON: {}", e))?;
+
+    for entry in parsed.values_mut() {
+        entry.path = entry.path.trim().to_string();
+        entry.captions_path = entry
+            .captions_path
+            .take()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        entry.backends = sanitize_backend_list(std::mem::take(&mut entry.backends));
+        entry.model_family = normalize_lora_model_family(&entry.model_family);
+    }
+
+    Ok(parsed)
+}
+
+fn save_carey_lora_catalog(catalog: &BTreeMap<String, CareyLoraCatalogEntry>) -> Result<(), String> {
+    let path = carey_lora_catalog_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    let json = serde_json::to_string_pretty(catalog)
+        .map_err(|e| format!("Cannot serialize LoRA catalog: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn resolve_carey_captions_source(entry: &CareyLoraCatalogEntry) -> Option<PathBuf> {
+    if let Some(captions_path) = entry
+        .captions_path
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+    {
+        return Some(captions_path);
+    }
+
+    let checkpoint_dir = PathBuf::from(&entry.path);
+    if count_caption_sidecars(&checkpoint_dir) > 0 {
+        return Some(checkpoint_dir);
+    }
+
+    None
+}
+
+fn load_carey_lora_metadata(
+    checkpoint_dir: &Path,
+    captions_dir: Option<&Path>,
+    existing: Option<&CareyLoraCatalogEntry>,
+) -> (f64, Vec<String>, String) {
+    let mut candidates = vec![checkpoint_dir.join("metadata.json")];
+    if let Some(captions_dir) = captions_dir {
+        let candidate = captions_dir.join("metadata.json");
+        if candidate != candidates[0] {
+            candidates.push(candidate);
+        }
+    }
+
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+
+        let Ok(raw) = std::fs::read_to_string(&candidate) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+
+        let scale = value
+            .get("scale")
+            .and_then(|value| value.as_f64())
+            .unwrap_or_else(default_lora_scale);
+        let backends = value
+            .get("backends")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(|text| text.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .map(sanitize_backend_list)
+            .unwrap_or_else(default_lora_backends);
+        let model_family = value
+            .get("model_family")
+            .or_else(|| value.get("family"))
+            .and_then(|value| value.as_str())
+            .map(normalize_lora_model_family)
+            .unwrap_or_else(|| infer_lora_model_family_from_path(checkpoint_dir));
+        return (scale, backends, model_family);
+    }
+
+    if let Some(existing) = existing {
+        return (
+            existing.scale,
+            sanitize_backend_list(existing.backends.clone()),
+            normalize_lora_model_family(&existing.model_family),
+        );
+    }
+
+    (
+        default_lora_scale(),
+        default_lora_backends(),
+        infer_lora_model_family_from_path(checkpoint_dir),
+    )
+}
+
+fn build_carey_lora_entries(
+    catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
+) -> Vec<CareyLoraEntry> {
+    catalog
+        .iter()
+        .map(|(name, entry)| {
+            let checkpoint_path = PathBuf::from(&entry.path);
+            let checkpoint_exists = looks_like_lora_checkpoint_dir(&checkpoint_path);
+            let resolved_captions_path = resolve_carey_captions_source(entry);
+            let caption_count = resolved_captions_path
+                .as_ref()
+                .map(|path| count_caption_sidecars(path))
+                .unwrap_or(0);
+
+            CareyLoraEntry {
+                name: name.clone(),
+                path: entry.path.clone(),
+                captions_path: entry.captions_path.clone(),
+                resolved_captions_path: resolved_captions_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
+                caption_count,
+                scale: entry.scale,
+                backends: sanitize_backend_list(entry.backends.clone()),
+                model_family: normalize_lora_model_family(&entry.model_family),
+                checkpoint_exists,
+                registered: checkpoint_exists,
+            }
+        })
+        .collect()
+}
+
+fn write_carey_lora_registry(entries: &[CareyLoraEntry]) -> Result<(), String> {
+    let path = carey_lora_registry_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = BTreeMap::<String, serde_json::Value>::new();
+    for entry in entries.iter().filter(|entry| entry.registered) {
+        payload.insert(
+            entry.name.clone(),
+            serde_json::json!({
+                "path": entry.path,
+                "scale": entry.scale,
+                "backends": entry.backends,
+                "model_family": entry.model_family,
+            }),
+        );
+    }
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize LoRA registry: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn read_carey_caption_pools() -> HashMap<String, usize> {
+    let path = carey_captions_path();
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return HashMap::new();
+    };
+    let Some(obj) = value.as_object() else {
+        return HashMap::new();
+    };
+
+    let mut pools = HashMap::new();
+    for (name, entries) in obj {
+        let count = entries.as_array().map(|items| items.len()).unwrap_or(0);
+        pools.insert(name.clone(), count);
+    }
+    pools
+}
+
+fn read_bundled_default_caption_pool(runtime_root: &Path) -> Vec<String> {
+    let path = bundled_default_captions_path(runtime_root);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    value
+        .get("default")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(|text| text.trim().to_string()))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn ensure_default_carey_captions(runtime_root: &Path) -> Result<(), String> {
+    let default_pool = read_bundled_default_caption_pool(runtime_root);
+    if default_pool.is_empty() {
+        return Ok(());
+    }
+
+    let path = carey_captions_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = if path.exists() {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    payload["default"] = serde_json::json!(default_pool);
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize default captions: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+
+    Ok(())
+}
+
+fn merge_default_captions_into_file(runtime_root: &Path) -> Result<(), String> {
+    ensure_default_carey_captions(runtime_root)
+}
+
+fn build_carey_lora_state(runtime_root: &Path) -> Result<CareyLoraState, String> {
+    ensure_default_carey_captions(runtime_root)?;
+    let catalog = read_carey_lora_catalog()?;
+    let entries = build_carey_lora_entries(&catalog);
+    write_carey_lora_registry(&entries)?;
+    Ok(CareyLoraState {
+        entries,
+        pools: read_carey_caption_pools(),
+        catalog_path: carey_lora_catalog_path().to_string_lossy().to_string(),
+        registry_path: carey_lora_registry_path().to_string_lossy().to_string(),
+        captions_path: carey_captions_path().to_string_lossy().to_string(),
+    })
+}
+
+async fn try_reload_carey_admin() -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+
+    match client.post("http://localhost:8003/admin/reload").send().await {
+        Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
+}
+
 async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
     let mut m = manager.lock().await;
     m.stop_all();
@@ -571,7 +1027,9 @@ fn rebuild_tray_menu_with_info(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_process::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init());
     let builder = if update::app_updater_enabled() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     } else {
@@ -831,6 +1289,10 @@ pub fn run() {
             download_model,
             get_download_progress,
             fetch_jerry_checkpoints,
+            get_carey_lora_state,
+            upsert_carey_lora,
+            remove_carey_lora,
+            build_carey_lora_captions,
             get_hf_token,
             save_hf_token,
             delete_hf_token,
@@ -1530,6 +1992,158 @@ async fn get_download_progress(
 ) -> Result<Vec<model_manager::DownloadProgress>, String> {
     let mgr = model_mgr.lock().await;
     Ok(mgr.get_download_progress())
+}
+
+#[tauri::command]
+fn get_carey_lora_state(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyLoraState, String> {
+    build_carey_lora_state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn upsert_carey_lora(
+    name: String,
+    checkpoint_path: String,
+    captions_path: Option<String>,
+    model_family: Option<String>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyLoraState, String> {
+    let normalized_name = sanitize_lora_name(&name)
+        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    let checkpoint_dir = PathBuf::from(checkpoint_path.trim());
+    if !looks_like_lora_checkpoint_dir(&checkpoint_dir) {
+        return Err(format!(
+            "{} does not look like a LoRA checkpoint folder",
+            checkpoint_dir.display()
+        ));
+    }
+
+    let normalized_captions_path = captions_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let captions_dir = normalized_captions_path.as_ref().map(PathBuf::from);
+    if let Some(captions_dir) = captions_dir.as_ref() {
+        if !captions_dir.is_dir() {
+            return Err(format!(
+                "{} is not a valid captions/source folder",
+                captions_dir.display()
+            ));
+        }
+    }
+
+    let mut catalog = read_carey_lora_catalog()?;
+    let existing = catalog.get(&normalized_name);
+    let (scale, backends, inferred_model_family) = load_carey_lora_metadata(
+        &checkpoint_dir,
+        captions_dir.as_deref(),
+        existing,
+    );
+    let resolved_model_family = model_family
+        .as_deref()
+        .map(normalize_lora_model_family)
+        .unwrap_or(inferred_model_family);
+
+    catalog.insert(
+        normalized_name,
+        CareyLoraCatalogEntry {
+            path: checkpoint_dir.to_string_lossy().to_string(),
+            captions_path: normalized_captions_path,
+            scale,
+            backends,
+            model_family: resolved_model_family,
+        },
+    );
+    save_carey_lora_catalog(&catalog)?;
+
+    let state = build_carey_lora_state(repo_root.inner())?;
+    let _ = try_reload_carey_admin().await;
+    Ok(state)
+}
+
+#[tauri::command]
+async fn remove_carey_lora(
+    name: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyLoraState, String> {
+    let normalized_name = sanitize_lora_name(&name)
+        .ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let mut catalog = read_carey_lora_catalog()?;
+    catalog.remove(&normalized_name);
+    save_carey_lora_catalog(&catalog)?;
+
+    let state = build_carey_lora_state(repo_root.inner())?;
+    let _ = try_reload_carey_admin().await;
+    Ok(state)
+}
+
+#[tauri::command]
+async fn build_carey_lora_captions(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyCaptionsBuildResult, String> {
+    let initial_state = build_carey_lora_state(repo_root.inner())?;
+    let python_exe = repo_root
+        .join("services")
+        .join("carey")
+        .join("env")
+        .join("Scripts")
+        .join("python.exe");
+    if !python_exe.exists() {
+        return Err("Carey must be built before captions can be generated.".to_string());
+    }
+
+    let script_path = repo_root.join("services").join("carey").join("build_captions.py");
+    if !script_path.exists() {
+        return Err(format!("Missing {}", script_path.display()));
+    }
+
+    if let Some(parent) = carey_captions_path().parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut cmd = tokio::process::Command::new(&python_exe);
+    hide_console_window(&mut cmd);
+    cmd.arg(&script_path)
+        .current_dir(repo_root.join("services").join("carey"));
+
+    for entry in &initial_state.entries {
+        if !entry.registered || entry.caption_count == 0 {
+            continue;
+        }
+        if let Some(resolved_captions_path) = entry.resolved_captions_path.as_ref() {
+            cmd.arg("--lora")
+                .arg(format!("{}:{}", entry.name, resolved_captions_path));
+        }
+    }
+
+    cmd.arg("-o").arg(carey_captions_path());
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run build_captions.py: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let combined_output = match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{}\n{}", stdout, stderr),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (true, true) => "No output".to_string(),
+    };
+
+    if !output.status.success() {
+        return Err(combined_output);
+    }
+
+    merge_default_captions_into_file(repo_root.inner())?;
+    let _ = try_reload_carey_admin().await;
+    let state = build_carey_lora_state(repo_root.inner())?;
+    Ok(CareyCaptionsBuildResult {
+        state,
+        output: combined_output,
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -22,12 +22,13 @@
     build_status: BuildStatus | null;
   }
 
-  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels }: {
+  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
     hfTokenConfigured: boolean;
     onSelect: (id: string) => void;
     onShowModels: (id: string) => void;
+    onManageCareyLoras: () => void;
   } = $props();
 
   async function rebuildAll() {
@@ -54,6 +55,8 @@
       onSelect={() => onSelect(service.id)}
       hasModels={servicesWithModels.has(service.id) && (service.id !== "stable-audio" || hfTokenConfigured)}
       onShowModels={() => onShowModels(service.id)}
+      hasCareyLoras={service.id === "carey"}
+      onManageCareyLoras={onManageCareyLoras}
     />
   {/each}
   {#if services.length === 0}
