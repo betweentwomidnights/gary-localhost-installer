@@ -1,12 +1,13 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.1.5",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.5/gary4local_0.1.5_x64-setup.exe",
-    "sha256":  "e0960c73a4fb2c42e7152469c889f549872b0f1ace612a5c6989c4d2de9d1874",
-    "published_at":  "2026-04-11T11:37:07.3573419Z",
+    "latest_version":  "0.1.6",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.6/gary4local_0.1.6_x64-setup.exe",
+    "sha256":  "d06eb2b036fba66c05478e6568b1b466bdc3e22abe2cb200bb5a12ce7f2ea1de",
+    "published_at":  "2026-04-22T16:49:55.4242795Z",
     "notes":  [
-                  "Adds Carey XL model toggles to gary4local so localhost users can opt into XL base, SFT, and turbo variants when VRAM allows.",
-                  "Brings Carey complete, cover, and extract handling closer to the remote backend, including better complete-mode routing and first-use model warmup messaging.",
-                  "Keeps Carey startup lazy so switching the XL toggle does not eagerly preload a model before the first request."
+                  "Adds the new Carey local LoRA manager for gary4local, including dynamic local LoRA registry generation and caption-pool building for Gary4JUCE.",
+                  "Supports separate checkpoint folders and captions/source folders so Side-Step style training workflows import cleanly.",
+                  "Adds standard-versus-XL LoRA family filtering so Gary4JUCE only shows adapters that match the current Carey XL mode.",
+                  "Requires gary4juce v3.0.4 or newer for the new local LoRA functionality."
               ]
 }
