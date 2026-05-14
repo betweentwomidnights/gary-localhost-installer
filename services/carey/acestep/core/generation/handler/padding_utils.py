@@ -158,17 +158,11 @@ class PaddingMixin:
                         # If src audio is provided, use its duration as default end
                         src_audio_duration = processed_src_audio.shape[-1] / 48000.0
                         if repainting_end is None or repainting_end < 0:
-                            if is_lego_task:
-                                # Route lego through the repaint branch so it gets the
-                                # same chunk-mask behavior as other repaint tasks.
-                                # conditioning_masks preserves src_latents for lego via
-                                # the instruction marker check added there.
-                                adjusted_end = src_audio_duration + padding_info_batch[0]["left_padding_duration"]
-                                repainting_end_batch = [adjusted_end] * actual_batch_size
-                            else:
-                                # Use src audio duration (before padding), then adjust for padding
-                                adjusted_end = src_audio_duration + padding_info_batch[0]["left_padding_duration"]
-                                repainting_end_batch = [adjusted_end] * actual_batch_size
+                            # Use src audio duration (before padding), then adjust for padding.
+                            # Lego follows the same repaint path and keeps its source-latent
+                            # span intact inside conditioning_masks via task_type == "lego".
+                            adjusted_end = src_audio_duration + padding_info_batch[0]["left_padding_duration"]
+                            repainting_end_batch = [adjusted_end] * actual_batch_size
                         else:
                             # Adjust repainting_end to be relative to padded audio
                             adjusted_end = repainting_end + padding_info_batch[0]["left_padding_duration"]

@@ -28,6 +28,7 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
             guidance_scale=7.5,
             inference_steps=64,
             use_src_as_ref=False,
+            no_fsq=False,
             time_signature="4",
             batch_size=1,
             audio_format="wav",
@@ -37,6 +38,31 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(data["guidance_scale"], str(carey_wrapper.COVER_GUIDANCE_SCALE))
         self.assertEqual(data["inference_steps"], str(carey_wrapper.COVER_INFERENCE_STEPS))
+        self.assertEqual(data["task_type"], "cover")
+
+    def test_cover_form_data_uses_cover_nofsq_task_type_when_requested(self):
+        job = carey_wrapper.Job(task_id="job-1b", task_type="cover", bpm=120, duration=42.0)
+        req = SimpleNamespace(
+            audio_data="",
+            bpm=120,
+            caption="orchestral version",
+            lyrics="[Instrumental]",
+            language="en",
+            key_scale="",
+            cover_noise_strength=0.2,
+            audio_cover_strength=0.3,
+            guidance_scale=1.0,
+            inference_steps=8,
+            use_src_as_ref=False,
+            no_fsq=True,
+            time_signature="4",
+            batch_size=1,
+            audio_format="wav",
+        )
+
+        data = carey_wrapper._build_form_data(job, req, "ignored.wav")
+
+        self.assertEqual(data["task_type"], "cover-nofsq")
 
     def test_complete_form_data_preserves_requested_generation_values(self):
         job = carey_wrapper.Job(task_id="job-2", task_type="complete", bpm=120, target_duration=64.0)
@@ -66,13 +92,14 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
         cover_job = carey_wrapper.Job(task_id="job-3", task_type="cover", bpm=120)
         carey_wrapper._current_model = carey_wrapper.ACESTEP_BASE_CONFIG
         client = object()
+        req = SimpleNamespace(model="xl-turbo", track_name="")
 
         with patch.object(carey_wrapper, "_unload_model", AsyncMock()) as unload_mock, patch.object(
             carey_wrapper,
             "_load_model",
             AsyncMock(return_value=carey_wrapper.ACESTEP_TURBO_CONFIG),
         ) as load_mock:
-            await carey_wrapper._ensure_required_model(client=client, job=cover_job)
+            await carey_wrapper._ensure_required_model(client=client, job=cover_job, req=req)
 
         unload_mock.assert_awaited_once()
         load_mock.assert_awaited_once_with(client, carey_wrapper.ACESTEP_TURBO_CONFIG)
@@ -83,13 +110,14 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
         lego_job = carey_wrapper.Job(task_id="job-4", task_type="lego", bpm=120)
         carey_wrapper._current_model = carey_wrapper.ACESTEP_BASE_CONFIG
         client = object()
+        req = SimpleNamespace(model="base", track_name="drums")
 
         with patch.object(carey_wrapper, "_unload_model", AsyncMock()) as unload_mock, patch.object(
             carey_wrapper,
             "_load_model",
             AsyncMock(),
         ) as load_mock:
-            await carey_wrapper._ensure_required_model(client=client, job=lego_job)
+            await carey_wrapper._ensure_required_model(client=client, job=lego_job, req=req)
 
         unload_mock.assert_not_called()
         load_mock.assert_not_called()

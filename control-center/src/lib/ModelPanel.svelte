@@ -318,6 +318,7 @@
         <div class="size-label">dit models</div>
         <div class="carey-hint">
           base, sft, and turbo cover the regular carey flow.
+          lego is currently most reliable on the regular/base path; treat xl-base lego as experimental.
           only turbo is fixed to 8 steps and cfg 1.0. sft behaves like base.
           xl-base, xl-sft, and xl-turbo are optional. we recommend 16 GB of GPU VRAM before enabling xl mode.
         </div>

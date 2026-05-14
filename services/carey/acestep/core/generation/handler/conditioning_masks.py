@@ -4,8 +4,6 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 
-_LEGO_INSTRUCTION_MARKER = "based on the audio context"
-
 
 class ConditioningMaskMixin:
     """Mixin containing repaint mask/span and source-latent builders.
@@ -25,6 +23,7 @@ class ConditioningMaskMixin:
         repainting_start: Optional[List[float]],
         repainting_end: Optional[List[float]],
         silence_latent_tiled: torch.Tensor,
+        task_type: str = "",
     ) -> Tuple[torch.Tensor, List[Tuple[str, int, int]], torch.Tensor, torch.Tensor]:
         """Create chunk masks/spans and corresponding source latents."""
         chunk_masks = []
@@ -56,12 +55,15 @@ class ConditioningMaskMixin:
 
             chunk_masks.append(torch.ones(max_latent_length, dtype=torch.bool, device=self.device))
             spans.append(("full", 0, max_latent_length))
-            instruction_i = instructions[i] if instructions and i < len(instructions) else ""
-            instruction_lower = instruction_i.lower()
-            is_cover = (
-                "generate audio semantic tokens" in instruction_lower
-                and "based on the given conditions" in instruction_lower
-            ) or has_code_hint
+            if task_type == "cover-nofsq":
+                is_cover = False
+            else:
+                instruction_i = instructions[i] if instructions and i < len(instructions) else ""
+                instruction_lower = instruction_i.lower()
+                is_cover = (
+                    "generate audio semantic tokens" in instruction_lower
+                    and "based on the given conditions" in instruction_lower
+                ) or has_code_hint
             is_covers.append(is_cover)
 
         chunk_masks_tensor = torch.stack(chunk_masks)
@@ -75,8 +77,7 @@ class ConditioningMaskMixin:
                 if i in repainting_ranges:
                     src_latent = target_latents[i].clone()
                     start_latent, end_latent = repainting_ranges[i]
-                    instruction_i = instructions[i] if instructions and i < len(instructions) else ""
-                    is_lego = _LEGO_INSTRUCTION_MARKER in instruction_i.lower()
+                    is_lego = task_type == "lego"
                     if not is_lego:
                         src_latent[start_latent:end_latent] = silence_latent_tiled[start_latent:end_latent]
                     src_latents_list.append(src_latent)

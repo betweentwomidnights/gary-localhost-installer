@@ -62,7 +62,8 @@
 
   <div class="note">
     xl-base, xl-sft, and xl-turbo can be tight at 12 GB. we recommend 16 GB of GPU VRAM before turning
-    this on. the first xl start may also download additional carey weights before the service becomes healthy.
+    this on. lego mode is still most reliable on the regular/base path, so treat xl-base lego as experimental.
+    the first xl start may also download additional carey weights before the service becomes healthy.
   </div>
 
   {#if message}

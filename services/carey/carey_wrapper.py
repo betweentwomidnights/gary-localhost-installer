@@ -446,6 +446,10 @@ class CoverRequest(BaseModel):
     guidance_scale: float = Field(1.0, description="Cover mode is locked to CFG 1.0 for turbo generation")
     inference_steps: int = Field(8, description="Cover mode is locked to 8 diffusion steps for turbo generation")
     use_src_as_ref: bool = Field(False, description="Pass source as ref_audio for subtler transformation")
+    no_fsq: bool = Field(
+        False,
+        description="Bypass the DiT FSQ roundtrip on source latents for higher acoustic fidelity.",
+    )
     time_signature: str = Field("4", description="Time signature numerator")
     batch_size: int = Field(1, description="Number of candidates")
     audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
@@ -848,8 +852,12 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         effective_caption = req.caption.strip()
         audio_duration = str(req.audio_duration)
 
+    backend_task_type = "repaint" if job.task_type == "complete" else job.task_type
+    if job.task_type == "cover" and getattr(req, "no_fsq", False):
+        backend_task_type = "cover-nofsq"
+
     data = {
-        "task_type":        "repaint" if job.task_type == "complete" else job.task_type,
+        "task_type":        backend_task_type,
         "caption":          effective_caption,
         "lyrics":           getattr(req, "lyrics", ""),
         "language":         getattr(req, "language", "en"),

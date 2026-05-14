@@ -44,6 +44,7 @@ class ServiceGenerateMixin:
         audio_code_hints: Optional[Union[str, List[str]]] = None,
         infer_method: str = "ode",
         timesteps: Optional[List[float]] = None,
+        task_type: str = "text2music",
     ) -> Dict[str, Any]:
         """Generate music latents and metadata from text/audio conditioning inputs.
 
@@ -71,6 +72,7 @@ class ServiceGenerateMixin:
             audio_code_hints: Optional serialized audio-code hints.
             infer_method: Diffusion inference method selector.
             timesteps: Optional explicit diffusion timestep sequence.
+            task_type: Logical task name driving cover/lego conditioning branches.
 
         Returns:
             Dict[str, Any]: Service output payload containing generated latents,
@@ -108,6 +110,7 @@ class ServiceGenerateMixin:
             audio_code_hints=normalized["audio_code_hints"],
             audio_cover_strength=audio_cover_strength,
             cover_noise_strength=cover_noise_strength,
+            task_type=task_type,
         )
         payload = self._unpack_service_processed_data(self.preprocess_batch(batch))
         seed_param = self._resolve_service_seed_param(normalized["seed_list"])
@@ -126,6 +129,7 @@ class ServiceGenerateMixin:
             cfg_interval_end=cfg_interval_end,
             shift=shift,
             timesteps=timesteps,
+            task_type=task_type,
         )
         outputs, encoder_hidden_states, encoder_attention_mask, context_latents = (
             self._execute_service_generate_diffusion(

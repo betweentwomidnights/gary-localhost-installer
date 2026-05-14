@@ -81,6 +81,7 @@ class GenerateMusicExecuteMixinTests(unittest.TestCase):
             cfg_interval_end=1.0,
             shift=1.0,
             infer_method="ode",
+            task_type="cover",
         )
         self.assertTrue(host.started)
         self.assertTrue(host.stopped)

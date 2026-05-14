@@ -708,7 +708,7 @@ def create_openrouter_router(app_state_getter) -> APIRouter:
         #   audio[0] → reference_audio  (style conditioning → music_continuation)
         reference_audio_path = None
         src_audio_path = None
-        _SRC_AUDIO_TASK_TYPES = {"cover", "repaint", "lego", "extract", "complete"}
+        _SRC_AUDIO_TASK_TYPES = {"cover", "cover-nofsq", "repaint", "lego", "extract", "complete"}
         if audio_paths:
             if req.task_type in _SRC_AUDIO_TASK_TYPES:
                 src_audio_path = audio_paths[0]

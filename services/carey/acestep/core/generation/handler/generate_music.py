@@ -177,6 +177,7 @@ class GenerateMusicMixin:
                 cfg_interval_end=cfg_interval_end,
                 shift=shift,
                 infer_method=infer_method,
+                task_type=task_type,
             )
             outputs = service_run["outputs"]
             infer_steps_for_progress = service_run["infer_steps_for_progress"]

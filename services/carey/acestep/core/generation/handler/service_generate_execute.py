@@ -74,15 +74,19 @@ class ServiceGenerateExecuteMixin:
         cfg_interval_end: float,
         shift: float,
         timesteps: Optional[List[float]],
+        task_type: str,
     ) -> Dict[str, Any]:
         """Build kwargs passed to model generation backends."""
-        is_covers = payload.get("is_covers")
-        if isinstance(is_covers, torch.Tensor):
-            # Service batches are task-homogeneous; ``any`` is the safest
-            # normalization across scalar/batched tensors.
-            is_cover = bool(is_covers.any().item())
+        if task_type in ("cover", "cover-nofsq"):
+            is_cover_task = True
         else:
-            is_cover = any(is_covers or [])
+            is_covers = payload.get("is_covers")
+            if isinstance(is_covers, torch.Tensor):
+                # Legacy direct service_generate callers may imply cover mode by
+                # supplying audio-code hints without going through generate_music.
+                is_cover_task = bool(is_covers.any().item())
+            else:
+                is_cover_task = any(is_covers or [])
 
         kwargs = {
             "text_hidden_states": payload["text_hidden_states"],
@@ -106,10 +110,10 @@ class ServiceGenerateExecuteMixin:
             # source-audio reconstruction instead of stem generation.
             "clean_src_latents": (
                 payload.get("target_latents")
-                if (is_cover and repaint_injection_ratio > 0.0)
+                if (is_cover_task and repaint_injection_ratio > 0.0)
                 else None
             ),
-            "repaint_injection_ratio": repaint_injection_ratio if is_cover else 0.0,
+            "repaint_injection_ratio": repaint_injection_ratio if is_cover_task else 0.0,
             "infer_method": infer_method,
             "infer_steps": infer_steps,
             "diffusion_guidance_sale": guidance_scale,

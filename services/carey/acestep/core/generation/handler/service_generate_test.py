@@ -121,6 +121,7 @@ class ServiceGenerateMixinTests(unittest.TestCase):
         self.assertEqual(host.calls["_normalize_service_generate_inputs"]["seed"], 7)
         self.assertTrue(host.calls["_normalize_service_generate_inputs"]["return_intermediate"])
         self.assertEqual(host.calls["_prepare_batch"]["captions"], host.normalized["captions"])
+        self.assertEqual(host.calls["_prepare_batch"]["task_type"], "text2music")
         self.assertEqual(host.calls["_resolve_service_seed_param"], host.normalized["seed_list"])
         self.assertTrue(host.calls["_attach_service_generate_outputs"]["return_intermediate"])
 
@@ -133,12 +134,14 @@ class ServiceGenerateMixinTests(unittest.TestCase):
             cover_noise_strength=0.2, repaint_injection_ratio=0.35,
             use_adg=True, cfg_interval_start=0.1, cfg_interval_end=0.9,
             shift=1.3, infer_method="sde", timesteps=custom_timesteps, return_intermediate=False,
+            task_type="cover-nofsq",
         )
         build_kwargs = host.calls["_build_service_generate_kwargs"]
         self.assertEqual(build_kwargs["guidance_scale"], 9.5)
         self.assertEqual(build_kwargs["audio_cover_strength"], 0.7)
         self.assertEqual(build_kwargs["cover_noise_strength"], 0.2)
         self.assertEqual(build_kwargs["repaint_injection_ratio"], 0.35)
+        self.assertEqual(build_kwargs["task_type"], "cover-nofsq")
         self.assertTrue(build_kwargs["use_adg"])
         self.assertEqual(build_kwargs["timesteps"], custom_timesteps)
         self.assertFalse(host.calls["_attach_service_generate_outputs"]["return_intermediate"])

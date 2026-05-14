@@ -33,6 +33,7 @@ class ConditioningBatchMixin:
         audio_code_hints: Optional[List[Optional[str]]] = None,
         audio_cover_strength: float = 1.0,
         cover_noise_strength: float = 0.0,
+        task_type: str = "",
     ) -> Dict[str, Any]:
         """Prepare model-ready conditioning batch tensors and metadata.
 
@@ -49,6 +50,7 @@ class ConditioningBatchMixin:
             instructions: Optional per-item generation instructions.
             audio_code_hints: Optional per-item serialized audio-code hints.
             audio_cover_strength: Blend factor for cover/non-cover conditioning.
+            task_type: Task identifier used by cover/lego-specific conditioning.
 
         Returns:
             Batch dictionary containing padded tensors and conditioning metadata
@@ -86,6 +88,7 @@ class ConditioningBatchMixin:
             repainting_start,
             repainting_end,
             silence_latent_tiled,
+            task_type,
         )
         precomputed_lm_hints_25hz = self._prepare_precomputed_lm_hints(
             batch_size, audio_code_hints, max_latent_length, silence_latent_tiled

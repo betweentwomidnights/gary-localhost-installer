@@ -56,7 +56,9 @@ class _Host(ConditioningBatchMixin):
         repainting_start: Optional[List[float]],
         repainting_end: Optional[List[float]],
         silence_latent_tiled: torch.Tensor,
+        task_type: str = "",
     ) -> Tuple[torch.Tensor, List[Tuple[str, int, int]], torch.Tensor, torch.Tensor]:
+        self.last_task_type = task_type
         chunk_masks = torch.ones(batch_size, max_latent_length, dtype=torch.bool)
         spans: List[Tuple[str, int, int]] = [("full", 0, max_latent_length)] * batch_size
         is_covers = torch.zeros(batch_size, dtype=torch.bool)
@@ -121,6 +123,7 @@ class ConditioningBatchMixinTests(unittest.TestCase):
         self.assertEqual(batch["target_latents"].shape, (2, 128, 16))
         self.assertEqual(len(batch["refer_audioss"]), 2)
         self.assertEqual(batch["refer_audioss"][0][0].shape, (2, 30 * host.sample_rate))
+        self.assertEqual(host.last_task_type, "")
 
     def test_prepare_batch_populates_non_cover_inputs_when_strength_below_one(self):
         """Populate optional non-cover token fields for blended cover path."""
@@ -141,6 +144,24 @@ class ConditioningBatchMixinTests(unittest.TestCase):
         self.assertIsNotNone(batch["non_cover_text_input_ids"])
         self.assertIsNotNone(batch["non_cover_text_attention_masks"])
         self.assertIsNotNone(batch["precomputed_lm_hints_25Hz"])
+
+    def test_prepare_batch_forwards_task_type_to_mask_builder(self):
+        """Forward task_type so cover-nofsq and lego branches can key off it."""
+        host = _Host()
+        host._prepare_batch(
+            captions=["c1"],
+            lyrics=["l1"],
+            keys=["k1"],
+            target_wavs=torch.zeros(1, 2, 96000),
+            refer_audios=[[torch.zeros(2, 96000)]],
+            metas=["m1"],
+            vocal_languages=["en"],
+            instructions=["i1"],
+            audio_code_hints=[None],
+            task_type="cover-nofsq",
+        )
+
+        self.assertEqual(host.last_task_type, "cover-nofsq")
 
 
 if __name__ == "__main__":
