@@ -39,7 +39,8 @@ npm.cmd run tauri build -- --config src-tauri/tauri.updater.conf.json
 4. Upload both files from `control-center\src-tauri\target\release\bundle\nsis\`:
    - `gary4local_<version>_x64-setup.exe`
    - `gary4local_<version>_x64-setup.exe.sig`
-5. Generate both updater feeds from the exact built installer and signature:
+5. In the GitHub release notes and updater feed notes, link the gary4juce compatibility line to the current recommended gary4juce release tag.
+6. Generate both updater feeds from the exact built installer and signature:
 
 ```powershell
 cd C:\path\to\backend-installer
@@ -52,15 +53,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
   -NotesText "Release note one.||Release note two."
 ```
 
-6. Review the generated files:
+7. Review the generated files:
    - `docs/updates/gary4local/stable.json`
    - `docs/updates/gary4local/native-stable.json`
-7. Commit those feed changes to `main` and push.
-8. Wait for GitHub Pages to publish the updated JSON.
-9. Sanity-check the live URLs:
+8. Commit those feed changes to `main` and push.
+9. Wait for GitHub Pages to publish the updated JSON.
+10. Sanity-check the live URLs:
    - `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json`
    - `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json`
-10. Launch the currently installed app and verify it offers `install update`.
+11. Launch the currently installed app and verify it offers `install update`.
 
 ## Preview Testing
 
