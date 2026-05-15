@@ -99,22 +99,83 @@ COVER_INFERENCE_STEPS = 8
 COVER_GUIDANCE_SCALE = 1.0
 
 # Default captions per track type (lego mode only)
-TRACK_CAPTIONS = {
-    "vocals":         "soulful indie vocalist, warm, wordless melody, expressive, intimate",
-    "backing_vocals": "background vocals, close harmony, wordless, warm, following the lead vocal",
-    "drums":          "live acoustic drum kit, tight kick and snare, brushed hi-hats, warm",
-    "bass":           "electric bass, warm fingerstyle, rhythmic, supportive",
-    "guitar":         "acoustic guitar, fingerpicked, warm, rhythmic",
-    "piano":          "piano, expressive, warm, melodic",
-    "strings":        "string ensemble, lush, warm, cinematic",
-    "synth":          "analog synth pad, warm, atmospheric",
-    "keyboard":       "electric piano, warm, smooth",
-    "percussion":     "percussion, shaker, tambourine, tight groove",
-    "brass":          "brass section, warm, expressive",
-    "woodwinds":      "woodwind ensemble, warm, airy, melodic",
+TRACK_CAPTION_POOLS = {
+    "vocals": [
+        "soulful rnb vocal",
+        "airy indie vocal hook",
+        "dream pop vocal oohs",
+        "gospel vocal adlibs",
+    ],
+    "backing_vocals": [
+        "gospel backing harmonies",
+        "dream pop vocal pads",
+        "doo wop backing vocals",
+        "rnb harmony stack",
+    ],
+    "drums": [
+        "lo-fi hiphop drums",
+        "funk breakbeat drums",
+        "indie rock drum groove",
+        "disco four-on-floor drums",
+    ],
+    "bass": [
+        "synthwave bass line",
+        "funk slap bass",
+        "dub reggae bass",
+        "motown bass groove",
+    ],
+    "guitar": [
+        "funk rhythm guitar",
+        "surf rock guitar riff",
+        "shoegaze guitar wash",
+        "folk acoustic guitar",
+    ],
+    "piano": [
+        "jazzy piano chords",
+        "gospel piano vamp",
+        "neo-soul rhodes chords",
+        "classical piano arpeggios",
+    ],
+    "strings": [
+        "cinematic string swell",
+        "disco string stabs",
+        "baroque violin line",
+        "romantic cello melody",
+    ],
+    "synth": [
+        "retro synthwave lead",
+        "ambient synth pad",
+        "acid synth line",
+        "electro arpeggio synth",
+    ],
+    "keyboard": [
+        "smooth rhodes chords",
+        "funk organ comping",
+        "warm wurlitzer riff",
+        "jazzy keyboard chords",
+    ],
+    "percussion": [
+        "afrobeat shaker groove",
+        "latin conga loop",
+        "disco tambourine hits",
+        "bossa percussion accents",
+    ],
+    "brass": [
+        "jazzy trumpet solo",
+        "funky horn stabs",
+        "soul brass section",
+        "muted trumpet melody",
+    ],
+    "woodwinds": [
+        "bossa flute melody",
+        "swing clarinet line",
+        "jazzy saxophone solo",
+        "folk woodwind harmony",
+    ],
 }
+TRACK_CAPTIONS = {track: captions[0] for track, captions in TRACK_CAPTION_POOLS.items()}
 
-ALLOWED_TRACKS = set(TRACK_CAPTIONS.keys())
+ALLOWED_TRACKS = set(TRACK_CAPTION_POOLS.keys())
 LORA_REGISTRY: dict[str, dict[str, object]] = {}
 _caption_pools: dict[str, list[str]] = {}
 
@@ -134,6 +195,11 @@ def _model_family_for_config(config_path: str) -> str:
 
 def _primary_runtime_family() -> str:
     return _model_family_for_config(ACESTEP_BASE_CONFIG)
+
+
+def _default_lego_caption(track_name: str) -> str:
+    captions = TRACK_CAPTION_POOLS.get(track_name, [])
+    return random.choice(captions) if captions else ""
 
 
 def _default_captions_path() -> Path:
@@ -845,7 +911,7 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         effective_caption = ""
         audio_duration = str(job.duration)
     elif job.task_type == "lego":
-        effective_caption = req.caption.strip() or TRACK_CAPTIONS.get(req.track_name, "")
+        effective_caption = req.caption.strip() or _default_lego_caption(req.track_name)
         audio_duration = str(job.duration)
     elif job.task_type == "cover":
         effective_caption = req.caption.strip()

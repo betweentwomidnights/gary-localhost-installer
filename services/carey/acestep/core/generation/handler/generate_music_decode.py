@@ -8,6 +8,7 @@ import torch
 from loguru import logger
 
 from acestep.gpu_config import get_effective_free_vram_gb
+from .padding_utils import COVER_EDGE_PAD_SAMPLES, COVER_EDGE_PAD_SECONDS
 
 
 class GenerateMusicDecodeMixin:
@@ -101,6 +102,7 @@ class GenerateMusicDecodeMixin:
         progress: Any,
         use_tiled_decode: bool,
         time_costs: Dict[str, Any],
+        task_type: str = "",
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
         """Decode predicted latents and update decode timing metrics.
 
@@ -109,6 +111,7 @@ class GenerateMusicDecodeMixin:
             progress: Optional progress callback.
             use_tiled_decode: Whether tiled VAE decode should be used.
             time_costs: Mutable time-cost payload from service generation.
+            task_type: Generation task type, used for cover-specific edge trimming.
 
         Returns:
             Tuple of decoded waveforms, CPU latents, and updated time-cost payload.
@@ -215,6 +218,13 @@ class GenerateMusicDecodeMixin:
                 del pred_latents_for_decode
                 if pred_wavs.dtype != torch.float32:
                     pred_wavs = pred_wavs.float()
+                if task_type in ("cover", "cover-nofsq") and pred_wavs.shape[-1] > COVER_EDGE_PAD_SAMPLES:
+                    pred_wavs = pred_wavs[..., COVER_EDGE_PAD_SAMPLES:].contiguous()
+                    logger.info(
+                        "[COVER-EDGE-FIX] Trimmed "
+                        f"{COVER_EDGE_PAD_SAMPLES} leading samples "
+                        f"({COVER_EDGE_PAD_SECONDS * 1000:.0f}ms) from cover output..."
+                    )
                 peak = pred_wavs.abs().amax(dim=[1, 2], keepdim=True)
                 if torch.any(peak > 1.0):
                     pred_wavs = pred_wavs / peak.clamp(min=1.0)

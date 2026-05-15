@@ -171,6 +171,7 @@ class GenerateMusicMixinTests(unittest.TestCase):
         self.assertEqual(host.calls["_run_generate_music_service_with_progress"]["guidance_scale"], 6.5)
         self.assertEqual(host.calls["_run_generate_music_service_with_progress"]["repaint_injection_ratio"], 0.75)
         self.assertEqual(host.calls["_prepare_generate_music_decode_state"]["infer_steps_for_progress"], 8)
+        self.assertEqual(host.calls["_decode_generate_music_pred_latents"]["task_type"], "text2music")
 
     def test_generate_music_returns_readiness_error_when_components_missing(self):
         """It short-circuits with readiness payload when required models are missing."""

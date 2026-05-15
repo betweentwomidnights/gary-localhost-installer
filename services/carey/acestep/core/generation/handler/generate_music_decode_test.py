@@ -44,6 +44,7 @@ def _load_generate_music_decode_module():
 
 GENERATE_MUSIC_DECODE_MODULE = _load_generate_music_decode_module()
 GenerateMusicDecodeMixin = GENERATE_MUSIC_DECODE_MODULE.GenerateMusicDecodeMixin
+COVER_EDGE_PAD_SAMPLES = GENERATE_MUSIC_DECODE_MODULE.COVER_EDGE_PAD_SAMPLES
 
 
 class _FakeDecodeOutput:
@@ -190,6 +191,35 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
         self.assertAlmostEqual(updated_costs["total_time_cost"], 2.5, places=6)
         self.assertAlmostEqual(updated_costs["offload_time_cost"], 0.25, places=6)
         self.assertEqual(host.progress_calls[0][0], 0.8)
+
+    def test_decode_pred_latents_trims_cover_edge_padding_before_normalization(self):
+        """Cover decode removes the leading edge pad before peak normalization."""
+
+        class _CoverHost(_Host):
+            """Host variant returning a decoded waveform with a cover edge pad."""
+
+            def _mlx_vae_decode(self, latents):
+                _ = latents
+                wav = torch.zeros(1, 2, COVER_EDGE_PAD_SAMPLES + 4)
+                wav[..., COVER_EDGE_PAD_SAMPLES:] = torch.tensor([0.1, 0.2, 0.3, 0.4])
+                return wav
+
+        host = _CoverHost()
+        pred_latents = torch.ones(1, 4, 3)
+        time_costs = {"total_time_cost": 1.0}
+
+        with patch.object(GENERATE_MUSIC_DECODE_MODULE.time, "time", side_effect=[10.0, 11.0]):
+            pred_wavs, _, _ = host._decode_generate_music_pred_latents(
+                pred_latents=pred_latents,
+                progress=None,
+                use_tiled_decode=False,
+                time_costs=time_costs,
+                task_type="cover-nofsq",
+            )
+
+        expected_tail = torch.tensor([0.1, 0.2, 0.3, 0.4]).repeat(1, 2, 1)
+        self.assertEqual(tuple(pred_wavs.shape), (1, 2, 4))
+        self.assertTrue(torch.equal(pred_wavs, expected_tail))
 
     def test_decode_pred_latents_restores_vae_device_on_decode_error(self):
         """It restores VAE device in the CPU-offload path even when decode raises."""

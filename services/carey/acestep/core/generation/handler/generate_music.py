@@ -195,6 +195,7 @@ class GenerateMusicMixin:
                 progress=progress,
                 use_tiled_decode=use_tiled_decode,
                 time_costs=time_costs,
+                task_type=task_type,
             )
             return self._build_generate_music_success_payload(
                 outputs=outputs,

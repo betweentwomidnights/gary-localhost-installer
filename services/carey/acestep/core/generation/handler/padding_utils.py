@@ -3,6 +3,10 @@
 import torch
 from loguru import logger
 
+COVER_EDGE_PAD_LATENT_FRAMES = 5
+COVER_EDGE_PAD_SAMPLES = COVER_EDGE_PAD_LATENT_FRAMES * 1920
+COVER_EDGE_PAD_SECONDS = COVER_EDGE_PAD_SAMPLES / 48000.0
+
 
 class PaddingMixin:
     """Mixin containing repaint/lego padding helpers.
@@ -32,9 +36,14 @@ class PaddingMixin:
             for i in range(actual_batch_size):
                 if processed_src_audio is not None:
                     if is_cover_task:
-                        # Cover task: Use src_audio directly without padding
-                        batch_target_wavs = processed_src_audio
-                        padding_info_batch.append({"left_padding_duration": 0.0, "right_padding_duration": 0.0})
+                        # Move user audio away from DiT sequence position 0;
+                        # decode trims this leading silence back off.
+                        batch_target_wavs = torch.nn.functional.pad(
+                            processed_src_audio, (COVER_EDGE_PAD_SAMPLES, 0), "constant", 0
+                        )
+                        padding_info_batch.append(
+                            {"left_padding_duration": COVER_EDGE_PAD_SECONDS, "right_padding_duration": 0.0}
+                        )
                     elif is_repaint_task or is_lego_task:
                         # Repaint/lego task: May need padding for outpainting
                         src_audio_duration = processed_src_audio.shape[-1] / 48000.0

@@ -66,6 +66,59 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(data["task_type"], "cover-nofsq")
 
+    def test_lego_form_data_uses_simple_fallback_caption_pool_when_empty(self):
+        job = carey_wrapper.Job(task_id="job-1c", task_type="lego", bpm=120, duration=8.0)
+        req = SimpleNamespace(
+            bpm=120,
+            caption="  ",
+            lyrics="",
+            language="en",
+            key_scale="",
+            guidance_scale=7.0,
+            inference_steps=50,
+            track_name="brass",
+            time_signature="4",
+            batch_size=1,
+            audio_format="wav",
+        )
+
+        with patch.object(carey_wrapper.random, "choice", return_value="jazzy trumpet solo") as choice_mock:
+            data = carey_wrapper._build_form_data(job, req, "ignored.wav")
+
+        choice_mock.assert_called_once_with(carey_wrapper.TRACK_CAPTION_POOLS["brass"])
+        self.assertEqual(data["caption"], "jazzy trumpet solo")
+
+    def test_lego_form_data_preserves_explicit_caption(self):
+        job = carey_wrapper.Job(task_id="job-1d", task_type="lego", bpm=120, duration=8.0)
+        req = SimpleNamespace(
+            bpm=120,
+            caption="bright flute hook",
+            lyrics="",
+            language="en",
+            key_scale="",
+            guidance_scale=7.0,
+            inference_steps=50,
+            track_name="woodwinds",
+            time_signature="4",
+            batch_size=1,
+            audio_format="wav",
+        )
+
+        with patch.object(carey_wrapper.random, "choice") as choice_mock:
+            data = carey_wrapper._build_form_data(job, req, "ignored.wav")
+
+        choice_mock.assert_not_called()
+        self.assertEqual(data["caption"], "bright flute hook")
+
+    def test_lego_caption_pools_are_short_and_complete(self):
+        self.assertEqual(set(carey_wrapper.TRACK_CAPTION_POOLS), carey_wrapper.ALLOWED_TRACKS)
+        for track_name, captions in carey_wrapper.TRACK_CAPTION_POOLS.items():
+            with self.subTest(track_name=track_name):
+                self.assertGreaterEqual(len(captions), 4)
+                self.assertEqual(carey_wrapper.TRACK_CAPTIONS[track_name], captions[0])
+                for caption in captions:
+                    self.assertLessEqual(len(caption.split()), 5)
+
     def test_complete_form_data_preserves_requested_generation_values(self):
         job = carey_wrapper.Job(task_id="job-2", task_type="complete", bpm=120, target_duration=64.0)
         req = SimpleNamespace(
