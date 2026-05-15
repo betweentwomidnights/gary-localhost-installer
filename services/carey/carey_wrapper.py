@@ -37,6 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -73,7 +74,8 @@ DEFAULT_STARTUP_CONFIG = (os.getenv("ACESTEP_CONFIG_PATH") or "acestep-v15-base"
 ACESTEP_BASE_CONFIG = (os.getenv("ACESTEP_BASE_CONFIG_PATH") or DEFAULT_STARTUP_CONFIG).strip()
 ACESTEP_SFT_CONFIG = (os.getenv("ACESTEP_SFT_CONFIG_PATH") or "acestep-v15-sft").strip()
 ACESTEP_TURBO_CONFIG = (os.getenv("ACESTEP_TURBO_CONFIG_PATH") or "acestep-v15-turbo").strip()
-ACESTEP_REGULAR_CONFIG = (os.getenv("ACESTEP_REGULAR_CONFIG_PATH") or "acestep-v15-sft").strip()
+ACESTEP_LEGO_CONFIG = (os.getenv("ACESTEP_LEGO_CONFIG_PATH") or "acestep-v15-base").strip()
+ACESTEP_REGULAR_CONFIG = (os.getenv("ACESTEP_REGULAR_CONFIG_PATH") or ACESTEP_LEGO_CONFIG).strip()
 MANAGE_MODEL_LIFECYCLE = _env_bool("ACESTEP_MANAGE_MODEL_LIFECYCLE", True)
 BACKEND_STARTS_LOADED = not _env_bool("ACESTEP_NO_INIT", False)
 EFFECTIVE_MAX_CONCURRENT = 1 if MANAGE_MODEL_LIFECYCLE else MAX_CONCURRENT
@@ -95,7 +97,6 @@ GENERATION_TIMEOUT = int(os.getenv("CAREY_GENERATION_TIMEOUT", "600"))
 JOB_TTL = 3600
 COVER_INFERENCE_STEPS = 8
 COVER_GUIDANCE_SCALE = 1.0
-LEGO_REGULAR_TRACKS = {"vocals", "backing_vocals"}
 
 # Default captions per track type (lego mode only)
 TRACK_CAPTIONS = {
@@ -206,7 +207,7 @@ def _stop_backend():
 
 
 def _sanitize_backend_list(values: object) -> list[str]:
-    allowed = {"base", "turbo", "regular"}
+    allowed = {"base", "turbo"}
     if not isinstance(values, list):
         return ["base", "turbo"]
     cleaned = []
@@ -448,7 +449,7 @@ class CoverRequest(BaseModel):
     use_src_as_ref: bool = Field(False, description="Pass source as ref_audio for subtler transformation")
     no_fsq: bool = Field(
         False,
-        description="Bypass the DiT FSQ roundtrip on source latents for higher acoustic fidelity.",
+        description="Backwards-compatible no-op. Cover requests always route as cover-nofsq.",
     )
     time_signature: str = Field("4", description="Time signature numerator")
     batch_size: int = Field(1, description="Number of candidates")
@@ -465,18 +466,8 @@ class CoverRequest(BaseModel):
 # App
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="ACE-Step Wrapper (localhost)", version="0.4.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def _init():
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     global _generation_semaphore
     _generation_semaphore = asyncio.Semaphore(EFFECTIVE_MAX_CONCURRENT)
     _install_windows_asyncio_exception_filter()
@@ -492,16 +483,27 @@ async def _init():
                 r = await client.get(f"{ACESTEP_URL}/health")
                 if r.status_code == 200:
                     print("[wrapper] api_server is ready!")
-                    return
+                    break
             except Exception:
                 pass
             await asyncio.sleep(2)
-    print("[wrapper] WARNING: api_server did not become ready within 120s")
+        else:
+            print("[wrapper] WARNING: api_server did not become ready within 120s")
+
+    try:
+        yield
+    finally:
+        _stop_backend()
 
 
-@app.on_event("shutdown")
-async def _shutdown():
-    _stop_backend()
+app = FastAPI(title="ACE-Step Wrapper (localhost)", version="0.4.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +690,7 @@ def _loading_status_message(model_name: str) -> str:
 
 
 def _backend_key_for(task_type: str, requested_model: str = "", track_name: str = "") -> str:
-    if task_type == "lego" and track_name in LEGO_REGULAR_TRACKS:
+    if task_type == "lego":
         return "regular"
     if task_type == "cover":
         if _cover_model_variant(requested_model) == "turbo":
@@ -705,8 +707,8 @@ def _required_model_family_for_task(task_type: str, requested_model: str = "", t
 
 
 def _required_model_for_task(task_type: str, requested_model: str = "", track_name: str = "") -> str:
-    if task_type == "lego" and track_name in LEGO_REGULAR_TRACKS:
-        return ACESTEP_REGULAR_CONFIG
+    if task_type == "lego":
+        return ACESTEP_LEGO_CONFIG
     if task_type == "cover":
         if _cover_model_variant(requested_model) == "turbo":
             return ACESTEP_TURBO_CONFIG
@@ -853,7 +855,7 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         audio_duration = str(req.audio_duration)
 
     backend_task_type = "repaint" if job.task_type == "complete" else job.task_type
-    if job.task_type == "cover" and getattr(req, "no_fsq", False):
+    if job.task_type == "cover":
         backend_task_type = "cover-nofsq"
 
     data = {
@@ -902,7 +904,8 @@ async def _run_generation(job: Job, req):
     raw_audio_path = None
     requested_model = getattr(req, "model", "")
     track_name = getattr(req, "track_name", "")
-    lora_name = (getattr(req, "lora", "") or "").strip()
+    # Lego is intentionally kept on unadapted regular/base ACE-Step.
+    lora_name = "" if job.task_type == "lego" else (getattr(req, "lora", "") or "").strip()
     backend_key = _backend_key_for(job.task_type, requested_model, track_name)
     required_family = _required_model_family_for_task(job.task_type, requested_model, track_name)
     lora_config = None
@@ -1171,6 +1174,9 @@ def _build_status_response(job: Job) -> JSONResponse:
 
 
 def _validate_lora_request(task_type: str, req) -> None:
+    if task_type == "lego":
+        return
+
     lora_name = (getattr(req, "lora", "") or "").strip()
     if not lora_name:
         return
@@ -1454,6 +1460,7 @@ async def health():
         "base_model": ACESTEP_BASE_CONFIG,
         "sft_model": ACESTEP_SFT_CONFIG,
         "turbo_model": ACESTEP_TURBO_CONFIG,
+        "lego_model": ACESTEP_LEGO_CONFIG,
         "regular_model": ACESTEP_REGULAR_CONFIG,
         "active_model_family": _primary_runtime_family(),
         "loras": len(LORA_REGISTRY),

@@ -533,7 +533,7 @@ fn sanitize_backend_list(values: Vec<String>) -> Vec<String> {
     let mut cleaned = Vec::new();
     for value in values {
         let text = value.trim().to_lowercase();
-        if matches!(text.as_str(), "base" | "turbo" | "regular") && !cleaned.contains(&text) {
+        if matches!(text.as_str(), "base" | "turbo") && !cleaned.contains(&text) {
             cleaned.push(text);
         }
     }

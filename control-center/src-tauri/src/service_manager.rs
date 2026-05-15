@@ -1,4 +1,4 @@
-use crate::manifest::ServiceDef;
+use crate::manifest::{HealthCheck, ServiceDef};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
@@ -49,6 +49,23 @@ pub struct ServiceManager {
     running: HashMap<String, RunningService>,
     errors: HashMap<String, String>,
     build_statuses: HashMap<String, BuildStatus>,
+}
+
+fn health_check_interval(
+    health: &HealthCheck,
+    healthy: bool,
+    elapsed_since_start: Duration,
+) -> Duration {
+    let normal_interval = Duration::from_secs(health.interval_seconds.max(1));
+    let startup_grace = Duration::from_secs(health.startup_grace_seconds);
+
+    if healthy {
+        normal_interval
+    } else if elapsed_since_start < startup_grace {
+        Duration::from_secs(1)
+    } else {
+        normal_interval.min(Duration::from_secs(5))
+    }
 }
 
 impl ServiceManager {
@@ -161,12 +178,14 @@ impl ServiceManager {
                 continue;
             };
 
-            let startup_grace = Duration::from_secs(health.startup_grace_seconds);
-            if now.duration_since(running.started_at) < startup_grace {
-                continue;
-            }
-
-            let interval = Duration::from_secs(health.interval_seconds.max(1));
+            // Probe quickly while a service is still starting so the UI can
+            // turn green as soon as the service reports ready. The manifest's
+            // normal interval applies after the first successful health check.
+            let interval = health_check_interval(
+                health,
+                running.healthy,
+                now.duration_since(running.started_at),
+            );
             if let Some(last_health_check_at) = running.last_health_check_at {
                 if now.duration_since(last_health_check_at) < interval {
                     continue;
@@ -318,7 +337,8 @@ impl ServiceManager {
                 .env("ACESTEP_BASE_CONFIG_PATH", base_config)
                 .env("ACESTEP_SFT_CONFIG_PATH", sft_config)
                 .env("ACESTEP_TURBO_CONFIG_PATH", turbo_config)
-                .env("ACESTEP_REGULAR_CONFIG_PATH", "acestep-v15-sft")
+                .env("ACESTEP_LEGO_CONFIG_PATH", "acestep-v15-base")
+                .env("ACESTEP_REGULAR_CONFIG_PATH", "acestep-v15-base")
                 .env("ACESTEP_NO_INIT", "true");
         }
 
@@ -605,4 +625,48 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 
     log::info!("Installed xformers SDPA shim");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn health(interval_seconds: u64, startup_grace_seconds: u64) -> HealthCheck {
+        HealthCheck {
+            endpoint: "/health".to_string(),
+            interval_seconds,
+            timeout_seconds: 5,
+            startup_grace_seconds,
+        }
+    }
+
+    #[test]
+    fn unhealthy_services_poll_quickly_during_startup_grace() {
+        let health = health(15, 120);
+
+        assert_eq!(
+            health_check_interval(&health, false, Duration::from_secs(20)),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn healthy_services_use_manifest_interval() {
+        let health = health(15, 120);
+
+        assert_eq!(
+            health_check_interval(&health, true, Duration::from_secs(20)),
+            Duration::from_secs(15)
+        );
+    }
+
+    #[test]
+    fn unhealthy_services_after_grace_still_retry_without_long_delays() {
+        let health = health(15, 120);
+
+        assert_eq!(
+            health_check_interval(&health, false, Duration::from_secs(121)),
+            Duration::from_secs(5)
+        );
+    }
 }
