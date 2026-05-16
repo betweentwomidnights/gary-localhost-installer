@@ -1,11 +1,11 @@
 {
-    "version":  "0.1.6",
-    "notes":  "Adds the new Carey local LoRA manager for gary4local, including dynamic local LoRA registry generation and caption-pool building for Gary4JUCE.\nSupports separate checkpoint folders and captions/source folders so Side-Step style training workflows import cleanly.\nAdds standard-versus-XL LoRA family filtering so Gary4JUCE only shows adapters that match the current Carey XL mode.\nRequires gary4juce v3.0.4 or newer for the new local LoRA functionality.",
-    "pub_date":  "2026-04-22T16:49:55.4242795Z",
-    "platforms":  {
-                      "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME5hcXNORENMZkN6U0lvNFNOS0ZlbVRadUZmUlloZFRDTzZJMUp6elBJL3cxTGx4bEI5U1R1SmgvSTNIcjRuQVBpbjFqY2E4TG9kNi9lNWxUOENVR0FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc2ODc2MzIwCWZpbGU6Z2FyeTRsb2NhbF8wLjEuNl94NjQtc2V0dXAuZXhlCnU3Y2Eza0w0UmYvemxxakdsNlpjM1BrOWlNeFhPZEtpUHAzb2N3a3phSnRMaUJtWi9iSnBmZ3Fqb3dKdHhRK3hzTWx6VzZhZ2hZWjN6QnA2Z1FuOURBPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.6/gary4local_0.1.6_x64-setup.exe"
-                                         }
-                  }
+  "version": "0.1.10",
+  "notes": "Fixes startup crashes caused by runtime icon.png copy failures. Carey covers now use cover-nofsq. Lego tasks now use acestep-v15-base instead of SFT.",
+  "pub_date": "2026-05-16T22:58:58Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEY5NHR5aTF0TWdRVDV0LzBBQSs0bHpkbDZIQzRkdGNyUUo0RXozTjZ2dVBPMkVSbE90RVFrT1IxVnc5Z1NEbFNDcVJJMTFESHdnclpXOUtKR3lBL1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4OTY5MTExCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTBfeDY0LXNldHVwLmV4ZQp4VldxVDlpZWlLRFRGVFpUeGVveUVjMitrSWd2cEt2dzd2SHlzNEo0cVlxL0wyV2tzZklJandQNkZwWkZ2Tzg1bjVRZlRPdFlpbUdxWWpOQjQvMTNCQT09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.10/gary4local_0.1.10_x64-setup.exe"
+    }
+  }
 }
