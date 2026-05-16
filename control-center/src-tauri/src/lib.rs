@@ -166,15 +166,57 @@ fn gary4juce_runtime_root() -> PathBuf {
     PathBuf::from(appdata).join("Gary4JUCE")
 }
 
-#[cfg(target_os = "windows")]
-fn webview2_user_data_folder() -> PathBuf {
+fn gary4local_local_data_root() -> PathBuf {
     let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Local", home)
     });
-    PathBuf::from(localappdata)
-        .join("com.betweentwomidnights.gary4local")
-        .join("WebView2-v2")
+    PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+}
+
+fn startup_diagnostic_log_path() -> PathBuf {
+    gary4local_local_data_root()
+        .join("logs")
+        .join("startup-panic.log")
+}
+
+fn append_startup_diagnostic(message: &str) {
+    let path = startup_diagnostic_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "unknown-time".to_string());
+
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+
+    let _ = std::io::Write::write_all(
+        &mut file,
+        format!("\n===== {} =====\n{}\n", timestamp, message).as_bytes(),
+    );
+}
+
+fn install_panic_diagnostics() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let message = format!("gary4local panic: {}\n\n{}", panic_info, backtrace);
+        append_startup_diagnostic(&message);
+        eprintln!("{}", message);
+    }));
+}
+
+#[cfg(target_os = "windows")]
+fn webview2_user_data_folder() -> PathBuf {
+    gary4local_local_data_root().join("WebView2-v2")
 }
 
 #[cfg(target_os = "windows")]
@@ -669,7 +711,9 @@ fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, 
     Ok(parsed)
 }
 
-fn save_carey_lora_catalog(catalog: &BTreeMap<String, CareyLoraCatalogEntry>) -> Result<(), String> {
+fn save_carey_lora_catalog(
+    catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
+) -> Result<(), String> {
     let path = carey_lora_catalog_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -885,8 +929,7 @@ fn ensure_default_carey_captions(runtime_root: &Path) -> Result<(), String> {
     payload["default"] = serde_json::json!(default_pool);
     let json = serde_json::to_string_pretty(&payload)
         .map_err(|e| format!("Cannot serialize default captions: {}", e))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
 
     Ok(())
 }
@@ -918,7 +961,11 @@ async fn try_reload_carey_admin() -> bool {
         Err(_) => return false,
     };
 
-    match client.post("http://localhost:8003/admin/reload").send().await {
+    match client
+        .post("http://localhost:8003/admin/reload")
+        .send()
+        .await
+    {
         Ok(response) => response.status().is_success(),
         Err(_) => false,
     }
@@ -1022,22 +1069,27 @@ async fn rebuild_tray_menu(app_handle: &tauri::AppHandle, manager: &ManagerState
         let mgr = manager.lock().await;
         mgr.get_service_info()
     };
-    rebuild_tray_menu_with_info(app_handle, &services);
+    if let Err(error) = rebuild_tray_menu_with_info(app_handle, &services) {
+        log::error!("Failed to rebuild tray menu: {}", error);
+        append_startup_diagnostic(&format!("Failed to rebuild tray menu: {}", error));
+    }
 }
 
 /// Inner sync function that builds the tray menu from pre-fetched service info.
 fn rebuild_tray_menu_with_info(
     app_handle: &tauri::AppHandle,
     services: &[service_manager::ServiceInfo],
-) {
+) -> Result<(), String> {
     let show_item = MenuItemBuilder::with_id("show", "show control center")
         .build(app_handle)
-        .unwrap();
+        .map_err(|error| format!("Cannot build tray show item: {}", error))?;
     let quit_item = MenuItemBuilder::with_id("quit", "quit (stop all services)")
         .build(app_handle)
-        .unwrap();
-    let sep1 = PredefinedMenuItem::separator(app_handle).unwrap();
-    let sep2 = PredefinedMenuItem::separator(app_handle).unwrap();
+        .map_err(|error| format!("Cannot build tray quit item: {}", error))?;
+    let sep1 = PredefinedMenuItem::separator(app_handle)
+        .map_err(|error| format!("Cannot build tray separator: {}", error))?;
+    let sep2 = PredefinedMenuItem::separator(app_handle)
+        .map_err(|error| format!("Cannot build tray separator: {}", error))?;
 
     let mut menu_builder = MenuBuilder::new(app_handle).item(&show_item).item(&sep1);
 
@@ -1050,19 +1102,28 @@ fn rebuild_tray_menu_with_info(
         let item = IconMenuItemBuilder::with_id(item_id, label)
             .icon(icon)
             .build(app_handle)
-            .unwrap();
+            .map_err(|error| format!("Cannot build tray service item for {}: {}", svc.id, error))?;
         menu_builder = menu_builder.item(&item);
     }
 
-    let menu = menu_builder.item(&sep2).item(&quit_item).build().unwrap();
+    let menu = menu_builder
+        .item(&sep2)
+        .item(&quit_item)
+        .build()
+        .map_err(|error| format!("Cannot build tray menu: {}", error))?;
 
     if let Some(tray) = app_handle.tray_by_id(&TrayIconId::new("main-tray")) {
-        let _ = tray.set_menu(Some(menu));
+        tray.set_menu(Some(menu))
+            .map_err(|error| format!("Cannot set tray menu: {}", error))?;
     }
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_diagnostics();
+
     let webview2_user_data_folder = configure_webview2_user_data_folder();
 
     let builder = tauri::Builder::default()
@@ -1079,7 +1140,7 @@ pub fn run() {
         builder
     };
 
-    builder
+    if let Err(error) = builder
         .setup(move |app| {
             if let Some(folder) = webview2_user_data_folder.as_ref() {
                 log::info!("Using WebView2 user data folder: {}", folder.display());
@@ -1110,8 +1171,19 @@ pub fn run() {
                 bundle_root.clone()
             } else {
                 let runtime_root = gary4juce_runtime_root();
-                sync_bundled_services_to_runtime(&bundle_root, &runtime_root)
-                    .map_err(std::io::Error::other)?;
+                if let Err(error) = sync_bundled_services_to_runtime(&bundle_root, &runtime_root) {
+                    let message = format!("Runtime service sync failed: {}", error);
+                    log::error!("{}", message);
+                    append_startup_diagnostic(&message);
+
+                    let manifest_path = runtime_root
+                        .join("services")
+                        .join("manifests")
+                        .join("services.json");
+                    if !manifest_path.exists() {
+                        return Err(std::io::Error::other(message).into());
+                    }
+                }
                 runtime_root
             };
 
@@ -1237,8 +1309,7 @@ pub fn run() {
             // --- Window close: ask whether to quit or minimize to tray ---
             let close_handle = handle.clone();
             let close_manager = manager.clone();
-            {
-                let window = app.get_webview_window("main").unwrap();
+            if let Some(window) = app.get_webview_window("main") {
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
@@ -1262,13 +1333,23 @@ pub fn run() {
                         }
                     }
                 });
+            } else {
+                let message = "Main webview window was not available during setup";
+                log::error!("{}", message);
+                append_startup_diagnostic(message);
             }
 
             // --- Background: health check + crash detection polling ---
             let poll_manager = manager.clone();
             let poll_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
-                let client = reqwest::Client::builder().build().unwrap();
+                let client = match reqwest::Client::builder().build() {
+                    Ok(client) => client,
+                    Err(error) => {
+                        log::error!("Failed to build health check client: {}", error);
+                        return;
+                    }
+                };
                 let initial_info = {
                     let mgr = poll_manager.lock().await;
                     mgr.get_service_info()
@@ -1309,7 +1390,13 @@ pub fn run() {
                     // the user can click a service action.
                     let current_tray_signature = tray_menu_signature(&info);
                     if current_tray_signature != last_tray_signature {
-                        rebuild_tray_menu_with_info(&poll_handle, &info);
+                        if let Err(error) = rebuild_tray_menu_with_info(&poll_handle, &info) {
+                            log::error!("Failed to rebuild tray menu: {}", error);
+                            append_startup_diagnostic(&format!(
+                                "Failed to rebuild tray menu: {}",
+                                error
+                            ));
+                        }
                         last_tray_signature = current_tray_signature;
                     }
                 }
@@ -1344,7 +1431,13 @@ pub fn run() {
             open_url,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    {
+        let message = format!("error while running tauri application: {}", error);
+        log::error!("{}", message);
+        append_startup_diagnostic(&message);
+        eprintln!("{}", message);
+        std::process::exit(1);
+    }
 }
 
 #[tauri::command]
@@ -2074,11 +2167,8 @@ async fn upsert_carey_lora(
 
     let mut catalog = read_carey_lora_catalog()?;
     let existing = catalog.get(&normalized_name);
-    let (scale, backends, inferred_model_family) = load_carey_lora_metadata(
-        &checkpoint_dir,
-        captions_dir.as_deref(),
-        existing,
-    );
+    let (scale, backends, inferred_model_family) =
+        load_carey_lora_metadata(&checkpoint_dir, captions_dir.as_deref(), existing);
     let resolved_model_family = model_family
         .as_deref()
         .map(normalize_lora_model_family)
@@ -2106,8 +2196,8 @@ async fn remove_carey_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<CareyLoraState, String> {
-    let normalized_name = sanitize_lora_name(&name)
-        .ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
     let mut catalog = read_carey_lora_catalog()?;
     catalog.remove(&normalized_name);
     save_carey_lora_catalog(&catalog)?;
@@ -2132,7 +2222,10 @@ async fn build_carey_lora_captions(
         return Err("Carey must be built before captions can be generated.".to_string());
     }
 
-    let script_path = repo_root.join("services").join("carey").join("build_captions.py");
+    let script_path = repo_root
+        .join("services")
+        .join("carey")
+        .join("build_captions.py");
     if !script_path.exists() {
         return Err(format!("Missing {}", script_path.display()));
     }

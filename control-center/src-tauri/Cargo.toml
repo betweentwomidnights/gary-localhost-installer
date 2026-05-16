@@ -1,6 +1,6 @@
 [package]
 name = "gary4local"
-version = "0.1.8"
+version = "0.1.9"
 description = "gary4local control center"
 authors = ["betweentwomidnights"]
 license = "MIT"

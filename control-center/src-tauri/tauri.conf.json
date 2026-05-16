@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "gary4local",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "identifier": "com.betweentwomidnights.gary4local",
   "build": {
     "frontendDist": "../dist",
