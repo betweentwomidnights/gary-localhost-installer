@@ -166,6 +166,42 @@ fn gary4juce_runtime_root() -> PathBuf {
     PathBuf::from(appdata).join("Gary4JUCE")
 }
 
+#[cfg(target_os = "windows")]
+fn webview2_user_data_folder() -> PathBuf {
+    let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+        format!("{}\\AppData\\Local", home)
+    });
+    PathBuf::from(localappdata)
+        .join("com.betweentwomidnights.gary4local")
+        .join("WebView2-v2")
+}
+
+#[cfg(target_os = "windows")]
+fn configure_webview2_user_data_folder() -> Option<PathBuf> {
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
+        return None;
+    }
+
+    let folder = webview2_user_data_folder();
+    if let Err(error) = std::fs::create_dir_all(&folder) {
+        eprintln!(
+            "Failed to create WebView2 user data folder {}: {}",
+            folder.display(),
+            error
+        );
+        return None;
+    }
+
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
+    Some(folder)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_webview2_user_data_folder() -> Option<PathBuf> {
+    None
+}
+
 fn runtime_services_dir(runtime_root: &Path) -> PathBuf {
     runtime_root.join("services")
 }
@@ -1027,7 +1063,14 @@ fn rebuild_tray_menu_with_info(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let webview2_user_data_folder = configure_webview2_user_data_folder();
+
     let builder = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init());
     let builder = if update::app_updater_enabled() {
@@ -1036,13 +1079,10 @@ pub fn run() {
         builder
     };
 
-    builder.setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+    builder
+        .setup(move |app| {
+            if let Some(folder) = webview2_user_data_folder.as_ref() {
+                log::info!("Using WebView2 user data folder: {}", folder.display());
             }
 
             app.manage(update::PendingNativeUpdate::default());
