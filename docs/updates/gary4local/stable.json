@@ -1,13 +1,13 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.1.7",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.7/gary4local_0.1.7_x64-setup.exe",
-    "sha256":  "4b2d318f25dc52928b8e579d195f5f0c49a677414b683ca06407d02e07512278",
-    "published_at":  "2026-05-15T09:56:31.8793403Z",
+    "latest_version":  "0.1.6",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.6/gary4local_0.1.6_x64-setup.exe",
+    "sha256":  "d06eb2b036fba66c05478e6568b1b466bdc3e22abe2cb200bb5a12ce7f2ea1de",
+    "published_at":  "2026-04-22T16:49:55.4242795Z",
     "notes":  [
-                  "Carey covers now use cover-nofsq for clearer source detail.",
-                  "Lego now uses the regular base model instead of SFT.",
-                  "Lego prompts and routing are simpler and more reliable.",
-                  "Requires gary4juce v3.0.4 or newer."
+                  "Adds the new Carey local LoRA manager for gary4local, including dynamic local LoRA registry generation and caption-pool building for Gary4JUCE.",
+                  "Supports separate checkpoint folders and captions/source folders so Side-Step style training workflows import cleanly.",
+                  "Adds standard-versus-XL LoRA family filtering so Gary4JUCE only shows adapters that match the current Carey XL mode.",
+                  "Requires gary4juce v3.0.4 or newer for the new local LoRA functionality."
               ]
 }
