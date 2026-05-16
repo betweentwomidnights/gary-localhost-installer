@@ -353,9 +353,18 @@ fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
     let icon_path = bundle_root.join("icon.png");
     if icon_path.is_file() {
         "icon.png".hash(&mut hasher);
-        let icon_bytes = std::fs::read(&icon_path)
-            .map_err(|e| format!("Cannot read {}: {}", icon_path.display(), e))?;
-        icon_bytes.hash(&mut hasher);
+        match std::fs::read(&icon_path) {
+            Ok(icon_bytes) => icon_bytes.hash(&mut hasher),
+            Err(error) => {
+                let message = format!(
+                    "Skipping bundled icon hash because {} could not be read: {}",
+                    icon_path.display(),
+                    error
+                );
+                log::warn!("{}", message);
+                append_startup_diagnostic(&message);
+            }
+        }
     }
 
     Ok(format!(
@@ -512,14 +521,16 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     let bundle_icon = bundle_root.join("icon.png");
     let runtime_icon = runtime_root.join("icon.png");
     if bundle_icon.is_file() {
-        std::fs::copy(&bundle_icon, &runtime_icon).map_err(|e| {
-            format!(
+        if let Err(error) = std::fs::copy(&bundle_icon, &runtime_icon) {
+            let message = format!(
                 "Cannot copy {} to {}: {}",
                 bundle_icon.display(),
                 runtime_icon.display(),
-                e
-            )
-        })?;
+                error
+            );
+            log::warn!("Non-fatal runtime icon sync warning: {}", message);
+            append_startup_diagnostic(&format!("Non-fatal runtime icon sync warning: {}", message));
+        }
     }
 
     std::fs::write(&stamp_path, desired_stamp)
@@ -1219,7 +1230,16 @@ pub fn run() {
 
             let icon_path = runtime_root.join("icon.png");
             let tray_icon = if icon_path.exists() {
-                load_png_as_image(&icon_path)
+                let icon = load_png_as_image(&icon_path);
+                if icon.is_none() {
+                    let message = format!(
+                        "Runtime tray icon could not be loaded from {}; continuing without a tray icon",
+                        icon_path.display()
+                    );
+                    log::warn!("{}", message);
+                    append_startup_diagnostic(&message);
+                }
+                icon
             } else {
                 None
             };
