@@ -193,6 +193,31 @@ impl ModelManager {
         entries
     }
 
+    /// Get Stable Audio 3 required Hugging Face components.
+    ///
+    /// These use the normal Hugging Face cache. A saved token is reused, but
+    /// the user still needs to accept access on each gated model page.
+    pub fn get_sa3_models(&self) -> Vec<ModelEntry> {
+        let components: Vec<(&str, &str, &str)> = vec![(
+            "stabilityai/stable-audio-3-medium",
+            "Stable Audio 3 Medium (includes T5Gemma)",
+            "model",
+        )];
+
+        components
+            .iter()
+            .map(|(id, display_name, category)| ModelEntry {
+                id: id.to_string(),
+                display_name: display_name.to_string(),
+                service: "sa3".to_string(),
+                size_category: Some(category.to_string()),
+                group: None,
+                epoch: None,
+                status: self.get_model_status(id),
+            })
+            .collect()
+    }
+
     /// Get Carey (ACE-Step) shared components and DiT model checkpoints.
     /// Carey stores models in services/carey/checkpoints/ (not HF cache).
     pub fn get_carey_models(&self) -> Vec<ModelEntry> {
@@ -630,7 +655,8 @@ def fmt_size(b):
 
 try:
     report(0.0, "Fetching repo info...")
-    api = HfApi()
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    api = HfApi(token=token)
     repo_info = api.repo_info(model_id, files_metadata=True)
     siblings = [s for s in repo_info.siblings if not s.rfilename.startswith(".")]
     file_entries = [(s.rfilename, s.size or (s.lfs.size if s.lfs else 0) or 0) for s in siblings]
@@ -672,7 +698,8 @@ try:
         resp = requests.get(url, headers=headers, stream=True, allow_redirects=True)
         resp.raise_for_status()
 
-        tmp_path = os.path.join(blobs_dir, f"{{filename}}.downloading")
+        safe_tmp_name = filename.replace("/", "_").replace("\\", "_") + ".downloading"
+        tmp_path = os.path.join(blobs_dir, safe_tmp_name)
         received = 0
         last_pct_reported = -1
 
@@ -1261,6 +1288,7 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
     let mgr = manager.lock().await;
     let mut models = mgr.get_gary_models();
     models.extend(mgr.get_jerry_models());
+    models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
     let progress = mgr.get_download_progress();

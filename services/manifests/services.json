@@ -108,6 +108,57 @@
       "dependsOn": []
     },
     {
+      "id": "sa3",
+      "displayName": "sa3 (stable audio 3)",
+      "description": "Text-to-audio generation and editing with Stable Audio 3",
+      "port": 8006,
+      "entryPoint": "api.py",
+      "workingDir": "services/sa3",
+      "pythonVersion": "3.11",
+      "torchVersion": "2.7.1",
+      "torchIndex": "https://download.pytorch.org/whl/cu128",
+      "torchPackages": ["torch==2.7.1", "torchaudio==2.7.1"],
+      "requirementsFile": "requirements.txt",
+      "editableInstall": true,
+      "editablePackagePath": ".",
+      "editableInstallFlags": "--no-deps",
+      "forceTorchReinstall": true,
+      "buildSteps": [
+        "pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip install -e . --no-deps",
+        "pip install -r requirements.txt",
+        "pip install https://github.com/sdbds/flash-attention-for-windows/releases/download/2.8.2/flash_attn-2.8.2+cu128torch2.7.1cxx11abiFALSEfullbackward-cp311-cp311-win_amd64.whl",
+        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
+      ],
+      "healthCheck": {
+        "endpoint": "/health",
+        "intervalSeconds": 15,
+        "timeoutSeconds": 5,
+        "startupGraceSeconds": 30
+      },
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "HF_TOKEN": "${HF_TOKEN}",
+        "SA3_MODEL": "medium",
+        "SA3_PROMPTS_DIR": "${APPDATA}/Gary4JUCE/sa3/prompts",
+        "SA3_LORA_REGISTRY": "${APPDATA}/Gary4JUCE/sa3/lora_registry.json",
+        "SA3_LORA_DIR": "${APPDATA}/Gary4JUCE/sa3/loras",
+        "SA3_PEAK_NORMALIZE_DB": "2.0",
+        "SA3_LIMITER_CEILING_DB": "-0.3",
+        "SA3_LIMITER_KNEE": "0.8",
+        "SA3_LATENT_RESCALE": "1.0",
+        "SA3_LATENT_SHIFT": "0.0",
+        "SA3_LATENT_TARGET_STD": "",
+        "SA3_LATENT_ADAPT_MIN": "0.9",
+        "SA3_LATENT_ADAPT_MAX": "1.0",
+        "SA3_CONTINUE_TAIL_MODE": "regen_past",
+        "SA3_CONTINUE_TAIL_PAD": "6",
+        "SA3_LATENT_DIAG": "0",
+        "OUTPUT_DIR": "${APPDATA}/Gary4JUCE/sa3/outputs"
+      },
+      "dependsOn": []
+    },
+    {
       "id": "carey",
       "displayName": "carey (ace-step 1.5)",
       "description": "Stem generation (lego), continuation (complete), and remix (cover) with ACE-Step",

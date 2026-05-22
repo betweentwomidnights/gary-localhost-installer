@@ -3,8 +3,10 @@
   import { onMount } from "svelte";
 
   let {
+    serviceId = "stable-audio",
     onTokenChange
   }: {
+    serviceId?: string;
     onTokenChange: (configured: boolean) => void;
   } = $props();
 
@@ -13,6 +15,11 @@
   let tokenInput: string = $state("");
   let saving: boolean = $state(false);
   let message: string | null = $state(null);
+
+  const stableAudioOpenUrl = "https://huggingface.co/stabilityai/stable-audio-open-small";
+  const sa3MediumUrl = "https://huggingface.co/stabilityai/stable-audio-3-medium";
+  const t5GemmaUrl = "https://huggingface.co/google/t5gemma-b-b-ul2";
+  let isSa3 = $derived(serviceId === "sa3");
 
   async function loadToken() {
     try {
@@ -65,20 +72,23 @@
 
 <div class="token-banner" class:configured={hfTokenConfigured}>
   {#if !hfTokenConfigured}
-    <div class="banner-title">⚠ huggingface token required for stable audio</div>
+    <div class="banner-title">huggingface token required for gated audio models</div>
     <div class="steps">
       <div class="step">
         <span class="num">1</span>
-        <span>Agree to the model license</span>
-        <button class="link-btn" onclick={() => openUrl("https://huggingface.co/stabilityai/stable-audio-open-small")}>
-          Open model page →
-        </button>
+        <span>Agree to the model access terms</span>
+        {#if isSa3}
+          <button class="link-btn" onclick={() => openUrl(sa3MediumUrl)}>SA3 Medium</button>
+          <button class="link-btn compact" onclick={() => openUrl(t5GemmaUrl)}>T5Gemma</button>
+        {:else}
+          <button class="link-btn" onclick={() => openUrl(stableAudioOpenUrl)}>Open model page</button>
+        {/if}
       </div>
       <div class="step">
         <span class="num">2</span>
         <span>Create a read token</span>
         <button class="link-btn" onclick={() => openUrl("https://huggingface.co/settings/tokens")}>
-          Token settings →
+          Token settings
         </button>
       </div>
       <div class="step">
@@ -99,10 +109,18 @@
     </div>
   {:else}
     <div class="configured-row">
-      <span class="banner-title">✓ huggingface token configured</span>
+      <span class="banner-title">huggingface token configured</span>
       <span class="masked">{maskedToken}</span>
       <button class="remove-btn" onclick={removeToken}>Remove</button>
     </div>
+    {#if isSa3}
+      <div class="access-note">
+        SA3 also needs accepted access for
+        <button class="inline-link" onclick={() => openUrl(sa3MediumUrl)}>SA3 Medium</button>
+        and
+        <button class="inline-link" onclick={() => openUrl(t5GemmaUrl)}>T5Gemma</button>.
+      </div>
+    {/if}
   {/if}
   {#if message}
     <div class="msg">{message}</div>
@@ -172,6 +190,10 @@
     cursor: pointer;
     white-space: nowrap;
     margin-left: auto;
+  }
+
+  .link-btn.compact {
+    margin-left: 0;
   }
 
   .link-btn:hover {
@@ -251,5 +273,24 @@
     margin-top: 4px;
     font-size: 10px;
     color: var(--text-secondary);
+  }
+
+  .access-note {
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .inline-link {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 10px;
+    padding: 0 2px;
+    cursor: pointer;
+  }
+
+  .inline-link:hover {
+    text-decoration: underline;
   }
 </style>

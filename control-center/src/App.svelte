@@ -8,7 +8,9 @@
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
+  import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
+  import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
 
@@ -33,9 +35,19 @@
     build_status: BuildStatus | null;
   }
 
+  interface Sa3LoudnessSettings {
+    peakNormalizeDb: string;
+    limiterCeilingDb: string;
+    latentRescale: string;
+    latentShift: string;
+    latentTargetStd: string;
+    continuationTailPad: string;
+  }
+
   interface AppSettings {
     melodyflowUseFlashAttn: boolean;
     careyUseXlModels: boolean;
+    sa3Loudness: Sa3LoudnessSettings;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
     skippedUpdateVersion: string | null;
@@ -68,6 +80,14 @@
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
     careyUseXlModels: false,
+    sa3Loudness: {
+      peakNormalizeDb: "2.0",
+      limiterCeilingDb: "-0.3",
+      latentRescale: "1.0",
+      latentShift: "0.0",
+      latentTargetStd: "",
+      continuationTailPad: "6",
+    },
     closeActionOnX: "ask",
     autoCheckUpdates: true,
     skippedUpdateVersion: null,
@@ -83,6 +103,7 @@
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
   let careyLoraModalOpen = $state(false);
+  let sa3LoraModalOpen = $state(false);
 
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
@@ -126,6 +147,15 @@
 
   function closeCareyLoras() {
     careyLoraModalOpen = false;
+  }
+
+  function showSa3Loras() {
+    selectedServiceId = "sa3";
+    sa3LoraModalOpen = true;
+  }
+
+  function closeSa3Loras() {
+    sa3LoraModalOpen = false;
   }
 
   function backToLogs() {
@@ -285,6 +315,10 @@
     appSettings = { ...appSettings, careyUseXlModels: enabled };
   }
 
+  function onSa3LoudnessSettingUpdated(settings: Sa3LoudnessSettings) {
+    appSettings = { ...appSettings, sa3Loudness: settings };
+  }
+
   function onCloseRequestEvent() {
     closeRequestModalOpen = true;
     rememberCloseChoice = false;
@@ -362,6 +396,7 @@
   let totalCount = $derived(services.length);
   let selectedService = $derived(services.find((s) => s.id === selectedServiceId) ?? null);
   let careyService = $derived(services.find((s) => s.id === "carey") ?? null);
+  let sa3Service = $derived(services.find((s) => s.id === "sa3") ?? null);
 </script>
 
 <main>
@@ -401,6 +436,7 @@
         onSelect={selectService}
         onShowModels={showModels}
         onManageCareyLoras={showCareyLoras}
+        onManageSa3Loras={showSa3Loras}
       />
     </div>
     <div class="divider"></div>
@@ -408,8 +444,15 @@
       {#if rightPanel === "models" && modelServiceId}
         <ModelPanel serviceId={modelServiceId} onBack={backToLogs} />
       {:else}
-        {#if selectedServiceId === "stable-audio"}
-          <TokenBanner {onTokenChange} />
+        {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
+          <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />
+          {#if selectedServiceId === "sa3"}
+            <Sa3OutputPanel
+              settings={appSettings.sa3Loudness}
+              serviceStatus={selectedService?.status ?? "stopped"}
+              onUpdated={onSa3LoudnessSettingUpdated}
+            />
+          {/if}
         {:else if selectedServiceId === "carey"}
           <CareyXlBanner
             enabled={appSettings.careyUseXlModels}
@@ -459,6 +502,12 @@
     serviceEnvExists={careyService?.env_exists ?? false}
     careyXlEnabled={appSettings.careyUseXlModels}
     onClose={closeCareyLoras}
+  />
+  <Sa3LoraModal
+    open={sa3LoraModalOpen}
+    serviceStatus={sa3Service?.status ?? "stopped"}
+    serviceEnvExists={sa3Service?.env_exists ?? false}
+    onClose={closeSa3Loras}
   />
 </main>
 

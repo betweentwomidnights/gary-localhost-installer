@@ -29,6 +29,8 @@
     onShowModels = () => {},
     hasCareyLoras = false,
     onManageCareyLoras = () => {},
+    hasSa3Loras = false,
+    onManageSa3Loras = () => {},
   }: {
     service: ServiceInfo;
     selected: boolean;
@@ -37,6 +39,8 @@
     onShowModels?: () => void;
     hasCareyLoras?: boolean;
     onManageCareyLoras?: () => void;
+    hasSa3Loras?: boolean;
+    onManageSa3Loras?: () => void;
   } = $props();
 
   const statusColors: Record<string, string> = {
@@ -126,6 +130,11 @@
     {/if}
     {#if hasCareyLoras}
       <button class="models-btn" onclick={(e) => { e.stopPropagation(); onManageCareyLoras(); }}>
+        add lora
+      </button>
+    {/if}
+    {#if hasSa3Loras}
+      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onManageSa3Loras(); }}>
         add lora
       </button>
     {/if}

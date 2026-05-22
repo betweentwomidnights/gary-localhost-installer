@@ -24,11 +24,80 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct Sa3LoudnessSettings {
+    #[serde(default = "default_sa3_peak_normalize_db")]
+    peak_normalize_db: String,
+    #[serde(default = "default_sa3_limiter_ceiling_db")]
+    limiter_ceiling_db: String,
+    #[serde(default = "default_sa3_latent_rescale")]
+    latent_rescale: String,
+    #[serde(default = "default_sa3_latent_shift")]
+    latent_shift: String,
+    #[serde(default)]
+    latent_target_std: String,
+    #[serde(default = "default_sa3_continuation_tail_pad")]
+    continuation_tail_pad: String,
+}
+
+impl Default for Sa3LoudnessSettings {
+    fn default() -> Self {
+        Self {
+            peak_normalize_db: default_sa3_peak_normalize_db(),
+            limiter_ceiling_db: default_sa3_limiter_ceiling_db(),
+            latent_rescale: default_sa3_latent_rescale(),
+            latent_shift: default_sa3_latent_shift(),
+            latent_target_std: String::new(),
+            continuation_tail_pad: default_sa3_continuation_tail_pad(),
+        }
+    }
+}
+
+fn default_sa3_peak_normalize_db() -> String {
+    "2.0".to_string()
+}
+
+fn default_sa3_limiter_ceiling_db() -> String {
+    "-0.3".to_string()
+}
+
+fn default_sa3_latent_rescale() -> String {
+    "1.0".to_string()
+}
+
+fn default_sa3_latent_shift() -> String {
+    "0.0".to_string()
+}
+
+fn default_sa3_continuation_tail_pad() -> String {
+    "6".to_string()
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3LoudnessSettingsPatch {
+    #[serde(default)]
+    peak_normalize_db: Option<String>,
+    #[serde(default)]
+    limiter_ceiling_db: Option<String>,
+    #[serde(default)]
+    latent_rescale: Option<String>,
+    #[serde(default)]
+    latent_shift: Option<String>,
+    #[serde(default)]
+    latent_target_std: Option<String>,
+    #[serde(default)]
+    continuation_tail_pad: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AppSettings {
     #[serde(default)]
     melodyflow_use_flash_attn: bool,
     #[serde(default)]
     carey_use_xl_models: bool,
+    #[serde(default)]
+    sa3_loudness: Sa3LoudnessSettings,
     #[serde(default)]
     close_action_on_x: CloseActionOnX,
     #[serde(default = "default_auto_check_updates")]
@@ -44,6 +113,7 @@ impl Default for AppSettings {
         Self {
             melodyflow_use_flash_attn: false,
             carey_use_xl_models: false,
+            sa3_loudness: Sa3LoudnessSettings::default(),
             close_action_on_x: CloseActionOnX::Ask,
             auto_check_updates: default_auto_check_updates(),
             skipped_update_version: None,
@@ -77,6 +147,8 @@ struct AppSettingsPatch {
     melodyflow_use_flash_attn: Option<bool>,
     #[serde(default)]
     carey_use_xl_models: Option<bool>,
+    #[serde(default)]
+    sa3_loudness: Option<Sa3LoudnessSettingsPatch>,
     #[serde(default)]
     close_action_on_x: Option<CloseActionOnX>,
     #[serde(default)]
@@ -128,6 +200,49 @@ struct CareyLoraState {
 #[serde(rename_all = "camelCase")]
 struct CareyCaptionsBuildResult {
     state: CareyLoraState,
+    output: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3LoraCatalogEntry {
+    path: String,
+    #[serde(default)]
+    prompts_path: Option<String>,
+    #[serde(default = "default_lora_scale")]
+    strength: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3LoraEntry {
+    name: String,
+    path: String,
+    prompts_path: Option<String>,
+    resolved_prompts_path: Option<String>,
+    prompt_file_path: String,
+    prompt_file_exists: bool,
+    prompt_count: usize,
+    caption_count: usize,
+    strength: f64,
+    checkpoint_exists: bool,
+    registered: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3LoraState {
+    entries: Vec<Sa3LoraEntry>,
+    pools: HashMap<String, usize>,
+    catalog_path: String,
+    registry_path: String,
+    prompts_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3PromptsBuildResult {
+    state: Sa3LoraState,
     output: String,
 }
 
@@ -262,6 +377,30 @@ fn carey_lora_registry_path() -> PathBuf {
 
 fn carey_captions_path() -> PathBuf {
     carey_runtime_dir().join("captions.json")
+}
+
+fn sa3_runtime_dir() -> PathBuf {
+    gary4juce_runtime_root().join("sa3")
+}
+
+fn sa3_lora_catalog_path() -> PathBuf {
+    sa3_runtime_dir().join("lora_catalog.json")
+}
+
+fn sa3_lora_registry_path() -> PathBuf {
+    sa3_runtime_dir().join("lora_registry.json")
+}
+
+fn sa3_prompts_dir() -> PathBuf {
+    sa3_runtime_dir().join("prompts")
+}
+
+fn bundled_sa3_default_prompts_path(runtime_root: &Path) -> PathBuf {
+    runtime_root
+        .join("services")
+        .join("sa3")
+        .join("prompts")
+        .join("defaults.json")
 }
 
 fn bundled_default_captions_path(runtime_root: &Path) -> PathBuf {
@@ -549,8 +688,15 @@ fn read_hf_token() -> Option<String> {
             return Some(trimmed);
         }
     }
-    // Fall back to system environment variable
-    std::env::var("HF_TOKEN").ok().filter(|t| !t.is_empty())
+    // Fall back to system environment variables
+    std::env::var("HF_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            std::env::var("HUGGING_FACE_HUB_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty())
+        })
 }
 
 fn read_app_settings() -> AppSettings {
@@ -575,6 +721,31 @@ fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn clean_setting_value(value: String) -> String {
+    value.trim().to_string()
+}
+
+fn merge_sa3_loudness_settings(current: &mut Sa3LoudnessSettings, patch: Sa3LoudnessSettingsPatch) {
+    if let Some(value) = patch.peak_normalize_db {
+        current.peak_normalize_db = clean_setting_value(value);
+    }
+    if let Some(value) = patch.limiter_ceiling_db {
+        current.limiter_ceiling_db = clean_setting_value(value);
+    }
+    if let Some(value) = patch.latent_rescale {
+        current.latent_rescale = clean_setting_value(value);
+    }
+    if let Some(value) = patch.latent_shift {
+        current.latent_shift = clean_setting_value(value);
+    }
+    if let Some(value) = patch.latent_target_std {
+        current.latent_target_std = clean_setting_value(value);
+    }
+    if let Some(value) = patch.continuation_tail_pad {
+        current.continuation_tail_pad = clean_setting_value(value);
+    }
+}
+
 fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
     let mut current = read_app_settings();
 
@@ -584,6 +755,10 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(carey_use_xl_models) = patch.carey_use_xl_models {
         current.carey_use_xl_models = carey_use_xl_models;
+    }
+
+    if let Some(sa3_loudness) = patch.sa3_loudness {
+        merge_sa3_loudness_settings(&mut current.sa3_loudness, sa3_loudness);
     }
 
     if let Some(close_action_on_x) = patch.close_action_on_x {
@@ -963,6 +1138,218 @@ fn build_carey_lora_state(runtime_root: &Path) -> Result<CareyLoraState, String>
     })
 }
 
+fn looks_like_sa3_lora_checkpoint(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .map(|ext| {
+                let ext = ext.to_string_lossy().to_lowercase();
+                ext == "ckpt" || ext == "safetensors"
+            })
+            .unwrap_or(false)
+}
+
+fn sa3_prompt_file_path(name: &str) -> PathBuf {
+    sa3_prompts_dir().join(format!("{}.json", name))
+}
+
+fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
+    let path = sa3_lora_catalog_path();
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
+    let mut parsed: BTreeMap<String, Sa3LoraCatalogEntry> =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid SA3 LoRA catalog JSON: {}", e))?;
+
+    for entry in parsed.values_mut() {
+        entry.path = entry.path.trim().to_string();
+        entry.prompts_path = entry
+            .prompts_path
+            .take()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if !entry.strength.is_finite() {
+            entry.strength = default_lora_scale();
+        }
+    }
+
+    Ok(parsed)
+}
+
+fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Result<(), String> {
+    let path = sa3_lora_catalog_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    let json = serde_json::to_string_pretty(catalog)
+        .map_err(|e| format!("Cannot serialize SA3 LoRA catalog: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn resolve_sa3_prompts_source(entry: &Sa3LoraCatalogEntry) -> Option<PathBuf> {
+    if let Some(prompts_path) = entry
+        .prompts_path
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+    {
+        return Some(prompts_path);
+    }
+
+    let checkpoint_path = PathBuf::from(&entry.path);
+    if let Some(parent) = checkpoint_path.parent() {
+        if count_caption_sidecars(parent) > 0 {
+            return Some(parent.to_path_buf());
+        }
+    }
+
+    None
+}
+
+fn read_sa3_prompt_count(path: &Path) -> usize {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return 0;
+    };
+    let Some(dice) = value.get("dice").and_then(|value| value.as_object()) else {
+        return 0;
+    };
+    dice.values()
+        .map(|value| value.as_array().map(|items| items.len()).unwrap_or(0))
+        .sum()
+}
+
+fn read_sa3_prompt_pools() -> HashMap<String, usize> {
+    let mut pools = HashMap::new();
+    let dir = sa3_prompts_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return pools;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file()
+            || !path
+                .extension()
+                .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        pools.insert(stem, read_sa3_prompt_count(&path));
+    }
+    pools
+}
+
+fn build_sa3_lora_entries(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Vec<Sa3LoraEntry> {
+    catalog
+        .iter()
+        .map(|(name, entry)| {
+            let checkpoint_path = PathBuf::from(&entry.path);
+            let checkpoint_exists = looks_like_sa3_lora_checkpoint(&checkpoint_path);
+            let resolved_prompts_path = resolve_sa3_prompts_source(entry);
+            let caption_count = resolved_prompts_path
+                .as_ref()
+                .map(|path| count_caption_sidecars(path))
+                .unwrap_or(0);
+            let prompt_file = sa3_prompt_file_path(name);
+            let prompt_file_exists = prompt_file.is_file();
+            let prompt_count = read_sa3_prompt_count(&prompt_file);
+
+            Sa3LoraEntry {
+                name: name.clone(),
+                path: entry.path.clone(),
+                prompts_path: entry.prompts_path.clone(),
+                resolved_prompts_path: resolved_prompts_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
+                prompt_file_path: prompt_file.to_string_lossy().to_string(),
+                prompt_file_exists,
+                prompt_count,
+                caption_count,
+                strength: entry.strength,
+                checkpoint_exists,
+                registered: checkpoint_exists,
+            }
+        })
+        .collect()
+}
+
+fn write_sa3_lora_registry(entries: &[Sa3LoraEntry]) -> Result<(), String> {
+    let path = sa3_lora_registry_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = BTreeMap::<String, serde_json::Value>::new();
+    for entry in entries.iter().filter(|entry| entry.registered) {
+        payload.insert(
+            entry.name.clone(),
+            serde_json::json!({
+                "path": entry.path,
+                "strength": entry.strength,
+            }),
+        );
+    }
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize SA3 LoRA registry: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn ensure_default_sa3_prompts(runtime_root: &Path) -> Result<(), String> {
+    let source = bundled_sa3_default_prompts_path(runtime_root);
+    if !source.is_file() {
+        return Ok(());
+    }
+
+    let dest = sa3_prompts_dir().join("defaults.json");
+    if dest.is_file() {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    std::fs::copy(&source, &dest).map_err(|e| {
+        format!(
+            "Cannot copy {} to {}: {}",
+            source.display(),
+            dest.display(),
+            e
+        )
+    })?;
+    Ok(())
+}
+
+fn build_sa3_lora_state(runtime_root: &Path) -> Result<Sa3LoraState, String> {
+    ensure_default_sa3_prompts(runtime_root)?;
+    let catalog = read_sa3_lora_catalog()?;
+    let entries = build_sa3_lora_entries(&catalog);
+    write_sa3_lora_registry(&entries)?;
+    Ok(Sa3LoraState {
+        entries,
+        pools: read_sa3_prompt_pools(),
+        catalog_path: sa3_lora_catalog_path().to_string_lossy().to_string(),
+        registry_path: sa3_lora_registry_path().to_string_lossy().to_string(),
+        prompts_dir: sa3_prompts_dir().to_string_lossy().to_string(),
+    })
+}
+
 async fn try_reload_carey_admin() -> bool {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(4))
@@ -997,6 +1384,18 @@ pub(crate) fn melodyflow_use_flash_attn_enabled() -> bool {
 
 pub(crate) fn carey_use_xl_models_enabled() -> bool {
     read_app_settings().carey_use_xl_models
+}
+
+pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
+    let settings = read_app_settings().sa3_loudness;
+    vec![
+        ("SA3_PEAK_NORMALIZE_DB", settings.peak_normalize_db),
+        ("SA3_LIMITER_CEILING_DB", settings.limiter_ceiling_db),
+        ("SA3_LATENT_RESCALE", settings.latent_rescale),
+        ("SA3_LATENT_SHIFT", settings.latent_shift),
+        ("SA3_LATENT_TARGET_STD", settings.latent_target_std),
+        ("SA3_CONTINUE_TAIL_PAD", settings.continuation_tail_pad),
+    ]
 }
 
 /// Load a PNG file and decode it to RGBA for Tauri Image
@@ -1440,6 +1839,10 @@ pub fn run() {
             upsert_carey_lora,
             remove_carey_lora,
             build_carey_lora_captions,
+            get_sa3_lora_state,
+            upsert_sa3_lora,
+            remove_sa3_lora,
+            build_sa3_lora_prompts,
             get_hf_token,
             save_hf_token,
             delete_hf_token,
@@ -2028,6 +2431,7 @@ async fn get_models(
     let mgr = model_mgr.lock().await;
     let mut models = mgr.get_gary_models();
     models.extend(mgr.get_jerry_models());
+    models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
     Ok(models)
@@ -2046,6 +2450,7 @@ async fn download_model(
     let svc = service_id.as_deref().unwrap_or("gary");
     let env_dir = match svc {
         "stable-audio" => "stable-audio",
+        "sa3" => "sa3",
         "carey" => "carey",
         "foundation" => "foundation",
         _ => "gary",
@@ -2060,6 +2465,7 @@ async fn download_model(
     if !python_exe.exists() {
         let label = match env_dir {
             "stable-audio" => "Jerry (Stable Audio)",
+            "sa3" => "SA3 (Stable Audio 3)",
             "carey" => "Carey (ACE-Step)",
             "foundation" => "Foundation-1",
             _ => "Gary",
@@ -2296,6 +2702,150 @@ async fn build_carey_lora_captions(
     Ok(CareyCaptionsBuildResult {
         state,
         output: combined_output,
+    })
+}
+
+#[tauri::command]
+fn get_sa3_lora_state(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3LoraState, String> {
+    build_sa3_lora_state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn upsert_sa3_lora(
+    name: String,
+    checkpoint_path: String,
+    prompts_path: Option<String>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3LoraState, String> {
+    let normalized_name = sanitize_lora_name(&name)
+        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    let checkpoint_file = PathBuf::from(checkpoint_path.trim());
+    if !looks_like_sa3_lora_checkpoint(&checkpoint_file) {
+        return Err(format!(
+            "{} does not look like an SA3 LoRA checkpoint file",
+            checkpoint_file.display()
+        ));
+    }
+
+    let normalized_prompts_path = prompts_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let prompts_dir = normalized_prompts_path.as_ref().map(PathBuf::from);
+    if let Some(prompts_dir) = prompts_dir.as_ref() {
+        if !prompts_dir.is_dir() {
+            return Err(format!(
+                "{} is not a valid prompts/source folder",
+                prompts_dir.display()
+            ));
+        }
+    }
+
+    let mut catalog = read_sa3_lora_catalog()?;
+    let strength = catalog
+        .get(&normalized_name)
+        .map(|entry| entry.strength)
+        .unwrap_or_else(default_lora_scale);
+    catalog.insert(
+        normalized_name,
+        Sa3LoraCatalogEntry {
+            path: checkpoint_file.to_string_lossy().to_string(),
+            prompts_path: normalized_prompts_path,
+            strength,
+        },
+    );
+    save_sa3_lora_catalog(&catalog)?;
+    build_sa3_lora_state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn remove_sa3_lora(
+    name: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3LoraState, String> {
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let mut catalog = read_sa3_lora_catalog()?;
+    catalog.remove(&normalized_name);
+    save_sa3_lora_catalog(&catalog)?;
+    build_sa3_lora_state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn build_sa3_lora_prompts(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3PromptsBuildResult, String> {
+    let initial_state = build_sa3_lora_state(repo_root.inner())?;
+    let python_exe = repo_root
+        .join("services")
+        .join("sa3")
+        .join("env")
+        .join("Scripts")
+        .join("python.exe");
+    if !python_exe.exists() {
+        return Err("SA3 must be built before prompts can be generated.".to_string());
+    }
+
+    let script_path = repo_root
+        .join("services")
+        .join("sa3")
+        .join("build_lora_prompts.py");
+    if !script_path.exists() {
+        return Err(format!("Missing {}", script_path.display()));
+    }
+
+    std::fs::create_dir_all(sa3_prompts_dir())
+        .map_err(|e| format!("Cannot create {}: {}", sa3_prompts_dir().display(), e))?;
+
+    let mut outputs = Vec::new();
+    for entry in &initial_state.entries {
+        if !entry.registered || entry.caption_count == 0 {
+            continue;
+        }
+        let Some(source_path) = entry.resolved_prompts_path.as_ref() else {
+            continue;
+        };
+
+        let mut cmd = tokio::process::Command::new(&python_exe);
+        hide_console_window(&mut cmd);
+        cmd.arg(&script_path)
+            .arg("--name")
+            .arg(&entry.name)
+            .arg("--captions-dir")
+            .arg(source_path)
+            .arg("--out-dir")
+            .arg(sa3_prompts_dir())
+            .arg("--force")
+            .current_dir(repo_root.join("services").join("sa3"));
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| format!("Failed to run build_lora_prompts.py: {}", e))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let combined_output = match (stdout.is_empty(), stderr.is_empty()) {
+            (false, false) => format!("{}\n{}", stdout, stderr),
+            (false, true) => stdout,
+            (true, false) => stderr,
+            (true, true) => format!("{}: no output", entry.name),
+        };
+        if !output.status.success() {
+            return Err(combined_output);
+        }
+        outputs.push(combined_output);
+    }
+
+    if outputs.is_empty() {
+        outputs.push("No registered SA3 LoRAs with txt sidecars were found.".to_string());
+    }
+
+    ensure_default_sa3_prompts(repo_root.inner())?;
+    let state = build_sa3_lora_state(repo_root.inner())?;
+    Ok(Sa3PromptsBuildResult {
+        state,
+        output: outputs.join("\n"),
     })
 }
 

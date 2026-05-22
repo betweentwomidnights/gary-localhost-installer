@@ -106,9 +106,8 @@ impl ServiceManager {
 
         // Resolve ${HF_TOKEN} — check stored file first, then system env
         if result.contains("${HF_TOKEN}") {
-            if let Some(hf_token) = crate::read_hf_token() {
-                result = result.replace("${HF_TOKEN}", &hf_token);
-            }
+            let hf_token = crate::read_hf_token().unwrap_or_default();
+            result = result.replace("${HF_TOKEN}", &hf_token);
         }
 
         // Resolve ${MODELS_DIR} — defaults to %APPDATA%/Gary4JUCE/models
@@ -304,6 +303,15 @@ impl ServiceManager {
             let resolved = self.resolve_env_var(v);
             if !resolved.is_empty() && !resolved.contains("${") {
                 cmd.env(k, &resolved);
+            }
+        }
+
+        if svc.id == "sa3" {
+            for (key, value) in crate::sa3_loudness_env() {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    cmd.env(key, trimmed);
+                }
             }
         }
 
