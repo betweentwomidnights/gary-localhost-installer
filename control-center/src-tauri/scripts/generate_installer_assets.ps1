@@ -165,7 +165,7 @@ try {
         $titleBrush = New-Object System.Drawing.SolidBrush($panelWhite)
         $bodyBrush = New-Object System.Drawing.SolidBrush($panelGray)
         try {
-            $sidebarGraphics.DrawString("localhost ctrl for gary4juce v3", $bodyFont, $bodyBrush, (New-Object System.Drawing.RectangleF -ArgumentList 18, 188, 128, 42))
+            $sidebarGraphics.DrawString("localhost ctrl for gary4juce v4", $bodyFont, $bodyBrush, (New-Object System.Drawing.RectangleF -ArgumentList 18, 188, 128, 42))
         } finally {
             $bodyFont.Dispose()
             $titleBrush.Dispose()
