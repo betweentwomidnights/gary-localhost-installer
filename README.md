@@ -1,6 +1,6 @@
 # gary4local
 
-local Windows control center and bundled backend services for [gary4juce v3](https://github.com/betweentwomidnights/gary4juce).
+local Windows control center and bundled backend services for [gary4juce v4](https://github.com/betweentwomidnights/gary4juce).
 
 find the macOS version here: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
 
@@ -17,7 +17,7 @@ install and startup flow:
 - `control-center/`
   Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into `%APPDATA%\Gary4JUCE`.
 - `services/`
-  The Python backends and model-specific code for Gary, Terry, Jerry, Carey, and Foundation.
+  The Python backends and model-specific code for Gary, Terry, Jerry, Carey, Foundation, and SA3.
 - `keygen_music_for_installer.wav`
   Source loop used to generate the tiny installer music asset. cuz why not?
 
@@ -27,7 +27,22 @@ install and startup flow:
 - `terry` / MelodyFlow: `http://localhost:8002` via [MelodyFlow](https://huggingface.co/spaces/facebook/MelodyFlow)
 - `carey` / ACE-Step: `http://localhost:8003` via [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) with localhost `lego`, `extract`, `complete`, and `cover` mode changes from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
 - `jerry` / Stable Audio: `http://localhost:8005` via [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and [stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools)
+- `sa3` / Stable Audio 3: `http://localhost:8006` via [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
 - `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
+
+## sa3 localhost notes
+
+The local `sa3` service mirrors the remote gary4juce contract for generate,
+loop, transform, continue, prompt dice, LoRA listing, and poll status.
+It was built from the same backend contract as
+[sa3-api](https://github.com/betweentwomidnights/sa3-api), which remains the
+clean reference for the remote SA3 API shape.
+
+- SA3 runs on `http://localhost:8006`.
+- LoRA entries are managed in the control center and written to `%APPDATA%\Gary4JUCE\sa3\lora_registry.json`.
+- Prompt dice pools live under `%APPDATA%\Gary4JUCE\sa3\prompts`.
+- `continue` supports both `inpaint` and `latent_prefix` continuation modes.
+- Output shaping controls expose the first pass at local loudness management for hot LoRA outputs.
 
 ## gary localhost optimizations
 

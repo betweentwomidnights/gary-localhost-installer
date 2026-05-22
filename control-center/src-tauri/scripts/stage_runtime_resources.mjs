@@ -10,7 +10,7 @@ const repoRoot = path.resolve(tauriDir, '..', '..');
 const resourcesDir = path.join(tauriDir, 'resources');
 const stagedServicesDir = path.join(resourcesDir, 'services');
 
-const serviceNames = ['gary', 'melodyflow', 'stable-audio', 'carey', 'foundation'];
+const serviceNames = ['gary', 'melodyflow', 'stable-audio', 'sa3', 'carey', 'foundation'];
 
 const excludedPathSegments = new Set([
   '.git',
@@ -42,6 +42,15 @@ const careyExcludedPrefixes = [
   'acestep/gradio_outputs',
 ];
 
+const sourceModelPrefixes = {
+  gary: ['audiocraft/models'],
+  melodyflow: ['audiocraft/models'],
+  'stable-audio': ['stable_audio_tools/models'],
+  sa3: ['stable_audio_3/models'],
+  carey: ['acestep/models'],
+  foundation: ['RC-stable-audio-tools/stable_audio_tools/models'],
+};
+
 function log(message) {
   console.log(`[stage-runtime] ${message}`);
 }
@@ -58,8 +67,16 @@ function shouldSkipPath(serviceName, relativePath) {
   const normalized = normalizeRelativePath(relativePath);
   const parts = normalized.split('/').filter(Boolean);
   const basename = parts[parts.length - 1] ?? '';
+  const allowedModelPrefixes = sourceModelPrefixes[serviceName] ?? [];
+  const isSourceModelPath = allowedModelPrefixes.some(
+    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
+  );
 
-  if (parts.some((part) => excludedPathSegments.has(part))) {
+  if (
+    parts.some(
+      (part) => excludedPathSegments.has(part) && !(part === 'models' && isSourceModelPath),
+    )
+  ) {
     return true;
   }
 

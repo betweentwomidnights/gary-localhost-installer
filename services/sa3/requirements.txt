@@ -1,0 +1,25 @@
+# Stable Audio 3 localhost backend requirements
+#
+# Install order:
+#   1. pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#   2. pip install -e . --no-deps          (vendored stable_audio_3 package)
+#   3. pip install -r requirements.txt     (this file)
+#   4. pip install flash-attn (prebuilt wheel for Windows cu128+torch2.7.1)
+#   5. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#      ^ step 5 restores CUDA torch if any transitive dependency tries to alter it.
+
+# API
+flask
+flask-cors
+requests
+
+# Upstream stable-audio-3 runtime deps
+einops>=0.8.2
+einops-exts>=0.0.4
+numpy>=2.2.6
+packaging>=26.0
+safetensors>=0.7.0
+tqdm>=4.67.3
+huggingface-hub>=1.7.1
+transformers>=5.8.0
+soundfile>=0.13.1

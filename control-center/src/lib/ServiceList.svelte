@@ -22,13 +22,14 @@
     build_status: BuildStatus | null;
   }
 
-  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras }: {
+  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onManageSa3Loras }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
     hfTokenConfigured: boolean;
     onSelect: (id: string) => void;
     onShowModels: (id: string) => void;
     onManageCareyLoras: () => void;
+    onManageSa3Loras: () => void;
   } = $props();
 
   async function rebuildAll() {
@@ -40,7 +41,7 @@
   }
 
   // Services that have downloadable models
-  const servicesWithModels = new Set(["gary", "stable-audio", "carey", "foundation"]);
+  const servicesWithModels = new Set(["gary", "stable-audio", "sa3", "carey", "foundation"]);
 </script>
 
 <div class="service-list">
@@ -53,10 +54,12 @@
       {service}
       selected={selectedServiceId === service.id}
       onSelect={() => onSelect(service.id)}
-      hasModels={servicesWithModels.has(service.id) && (service.id !== "stable-audio" || hfTokenConfigured)}
+      hasModels={servicesWithModels.has(service.id) && (!["stable-audio", "sa3"].includes(service.id) || hfTokenConfigured)}
       onShowModels={() => onShowModels(service.id)}
       hasCareyLoras={service.id === "carey"}
       onManageCareyLoras={onManageCareyLoras}
+      hasSa3Loras={service.id === "sa3"}
+      onManageSa3Loras={onManageSa3Loras}
     />
   {/each}
   {#if services.length === 0}

@@ -52,6 +52,8 @@ services/**/models/
 !services/carey/acestep/models/**
 !services/stable-audio/stable_audio_tools/models/
 !services/stable-audio/stable_audio_tools/models/**
+!services/sa3/stable_audio_3/models/
+!services/sa3/stable_audio_3/models/**
 !services/foundation/RC-stable-audio-tools/stable_audio_tools/models/
 !services/foundation/RC-stable-audio-tools/stable_audio_tools/models/**
 !services/**/audiocraft/models/
@@ -68,6 +70,7 @@ services/**/*.ckpt
 
 # Reference folder (local-only context, not shipped)
 reference/
+LOCAL_SIGNING_NOTES.md
 
 # Stable-audio training/dev files (not used in inference)
 services/stable-audio/run_gradio.py

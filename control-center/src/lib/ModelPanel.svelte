@@ -36,6 +36,7 @@
   let fetchError: string | null = $state(null);
 
   const isJerry = $derived(serviceId === "stable-audio");
+  const isSa3 = $derived(serviceId === "sa3");
   const isCarey = $derived(serviceId === "carey");
 
   async function loadModels() {
@@ -124,6 +125,9 @@
   let careyDitModels = $derived(
     serviceModels.filter((m) => m.size_category === "dit")
   );
+  let sa3Models = $derived(
+    serviceModels.filter((m) => m.size_category === "model" || m.size_category === "text")
+  );
 
   let filteredModels = $derived(
     filterSize === "all"
@@ -142,6 +146,7 @@
   let serviceLabel = $derived(
     serviceId === "gary" ? "gary (musicgen)" :
     serviceId === "stable-audio" ? "jerry (stable audio)" :
+    serviceId === "sa3" ? "sa3 (stable audio 3)" :
     serviceId === "carey" ? "carey (ace-step)" :
     serviceId === "foundation" ? "foundation-1" :
     serviceId
@@ -174,7 +179,7 @@
         <span class="active-badge">{activeDownloads} downloading</span>
       {/if}
     </div>
-    {#if !isJerry && !isCarey && availableSizes.length > 1}
+    {#if !isJerry && !isSa3 && !isCarey && availableSizes.length > 1}
       <div class="filters">
         <button class:active={filterSize === "all"} onclick={() => filterSize = "all"}>All</button>
         {#each sizeOrder as size}
@@ -275,6 +280,42 @@
             jerry must be running to fetch checkpoints.
           </div>
         {/if}
+      </div>
+
+    {:else if isSa3}
+      <div class="size-group">
+        <div class="size-label">required components</div>
+        <div class="carey-hint">
+          download these with the same saved Hugging Face token.
+          your Hugging Face account must accept access for both model pages first.
+        </div>
+        {#each sa3Models as model}
+          {@const prog = getProgress(model.id)}
+          <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
+            <div class="model-info">
+              <span class="model-name">{model.display_name}</span>
+              <span class="model-path">{model.id}</span>
+            </div>
+            {#if model.status === "downloading" && prog}
+              <div class="download-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {Math.round(prog.progress * 100)}%"></div>
+                </div>
+                <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
+              </div>
+            {:else}
+              <button
+                class="dl-btn"
+                class:downloaded={model.status === "downloaded"}
+                class:failed={model.status === "failed"}
+                disabled={model.status === "downloading" || model.status === "downloaded"}
+                onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
+              >
+                {statusLabels[model.status] || "Download"}
+              </button>
+            {/if}
+          </div>
+        {/each}
       </div>
 
     {:else if isCarey}
