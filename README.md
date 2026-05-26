@@ -1,6 +1,6 @@
 # gary4local
 
-local Windows control center and bundled backend services for [gary4juce v4](https://github.com/betweentwomidnights/gary4juce).
+local Windows control center and bundled backend services for [gary4juce v4.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.0).
 
 find the macOS version here: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
 
