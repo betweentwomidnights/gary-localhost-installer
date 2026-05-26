@@ -1,11 +1,11 @@
 {
-  "version": "0.1.10",
-  "notes": "Fixes startup crashes caused by runtime icon.png copy failures. Carey covers now use cover-nofsq. Lego tasks now use acestep-v15-base instead of SFT.",
-  "pub_date": "2026-05-16T22:58:58Z",
+  "version": "0.1.11",
+  "notes": "Adds SA3 local backend for Gary4JUCE v4.0.0.\nIncludes SA3 LoRA setup, prompt pools, latent-prefix continuation, and output shaping controls.",
+  "pub_date": "2026-05-26T04:48:30.7068421Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEY5NHR5aTF0TWdRVDV0LzBBQSs0bHpkbDZIQzRkdGNyUUo0RXozTjZ2dVBPMkVSbE90RVFrT1IxVnc5Z1NEbFNDcVJJMTFESHdnclpXOUtKR3lBL1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4OTY5MTExCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTBfeDY0LXNldHVwLmV4ZQp4VldxVDlpZWlLRFRGVFpUeGVveUVjMitrSWd2cEt2dzd2SHlzNEo0cVlxL0wyV2tzZklJandQNkZwWkZ2Tzg1bjVRZlRPdFlpbUdxWWpOQjQvMTNCQT09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.10/gary4local_0.1.10_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEd4RmU4Y3ZZbCszVkJQMWxWNmZXemJDYjhDVS8xNklKR1pqYlp1NUd2V29TSTV2RGg5KzI4b3hRQ2dvQURXMU51bEJiRHh1WXdValNXZmU2VGdUSndzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NzcwODgwCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTFfeDY0LXNldHVwLmV4ZQoyOUpZcFhDNERvR1BzNXNQZTRmRVZ4cTAwUG9iS1VZNzJodHpWVEJGTG5SL1ZUemJLTU1US1JrNFdUMGpsZit5YVh5am9HSFFkeHp1RUhLVzRJU05DQT09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.11/gary4local_0.1.11_x64-setup.exe"
     }
   }
 }

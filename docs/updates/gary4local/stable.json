@@ -1,12 +1,11 @@
 {
   "channel": "stable",
-  "latest_version": "0.1.10",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.10/gary4local_0.1.10_x64-setup.exe",
-  "sha256": "f7b85aeed1147d905c602a06d1f76c64f0b7fc920a21c6b4124b0cd9188c1dce",
-  "published_at": "2026-05-16T22:58:58Z",
+  "latest_version": "0.1.11",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.11/gary4local_0.1.11_x64-setup.exe",
+  "sha256": "8162465be39456a4f158d1d00980aad3ca8dc773070b7dbd35ae5ab47aa5a9c0",
+  "published_at": "2026-05-26T04:48:30.7068421Z",
   "notes": [
-    "Fixes startup crashes caused by runtime icon.png copy failures.",
-    "Carey covers now use cover-nofsq for clearer source detail.",
-    "Lego tasks now use acestep-v15-base instead of SFT."
+    "Adds SA3 local backend for Gary4JUCE v4.0.0.",
+    "Includes SA3 LoRA setup, prompt pools, latent-prefix continuation, and output shaping controls."
   ]
 }
