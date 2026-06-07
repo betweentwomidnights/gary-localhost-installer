@@ -13,6 +13,7 @@ from functools import partial
 from torch.nn import functional as F
 
 from ..interface.aeiou import audio_spectrogram_image
+from ..inference.decode_utils import align_latents_for_decode
 from ..inference.sampling import truncated_logistic_normal_rescaled, sample_timesteps_logsnr, sample_timesteps_logsnr_uniform, sample_diffusion
 from ..models.diffusion import ConditionedDiffusionModelWrapper
 from ..models.inpainting import random_inpaint_mask, MaskType
@@ -1105,13 +1106,17 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
                         mask_parts = []
 
                         if prompt_target is not None:
-                            decoded_prompt = pretransform.decode(prompt_target.float())
+                            decoded_prompt = pretransform.decode(
+                                align_latents_for_decode(prompt_target, pretransform)
+                            )
                             decoded_prompt = trim_and_concat(decoded_prompt, prompt_per_elem_trim)
                             parts.append(decoded_prompt)
                             mask_parts.append(prompt_context_mask)
 
                         if inpaint_target is not None:
-                            decoded_inpaint = pretransform.decode(inpaint_target.float())
+                            decoded_inpaint = pretransform.decode(
+                                align_latents_for_decode(inpaint_target, pretransform)
+                            )
                             decoded_inpaint = trim_and_concat(decoded_inpaint, inpaint_per_elem_trim)
                             parts.append(decoded_inpaint)
                             mask_parts.append(inpaint_context_mask)
@@ -1140,4 +1145,4 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
         finally:
             gc.collect()
             torch.cuda.empty_cache()
-            module.train()            
+            module.train()

@@ -8,9 +8,13 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 
-_BPM_TAIL = re.compile(r"[,;]?\s*\d+(?:\.\d+)?\s*bpm.*$", re.IGNORECASE | re.DOTALL)
+_BPM_TAIL = re.compile(
+    r"[,;]?\s*(?:bpm\s*:\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*bpm)\s*$",
+    re.IGNORECASE,
+)
 
 
 def prompt_from_caption(text: str) -> str:
@@ -19,6 +23,9 @@ def prompt_from_caption(text: str) -> str:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True, help="LoRA registry name")
     parser.add_argument("--captions-dir", required=True, help="Folder with SA3 training .txt sidecars")
@@ -41,9 +48,13 @@ def main() -> int:
 
     seen = set()
     prompts: list[str] = []
-    txts = sorted(filename for filename in os.listdir(args.captions_dir) if filename.endswith(".txt"))
+    captions_dir = Path(args.captions_dir)
+    txts = sorted(
+        captions_dir.rglob("*.txt"),
+        key=lambda path: path.relative_to(captions_dir).as_posix().lower(),
+    )
     for filename in txts:
-        with open(os.path.join(args.captions_dir, filename), encoding="utf-8") as handle:
+        with filename.open(encoding="utf-8-sig", errors="replace") as handle:
             prompt = prompt_from_caption(handle.read())
         if not prompt:
             continue

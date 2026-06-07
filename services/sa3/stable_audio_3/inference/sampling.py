@@ -4,6 +4,7 @@ from tqdm import trange, tqdm
 import torch.distributions as dist
 
 from ..data.utils import create_padding_mask_from_lengths, compute_effective_seq_len_from_conditioning
+from .decode_utils import align_latents_for_decode
 
 
 def build_schedule(
@@ -542,7 +543,7 @@ def sample_diffusion(
 
     # Decode if requested
     if decode and pretransform is not None:
-        sampled = sampled.to(next(pretransform.parameters()).dtype)
+        sampled = align_latents_for_decode(sampled, pretransform)
         sampled = pretransform.decode(sampled, chunked=chunked_decode)
 
         # Zero out audio beyond valid region (padding positions decode to garbage)

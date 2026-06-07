@@ -12,6 +12,26 @@ install and startup flow:
 
 ![gary4local install and startup preview](docs/gary4local-install-startup.gif)
 
+## version 0.1.12
+
+Version 0.1.12 adds Stable Audio 3 LoRA training directly to the Windows
+control center. The trainer is a focused integration of
+[dada-bots' underfit project](https://github.com/dada-bots/underfit), adapted
+to use Gary4local's existing SA3 environment, saved Hugging Face token, model
+storage, and LoRA registry.
+
+- Choose an audio dataset, edit optional text-sidecar prompts, and start
+  training with practical defaults for consumer NVIDIA GPUs.
+- Follow selectable, auto-scrolling logs and persisted job progress, or cancel
+  preprocessing and training from the same window.
+- Completed `.safetensors` adapters are copied into Gary4local's SA3 LoRA
+  folder and registered for generation automatically.
+- An optional experimental loudness fix can normalize each track's encoded
+  latent RMS to the base-model target before training.
+- The SA3 runtime now aligns sampler latents with the decoder's device and
+  precision before decode, and converts half-precision models before moving
+  them to the GPU to reduce peak loading memory.
+
 ## what lives here
 
 - `control-center/`
@@ -40,9 +60,14 @@ clean reference for the remote SA3 API shape.
 
 - SA3 runs on `http://localhost:8006`.
 - LoRA entries are managed in the control center and written to `%APPDATA%\Gary4JUCE\sa3\lora_registry.json`.
+- The integrated LoRA trainer uses a stripped-down version of [underfit](https://github.com/dada-bots/underfit) and automatically registers completed adapters.
+- The optional dataset prompt editor creates and edits same-name `.txt` sidecars using the literal prompt format consumed during training.
+- Training jobs expose live logs, persist their status when the control center closes, and can be cancelled gracefully.
 - Prompt dice pools live under `%APPDATA%\Gary4JUCE\sa3\prompts`.
 - `continue` supports both `inpaint` and `latent_prefix` continuation modes.
 - Output shaping controls expose the first pass at local loudness management for hot LoRA outputs.
+- Manual and preview decode paths normalize latents to the decoder's device and dtype, including CFG paths that may return float32 latents.
+- Half-precision SA3 models are converted before transfer to CUDA, reducing transient GPU memory pressure during load and reload.
 
 ## gary localhost optimizations
 

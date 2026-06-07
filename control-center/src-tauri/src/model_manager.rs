@@ -198,11 +198,18 @@ impl ModelManager {
     /// These use the normal Hugging Face cache. A saved token is reused, but
     /// the user still needs to accept access on each gated model page.
     pub fn get_sa3_models(&self) -> Vec<ModelEntry> {
-        let components: Vec<(&str, &str, &str)> = vec![(
-            "stabilityai/stable-audio-3-medium",
-            "Stable Audio 3 Medium (includes T5Gemma)",
-            "model",
-        )];
+        let components: Vec<(&str, &str, &str)> = vec![
+            (
+                "stabilityai/stable-audio-3-medium",
+                "Stable Audio 3 Medium (inference)",
+                "model",
+            ),
+            (
+                "stabilityai/stable-audio-3-medium-base",
+                "Stable Audio 3 Medium Base (LoRA training)",
+                "model",
+            ),
+        ];
 
         components
             .iter()

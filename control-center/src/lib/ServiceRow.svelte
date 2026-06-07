@@ -31,6 +31,8 @@
     onManageCareyLoras = () => {},
     hasSa3Loras = false,
     onManageSa3Loras = () => {},
+    hasSa3LoraTraining = false,
+    onTrainSa3Lora = () => {},
   }: {
     service: ServiceInfo;
     selected: boolean;
@@ -41,6 +43,8 @@
     onManageCareyLoras?: () => void;
     hasSa3Loras?: boolean;
     onManageSa3Loras?: () => void;
+    hasSa3LoraTraining?: boolean;
+    onTrainSa3Lora?: () => void;
   } = $props();
 
   const statusColors: Record<string, string> = {
@@ -129,13 +133,18 @@
       </button>
     {/if}
     {#if hasCareyLoras}
-      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onManageCareyLoras(); }}>
+      <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onManageCareyLoras(); }}>
         add lora
       </button>
     {/if}
     {#if hasSa3Loras}
-      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onManageSa3Loras(); }}>
+      <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onManageSa3Loras(); }}>
         add lora
+      </button>
+    {/if}
+    {#if hasSa3LoraTraining}
+      <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onTrainSa3Lora(); }}>
+        train lora
       </button>
     {/if}
   </div>
@@ -218,20 +227,25 @@
   }
   .controls {
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px;
     margin-top: 8px;
-    padding-left: 18px;
+    padding-left: 12px;
   }
   .controls button {
-    font-size: 11px;
-    padding: 3px 10px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-size: 10px;
+    padding: 3px 6px;
   }
-  .controls .models-btn {
+  .controls .models-btn,
+  .controls .lora-btn {
     border-color: var(--accent);
-    color: var(--accent);
-  }
-  .controls .models-btn:hover:not(:disabled) {
     background: var(--accent);
     color: white;
+  }
+  .controls .models-btn:hover:not(:disabled),
+  .controls .lora-btn:hover:not(:disabled) {
+    filter: brightness(1.12);
   }
 </style>

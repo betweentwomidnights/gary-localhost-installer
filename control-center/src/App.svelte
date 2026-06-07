@@ -11,6 +11,7 @@
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
+  import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
 
@@ -104,6 +105,7 @@
   let updateActionError: string | null = $state(null);
   let careyLoraModalOpen = $state(false);
   let sa3LoraModalOpen = $state(false);
+  let sa3LoraTrainingModalOpen = $state(false);
 
   // Right panel can show either logs or the model panel for a service
   let rightPanel: "logs" | "models" = $state("logs");
@@ -156,6 +158,15 @@
 
   function closeSa3Loras() {
     sa3LoraModalOpen = false;
+  }
+
+  function showSa3LoraTraining() {
+    selectedServiceId = "sa3";
+    sa3LoraTrainingModalOpen = true;
+  }
+
+  function closeSa3LoraTraining() {
+    sa3LoraTrainingModalOpen = false;
   }
 
   function backToLogs() {
@@ -437,6 +448,7 @@
         onShowModels={showModels}
         onManageCareyLoras={showCareyLoras}
         onManageSa3Loras={showSa3Loras}
+        onTrainSa3Lora={showSa3LoraTraining}
       />
     </div>
     <div class="divider"></div>
@@ -508,6 +520,12 @@
     serviceStatus={sa3Service?.status ?? "stopped"}
     serviceEnvExists={sa3Service?.env_exists ?? false}
     onClose={closeSa3Loras}
+  />
+  <Sa3LoraTrainingModal
+    open={sa3LoraTrainingModalOpen}
+    serviceStatus={sa3Service?.status ?? "stopped"}
+    serviceEnvExists={sa3Service?.env_exists ?? false}
+    onClose={closeSa3LoraTraining}
   />
 </main>
 
