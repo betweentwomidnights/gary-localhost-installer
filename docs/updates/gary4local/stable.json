@@ -1,11 +1,12 @@
 {
   "channel": "stable",
-  "latest_version": "0.1.11",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.11/gary4local_0.1.11_x64-setup.exe",
-  "sha256": "8162465be39456a4f158d1d00980aad3ca8dc773070b7dbd35ae5ab47aa5a9c0",
-  "published_at": "2026-05-26T04:48:30.7068421Z",
+  "latest_version": "0.1.12",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.12/gary4local_0.1.12_x64-setup.exe",
+  "sha256": "82aeeda164e51cf42b004ee21f3d21282e5da8219f17705b514cd83ce65f1b49",
+  "published_at": "2026-06-07T13:27:19.6110886Z",
   "notes": [
-    "Adds SA3 local backend for Gary4JUCE v4.0.0.",
-    "Includes SA3 LoRA setup, prompt pools, latent-prefix continuation, and output shaping controls."
+    "Adds Stable Audio 3 LoRA training on Windows via a focused integration of dada-bots underfit.",
+    "Includes optional per-track latent-RMS loudness normalization, prompt-sidecar editing, persisted logs, cancellation, and automatic LoRA registration.",
+    "Hardens SA3 decoding and reduces peak GPU memory during model loading."
   ]
 }

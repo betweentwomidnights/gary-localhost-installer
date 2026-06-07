@@ -1,11 +1,11 @@
 {
-  "version": "0.1.11",
-  "notes": "Adds SA3 local backend for Gary4JUCE v4.0.0.\nIncludes SA3 LoRA setup, prompt pools, latent-prefix continuation, and output shaping controls.",
-  "pub_date": "2026-05-26T04:48:30.7068421Z",
+  "version": "0.1.12",
+  "notes": "Adds Stable Audio 3 LoRA training on Windows via a focused integration of dada-bots underfit.\nIncludes optional per-track latent-RMS loudness normalization, prompt-sidecar editing, persisted logs, cancellation, and automatic LoRA registration.\nHardens SA3 decoding and reduces peak GPU memory during model loading.",
+  "pub_date": "2026-06-07T13:27:19.6110886Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEd4RmU4Y3ZZbCszVkJQMWxWNmZXemJDYjhDVS8xNklKR1pqYlp1NUd2V29TSTV2RGg5KzI4b3hRQ2dvQURXMU51bEJiRHh1WXdValNXZmU2VGdUSndzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NzcwODgwCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTFfeDY0LXNldHVwLmV4ZQoyOUpZcFhDNERvR1BzNXNQZTRmRVZ4cTAwUG9iS1VZNzJodHpWVEJGTG5SL1ZUemJLTU1US1JrNFdUMGpsZit5YVh5am9HSFFkeHp1RUhLVzRJU05DQT09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.11/gary4local_0.1.11_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1hcU9tM3NKMDFMQXpIZmxFYWV5Wk1FdUp2emJCTEZhWFFnZkgxMjJpT0NTK3JGTzV6R2YvaFczSkluYTh2TEVmLy80dGRNeEVPdjNnaDBXNVhnZ0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwODM4MjU0CWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTJfeDY0LXNldHVwLmV4ZQpiUjFvVHdWNEduWXdhcFM5K2NHY3duRnI0U3J4K1R0U2paNUYzTDF1b0FlcVF4V0piaTJIbmJlMWVKeGpsWWxCVlJ3S1JQUHFEQmc5UjJ5RW5ZMEdCUT09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.12/gary4local_0.1.12_x64-setup.exe"
     }
   }
 }
