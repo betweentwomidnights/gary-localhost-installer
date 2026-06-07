@@ -11,6 +11,7 @@ import os, time, math
 from einops import rearrange
 
 from stable_audio_3.interface.aeiou import audio_spectrogram_image
+from stable_audio_3.inference.decode_utils import align_latents_for_decode
 from stable_audio_3.inference.distribution_shift import LogSNRShift, FluxDistributionShift, DistributionShift, IdentityDistributionShift
 from stable_audio_3.models.lora import has_lora
 from stable_audio_3.interface.reprompt import reprompt as _reprompt_fn, get_model as _reprompt_get_model, is_model_cached as _reprompt_is_model_cached
@@ -115,6 +116,10 @@ def generate_cond(
 
         if (current_step - 1) % preview_every == 0:
             if stable_audio_3_model.model.pretransform is not None:
+                denoised = align_latents_for_decode(
+                    denoised,
+                    stable_audio_3_model.model.pretransform,
+                )
                 denoised = stable_audio_3_model.model.pretransform.decode(denoised)
             denoised = rearrange(denoised, "b d n -> d (b n)")
             denoised = denoised.clamp(-1, 1).mul(32767).to(torch.int16).cpu()

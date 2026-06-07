@@ -23,3 +23,8 @@ tqdm>=4.67.3
 huggingface-hub>=1.7.1
 transformers>=5.8.0
 soundfile>=0.13.1
+
+# LoRA training
+accelerate>=0.30
+dill>=0.3.8
+audio-metadata>=0.11

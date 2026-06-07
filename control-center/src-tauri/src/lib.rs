@@ -246,6 +246,67 @@ struct Sa3PromptsBuildResult {
     output: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3DatasetSidecarEntry {
+    audio_path: String,
+    relative_path: String,
+    sidecar_path: String,
+    content: String,
+    exists: bool,
+    json_sidecar_exists: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3DatasetSidecarUpdate {
+    audio_path: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3DatasetSidecarSaveResult {
+    saved: usize,
+    removed: usize,
+    entries: Vec<Sa3DatasetSidecarEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3LoraTrainingState {
+    #[serde(default)]
+    job_id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    child_pid: Option<u32>,
+    #[serde(default)]
+    run_dir: Option<String>,
+    #[serde(default)]
+    log_path: Option<String>,
+    #[serde(default)]
+    cancel_path: Option<String>,
+    #[serde(default)]
+    final_checkpoint_path: Option<String>,
+    #[serde(default)]
+    current_step: Option<u32>,
+    #[serde(default)]
+    max_steps: Option<u32>,
+    #[serde(default)]
+    log_tail: String,
+}
+
 fn default_lora_scale() -> f64 {
     1.0
 }
@@ -393,6 +454,30 @@ fn sa3_lora_registry_path() -> PathBuf {
 
 fn sa3_prompts_dir() -> PathBuf {
     sa3_runtime_dir().join("prompts")
+}
+
+fn sa3_lora_dir() -> PathBuf {
+    sa3_runtime_dir().join("loras")
+}
+
+fn sa3_training_dir() -> PathBuf {
+    sa3_runtime_dir().join("training")
+}
+
+fn sa3_training_models_dir() -> PathBuf {
+    sa3_training_dir().join("models")
+}
+
+fn sa3_training_jobs_dir() -> PathBuf {
+    sa3_training_dir().join("jobs")
+}
+
+fn sa3_training_logs_dir() -> PathBuf {
+    sa3_training_dir().join("logs")
+}
+
+fn sa3_training_current_job_path() -> PathBuf {
+    sa3_training_dir().join("current_job.json")
 }
 
 fn bundled_sa3_default_prompts_path(runtime_root: &Path) -> PathBuf {
@@ -872,6 +957,179 @@ fn count_caption_sidecars(dir: &Path) -> usize {
     }
 }
 
+fn is_sa3_dataset_audio_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "wav" | "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aiff" | "aif"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn user_facing_windows_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{}", unc_path);
+    }
+    value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+}
+
+fn canonical_sa3_dataset_root(dataset_path: &str) -> Result<PathBuf, String> {
+    let trimmed = dataset_path.trim();
+    if trimmed.is_empty() {
+        return Err("Choose a dataset folder first".to_string());
+    }
+    let requested = PathBuf::from(trimmed);
+    if !requested.is_dir() {
+        return Err(format!(
+            "{} is not a valid dataset folder",
+            requested.display()
+        ));
+    }
+    requested
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))
+}
+
+fn collect_sa3_dataset_audio_files(
+    root: &Path,
+    directory: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let canonical_directory = directory
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", directory.display(), e))?;
+    if !canonical_directory.starts_with(root) || !visited.insert(canonical_directory.clone()) {
+        return Ok(());
+    }
+
+    for entry in read_dir_sorted(&canonical_directory)? {
+        let Ok(canonical_entry) = entry.canonicalize() else {
+            continue;
+        };
+        if !canonical_entry.starts_with(root) {
+            continue;
+        }
+        if canonical_entry.is_dir() {
+            collect_sa3_dataset_audio_files(root, &canonical_entry, visited, files)?;
+        } else if canonical_entry.is_file() && is_sa3_dataset_audio_file(&canonical_entry) {
+            files.push(canonical_entry);
+        }
+    }
+    Ok(())
+}
+
+fn sa3_dataset_json_sidecar_exists(root: &Path, audio_path: &Path) -> bool {
+    let mut candidates = vec![audio_path.with_extension("json")];
+    if let (Some(parent), Some(stem)) = (audio_path.parent(), audio_path.file_stem()) {
+        if let Some(grandparent) = parent.parent() {
+            candidates.push(grandparent.join("json").join(stem).with_extension("json"));
+        }
+    }
+    candidates
+        .into_iter()
+        .any(|candidate| candidate.starts_with(root) && candidate.is_file())
+}
+
+fn read_sa3_dataset_sidecars(dataset_path: &str) -> Result<Vec<Sa3DatasetSidecarEntry>, String> {
+    let root = canonical_sa3_dataset_root(dataset_path)?;
+    let mut files = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    collect_sa3_dataset_audio_files(&root, &root, &mut visited, &mut files)?;
+    files.sort_by(|left, right| {
+        left.strip_prefix(&root)
+            .unwrap_or(left)
+            .to_string_lossy()
+            .to_lowercase()
+            .cmp(
+                &right
+                    .strip_prefix(&root)
+                    .unwrap_or(right)
+                    .to_string_lossy()
+                    .to_lowercase(),
+            )
+    });
+
+    Ok(files
+        .into_iter()
+        .map(|audio_path| {
+            let sidecar_path = audio_path.with_extension("txt");
+            let exists = sidecar_path.is_file();
+            let content = if exists {
+                std::fs::read_to_string(&sidecar_path)
+                    .unwrap_or_default()
+                    .trim_start_matches('\u{feff}')
+                    .to_string()
+            } else {
+                String::new()
+            };
+            Sa3DatasetSidecarEntry {
+                relative_path: audio_path
+                    .strip_prefix(&root)
+                    .unwrap_or(&audio_path)
+                    .to_string_lossy()
+                    .to_string(),
+                audio_path: user_facing_windows_path(&audio_path),
+                sidecar_path: user_facing_windows_path(&sidecar_path),
+                content,
+                exists,
+                json_sidecar_exists: sa3_dataset_json_sidecar_exists(&root, &audio_path),
+            }
+        })
+        .collect())
+}
+
+fn save_sa3_dataset_sidecar_updates(
+    dataset_path: &str,
+    sidecars: Vec<Sa3DatasetSidecarUpdate>,
+) -> Result<Sa3DatasetSidecarSaveResult, String> {
+    let root = canonical_sa3_dataset_root(dataset_path)?;
+    let mut saved = 0;
+    let mut removed = 0;
+
+    for sidecar in sidecars {
+        let requested_audio = PathBuf::from(sidecar.audio_path.trim());
+        let audio_path = requested_audio
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve {}: {}", requested_audio.display(), e))?;
+        if !audio_path.starts_with(&root)
+            || !audio_path.is_file()
+            || !is_sa3_dataset_audio_file(&audio_path)
+        {
+            return Err(format!(
+                "{} is not an audio file inside {}",
+                audio_path.display(),
+                root.display()
+            ));
+        }
+
+        let sidecar_path = audio_path.with_extension("txt");
+        let content = sidecar.content.trim();
+        if content.is_empty() {
+            if sidecar_path.is_file() {
+                std::fs::remove_file(&sidecar_path)
+                    .map_err(|e| format!("Cannot remove {}: {}", sidecar_path.display(), e))?;
+                removed += 1;
+            }
+            continue;
+        }
+
+        std::fs::write(&sidecar_path, format!("{}\n", content))
+            .map_err(|e| format!("Cannot save {}: {}", sidecar_path.display(), e))?;
+        saved += 1;
+    }
+
+    Ok(Sa3DatasetSidecarSaveResult {
+        saved,
+        removed,
+        entries: read_sa3_dataset_sidecars(dataset_path)?,
+    })
+}
+
 fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
     let path = carey_lora_catalog_path();
     if !path.exists() {
@@ -1348,6 +1606,296 @@ fn build_sa3_lora_state(runtime_root: &Path) -> Result<Sa3LoraState, String> {
         registry_path: sa3_lora_registry_path().to_string_lossy().to_string(),
         prompts_dir: sa3_prompts_dir().to_string_lossy().to_string(),
     })
+}
+
+fn read_text_tail(path: &Path, max_bytes: usize) -> String {
+    let Ok(bytes) = std::fs::read(path) else {
+        return String::new();
+    };
+    let start = bytes.len().saturating_sub(max_bytes);
+    String::from_utf8_lossy(&bytes[start..]).to_string()
+}
+
+fn now_epoch_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn sa3_current_training_status_path() -> Option<PathBuf> {
+    std::fs::read_to_string(sa3_training_current_job_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("statusPath")
+                .and_then(|value| value.as_str())
+                .map(PathBuf::from)
+        })
+}
+
+fn read_sa3_training_status_file(path: &Path) -> Sa3LoraTrainingState {
+    let mut state = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Sa3LoraTrainingState>(&raw).ok())
+        .unwrap_or_else(|| Sa3LoraTrainingState {
+            job_id: None,
+            name: None,
+            status: "idle".to_string(),
+            phase: "idle".to_string(),
+            message: "No SA3 LoRA training job has been started.".to_string(),
+            error: None,
+            pid: None,
+            child_pid: None,
+            run_dir: None,
+            log_path: None,
+            cancel_path: None,
+            final_checkpoint_path: None,
+            current_step: None,
+            max_steps: None,
+            log_tail: String::new(),
+        });
+
+    if let Some(log_path) = state.log_path.as_ref().map(PathBuf::from) {
+        state.log_tail = read_text_tail(&log_path, 16 * 1024);
+    }
+    if let Some(run_dir) = state.run_dir.as_ref().map(PathBuf::from) {
+        if let Some(step) = read_sa3_training_step(&run_dir) {
+            state.current_step = Some(step);
+        }
+    }
+    state
+}
+
+fn read_sa3_training_step(run_dir: &Path) -> Option<u32> {
+    let path = run_dir.join("demos").join("loss_by_timestep.bin");
+    let length = std::fs::metadata(path).ok()?.len();
+    const RECORD_BYTES: u64 = 12;
+    if length < RECORD_BYTES {
+        return None;
+    }
+    Some((length / RECORD_BYTES).min(u32::MAX as u64) as u32)
+}
+
+fn read_sa3_lora_training_state() -> Sa3LoraTrainingState {
+    match sa3_current_training_status_path() {
+        Some(path) => read_sa3_training_status_file(&path),
+        None => read_sa3_training_status_file(Path::new("")),
+    }
+}
+
+fn write_sa3_training_launch_state(
+    status_path: &Path,
+    job_id: &str,
+    name: &str,
+    run_dir: &Path,
+    log_path: &Path,
+    cancel_path: &Path,
+    max_steps: u32,
+) -> Result<(), String> {
+    if let Some(parent) = status_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let payload = serde_json::json!({
+        "jobId": job_id,
+        "name": name,
+        "status": "starting",
+        "phase": "starting",
+        "message": "Launching SA3 LoRA training.",
+        "runDir": run_dir.to_string_lossy(),
+        "logPath": log_path.to_string_lossy(),
+        "cancelPath": cancel_path.to_string_lossy(),
+        "currentStep": 0,
+        "maxSteps": max_steps,
+        "updatedAt": now_epoch_seconds(),
+    });
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize SA3 training state: {}", e))?;
+    std::fs::write(status_path, json)
+        .map_err(|e| format!("Cannot save {}: {}", status_path.display(), e))?;
+
+    let current_payload = serde_json::json!({
+        "jobId": job_id,
+        "statusPath": status_path.to_string_lossy(),
+    });
+    let current_json = serde_json::to_string_pretty(&current_payload)
+        .map_err(|e| format!("Cannot serialize SA3 current job: {}", e))?;
+    let current_path = sa3_training_current_job_path();
+    if let Some(parent) = current_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(&current_path, current_json)
+        .map_err(|e| format!("Cannot save {}: {}", current_path.display(), e))?;
+    Ok(())
+}
+
+fn patch_sa3_training_status(
+    status_path: &Path,
+    updates: &[(&str, serde_json::Value)],
+) -> Result<(), String> {
+    let mut payload = std::fs::read_to_string(status_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    for (key, value) in updates {
+        payload.insert((*key).to_string(), value.clone());
+    }
+    payload.insert(
+        "updatedAt".to_string(),
+        serde_json::json!(now_epoch_seconds()),
+    );
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(payload))
+        .map_err(|e| format!("Cannot serialize SA3 training state: {}", e))?;
+    std::fs::write(status_path, json)
+        .map_err(|e| format!("Cannot save {}: {}", status_path.display(), e))
+}
+
+fn write_sa3_training_process_id(status_path: &Path, pid: u32) -> Result<(), String> {
+    patch_sa3_training_status(status_path, &[("pid", serde_json::json!(pid))])
+}
+
+fn write_sa3_training_cancelled_state(
+    status_path: &Path,
+    cancel_path: Option<&Path>,
+    message: &str,
+) -> Result<(), String> {
+    let mut updates = vec![
+        ("status", serde_json::json!("cancelled")),
+        ("phase", serde_json::json!("cancelled")),
+        ("message", serde_json::json!(message)),
+        ("error", serde_json::Value::Null),
+        ("childPid", serde_json::Value::Null),
+    ];
+    if let Some(cancel_path) = cancel_path {
+        updates.push((
+            "cancelPath",
+            serde_json::json!(cancel_path.to_string_lossy()),
+        ));
+    }
+    patch_sa3_training_status(status_path, &updates)
+}
+
+fn write_cancel_marker(cancel_path: &Path) -> Result<(), String> {
+    if let Some(parent) = cancel_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(cancel_path, "cancelled\n")
+        .map_err(|e| format!("Cannot write {}: {}", cancel_path.display(), e))
+}
+
+fn terminate_process_tree(pid: u32) -> Result<(), String> {
+    if pid == 0 {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let output = std::process::Command::new("taskkill")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/T")
+            .arg("/F")
+            .output()
+            .map_err(|e| format!("Failed to run taskkill for {}: {}", pid, e))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let normalized = text.to_lowercase();
+        if normalized.contains("not found")
+            || normalized.contains("not running")
+            || normalized.contains("no running instance")
+        {
+            return Ok(());
+        }
+        Err(format!("taskkill {} failed: {}", pid, text.trim()))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .output()
+            .map_err(|e| format!("Failed to run kill for {}: {}", pid, e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Err(format!("kill {} failed: {}", pid, text.trim()))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn discover_sa3_training_pids(state: &Sa3LoraTrainingState) -> Vec<u32> {
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'pre_encode\\.py' -or $_.CommandLine -match 'lora_train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+        ])
+        .output();
+
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw.trim()) else {
+        return Vec::new();
+    };
+
+    let mut needles = Vec::new();
+    if let Some(job_id) = state.job_id.as_deref().filter(|value| !value.is_empty()) {
+        needles.push(job_id.to_lowercase());
+    }
+    if let Some(run_dir) = state.run_dir.as_deref().filter(|value| !value.is_empty()) {
+        needles.push(run_dir.to_lowercase());
+    }
+    if needles.is_empty() {
+        return Vec::new();
+    }
+
+    let rows: Vec<serde_json::Value> = match value {
+        serde_json::Value::Array(rows) => rows,
+        serde_json::Value::Object(_) => vec![value],
+        _ => Vec::new(),
+    };
+
+    rows.into_iter()
+        .filter_map(|row| {
+            let command_line = row.get("CommandLine")?.as_str()?.to_lowercase();
+            if !needles.iter().any(|needle| command_line.contains(needle)) {
+                return None;
+            }
+            row.get("ProcessId")
+                .and_then(|pid| pid.as_u64())
+                .and_then(|pid| u32::try_from(pid).ok())
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn discover_sa3_training_pids(_state: &Sa3LoraTrainingState) -> Vec<u32> {
+    Vec::new()
 }
 
 async fn try_reload_carey_admin() -> bool {
@@ -1843,6 +2391,12 @@ pub fn run() {
             upsert_sa3_lora,
             remove_sa3_lora,
             build_sa3_lora_prompts,
+            get_sa3_dataset_sidecars,
+            save_sa3_dataset_sidecars,
+            open_sa3_training_reference,
+            get_sa3_lora_training_state,
+            start_sa3_lora_training,
+            cancel_sa3_lora_training,
             get_hf_token,
             save_hf_token,
             delete_hf_token,
@@ -2847,6 +3401,296 @@ async fn build_sa3_lora_prompts(
         state,
         output: outputs.join("\n"),
     })
+}
+
+#[tauri::command]
+fn get_sa3_dataset_sidecars(dataset_path: String) -> Result<Vec<Sa3DatasetSidecarEntry>, String> {
+    read_sa3_dataset_sidecars(&dataset_path)
+}
+
+#[tauri::command]
+fn save_sa3_dataset_sidecars(
+    dataset_path: String,
+    sidecars: Vec<Sa3DatasetSidecarUpdate>,
+) -> Result<Sa3DatasetSidecarSaveResult, String> {
+    save_sa3_dataset_sidecar_updates(&dataset_path, sidecars)
+}
+
+#[tauri::command]
+async fn open_sa3_training_reference(reference: String) -> Result<(), String> {
+    let url = match reference.as_str() {
+        "underfit" => "https://github.com/dada-bots/underfit#2-optional-add-metadata-for-prompts",
+        "prompting" => {
+            "https://github.com/Stability-AI/stable-audio-3/blob/main/docs/guides/prompting.md"
+        }
+        _ => return Err("Unknown SA3 training reference".to_string()),
+    };
+
+    let mut command = tokio::process::Command::new("cmd");
+    command.args(["/C", "start", "", url]);
+    hide_console_window(&mut command);
+    let status = command
+        .status()
+        .await
+        .map_err(|e| format!("Failed to open training reference: {}", e))?;
+    if !status.success() {
+        return Err(format!(
+            "Windows could not open the training reference (exit code {:?})",
+            status.code()
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
+    Ok(read_sa3_lora_training_state())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_sa3_lora_training(
+    name: String,
+    dataset_path: String,
+    fixed_prompt: String,
+    max_steps: u32,
+    rank: u32,
+    batch_size: u32,
+    checkpoint_every: u32,
+    latent_crop_seconds: f64,
+    learning_rate: f64,
+    loudness_fix_enabled: bool,
+    target_latent_rms: f64,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3LoraTrainingState, String> {
+    let normalized_name = sanitize_lora_name(&name)
+        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    if max_steps == 0 {
+        return Err("training steps must be greater than 0".to_string());
+    }
+    if rank == 0 {
+        return Err("LoRA rank must be greater than 0".to_string());
+    }
+    if batch_size == 0 {
+        return Err("batch size must be greater than 0".to_string());
+    }
+    if checkpoint_every == 0 {
+        return Err("checkpoint interval must be greater than 0".to_string());
+    }
+    if !latent_crop_seconds.is_finite() || latent_crop_seconds <= 0.0 {
+        return Err("latent crop seconds must be greater than 0".to_string());
+    }
+    if !learning_rate.is_finite() || learning_rate <= 0.0 {
+        return Err("learning rate must be greater than 0".to_string());
+    }
+    if loudness_fix_enabled
+        && (!target_latent_rms.is_finite() || !(0.5..=1.3).contains(&target_latent_rms))
+    {
+        return Err("target latent RMS must be between 0.5 and 1.3".to_string());
+    }
+    if read_hf_token().is_none() {
+        return Err("Save a Hugging Face token before training SA3 LoRAs.".to_string());
+    }
+
+    let current_state = read_sa3_lora_training_state();
+    if matches!(current_state.status.as_str(), "starting" | "running") {
+        return Err(format!(
+            "SA3 LoRA training job '{}' is already {}.",
+            current_state
+                .name
+                .as_deref()
+                .unwrap_or(current_state.job_id.as_deref().unwrap_or("current")),
+            current_state.phase
+        ));
+    }
+
+    let dataset_dir = PathBuf::from(dataset_path.trim());
+    if !dataset_dir.is_dir() {
+        return Err(format!(
+            "{} is not a valid dataset folder",
+            dataset_dir.display()
+        ));
+    }
+
+    let python_exe = repo_root
+        .join("services")
+        .join("sa3")
+        .join("env")
+        .join("Scripts")
+        .join("python.exe");
+    if !python_exe.exists() {
+        return Err("SA3 must be built before LoRA training can start.".to_string());
+    }
+
+    let script_path = repo_root
+        .join("services")
+        .join("sa3")
+        .join("train_lora_job.py");
+    if !script_path.exists() {
+        return Err(format!("Missing {}", script_path.display()));
+    }
+
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let job_id = format!("{}-{}", normalized_name, epoch);
+    let training_root = sa3_training_dir();
+    let run_dir = sa3_training_jobs_dir().join(&job_id);
+    let log_path = sa3_training_logs_dir().join(format!("{}.log", job_id));
+    let status_path = run_dir.join("status.json");
+    let cancel_path = run_dir.join("cancel.requested");
+
+    std::fs::create_dir_all(&run_dir)
+        .map_err(|e| format!("Cannot create {}: {}", run_dir.display(), e))?;
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    std::fs::create_dir_all(sa3_lora_dir())
+        .map_err(|e| format!("Cannot create {}: {}", sa3_lora_dir().display(), e))?;
+    std::fs::create_dir_all(sa3_prompts_dir())
+        .map_err(|e| format!("Cannot create {}: {}", sa3_prompts_dir().display(), e))?;
+
+    write_sa3_training_launch_state(
+        &status_path,
+        &job_id,
+        &normalized_name,
+        &run_dir,
+        &log_path,
+        &cancel_path,
+        max_steps,
+    )?;
+
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Cannot create {}: {}", log_path.display(), e))?;
+    let log_file_err = log_file
+        .try_clone()
+        .map_err(|e| format!("Cannot clone log handle: {}", e))?;
+
+    let mut cmd = tokio::process::Command::new(&python_exe);
+    hide_console_window(&mut cmd);
+    cmd.arg("-u")
+        .arg(&script_path)
+        .arg("--job-id")
+        .arg(&job_id)
+        .arg("--name")
+        .arg(&normalized_name)
+        .arg("--dataset-dir")
+        .arg(&dataset_dir)
+        .arg("--fixed-prompt")
+        .arg(fixed_prompt.trim())
+        .arg("--training-root")
+        .arg(&training_root)
+        .arg("--models-dir")
+        .arg(sa3_training_models_dir())
+        .arg("--run-dir")
+        .arg(&run_dir)
+        .arg("--lora-dir")
+        .arg(sa3_lora_dir())
+        .arg("--catalog-path")
+        .arg(sa3_lora_catalog_path())
+        .arg("--prompts-dir")
+        .arg(sa3_prompts_dir())
+        .arg("--status-path")
+        .arg(&status_path)
+        .arg("--current-job-path")
+        .arg(sa3_training_current_job_path())
+        .arg("--cancel-path")
+        .arg(&cancel_path)
+        .arg("--log-path")
+        .arg(&log_path)
+        .arg("--max-steps")
+        .arg(max_steps.to_string())
+        .arg("--rank")
+        .arg(rank.to_string())
+        .arg("--alpha")
+        .arg("0")
+        .arg("--adapter-type")
+        .arg("dora")
+        .arg("--batch-size")
+        .arg(batch_size.to_string())
+        .arg("--checkpoint-every")
+        .arg(checkpoint_every.to_string())
+        .arg("--latent-crop-seconds")
+        .arg(latent_crop_seconds.to_string())
+        .arg("--learning-rate")
+        .arg(learning_rate.to_string());
+    if loudness_fix_enabled {
+        cmd.arg("--per-track-target-latent-rms")
+            .arg(target_latent_rms.to_string());
+    }
+    cmd.current_dir(repo_root.join("services").join("sa3"))
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(log_file_err))
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUNBUFFERED", "1");
+    if let Some(token) = read_hf_token() {
+        cmd.env("HF_TOKEN", token);
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to launch SA3 LoRA training: {}", e))?;
+    if let Some(pid) = child.id() {
+        write_sa3_training_process_id(&status_path, pid)?;
+    }
+
+    Ok(read_sa3_lora_training_state())
+}
+
+#[tauri::command]
+fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
+    let state = read_sa3_lora_training_state();
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(state);
+    }
+
+    let cancel_path = state.cancel_path.as_deref().map(PathBuf::from).or_else(|| {
+        state
+            .run_dir
+            .as_deref()
+            .map(|run_dir| PathBuf::from(run_dir).join("cancel.requested"))
+    });
+    if let Some(path) = cancel_path.as_ref() {
+        write_cancel_marker(path)?;
+    }
+
+    let mut pids = Vec::new();
+    if let Some(pid) = state.child_pid {
+        pids.push(pid);
+    }
+    if let Some(pid) = state.pid {
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    for pid in discover_sa3_training_pids(&state) {
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+
+    let mut warnings = Vec::new();
+    for pid in pids {
+        if let Err(error) = terminate_process_tree(pid) {
+            warnings.push(error);
+        }
+    }
+
+    let message = if warnings.is_empty() {
+        "Training cancelled.".to_string()
+    } else {
+        format!(
+            "Training cancelled. Process cleanup warning: {}",
+            warnings.join("; ")
+        )
+    };
+    if let Some(status_path) = sa3_current_training_status_path() {
+        write_sa3_training_cancelled_state(&status_path, cancel_path.as_deref(), &message)?;
+    }
+
+    Ok(read_sa3_lora_training_state())
 }
 
 // ---------------------------------------------------------------------------

@@ -66,9 +66,10 @@ def load_diffusion_cond(
 ):
     model = create_diffusion_cond_from_config(model_config)
     copy_state_dict(model, load_file(ckpt_path))
-    model.to(device).eval().requires_grad_(False)
     if model_half:
+        # Avoid a transient full-precision device copy during load/reload.
         model.to(torch.float16)
+    model.to(device).eval().requires_grad_(False)
     return model
 
 

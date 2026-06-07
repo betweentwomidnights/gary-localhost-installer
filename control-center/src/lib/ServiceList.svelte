@@ -22,7 +22,7 @@
     build_status: BuildStatus | null;
   }
 
-  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onManageSa3Loras }: {
+  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onManageSa3Loras, onTrainSa3Lora }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
     hfTokenConfigured: boolean;
@@ -30,6 +30,7 @@
     onShowModels: (id: string) => void;
     onManageCareyLoras: () => void;
     onManageSa3Loras: () => void;
+    onTrainSa3Lora: () => void;
   } = $props();
 
   async function rebuildAll() {
@@ -60,6 +61,8 @@
       onManageCareyLoras={onManageCareyLoras}
       hasSa3Loras={service.id === "sa3"}
       onManageSa3Loras={onManageSa3Loras}
+      hasSa3LoraTraining={service.id === "sa3" && hfTokenConfigured}
+      onTrainSa3Lora={onTrainSa3Lora}
     />
   {/each}
   {#if services.length === 0}

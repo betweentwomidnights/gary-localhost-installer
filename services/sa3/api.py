@@ -43,6 +43,7 @@ from stable_audio_3.inference.distribution_shift import (
     IdentityDistributionShift,
     LogSNRShift,
 )
+from stable_audio_3.inference.decode_utils import align_latents_for_decode
 
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -689,11 +690,14 @@ def apply_loudness_chain(
     meta["latent_factor"] = round(float(latent_factor), 6)
 
     pretransform = local_pipe.model.pretransform
-    try:
-        decode_dtype = next(pretransform.parameters()).dtype
-        latents = latents.to(decode_dtype)
-    except StopIteration:
-        pass
+    latents = align_latents_for_decode(
+        latents,
+        pretransform,
+        on_cast=lambda source_device, source_dtype, target_device, target_dtype: print(
+            f"[{session_id}] decode cast "
+            f"{source_device}/{source_dtype} -> {target_device}/{target_dtype}"
+        ),
+    )
     audio = pretransform.decode(latents).float()
 
     if not params.get("target_samples"):

@@ -68,18 +68,33 @@
       autoScroll = false;
     }
   }
+
+  function selectLogText() {
+    if (!logContainer) return;
+    autoScroll = false;
+    isSelecting = true;
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(logContainer);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    logContainer.focus();
+  }
 </script>
 
 <div class="log-viewer">
   {#if serviceId}
     <div class="log-header">
       <span class="log-title">Logs: {serviceId}</span>
-      {#if !autoScroll}
-        <button class="scroll-btn" onclick={() => {
-          autoScroll = true;
-          if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
-        }}>Scroll to bottom</button>
-      {/if}
+      <div class="log-actions">
+        <button type="button" class="scroll-btn" onclick={selectLogText}>select all</button>
+        {#if !autoScroll}
+          <button class="scroll-btn" onclick={() => {
+            autoScroll = true;
+            if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
+          }}>Scroll to bottom</button>
+        {/if}
+      </div>
     </div>
     <div
       class="log-content-wrap"
@@ -90,6 +105,7 @@
       <pre
         class="log-content"
         bind:this={logContainer}
+        tabindex="-1"
         onscroll={handleScroll}
       >{logText || "No output yet."}</pre>
     </div>
@@ -132,6 +148,10 @@
   .scroll-btn:hover {
     opacity: 0.8;
   }
+  .log-actions {
+    display: flex;
+    gap: 6px;
+  }
   .log-content {
     display: block;
     flex: 1;
@@ -151,6 +171,7 @@
     user-select: text;
     -webkit-user-select: text;
     cursor: text;
+    outline: none;
   }
   .log-content-wrap {
     display: flex;
