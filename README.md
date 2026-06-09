@@ -1,6 +1,6 @@
 # gary4local
 
-local Windows control center and bundled backend services for [gary4juce v4.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.0).
+local Windows control center and bundled backend services for [gary4juce v4.0.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1).
 
 find the macOS version here: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
 
@@ -11,6 +11,20 @@ This branch is the `v2-refactor` Tauri/Rust implementation. The old PyInstaller/
 install and startup flow:
 
 ![gary4local install and startup preview](docs/gary4local-install-startup.gif)
+
+## version 0.1.13
+
+Version 0.1.13 hardens Hugging Face onboarding and model downloads, especially
+for users who are new to gated repositories and fine-grained access tokens.
+
+- Adds an in-app visual guide for enabling public gated-repository access on a
+  fine-grained Hugging Face token.
+- Shows actionable model-download errors directly in the model list.
+- Uses Hugging Face's official snapshot downloader for resumable downloads and
+  reliable cache layout on Windows.
+- Detects incomplete SA3 snapshots instead of presenting them as ready.
+- Loads complete SA3 Medium and bundled T5Gemma files directly from the local
+  cache, avoiding unnecessary Hub checks during inference.
 
 ## version 0.1.12
 
