@@ -1,11 +1,11 @@
 {
-  "version": "0.1.14",
-  "notes": "Clarifies Hugging Face gated-model permission failures.\nPreserves wrapped 401/403 details and shows the required token permission from the SA3 model screen.\nCompatible with Gary4JUCE v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1",
-  "pub_date": "2026-06-09T08:22:23.2744361Z",
+  "version": "0.1.13",
+  "notes": "Guides fine-grained Hugging Face tokens through public gated-repository access.\nHardens resumable model downloads, incomplete-cache detection, and actionable errors.\nCompatible with Gary4JUCE v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1",
+  "pub_date": "2026-06-09T08:03:39.5635315Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1pY2gzRzMvRWkrT1NVak1pblNpdVgzMlN3dGN1OUtUSWNXNnYyczlNVC9nb01JUDFGQ1VCcUFObE1IWW5wRCs5OUQrSzZpWGlJZmNJaUFwSVgwNWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwOTkzMjM0CWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTRfeDY0LXNldHVwLmV4ZQpmSExhK1FaNjA5OHMzWXh3WW9XOS8xeEpOTHVjWVl0MEFUN0dBMUI4WVVjKzIvenlkd0t1WmErdmZuOVZrQ29xWUFSSStTd2tXcEt5ZHpzUlNLaEhDdz09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.14/gary4local_0.1.14_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEg1OTBLVk4vTnVoaVFhYXdhcG9IdDd2SXpUVm13RU5qTW5ESkpUOFRmWHJxQzZPbXF5VDhRRWtkVS9PVkRkM1k4eGhHMkxRQzErOWJ2TGhYOWVHNWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwOTkyMDcwCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTNfeDY0LXNldHVwLmV4ZQpIS0d2TlF2TEhjNVlibGlHdDUzREcrZ1RIL2lZQU10Sk9hV2RjUkdwRVIwM0J2d3RNUHVXa3dHaDNIWjhNdnVyeDlEUDhmMllwc3BWYTU3R1VNeFpDdz09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.13/gary4local_0.1.13_x64-setup.exe"
     }
   }
 }
