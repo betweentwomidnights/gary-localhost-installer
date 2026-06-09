@@ -11,6 +11,11 @@ class ModelConfig:
 
     def resolve(self):
         """Download files from HuggingFace Hub and return local cached paths."""
+        cached_config = try_to_load_from_cache(self.repo_id, self.config_path)
+        cached_ckpt = try_to_load_from_cache(self.repo_id, self.ckpt_path)
+        if isinstance(cached_config, str) and isinstance(cached_ckpt, str):
+            return cached_config, cached_ckpt
+
         local_config = hf_hub_download(repo_id=self.repo_id, filename=self.config_path)
         local_ckpt = hf_hub_download(repo_id=self.repo_id, filename=self.ckpt_path)
         return local_config, local_ckpt

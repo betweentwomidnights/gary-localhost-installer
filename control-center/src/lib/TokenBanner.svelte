@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
 
   let {
     serviceId = "stable-audio",
@@ -18,7 +19,6 @@
 
   const stableAudioOpenUrl = "https://huggingface.co/stabilityai/stable-audio-open-small";
   const sa3MediumUrl = "https://huggingface.co/stabilityai/stable-audio-3-medium";
-  const t5GemmaUrl = "https://huggingface.co/google/t5gemma-b-b-ul2";
   let isSa3 = $derived(serviceId === "sa3");
 
   async function loadToken() {
@@ -79,7 +79,6 @@
         <span>Agree to the model access terms</span>
         {#if isSa3}
           <button class="link-btn" onclick={() => openUrl(sa3MediumUrl)}>SA3 Medium</button>
-          <button class="link-btn compact" onclick={() => openUrl(t5GemmaUrl)}>T5Gemma</button>
         {:else}
           <button class="link-btn" onclick={() => openUrl(stableAudioOpenUrl)}>Open model page</button>
         {/if}
@@ -87,6 +86,9 @@
       <div class="step">
         <span class="num">2</span>
         <span>Create a read token</span>
+        {#if isSa3}
+          <TokenPermissionHelp />
+        {/if}
         <button class="link-btn" onclick={() => openUrl("https://huggingface.co/settings/tokens")}>
           Token settings
         </button>
@@ -115,10 +117,10 @@
     </div>
     {#if isSa3}
       <div class="access-note">
-        SA3 also needs accepted access for
-        <button class="inline-link" onclick={() => openUrl(sa3MediumUrl)}>SA3 Medium</button>
-        and
-        <button class="inline-link" onclick={() => openUrl(t5GemmaUrl)}>T5Gemma</button>.
+        SA3 needs accepted access for
+        <button class="inline-link" onclick={() => openUrl(sa3MediumUrl)}>SA3 Medium</button>.
+        Fine-grained tokens need gated access
+        <TokenPermissionHelp />. T5Gemma is bundled in the same download.
       </div>
     {/if}
   {/if}
@@ -190,10 +192,6 @@
     cursor: pointer;
     white-space: nowrap;
     margin-left: auto;
-  }
-
-  .link-btn.compact {
-    margin-left: 0;
   }
 
   .link-btn:hover {

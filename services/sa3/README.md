@@ -15,7 +15,12 @@ The token alone is not enough: the same Hugging Face account must also accept
 the model terms for:
 
 - https://huggingface.co/stabilityai/stable-audio-3-medium
-- https://huggingface.co/google/t5gemma-b-b-ul2
+
+The Stable Audio 3 repositories bundle their required T5Gemma files in the
+`t5gemma-b-b-ul2/` subfolder, so no separate T5Gemma download is required.
+For a fine-grained Hugging Face token, enable read access to public gated
+repositories. Accepting the model terms on the account does not grant that
+permission to the token automatically.
 
 The service health endpoint does not load or download the model. First load
 happens when `/load` or a generation endpoint is called.

@@ -202,6 +202,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id}</span>
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
             </div>
             {#if model.status === "downloading" && prog}
               <div class="download-progress">
@@ -253,6 +256,9 @@
               <div class="model-info">
                 <span class="model-name">{model.display_name}</span>
                 <span class="model-path">{model.group || ""}</span>
+                {#if prog?.error}
+                  <span class="download-error">{prog.error}</span>
+                {/if}
               </div>
               {#if model.status === "downloading" && prog}
                 <div class="download-progress">
@@ -295,6 +301,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id}</span>
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
             </div>
             {#if model.status === "downloading" && prog}
               <div class="download-progress">
@@ -332,6 +341,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id.replace("carey::", "")}</span>
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
             </div>
             {#if model.status === "downloading" && prog}
               <div class="download-progress">
@@ -369,6 +381,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id.replace("carey::", "")}</span>
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
             </div>
             {#if model.status === "downloading" && prog}
               <div class="download-progress">
@@ -410,6 +425,9 @@
                   <div class="model-info">
                     <span class="model-name">{model.display_name}</span>
                     <span class="model-path">{model.id}</span>
+                    {#if prog?.error}
+                      <span class="download-error">{prog.error}</span>
+                    {/if}
                   </div>
 
                   {#if model.status === "downloading" && prog}
@@ -446,6 +464,9 @@
                 <div class="model-info">
                   <span class="model-name">{model.display_name}</span>
                   <span class="model-path">{model.id}</span>
+                  {#if prog?.error}
+                    <span class="download-error">{prog.error}</span>
+                  {/if}
                 </div>
                 {#if model.status === "downloading" && prog}
                   <div class="download-progress">
@@ -738,6 +759,14 @@
     padding: 4px 16px;
     font-size: 11px;
     color: var(--red);
+  }
+
+  .download-error {
+    color: var(--red);
+    font-size: 10px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    user-select: text;
   }
 
   .finetune-hint {

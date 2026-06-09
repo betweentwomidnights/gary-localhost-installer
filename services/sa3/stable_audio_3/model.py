@@ -2,6 +2,7 @@ import json
 import numpy as np
 import torch
 import typing as tp
+from pathlib import Path
 from torch.nn.functional import interpolate
 
 from stable_audio_3.inference.audio_utils import prepare_audio, numpy_audio_to_tensor
@@ -53,6 +54,27 @@ class StableAudioModel:
         local_config, local_ckpt = model_cfg.resolve()
         with open(local_config) as f:
             model_config = json.load(f)
+
+        # Current SA3 repositories bundle T5Gemma beside model_config.json.
+        # Resolve that subfolder directly so a complete cached snapshot never
+        # needs a second Hub lookup during inference.
+        snapshot_dir = Path(local_config).parent
+        conditioning = model_config.get("model", {}).get("conditioning", {})
+        for conditioner in conditioning.get("configs", []):
+            config = conditioner.get("config", {})
+            subfolder = config.get("subfolder")
+            if config.get("repo_id") == model_cfg.repo_id and subfolder:
+                bundled_path = snapshot_dir / subfolder
+                bundled_files = (
+                    "config.json",
+                    "model.safetensors",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                )
+                if all((bundled_path / filename).is_file() for filename in bundled_files):
+                    config["model_path"] = str(bundled_path)
+                    config.pop("repo_id", None)
+                    config.pop("subfolder", None)
 
         model = load_diffusion_cond(
             model_config, local_ckpt, device=device, model_half=model_half

@@ -115,7 +115,6 @@ MAX_SAMPLE_SIZE = int((MAX_DURATION + CONTINUE_TAIL_PAD_MAX + 40.0) * OUTPUT_SAM
 
 SA3_MODEL_LINKS = {
     "stable-audio-3-medium": "https://huggingface.co/stabilityai/stable-audio-3-medium",
-    "t5gemma-b-b-ul2": "https://huggingface.co/google/t5gemma-b-b-ul2",
 }
 
 
@@ -245,18 +244,32 @@ def lora_payload(entries: list[tuple[str, str]]) -> list[dict[str, Any]]:
 
 def friendly_load_error(error: Exception) -> str:
     raw = str(error)
-    lower = raw.lower()
+    details = [raw]
+    current = error.__cause__ or error.__context__
+    seen = {id(error)}
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        details.append(str(current))
+        current = current.__cause__ or current.__context__
+    lower = "\n".join(details).lower()
     if not hf_token_configured():
         return (
             "HF_TOKEN is not configured. Save a Hugging Face read token in "
-            "gary4local, then accept the model terms for Stable Audio 3 Medium "
-            "and T5Gemma."
+            "gary4local, then accept the model terms for Stable Audio 3 Medium. "
+            "Its T5Gemma files are included in the same model download."
+        )
+    if "enable access to public gated repositories" in lower:
+        return (
+            "The saved Hugging Face fine-grained token cannot download public "
+            "gated repositories. Edit the token in Hugging Face settings and "
+            "enable read access to public gated repositories, then stop and "
+            "restart SA3."
         )
     if any(marker in lower for marker in ("401", "403", "gated", "restricted", "access")):
         return (
             "Hugging Face token is configured, but this account may not have "
-            "accepted all gated model terms for SA3. Open the Stable Audio 3 "
-            "Medium and T5Gemma model pages, accept access, then retry."
+            "accepted the gated model terms for SA3. Open the Stable Audio 3 "
+            "Medium model page, accept access, then retry."
         )
     return raw
 

@@ -198,6 +198,14 @@ impl ModelManager {
     /// These use the normal Hugging Face cache. A saved token is reused, but
     /// the user still needs to accept access on each gated model page.
     pub fn get_sa3_models(&self) -> Vec<ModelEntry> {
+        let required_files = [
+            "model_config.json",
+            "model.safetensors",
+            "t5gemma-b-b-ul2/config.json",
+            "t5gemma-b-b-ul2/model.safetensors",
+            "t5gemma-b-b-ul2/tokenizer.json",
+            "t5gemma-b-b-ul2/tokenizer_config.json",
+        ];
         let components: Vec<(&str, &str, &str)> = vec![
             (
                 "stabilityai/stable-audio-3-medium",
@@ -220,7 +228,7 @@ impl ModelManager {
                 size_category: Some(category.to_string()),
                 group: None,
                 epoch: None,
-                status: self.get_model_status(id),
+                status: self.get_model_status_with_required_files(id, &required_files),
             })
             .collect()
     }
@@ -460,6 +468,46 @@ impl ModelManager {
         ModelStatus::Available
     }
 
+    fn get_model_status_with_required_files(
+        &self,
+        model_id: &str,
+        required_files: &[&str],
+    ) -> ModelStatus {
+        if let Some(dl) = self.downloads.get(model_id) {
+            return dl.status.clone();
+        }
+
+        if let Some(status) = self.model_cache.get(model_id) {
+            return status.clone();
+        }
+
+        if Self::is_model_snapshot_complete(model_id, required_files) {
+            ModelStatus::Downloaded
+        } else {
+            ModelStatus::Available
+        }
+    }
+
+    fn is_model_snapshot_complete(model_id: &str, required_files: &[&str]) -> bool {
+        let folder_name = format!("models--{}", model_id.replace('/', "--"));
+        let snapshots_dir = Self::hf_cache_dir()
+            .join("hub")
+            .join(folder_name)
+            .join("snapshots");
+
+        let Ok(entries) = std::fs::read_dir(snapshots_dir) else {
+            return false;
+        };
+
+        entries.flatten().any(|entry| {
+            let snapshot = entry.path();
+            snapshot.is_dir()
+                && required_files
+                    .iter()
+                    .all(|filename| snapshot.join(filename).is_file())
+        })
+    }
+
     /// Check if a model exists in the HuggingFace cache
     fn is_model_cached(model_id: &str) -> bool {
         let cache_dir = Self::hf_cache_dir();
@@ -547,7 +595,14 @@ pub async fn download_model(
 ) -> Result<(), String> {
     let cache_dir = ModelManager::hf_cache_dir();
 
-    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("Cannot create cache dir: {}", e))?;
+    if let Err(error) = std::fs::create_dir_all(&cache_dir) {
+        let msg = format!("Cannot create cache dir: {}", error);
+        let mut mgr = manager.lock().await;
+        mgr.set_download_done(&model_id, Some(msg.clone()));
+        drop(mgr);
+        emit_model_status(&manager, &handle).await;
+        return Err(msg);
+    }
 
     // Parse composite ID: "repo::filename" means download a single file
     let (repo_id, single_file) = if model_id.contains("::") {
@@ -639,15 +694,17 @@ except Exception as e:
             filename = filename,
         )
     } else {
-        // Full-repo download (for Gary models, base models)
+        // Full-repo download. Let huggingface_hub own cache layout, Xet/LFS
+        // handling, authentication, and resume behavior. A small reporter
+        // thread keeps the existing byte-level UI reasonably informative.
         format!(
             r#"
-import sys, os, json
+import sys, os, json, shutil, threading
 
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
 
-from huggingface_hub import HfApi, hf_hub_download, constants
+from huggingface_hub import HfApi, snapshot_download, constants
 
 model_id = "{repo_id}"
 
@@ -660,6 +717,20 @@ def fmt_size(b):
     if b < 1024**3: return f"{{b/1024**2:.1f}}MB"
     return f"{{b/1024**3:.2f}}GB"
 
+def cache_bytes(folder):
+    total = 0
+    if not os.path.isdir(folder):
+        return total
+    for root, _, files in os.walk(folder):
+        for name in files:
+            if name.endswith(".lock"):
+                continue
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
 try:
     report(0.0, "Fetching repo info...")
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -668,7 +739,6 @@ try:
     siblings = [s for s in repo_info.siblings if not s.rfilename.startswith(".")]
     file_entries = [(s.rfilename, s.size or (s.lfs.size if s.lfs else 0) or 0) for s in siblings]
     total_bytes = sum(sz for _, sz in file_entries)
-    completed_bytes = 0
 
     if total_bytes == 0:
         report(1.0, "No files")
@@ -676,64 +746,55 @@ try:
         sys.exit(0)
 
     report(0.0, f"Downloading {{len(file_entries)}} files ({{fmt_size(total_bytes)}})")
+    os.makedirs(constants.HF_HUB_CACHE, exist_ok=True)
+    folder = os.path.join(
+        constants.HF_HUB_CACHE,
+        "models--" + model_id.replace("/", "--"),
+    )
+    blobs_dir = os.path.join(folder, "blobs")
+    snapshot_dir = os.path.join(folder, "snapshots", repo_info.sha)
+    existing_bytes = min(
+        max(cache_bytes(blobs_dir), cache_bytes(snapshot_dir)),
+        total_bytes,
+    )
+    remaining_bytes = max(total_bytes - existing_bytes, 0)
+    free_bytes = shutil.disk_usage(constants.HF_HUB_CACHE).free
+    reserve_bytes = 512 * 1024 * 1024
+    if free_bytes < remaining_bytes + reserve_bytes:
+        raise RuntimeError(
+            "Not enough free disk space for this model. "
+            f"Need about {{fmt_size(remaining_bytes + reserve_bytes)}} free, "
+            f"but only {{fmt_size(free_bytes)}} is available."
+        )
 
-    for i, (filename, file_size) in enumerate(file_entries):
-        short = filename if len(filename) < 40 else "..." + filename[-37:]
+    stop_reporting = threading.Event()
 
-        if file_size < 5 * 1024 * 1024:
-            report(completed_bytes / total_bytes, f"{{short}} ({{fmt_size(file_size)}})")
-            hf_hub_download(model_id, filename=filename)
-            completed_bytes += file_size
-            report(completed_bytes / total_bytes, f"{{short}} done")
-            continue
+    def report_cache_progress():
+        last_bytes = -1
+        while not stop_reporting.wait(1.0):
+            current = min(
+                max(cache_bytes(blobs_dir), cache_bytes(snapshot_dir)),
+                total_bytes,
+            )
+            if current != last_bytes:
+                report(
+                    current / total_bytes,
+                    f"Downloaded {{fmt_size(current)}}/{{fmt_size(total_bytes)}}",
+                )
+                last_bytes = current
 
-        import requests, hashlib
-
-        hub_dir = constants.HF_HUB_CACHE
-        folder = os.path.join(hub_dir, "models--" + model_id.replace("/", "--"))
-        blobs_dir = os.path.join(folder, "blobs")
-        refs_dir = os.path.join(folder, "refs")
-        os.makedirs(blobs_dir, exist_ok=True)
-        os.makedirs(refs_dir, exist_ok=True)
-
-        url = f"https://huggingface.co/{{model_id}}/resolve/main/{{filename}}"
-        headers = {{}}
-        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-        if token:
-            headers["Authorization"] = f"Bearer {{token}}"
-
-        resp = requests.get(url, headers=headers, stream=True, allow_redirects=True)
-        resp.raise_for_status()
-
-        safe_tmp_name = filename.replace("/", "_").replace("\\", "_") + ".downloading"
-        tmp_path = os.path.join(blobs_dir, safe_tmp_name)
-        received = 0
-        last_pct_reported = -1
-
-        with open(tmp_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                f.write(chunk)
-                received += len(chunk)
-                current_total = completed_bytes + received
-                pct = current_total / total_bytes
-                pct_int = int(pct * 100)
-                if pct_int != last_pct_reported:
-                    report(pct, f"{{short}} {{fmt_size(current_total)}}/{{fmt_size(total_bytes)}}")
-                    last_pct_reported = pct_int
-
-        sha = hashlib.sha256()
-        with open(tmp_path, "rb") as f:
-            while True:
-                data = f.read(1024 * 1024)
-                if not data: break
-                sha.update(data)
-        blob_path = os.path.join(blobs_dir, sha.hexdigest())
-        os.replace(tmp_path, blob_path)
-
-        hf_hub_download(model_id, filename=filename)
-
-        completed_bytes += file_size
-        report(completed_bytes / total_bytes, f"{{short}} done ({{i+1}}/{{len(file_entries)}})")
+    reporter = threading.Thread(target=report_cache_progress, daemon=True)
+    reporter.start()
+    try:
+        snapshot_download(
+            repo_id=model_id,
+            token=token,
+            revision=repo_info.sha,
+            max_workers=4,
+        )
+    finally:
+        stop_reporting.set()
+        reporter.join(timeout=2)
 
     report(1.0, "done")
     print(json.dumps({{"status": "done"}}), flush=True)
@@ -757,15 +818,25 @@ except Exception as e:
     }
     hide_console_window(&mut cmd);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to start download: {}", e))?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let msg = format!("Failed to start download: {}", error);
+            let mut mgr = manager.lock().await;
+            mgr.set_download_done(&model_id, Some(msg.clone()));
+            drop(mgr);
+            emit_model_status(&manager, &handle).await;
+            return Err(msg);
+        }
+    };
 
     // Read stdout for our JSON progress lines
     let stdout = child.stdout.take();
     let model_id_clone = model_id.clone();
     let mgr_out = manager.clone();
     let handle_out = handle.clone();
+    let reported_error = Arc::new(Mutex::new(None::<String>));
+    let reported_error_out = reported_error.clone();
 
     let stdout_task = tauri::async_runtime::spawn(async move {
         if let Some(stdout) = stdout {
@@ -785,33 +856,43 @@ except Exception as e:
                         drop(mgr);
                         emit_model_status(&mgr_out, &handle_out).await;
                     }
+                    if msg.get("status").and_then(|v| v.as_str()) == Some("error") {
+                        if let Some(error) = msg.get("error").and_then(|v| v.as_str()) {
+                            *reported_error_out.lock().await = Some(error.to_string());
+                        }
+                    }
                 }
             }
         }
     });
 
-    // Drain stderr so the child process doesn't block
+    // Capture stderr so failures outside our JSON exception handler are still
+    // actionable in the UI.
     let stderr = child.stderr.take();
     let stderr_task = tauri::async_runtime::spawn(async move {
+        let mut output = String::new();
         if let Some(stderr) = stderr {
             use tokio::io::{AsyncReadExt, BufReader};
             let mut reader = BufReader::new(stderr);
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = reader.read(&mut buf).await {
-                if n == 0 {
-                    break;
-                }
-            }
+            let _ = reader.read_to_string(&mut output).await;
         }
+        output
     });
 
     let _ = stdout_task.await;
-    let _ = stderr_task.await;
+    let stderr_output = stderr_task.await.unwrap_or_default();
 
-    let exit_status = child
-        .wait()
-        .await
-        .map_err(|e| format!("Download process error: {}", e))?;
+    let exit_status = match child.wait().await {
+        Ok(status) => status,
+        Err(error) => {
+            let msg = format!("Download process error: {}", error);
+            let mut mgr = manager.lock().await;
+            mgr.set_download_done(&model_id, Some(msg.clone()));
+            drop(mgr);
+            emit_model_status(&manager, &handle).await;
+            return Err(msg);
+        }
+    };
 
     if exit_status.success() {
         let mut mgr = manager.lock().await;
@@ -820,7 +901,16 @@ except Exception as e:
         emit_model_status(&manager, &handle).await;
         Ok(())
     } else {
-        let msg = format!("Download failed for {}", model_id);
+        let detail = reported_error
+            .lock()
+            .await
+            .clone()
+            .or_else(|| {
+                let trimmed = stderr_output.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            })
+            .unwrap_or_else(|| "The download process exited without an error message.".to_string());
+        let msg = format!("Download failed for {}: {}", model_id, detail);
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, Some(msg.clone()));
         drop(mgr);
