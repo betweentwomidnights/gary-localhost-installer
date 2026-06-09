@@ -23,6 +23,9 @@ gated Stable Audio 3 models.
 - Labels a stored token as saved rather than implying its permissions have
   already been validated.
 - Places the gated-token permission guide directly on the SA3 model screen.
+- Repairs older SA3 environments by installing missing LoRA training
+  dependencies before preprocessing begins.
+- Cancels SA3 LoRA training without flashing PowerShell or taskkill windows.
 
 ## version 0.1.13
 
