@@ -520,6 +520,14 @@ fn hide_console_window(cmd: &mut tokio::process::Command) {
     }
 }
 
+fn hide_std_console_window(cmd: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut entries = Vec::new();
     let reader =
@@ -1796,11 +1804,10 @@ fn terminate_process_tree(pid: u32) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("taskkill")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .arg("/T")
-            .arg("/F")
+        let mut command = std::process::Command::new("taskkill");
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        hide_std_console_window(&mut command);
+        let output = command
             .output()
             .map_err(|e| format!("Failed to run taskkill for {}: {}", pid, e))?;
         if output.status.success() {
@@ -1843,13 +1850,14 @@ fn terminate_process_tree(pid: u32) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn discover_sa3_training_pids(state: &Sa3LoraTrainingState) -> Vec<u32> {
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'pre_encode\\.py' -or $_.CommandLine -match 'lora_train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
-        ])
-        .output();
+    let mut command = std::process::Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'pre_encode\\.py' -or $_.CommandLine -match 'lora_train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+    ]);
+    hide_std_console_window(&mut command);
+    let output = command.output();
 
     let Ok(output) = output else {
         return Vec::new();

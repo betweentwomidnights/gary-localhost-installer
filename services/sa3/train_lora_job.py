@@ -136,6 +136,7 @@ def terminate_process_tree(proc: subprocess.Popen) -> None:
             ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             check=False,
         )
     else:
