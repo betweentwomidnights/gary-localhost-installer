@@ -2,6 +2,20 @@
   import { invoke } from "@tauri-apps/api/core";
 
   let open = $state(false);
+  let openToRight = $state(true);
+  let trigger: HTMLButtonElement;
+
+  function updatePlacement() {
+    if (!trigger) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const popoverWidth = Math.min(320, window.innerWidth - 48);
+    openToRight = window.innerWidth - triggerRect.left >= popoverWidth + 8;
+  }
+
+  function toggleHelp() {
+    if (!open) updatePlacement();
+    open = !open;
+  }
 
   function clickOutside(node: HTMLElement) {
     function handleClick(event: MouseEvent) {
@@ -27,6 +41,9 @@
 </script>
 
 <svelte:window
+  onresize={() => {
+    if (open) updatePlacement();
+  }}
   onkeydown={(event) => {
     if (event.key === "Escape") open = false;
   }}
@@ -34,18 +51,24 @@
 
 <span class="help-wrap" use:clickOutside>
   <button
+    bind:this={trigger}
     class="help-trigger"
     type="button"
     aria-label="Show required Hugging Face token permission"
     aria-expanded={open}
     title="Required token permission"
-    onclick={() => open = !open}
+    onclick={toggleHelp}
   >
     ?
   </button>
 
   {#if open}
-    <span class="help-popover" role="dialog" aria-label="Required Hugging Face token permission">
+    <span
+      class="help-popover"
+      class:open-to-right={openToRight}
+      role="dialog"
+      aria-label="Required Hugging Face token permission"
+    >
       <span class="help-header">
         <strong>Enable gated model access</strong>
         <button
@@ -128,6 +151,11 @@
     flex-direction: column;
     gap: 8px;
     color: var(--text-primary);
+  }
+
+  .help-popover.open-to-right {
+    right: auto;
+    left: 0;
   }
 
   .help-header {
