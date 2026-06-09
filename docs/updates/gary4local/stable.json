@@ -1,12 +1,12 @@
 {
   "channel": "stable",
-  "latest_version": "0.1.13",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.13/gary4local_0.1.13_x64-setup.exe",
-  "sha256": "8266b104a416b7e9d53a2180446eec52b0b28a83d4f17417eb05cdb47b750424",
-  "published_at": "2026-06-09T08:03:39.5635315Z",
+  "latest_version": "0.1.14",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.14/gary4local_0.1.14_x64-setup.exe",
+  "sha256": "272fafe603ea55cc6b4dd2117d446ae1829ebb6df8f92e85a325b1f413c9b3ac",
+  "published_at": "2026-06-09T08:22:23.2744361Z",
   "notes": [
-    "Guides fine-grained Hugging Face tokens through public gated-repository access.",
-    "Hardens resumable model downloads, incomplete-cache detection, and actionable errors.",
+    "Clarifies Hugging Face gated-model permission failures.",
+    "Preserves wrapped 401/403 details and shows the required token permission from the SA3 model screen.",
     "Compatible with Gary4JUCE v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1"
   ]
 }
