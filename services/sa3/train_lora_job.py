@@ -9,6 +9,7 @@ polls the status JSON written here.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -21,6 +22,11 @@ from pathlib import Path
 SERVICE_DIR = Path(__file__).resolve().parent
 MODEL_KEY = "sa3-medium"
 BASE_REPO = "stabilityai/stable-audio-3-medium-base"
+TRAINING_DEPENDENCIES = {
+    "accelerate": "accelerate>=0.30",
+    "dill": "dill>=0.3.8",
+    "audio_metadata": "audio-metadata>=0.11",
+}
 
 
 class Cancelled(RuntimeError):
@@ -72,6 +78,54 @@ def cancel_requested(args) -> bool:
 def check_cancel(args) -> None:
     if cancel_requested(args):
         raise Cancelled("Training cancelled.")
+
+
+def missing_training_dependencies() -> list[str]:
+    return [
+        requirement
+        for module, requirement in TRAINING_DEPENDENCIES.items()
+        if importlib.util.find_spec(module) is None
+    ]
+
+
+def ensure_training_dependencies(args) -> None:
+    missing = missing_training_dependencies()
+    if not missing:
+        return
+
+    print(
+        "[environment-setup] Installing missing SA3 LoRA training dependencies: "
+        + ", ".join(missing),
+        flush=True,
+    )
+    try:
+        run_step(
+            args,
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                *missing,
+            ],
+            "environment-setup",
+            "Installing missing SA3 LoRA training dependencies",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Could not install the missing SA3 LoRA training dependencies automatically. "
+            "Use 'rebuild env' for SA3 and try again."
+        ) from exc
+    importlib.invalidate_caches()
+
+    unresolved = missing_training_dependencies()
+    if unresolved:
+        raise RuntimeError(
+            "SA3 LoRA training dependencies are still missing after automatic repair: "
+            + ", ".join(unresolved)
+            + ". Use 'rebuild env' for SA3 and try again."
+        )
 
 
 def terminate_process_tree(proc: subprocess.Popen) -> None:
@@ -331,6 +385,7 @@ def main() -> int:
             args.cancel_path.unlink()
         update_status(args, status="running", phase="starting", message="Starting SA3 LoRA training")
 
+        ensure_training_dependencies(args)
         require_cuda(args)
         _, base_ckpt = stage_base_model(args)
 
