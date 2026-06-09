@@ -1,11 +1,11 @@
 {
-  "version": "0.1.13",
-  "notes": "Guides fine-grained Hugging Face tokens through public gated-repository access.\nHardens resumable model downloads, incomplete-cache detection, and actionable errors.\nCompatible with Gary4JUCE v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1",
-  "pub_date": "2026-06-09T08:03:39.5635315Z",
+  "version": "0.1.14",
+  "notes": "Clarifies Hugging Face gated-model permission failures.\nRepairs missing SA3 LoRA training dependencies and hides cancellation helper windows.\nCompatible with Gary4JUCE v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1",
+  "pub_date": "2026-06-09T08:51:30.7217940Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEg1OTBLVk4vTnVoaVFhYXdhcG9IdDd2SXpUVm13RU5qTW5ESkpUOFRmWHJxQzZPbXF5VDhRRWtkVS9PVkRkM1k4eGhHMkxRQzErOWJ2TGhYOWVHNWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwOTkyMDcwCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTNfeDY0LXNldHVwLmV4ZQpIS0d2TlF2TEhjNVlibGlHdDUzREcrZ1RIL2lZQU10Sk9hV2RjUkdwRVIwM0J2d3RNUHVXa3dHaDNIWjhNdnVyeDlEUDhmMllwc3BWYTU3R1VNeFpDdz09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.13/gary4local_0.1.13_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtqdGpXcThrUFdtUVRZYU1qb09hN0J0c3I0a2wySW5FTUR5QTFydFo5c0k3OWtjL24xOUJRcnhoNGM5bExUYlUzaFQxbi9OZGlCdnZqNG1odzR6ZkFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwOTk1MDM1CWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTRfeDY0LXNldHVwLmV4ZQp5d09nNC9QYTFUMU1TbC9KNm5aRWJiR0dPSEI4MDNIWEJONWZ3MDhDWmV1Z0VwUko3L2FpTFR1NXVlaCtMV3dFOGUxelFERndLZXRlMk8xblkwVXRBUT09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.14/gary4local_0.1.14_x64-setup.exe"
     }
   }
 }
