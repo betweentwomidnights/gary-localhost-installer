@@ -12,6 +12,18 @@ install and startup flow:
 
 ![gary4local install and startup preview](docs/gary4local-install-startup.gif)
 
+## version 0.1.14
+
+Version 0.1.14 makes Hugging Face permission failures explicit when downloading
+gated Stable Audio 3 models.
+
+- Preserves the underlying Hugging Face error when a generic cache error wraps
+  a `401` or `403` response.
+- Explains when a fine-grained token needs public gated-repository read access.
+- Labels a stored token as saved rather than implying its permissions have
+  already been validated.
+- Places the gated-token permission guide directly on the SA3 model screen.
+
 ## version 0.1.13
 
 Version 0.1.13 hardens Hugging Face onboarding and model downloads, especially

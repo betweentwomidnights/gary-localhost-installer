@@ -580,6 +580,38 @@ impl ModelManager {
     }
 }
 
+fn friendly_hf_download_error(raw_detail: &str) -> String {
+    let lower = raw_detail.to_ascii_lowercase();
+
+    if lower.contains("enable access to public gated repositories")
+        || lower.contains("read access to contents of all public gated repos")
+    {
+        return "Hugging Face token permission denied. Open Token settings and enable \
+                \"Read access to contents of all public gated repos you can access,\" then retry."
+            .to_string();
+    }
+
+    if lower.contains("401 unauthorized")
+        || lower.contains("invalid username or password")
+        || lower.contains("invalid token")
+    {
+        return "Hugging Face rejected the saved token. Remove it, create a new read token, \
+                save it in Gary4local, and retry."
+            .to_string();
+    }
+
+    if lower.contains("403 forbidden")
+        || lower.contains("gatedrepoerror")
+        || lower.contains("cannot access gated repo")
+    {
+        return "Hugging Face denied access to this gated model. Accept the model's access \
+                terms and enable public gated-repository read access on the saved token, then retry."
+            .to_string();
+    }
+
+    raw_detail.to_string()
+}
+
 /// Run a model download using the service's Python venv.
 ///
 /// Supports two ID formats:
@@ -636,6 +668,18 @@ def fmt_size(b):
     if b < 1024**3: return f"{{b/1024**2:.1f}}MB"
     return f"{{b/1024**3:.2f}}GB"
 
+def exception_details(error):
+    details = []
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        details.append(type(current).__name__ + ": " + str(current))
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return "\n".join(details)
+
 try:
     short = filename if len(filename) < 50 else "..." + filename[-47:]
     report(0.0, f"Downloading {{short}}...")
@@ -687,7 +731,11 @@ try:
     print(json.dumps({{"status": "done"}}), flush=True)
 
 except Exception as e:
-    print(json.dumps({{"status": "error", "error": str(e)}}), flush=True)
+    print(json.dumps({{
+        "status": "error",
+        "error": str(e),
+        "details": exception_details(e),
+    }}), flush=True)
     sys.exit(1)
 "#,
             repo_id = repo_id,
@@ -730,6 +778,18 @@ def cache_bytes(folder):
             except OSError:
                 pass
     return total
+
+def exception_details(error):
+    details = []
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        details.append(type(current).__name__ + ": " + str(current))
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return "\n".join(details)
 
 try:
     report(0.0, "Fetching repo info...")
@@ -800,7 +860,11 @@ try:
     print(json.dumps({{"status": "done"}}), flush=True)
 
 except Exception as e:
-    print(json.dumps({{"status": "error", "error": str(e)}}), flush=True)
+    print(json.dumps({{
+        "status": "error",
+        "error": str(e),
+        "details": exception_details(e),
+    }}), flush=True)
     sys.exit(1)
 "#,
             repo_id = repo_id,
@@ -857,8 +921,13 @@ except Exception as e:
                         emit_model_status(&mgr_out, &handle_out).await;
                     }
                     if msg.get("status").and_then(|v| v.as_str()) == Some("error") {
-                        if let Some(error) = msg.get("error").and_then(|v| v.as_str()) {
-                            *reported_error_out.lock().await = Some(error.to_string());
+                        let detail = msg
+                            .get("details")
+                            .and_then(|v| v.as_str())
+                            .filter(|value| !value.trim().is_empty())
+                            .or_else(|| msg.get("error").and_then(|v| v.as_str()));
+                        if let Some(detail) = detail {
+                            *reported_error_out.lock().await = Some(detail.to_string());
                         }
                     }
                 }
@@ -901,7 +970,7 @@ except Exception as e:
         emit_model_status(&manager, &handle).await;
         Ok(())
     } else {
-        let detail = reported_error
+        let raw_detail = reported_error
             .lock()
             .await
             .clone()
@@ -910,6 +979,7 @@ except Exception as e:
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             })
             .unwrap_or_else(|| "The download process exited without an error message.".to_string());
+        let detail = friendly_hf_download_error(&raw_detail);
         let msg = format!("Download failed for {}: {}", model_id, detail);
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, Some(msg.clone()));
@@ -1394,4 +1464,40 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
     use tauri::Emitter;
     let _ = handle.emit("models-updated", &models);
     let _ = handle.emit("download-progress", &progress);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::friendly_hf_download_error;
+
+    #[test]
+    fn explains_missing_public_gated_repo_permission() {
+        let raw = r#"LocalEntryNotFoundError: An error happened while trying to locate the file
+HfHubHTTPError: 403 Forbidden: Please enable access to public gated repositories in your
+fine-grained token settings to view this repository."#;
+
+        assert_eq!(
+            friendly_hf_download_error(raw),
+            "Hugging Face token permission denied. Open Token settings and enable \
+             \"Read access to contents of all public gated repos you can access,\" then retry."
+        );
+    }
+
+    #[test]
+    fn explains_other_gated_repo_denials() {
+        let raw = "GatedRepoError: 403 Forbidden: Cannot access gated repo";
+
+        assert_eq!(
+            friendly_hf_download_error(raw),
+            "Hugging Face denied access to this gated model. Accept the model's access terms \
+             and enable public gated-repository read access on the saved token, then retry."
+        );
+    }
+
+    #[test]
+    fn preserves_unclassified_download_errors() {
+        let raw = "ConnectionError: connection timed out";
+
+        assert_eq!(friendly_hf_download_error(raw), raw);
+    }
 }

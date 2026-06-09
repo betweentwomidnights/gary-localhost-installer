@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
 
   interface ModelEntry {
     id: string;
@@ -292,8 +293,9 @@
       <div class="size-group">
         <div class="size-label">required components</div>
         <div class="carey-hint">
-          download these with the same saved Hugging Face token.
-          your Hugging Face account must accept access for both model pages first.
+          Download these with the same saved Hugging Face token. Accept each model's access
+          terms, and give fine-grained tokens public gated-repository read access
+          <TokenPermissionHelp />.
         </div>
         {#each sa3Models as model}
           {@const prog = getProgress(model.id)}

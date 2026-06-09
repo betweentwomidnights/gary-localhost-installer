@@ -111,7 +111,7 @@
     </div>
   {:else}
     <div class="configured-row">
-      <span class="banner-title">huggingface token configured</span>
+      <span class="banner-title">huggingface token saved</span>
       <span class="masked">{maskedToken}</span>
       <button class="remove-btn" onclick={removeToken}>Remove</button>
     </div>
