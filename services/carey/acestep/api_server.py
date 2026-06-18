@@ -226,6 +226,26 @@ def _sync_local_model_code(model_name: str, checkpoint_dir: str) -> None:
         print(f"[Model Sync] Warning: failed to sync local code for {model_name}: {exc}")
 
 
+def _checkpoint_files_valid(model_name: str, checkpoint_dir: str) -> bool:
+    try:
+        from acestep.model_downloader import checkpoint_files_valid
+    except Exception as exc:
+        print(f"[Model Download] Warning: could not import checkpoint validator: {exc}")
+        return True
+
+    return checkpoint_files_valid(model_name, checkpoint_dir)
+
+
+def _quarantine_invalid_checkpoint_files(model_name: str, checkpoint_dir: str) -> None:
+    try:
+        from acestep.model_downloader import quarantine_invalid_checkpoint_files
+    except Exception as exc:
+        print(f"[Model Download] Warning: could not import checkpoint quarantiner: {exc}")
+        return
+
+    quarantine_invalid_checkpoint_files(model_name, checkpoint_dir)
+
+
 def _ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
     """
     Ensure model is downloaded. Auto-detect source based on network.
@@ -239,11 +259,20 @@ def _ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
     """
     model_path = os.path.join(checkpoint_dir, model_name)
 
-    # Check if model already exists
+    # Check if model already exists and its known large files match the pinned
+    # upstream blobs. Shape-compatible but stale LM weights can load and then
+    # produce corrupted understand_music captions.
     if os.path.exists(model_path) and os.listdir(model_path):
-        print(f"[Model Download] Model {model_name} already exists at {model_path}")
-        _sync_local_model_code(model_name, checkpoint_dir)
-        return model_path
+        if _checkpoint_files_valid(model_name, checkpoint_dir):
+            print(f"[Model Download] Model {model_name} already exists at {model_path}")
+            _sync_local_model_code(model_name, checkpoint_dir)
+            return model_path
+
+        print(
+            f"[Model Download] Model {model_name} exists at {model_path} "
+            "but failed checkpoint validation; refreshing."
+        )
+        _quarantine_invalid_checkpoint_files(model_name, checkpoint_dir)
 
     # Get repository ID
     repo_id = MODEL_REPO_MAPPING.get(model_name, DEFAULT_REPO_ID)
@@ -282,6 +311,10 @@ def _ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
             model_path = _download_from_huggingface(repo_id, checkpoint_dir, model_name)
 
     _sync_local_model_code(model_name, checkpoint_dir)
+    if not _checkpoint_files_valid(model_name, checkpoint_dir):
+        raise RuntimeError(
+            f"Downloaded model {model_name} failed checkpoint validation at {model_path}"
+        )
     return model_path
 
 
@@ -1335,6 +1368,7 @@ def create_app() -> FastAPI:
         app.state.llm_handler = llm_handler
         app.state._llm_initialized = False
         app.state._llm_init_error = None
+        app.state._llm_init_error_model = None
         app.state._llm_init_lock = Lock()
         app.state._llm_lazy_load_disabled = False  # Will be set to True if LLM skipped due to GPU config
 
@@ -1576,10 +1610,39 @@ def create_app() -> FastAPI:
                 def _ensure_llm_ready() -> None:
                     """Ensure LLM handler is initialized when needed"""
                     with app.state._llm_init_lock:
+                        requested_model = (req.lm_model_path or "").strip()
                         initialized = getattr(app.state, "_llm_initialized", False)
                         had_error = getattr(app.state, "_llm_init_error", None)
-                        if initialized or had_error is not None:
+                        error_model = getattr(
+                            app.state, "_llm_init_error_model", None
+                        )
+                        current_params = getattr(llm, "last_init_params", None)
+                        current_model = (
+                            (current_params or {}).get("lm_model_path", "").strip()
+                            if isinstance(current_params, dict)
+                            else ""
+                        )
+                        if initialized and (
+                            not requested_model or current_model == requested_model
+                        ):
                             return
+                        if initialized and requested_model != current_model:
+                            print(
+                                f"[API Server] Switching LLM from "
+                                f"{current_model or 'unknown'} to {requested_model}"
+                            )
+                            llm.unload()
+                            app.state._llm_initialized = False
+                            app.state._llm_init_error = None
+                            app.state._llm_init_error_model = None
+                            initialized = False
+                            had_error = None
+                        if had_error is not None:
+                            if requested_model and requested_model != error_model:
+                                app.state._llm_init_error = None
+                                app.state._llm_init_error_model = None
+                            else:
+                                return
                         print("[API Server] reloading.")
 
                         # Check if lazy loading is disabled (GPU memory insufficient)
@@ -1589,12 +1652,17 @@ def create_app() -> FastAPI:
                                 "in .env or environment variables. For this request, optional LLM features "
                                 "(use_cot_caption, use_cot_language) will be auto-disabled."
                             )
+                            app.state._llm_init_error_model = requested_model or None
                             print("[API Server] LLM lazy load blocked: LLM was not initialized at startup")
                             return
 
                         project_root = _get_project_root()
                         checkpoint_dir = os.path.join(project_root, "checkpoints")
-                        lm_model_path = (req.lm_model_path or os.getenv("ACESTEP_LM_MODEL_PATH") or "acestep-5Hz-lm-0.6B").strip()
+                        lm_model_path = (
+                            requested_model
+                            or os.getenv("ACESTEP_LM_MODEL_PATH")
+                            or "acestep-5Hz-lm-0.6B"
+                        ).strip()
                         backend = (req.lm_backend or os.getenv("ACESTEP_LM_BACKEND") or "vllm").strip().lower()
                         if backend not in {"vllm", "pt", "mlx"}:
                             backend = "vllm"
@@ -1620,8 +1688,11 @@ def create_app() -> FastAPI:
                         )
                         if not ok:
                             app.state._llm_init_error = status
+                            app.state._llm_init_error_model = lm_model_path
                         else:
                             app.state._llm_initialized = True
+                            app.state._llm_init_error = None
+                            app.state._llm_init_error_model = None
 
                 def _normalize_metas(meta: Dict[str, Any]) -> Dict[str, Any]:
                     """Ensure a stable `metas` dict (keys always present)."""
@@ -1662,6 +1733,7 @@ def create_app() -> FastAPI:
                             llm.unload()
                             app.state._llm_initialized = False
                             app.state._llm_init_error = None
+                            app.state._llm_init_error_model = None
                         except Exception as e:
                             print(f"[API Server] Failed to unload LM: {e}")
 
@@ -1932,7 +2004,7 @@ def create_app() -> FastAPI:
                     # This yields the deep metadata and lyrics transcription
                     metadata_dict, status_string = llm_to_pass.understand_audio_from_codes(
                         audio_codes=audio_codes,
-                        temperature=0.3,
+                        temperature=float(os.getenv("ACESTEP_UNDERSTAND_TEMPERATURE", "0.3")),
                         use_constrained_decoding=True,
                         constrained_decoding_debug=config.constrained_decoding_debug
                     )
@@ -1942,6 +2014,11 @@ def create_app() -> FastAPI:
 
                     return {
                         "status_message": "Full Hardware Analysis Success",
+                        "lm_model": (
+                            req.lm_model_path
+                            or os.getenv("ACESTEP_LM_MODEL_PATH")
+                            or "acestep-5Hz-lm-0.6B"
+                        ),
                         "bpm": metadata_dict.get("bpm"),
                         "keyscale": metadata_dict.get("keyscale"),
                         "timesignature": metadata_dict.get("timesignature"),
@@ -2286,7 +2363,13 @@ def create_app() -> FastAPI:
                 if auto_offload:
                     print("[API Server] Auto-setting offload_to_cpu=True based on GPU memory")
 
-            offload_dit_to_cpu = _env_bool("ACESTEP_OFFLOAD_DIT_TO_CPU", False)
+            offload_dit_to_cpu_env = os.getenv("ACESTEP_OFFLOAD_DIT_TO_CPU")
+            if offload_dit_to_cpu_env is not None:
+                offload_dit_to_cpu = _env_bool("ACESTEP_OFFLOAD_DIT_TO_CPU", False)
+            else:
+                offload_dit_to_cpu = gpu_config.offload_dit_to_cpu_default
+                if offload_dit_to_cpu:
+                    print("[API Server] Auto-setting offload_dit_to_cpu=True based on GPU tier")
             compile_model = _env_bool("ACESTEP_COMPILE_MODEL", False)
 
             # Checkpoint directory
@@ -2435,14 +2518,17 @@ def create_app() -> FastAPI:
                 is_supported, warning_msg = is_lm_model_supported(lm_model_path, gpu_config)
                 if not is_supported:
                     print(f"[API Server] Warning: {warning_msg}")
-                    # Try to fall back to a supported model
-                    recommended_lm = get_recommended_lm_model(gpu_config)
-                    if recommended_lm:
-                        lm_model_path = recommended_lm
-                        print(f"[API Server] Falling back to supported LM model: {lm_model_path}")
+                    if lm_model_path_env:
+                        print(f"[API Server] Explicit LM model requested; attempting {lm_model_path} anyway (may cause OOM)")
                     else:
-                        # No supported model, but user may have forced init
-                        print(f"[API Server] No GPU-validated LM model available, attempting {lm_model_path} anyway (may cause OOM)")
+                        # Try to fall back to a supported model
+                        recommended_lm = get_recommended_lm_model(gpu_config)
+                        if recommended_lm:
+                            lm_model_path = recommended_lm
+                            print(f"[API Server] Falling back to supported LM model: {lm_model_path}")
+                        else:
+                            # No supported model, but user may have forced init
+                            print(f"[API Server] No GPU-validated LM model available, attempting {lm_model_path} anyway (may cause OOM)")
 
             if init_llm:
                 lm_backend = os.getenv("ACESTEP_LM_BACKEND", "vllm").strip().lower()
@@ -3330,7 +3416,11 @@ def create_app() -> FastAPI:
                 "use_flash_attention": _env_bool("ACESTEP_USE_FLASH_ATTENTION", True),
                 "compile_model": _env_bool("ACESTEP_COMPILE_MODEL", False),
                 "offload_to_cpu": _env_bool("ACESTEP_OFFLOAD_TO_CPU", False) if offload_to_cpu_env else auto_offload,
-                "offload_dit_to_cpu": _env_bool("ACESTEP_OFFLOAD_DIT_TO_CPU", False),
+                "offload_dit_to_cpu": (
+                    _env_bool("ACESTEP_OFFLOAD_DIT_TO_CPU", False)
+                    if os.getenv("ACESTEP_OFFLOAD_DIT_TO_CPU") is not None
+                    else gpu_config.offload_dit_to_cpu_default
+                ),
                 "quantization": os.getenv("ACESTEP_QUANTIZATION"),
             }
         if requested_config_path is not None:
@@ -3353,10 +3443,31 @@ def create_app() -> FastAPI:
         """Unload the DiT model from GPU and free VRAM. Sets server back to
         uninitialised state. Use /v1/load to reload before the next generation."""
         import gc
+        import torch
         handler: AceStepHandler = app.state.handler
         try:
-            for attr in ("model", "vae", "text_encoder", "acoustic_model",
-                         "silence_latent", "tokenize", "detokenize"):
+            cuda_before = None
+            if torch.cuda.is_available():
+                cuda_before = {
+                    "allocated_gb": torch.cuda.memory_allocated() / (1024**3),
+                    "reserved_gb": torch.cuda.memory_reserved() / (1024**3),
+                }
+
+            # LoRA helpers may retain strong references to decoder modules.
+            # Clear them before dropping the model so CUDA tensors can be GC'd.
+            for attr in ("_lora_service", "_lora_adapter_registry",
+                         "_lora_scale_state", "_lora_active_adapter",
+                         "_lora_last_scale_report", "_active_loras",
+                         "_base_decoder"):
+                if hasattr(handler, attr):
+                    try:
+                        setattr(handler, attr, None)
+                    except Exception:
+                        pass
+
+            for attr in ("model", "vae", "text_encoder", "text_tokenizer",
+                         "acoustic_model", "reward_model", "silence_latent",
+                         "tokenize", "detokenize", "config"):
                 obj = getattr(handler, attr, None)
                 if obj is not None:
                     try:
@@ -3364,13 +3475,35 @@ def create_app() -> FastAPI:
                         del obj
                     except Exception:
                         pass
+
+            try:
+                import torch._dynamo
+                torch._dynamo.reset()
+            except Exception:
+                pass
+
             gc.collect()
-            import torch
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
+                try:
+                    torch.cuda.ipc_collect()
+                except Exception:
+                    pass
+            cuda_after = None
+            if torch.cuda.is_available():
+                cuda_after = {
+                    "allocated_gb": torch.cuda.memory_allocated() / (1024**3),
+                    "reserved_gb": torch.cuda.memory_reserved() / (1024**3),
+                }
             app.state._initialized = False
-            return _wrap_response({"status": "unloaded"})
+            app.state._config_path = None
+            return _wrap_response({
+                "status": "unloaded",
+                "cuda_before": cuda_before,
+                "cuda_after": cuda_after,
+            })
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Unload failed: {e}")
 

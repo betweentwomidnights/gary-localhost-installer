@@ -37,7 +37,7 @@ def sync_lora_state_from_service(self) -> None:
 
 def ensure_lora_registry(self) -> None:
     decoder = _decoder_from_host(self)
-    if not hasattr(self, "_lora_service"):
+    if not hasattr(self, "_lora_service") or self._lora_service is None:
         self._lora_service = LoraService(decoder=decoder)
     else:
         self._lora_service.bind_decoder(decoder)

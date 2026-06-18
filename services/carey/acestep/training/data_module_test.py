@@ -12,6 +12,8 @@ import unittest
 
 from acestep.training.path_safety import safe_path, set_safe_root
 from acestep.training.data_module import (
+    PromptVariantSampler,
+    PreprocessedDataModule,
     PreprocessedTensorDataset,
     load_dataset_from_json,
 )
@@ -128,6 +130,69 @@ class PreprocessedTensorDatasetPathSafetyTests(unittest.TestCase):
                 os.path.realpath(ds.valid_paths[0]),
                 os.path.realpath(pt_file),
             )
+
+
+class PromptVariantSamplerTests(unittest.TestCase):
+    def setUp(self):
+        set_safe_root(tempfile.gettempdir())
+
+    def _make_variant_dataset(self, directory, track_count=10, genre_ratio=20):
+        groups = []
+        samples = []
+        for index in range(track_count):
+            caption = f"track-{index}.pt"
+            genre = f"track-{index}.genre.pt"
+            open(os.path.join(directory, caption), "wb").close()
+            open(os.path.join(directory, genre), "wb").close()
+            samples.append(caption)
+            groups.append({"path": caption, "genre_path": genre})
+        manifest = {
+            "metadata": {
+                "genre_ratio": genre_ratio,
+                "prompt_variant_strategy": "epoch_rotating_track_swap",
+            },
+            "samples": samples,
+            "sample_groups": groups,
+            "num_samples": track_count,
+        }
+        with open(os.path.join(directory, "manifest.json"), "w") as handle:
+            json.dump(manifest, handle)
+        return PreprocessedTensorDataset(directory)
+
+    def test_twenty_percent_yields_ten_tracks_and_two_genres_per_epoch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = self._make_variant_dataset(directory)
+            sampler = PromptVariantSampler(dataset)
+
+            first_epoch = list(sampler)
+            second_epoch = list(sampler)
+
+            self.assertEqual(len(first_epoch), 10)
+            self.assertEqual(sum(use_genre for _, use_genre in first_epoch), 2)
+            self.assertEqual(sum(use_genre for _, use_genre in second_epoch), 2)
+            first_genres = {index for index, use_genre in first_epoch if use_genre}
+            second_genres = {index for index, use_genre in second_epoch if use_genre}
+            self.assertTrue(first_genres.isdisjoint(second_genres))
+
+    def test_rotation_covers_all_tracks_in_five_epochs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = self._make_variant_dataset(directory)
+            sampler = PromptVariantSampler(dataset)
+
+            selected = set()
+            for _ in range(5):
+                selected.update(index for index, use_genre in sampler if use_genre)
+
+            self.assertEqual(selected, set(range(10)))
+
+    def test_data_module_length_remains_one_sample_per_track(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._make_variant_dataset(directory)
+            module = PreprocessedDataModule(directory, batch_size=1, num_workers=0)
+            module.setup("fit")
+
+            self.assertEqual(len(module.train_dataset), 10)
+            self.assertEqual(len(module.train_dataloader()), 10)
 
 
 class SaveManifestTests(unittest.TestCase):

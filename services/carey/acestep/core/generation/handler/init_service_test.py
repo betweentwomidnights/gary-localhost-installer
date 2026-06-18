@@ -377,6 +377,21 @@ class InitServiceMixinTests(unittest.TestCase):
     def test_initialize_service_success_uses_decomposed_helpers(self):
         """It executes decomposed helper calls and returns a success status payload."""
         host = _Host(project_root="K:/fake_root", device="cpu")
+        host.lora_loaded = True
+        host.use_lora = True
+        host.lora_scale = 0.5
+        host._base_decoder = {"stale": torch.ones(1)}
+        host._active_loras = {"old": 0.5}
+        host._lora_adapter_registry = {"old": object()}
+        host._lora_active_adapter = "old"
+        host._lora_scale_state = {"old": 0.5}
+        host._adapter_type = "lora"
+        host._lora_service = types.SimpleNamespace(
+            registry={"old": object()},
+            scale_state={"old": 0.5},
+            active_adapter="old",
+            last_scale_report={"old": 0.5},
+        )
 
         def _fake_load_main_model(**_kwargs):
             """Simulate successful main-model load by setting minimal config state."""
@@ -421,6 +436,19 @@ class InitServiceMixinTests(unittest.TestCase):
         self.assertEqual(host.last_init_params["device"], "cpu")
         ensure_models.assert_called_once()
         sync_code.assert_called_once()
+        self.assertFalse(host.lora_loaded)
+        self.assertFalse(host.use_lora)
+        self.assertEqual(host.lora_scale, 1.0)
+        self.assertIsNone(host._base_decoder)
+        self.assertEqual(host._active_loras, {})
+        self.assertEqual(host._lora_adapter_registry, {})
+        self.assertIsNone(host._lora_active_adapter)
+        self.assertEqual(host._lora_scale_state, {})
+        self.assertIsNone(host._adapter_type)
+        self.assertEqual(host._lora_service.registry, {})
+        self.assertEqual(host._lora_service.scale_state, {})
+        self.assertIsNone(host._lora_service.active_adapter)
+        self.assertEqual(host._lora_service.last_scale_report, {})
 
     def test_initialize_service_returns_error_payload_when_loader_raises(self):
         """It catches init errors and returns a formatted failure message."""

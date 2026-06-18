@@ -312,6 +312,33 @@ impl ModelManager {
                     "Qwen3-Embedding-0.6B/tokenizer.json",
                 ],
             ),
+            (
+                "carey::acestep-5Hz-lm-0.6B",
+                "ACE-Step 5Hz LM 0.6B (captioner)",
+                "lm",
+                &[
+                    "acestep-5Hz-lm-0.6B/config.json",
+                    "acestep-5Hz-lm-0.6B/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-5Hz-lm-1.7B",
+                "ACE-Step 5Hz LM 1.7B (captioner)",
+                "lm",
+                &[
+                    "acestep-5Hz-lm-1.7B/config.json",
+                    "acestep-5Hz-lm-1.7B/model.safetensors",
+                ],
+            ),
+            (
+                "carey::acestep-5Hz-lm-4B",
+                "ACE-Step 5Hz LM 4B (captioner)",
+                "lm",
+                &[
+                    "acestep-5Hz-lm-4B/config.json",
+                    "acestep-5Hz-lm-4B/model.safetensors",
+                ],
+            ),
         ];
 
         components
@@ -1049,6 +1076,9 @@ pub async fn download_carey_model(
         "acestep-v15-xl-turbo" => ("ACE-Step/acestep-v15-xl-turbo", ""),
         "vae" => ("ACE-Step/Ace-Step1.5", "vae/**"),
         "Qwen3-Embedding-0.6B" => ("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**"),
+        "acestep-5Hz-lm-0.6B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-0.6B/**"),
+        "acestep-5Hz-lm-1.7B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**"),
+        "acestep-5Hz-lm-4B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-4B/**"),
         other => return Err(format!("Unknown Carey component: {}", other)),
     };
 

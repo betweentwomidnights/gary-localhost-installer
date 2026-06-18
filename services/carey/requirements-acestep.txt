@@ -38,7 +38,8 @@ toml
 modelscope
 
 # Training dependencies (required for LoRA/LoKr training)
-peft>=0.18.0
+# PEFT 0.19+ requires torchao>=0.16, which does not support Windows torch 2.7.1.
+peft==0.18.1
 lycoris-lora
 lightning>=2.0.0
 tensorboard>=2.0.0

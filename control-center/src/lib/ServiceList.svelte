@@ -22,13 +22,14 @@
     build_status: BuildStatus | null;
   }
 
-  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onManageSa3Loras, onTrainSa3Lora }: {
+  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
     hfTokenConfigured: boolean;
     onSelect: (id: string) => void;
     onShowModels: (id: string) => void;
     onManageCareyLoras: () => void;
+    onTrainCareyAce: () => void;
     onManageSa3Loras: () => void;
     onTrainSa3Lora: () => void;
   } = $props();
@@ -59,6 +60,8 @@
       onShowModels={() => onShowModels(service.id)}
       hasCareyLoras={service.id === "carey"}
       onManageCareyLoras={onManageCareyLoras}
+      hasCareyAceTraining={service.id === "carey"}
+      onTrainCareyAce={onTrainCareyAce}
       hasSa3Loras={service.id === "sa3"}
       onManageSa3Loras={onManageSa3Loras}
       hasSa3LoraTraining={service.id === "sa3" && hfTokenConfigured}

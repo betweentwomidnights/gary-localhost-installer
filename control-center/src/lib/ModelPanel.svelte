@@ -123,6 +123,9 @@
   let careySharedModels = $derived(
     serviceModels.filter((m) => m.size_category === "shared")
   );
+  let careyLmModels = $derived(
+    serviceModels.filter((m) => m.size_category === "lm")
+  );
   let careyDitModels = $derived(
     serviceModels.filter((m) => m.size_category === "dit")
   );
@@ -338,6 +341,43 @@
           models are stored in services/carey/checkpoints/.
         </div>
         {#each careySharedModels as model}
+          {@const prog = getProgress(model.id)}
+          <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
+            <div class="model-info">
+              <span class="model-name">{model.display_name}</span>
+              <span class="model-path">{model.id.replace("carey::", "")}</span>
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
+            </div>
+            {#if model.status === "downloading" && prog}
+              <div class="download-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {Math.round(prog.progress * 100)}%"></div>
+                </div>
+                <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
+              </div>
+            {:else}
+              <button
+                class="dl-btn"
+                class:downloaded={model.status === "downloaded"}
+                class:failed={model.status === "failed"}
+                disabled={model.status === "downloading" || model.status === "downloaded"}
+                onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
+              >
+                {statusLabels[model.status] || "Download"}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      <div class="size-group">
+        <div class="size-label">captioner LMs</div>
+        <div class="carey-hint">
+          used by understand_music to draft captions, genres, BPM, and key. 1.7B is the sweet spot when it fits; 4B is for larger GPUs.
+        </div>
+        {#each careyLmModels as model}
           {@const prog = getProgress(model.id)}
           <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
             <div class="model-info">

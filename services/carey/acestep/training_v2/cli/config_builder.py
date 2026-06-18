@@ -117,6 +117,7 @@ def build_configs(args: argparse.Namespace) -> Tuple[AdapterConfig, TrainingConf
             dropout=args.dropout,
             target_modules=resolved_modules,
             bias=args.bias,
+            use_dora=getattr(args, "use_dora", False),
             attention_type=attention_type,
         )
 

@@ -2,9 +2,9 @@
   import { tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import Sa3DatasetSidecarModal from "./Sa3DatasetSidecarModal.svelte";
+  import CareyAceDatasetSidecarModal from "./CareyAceDatasetSidecarModal.svelte";
 
-  interface Sa3LoraTrainingState {
+  interface CareyAceTrainingState {
     jobId: string | null;
     name: string | null;
     status: string;
@@ -19,6 +19,18 @@
     finalCheckpointPath: string | null;
     currentStep: number | null;
     maxSteps: number | null;
+    currentFile: number | null;
+    totalFiles: number | null;
+    sampleCount: number | null;
+    captionedCount: number | null;
+    captionLmModel: string | null;
+    modelFamily: string | null;
+    adapterType: string | null;
+    captionsPath: string | null;
+    datasetJsonPath: string | null;
+    trainingPlanPath: string | null;
+    resultPath: string | null;
+    registeredLoraName: string | null;
     logTail: string;
   }
 
@@ -27,19 +39,21 @@
     serviceStatus,
     serviceEnvExists,
     onClose,
+    onShowModels,
   }: {
     open: boolean;
     serviceStatus: "stopped" | "starting" | "running" | "unhealthy" | "failed";
     serviceEnvExists: boolean;
     onClose: () => void;
+    onShowModels: () => void;
   } = $props();
 
-  let trainingState: Sa3LoraTrainingState = $state({
+  let trainingState: CareyAceTrainingState = $state({
     jobId: null,
     name: null,
     status: "idle",
     phase: "idle",
-    message: "No SA3 LoRA training job has been started.",
+    message: "No ACE-Step LoRA training job has been started.",
     error: null,
     pid: null,
     childPid: null,
@@ -49,13 +63,27 @@
     finalCheckpointPath: null,
     currentStep: null,
     maxSteps: null,
+    currentFile: null,
+    totalFiles: null,
+    sampleCount: null,
+    captionedCount: null,
+    captionLmModel: null,
+    modelFamily: null,
+    adapterType: null,
+    captionsPath: null,
+    datasetJsonPath: null,
+    trainingPlanPath: null,
+    resultPath: null,
+    registeredLoraName: null,
     logTail: "",
   });
+
   let loading = $state(false);
   let starting = $state(false);
   let cancelling = $state(false);
   let error = $state<string | null>(null);
   let sidecarModalOpen = $state(false);
+  let modalElement: HTMLDivElement | null = $state(null);
   let logSection: HTMLDivElement | null = $state(null);
   let logOutput: HTMLPreElement | null = $state(null);
   let autoScrollLog = $state(true);
@@ -67,15 +95,26 @@
 
   let formName = $state("");
   let datasetPath = $state("");
-  let fixedPrompt = $state("");
-  let maxSteps = $state(2000);
-  let rank = $state(16);
+  let model = $state<"base" | "xl-base">("base");
+  let adapterType = $state<"lora" | "dora">("dora");
+  let trigger = $state("");
+  let instrumental = $state(true);
+  let autoCaption = $state(true);
+  let captionLmModel = $state("acestep-5Hz-lm-1.7B");
+  let overwriteCaptions = $state(false);
+  let genreRatio = $state(20);
+  let bpmAnalysis = $state(true);
+  let keyAnalysis = $state(true);
+  let includeAutoTimesignature = $state(false);
+  let analysisDuration = $state(0);
+  let rank = $state(64);
+  let epochs = $state(150);
+  let saveEvery = $state(25);
   let batchSize = $state(1);
-  let checkpointEvery = $state(500);
-  let latentCropSeconds = $state(47);
-  let learningRateText = $state("1e-4");
-  let loudnessFixEnabled = $state(false);
-  let targetLatentRms = $state(0.9);
+  let gradientAccumulation = $state(1);
+  let learningRateText = $state("3e-4");
+  const cfgRatio = 0.15;
+  let maxDuration = $state(240);
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -85,20 +124,6 @@
     error = null;
     try {
       await invoke("reveal_path", { path });
-    } catch (e) {
-      error = describeError(e);
-    }
-  }
-
-  function formatLearningRate(value: number): string {
-    if (!Number.isFinite(value) || value <= 0) return "invalid";
-    return value.toFixed(12).replace(/0+$/, "").replace(/\.$/, "");
-  }
-
-  async function openUnderfit() {
-    error = null;
-    try {
-      await invoke("open_sa3_training_reference", { reference: "underfit" });
     } catch (e) {
       error = describeError(e);
     }
@@ -118,6 +143,23 @@
       .slice(0, 64);
   }
 
+  function formatLearningRate(value: number): string {
+    if (!Number.isFinite(value) || value <= 0) return "invalid";
+    return value.toFixed(12).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  async function pickDatasetFolder() {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (typeof selected !== "string") return;
+    datasetPath = selected;
+    if (!formName.trim()) {
+      formName = suggestName(selected);
+    }
+    if (!trigger.trim()) {
+      trigger = suggestName(selected);
+    }
+  }
+
   function handleLogMouseDown() {
     isSelectingLog = true;
   }
@@ -128,29 +170,53 @@
     }, 100);
   }
 
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  async function waitForLayout() {
+    await tick();
+    await nextFrame();
+    await nextFrame();
+  }
+
+  function scrollLogPaneToBottom() {
+    if (!logOutput) return;
+    isLogAutoScrolling = true;
+    logOutput.scrollTop = logOutput.scrollHeight;
+    requestAnimationFrame(() => {
+      isLogAutoScrolling = false;
+    });
+  }
+
+  function scrollModalToBottom() {
+    if (modalElement) {
+      modalElement.scrollTop = modalElement.scrollHeight;
+      return;
+    }
+    logSection?.scrollIntoView({ behavior: "auto", block: "end" });
+  }
+
   async function scrollLogToBottom() {
     autoScrollLog = true;
-    await tick();
-    if (logOutput) {
-      isLogAutoScrolling = true;
-      logOutput.scrollTop = logOutput.scrollHeight;
-      requestAnimationFrame(() => {
-        isLogAutoScrolling = false;
-      });
-    }
+    await waitForLayout();
+    scrollLogPaneToBottom();
   }
 
   async function revealLogOutput() {
-    await tick();
-    logSection?.scrollIntoView({ behavior: "smooth", block: "start" });
-    await scrollLogToBottom();
+    shouldRevealLog = false;
+    await waitForLayout();
+    scrollLogPaneToBottom();
+    scrollModalToBottom();
+    await nextFrame();
+    scrollLogPaneToBottom();
+    scrollModalToBottom();
   }
 
   function handleLogScroll() {
     if (!logOutput || isLogAutoScrolling) return;
     const { scrollTop, scrollHeight, clientHeight } = logOutput;
-    const nearBottom = scrollHeight - scrollTop - clientHeight < 50;
-    if (!nearBottom) {
+    if (scrollHeight - scrollTop - clientHeight >= 50) {
       autoScrollLog = false;
     }
   }
@@ -170,7 +236,7 @@
   async function loadTrainingState() {
     loading = true;
     try {
-      trainingState = await invoke<Sa3LoraTrainingState>("get_sa3_lora_training_state");
+      trainingState = await invoke<CareyAceTrainingState>("get_carey_ace_lora_training_state");
     } catch (e) {
       error = describeError(e);
     } finally {
@@ -178,32 +244,35 @@
     }
   }
 
-  async function pickDatasetFolder() {
-    const selected = await openDialog({ directory: true, multiple: false });
-    if (typeof selected !== "string") return;
-    datasetPath = selected;
-    if (!formName.trim()) {
-      formName = suggestName(selected);
-    }
-  }
-
-  async function startTraining() {
+  async function startJob(prepareOnly: boolean) {
     starting = true;
     error = null;
     autoScrollLog = true;
     try {
-      trainingState = await invoke<Sa3LoraTrainingState>("start_sa3_lora_training", {
+      trainingState = await invoke<CareyAceTrainingState>("start_carey_ace_lora_training", {
         name: formName,
         datasetPath,
-        fixedPrompt,
-        maxSteps,
+        model,
+        adapterType,
+        trigger,
+        instrumental,
+        autoCaption: prepareOnly ? autoCaption : false,
+        captionLmModel,
+        overwriteCaptions,
+        genreRatio,
+        prepareOnly,
+        includeAutoTimesignature,
+        bpmAnalysis,
+        keyAnalysis,
+        analysisDuration,
         rank,
+        epochs,
+        saveEvery,
         batchSize,
-        checkpointEvery,
-        latentCropSeconds,
+        gradientAccumulation,
         learningRate,
-        loudnessFixEnabled,
-        targetLatentRms,
+        cfgRatio,
+        maxDuration,
       });
       shouldRevealLog = true;
       await revealLogOutput();
@@ -218,7 +287,7 @@
     cancelling = true;
     error = null;
     try {
-      trainingState = await invoke<Sa3LoraTrainingState>("cancel_sa3_lora_training");
+      trainingState = await invoke<CareyAceTrainingState>("cancel_carey_ace_lora_training");
     } catch (e) {
       error = describeError(e);
     } finally {
@@ -231,27 +300,30 @@
   );
   let learningRate = $derived(Number(learningRateText.trim()));
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
-  let canStart = $derived(
+  let commonValid = $derived(
     open &&
       serviceEnvExists &&
-      serviceStatus !== "running" &&
       !starting &&
       !cancelling &&
       !isTraining &&
       !!formName.trim() &&
       !!datasetPath.trim() &&
-      maxSteps > 0 &&
       rank > 0 &&
+      epochs > 0 &&
+      saveEvery > 0 &&
       batchSize > 0 &&
-      checkpointEvery > 0 &&
-      latentCropSeconds > 0 &&
+      gradientAccumulation > 0 &&
+      maxDuration > 0 &&
+      genreRatio >= 0 &&
+      genreRatio <= 100 &&
       Number.isFinite(learningRate) &&
       learningRate > 0 &&
-      (!loudnessFixEnabled ||
-        (Number.isFinite(targetLatentRms) &&
-          targetLatentRms >= 0.5 &&
-          targetLatentRms <= 1.3))
+      Number.isFinite(cfgRatio) &&
+      cfgRatio >= 0 &&
+      cfgRatio < 1
   );
+  let canPrepare = $derived(commonValid);
+  let canTrain = $derived(commonValid);
 
   $effect(() => {
     if (!open) return;
@@ -268,7 +340,7 @@
       lastJobId = jobId;
       lastLogLength = 0;
       autoScrollLog = true;
-      if (jobId && isTraining) {
+      if (jobId && isTraining && !starting) {
         shouldRevealLog = true;
       }
     }
@@ -304,7 +376,7 @@
         logOutput.scrollTop = logOutput.scrollHeight;
       }
       if (reveal) {
-        logSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+        scrollModalToBottom();
         shouldRevealLog = false;
       }
       requestAnimationFrame(() => {
@@ -316,109 +388,183 @@
 
 {#if open}
   <div class="overlay">
-    <button type="button" class="backdrop" aria-label="close sa3 lora trainer" onclick={onClose}></button>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sa3-train-title" tabindex="-1">
-      <div class="eyebrow">sa3 lora trainer</div>
-      <div class="title" id="sa3-train-title">train a local SA3 LoRA</div>
+    <button type="button" class="backdrop" aria-label="close ace-step lora trainer" onclick={onClose}></button>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ace-train-title" tabindex="-1" bind:this={modalElement}>
+      <div class="eyebrow">carey ace-step trainer</div>
+      <div class="title" id="ace-train-title">train a local ACE-Step LoRA</div>
       <div class="body">
-        select a folder of audio files. optional same-name `.txt` prompts are picked up during encoding; the finished checkpoint is added to the SA3 LoRA registry.
+        prepare ACE sidecars with understand_music, edit the metadata, then train a LoRA or DoRA adapter against base or xl-base. Successful runs register themselves in Carey's LoRA registry.
         <div class="upstream-credit">
-          this LoRA trainer is a stripped-down version of dada-bots'
-          <button type="button" onclick={() => void openUnderfit()}>underfit</button>
-          repo.
+          trainer references koda-dernet's
+          <button type="button" onclick={() => void invoke("open_url", { url: "https://github.com/koda-dernet/Side-Step" })}>Side-Step</button>
+          project, adapted into Gary's local workflow.
         </div>
       </div>
 
       {#if !serviceEnvExists}
-        <div class="warning">build SA3 first so the training environment exists.</div>
+        <div class="warning">build Carey first so the ACE-Step training environment exists.</div>
       {:else if serviceStatus === "running"}
-        <div class="warning">stop SA3 before training. generation keeps the model in VRAM.</div>
+        <div class="warning">Starting the trainer will stop Carey inference first so the captioner/trainer can own GPU memory.</div>
       {/if}
 
       <div class="section-label">dataset</div>
       <div class="form-grid">
         <label class="field">
           <span>LoRA name</span>
-          <input type="text" bind:value={formName} placeholder="my-style" />
+          <input type="text" bind:value={formName} placeholder="my-ace-style" />
+        </label>
+        <label class="field">
+          <span>trigger tag</span>
+          <input type="text" bind:value={trigger} placeholder="patch" />
         </label>
 
         <label class="field wide">
           <span>audio folder</span>
           <div class="path-row">
-            <input type="text" bind:value={datasetPath} placeholder="C:\\path\\to\\audio dataset" />
+            <input type="text" bind:value={datasetPath} placeholder="C:\\path\\to\\ace dataset" />
             <button type="button" onclick={pickDatasetFolder}>pick folder</button>
             <button type="button" onclick={() => sidecarModalOpen = true} disabled={!datasetPath.trim()}>
-              edit prompts
+              edit prompts / sidecars
             </button>
           </div>
         </label>
+      </div>
 
-        <label class="field wide">
-          <span>style prompt / trigger text</span>
-          <input type="text" bind:value={fixedPrompt} placeholder="optional shared style phrase" />
+      <div class="section-label">captioner</div>
+      <div class="settings-grid">
+        <label class="field">
+          <span>LM model</span>
+          <select bind:value={captionLmModel}>
+            <option value="acestep-5Hz-lm-0.6B">0.6B low VRAM</option>
+            <option value="acestep-5Hz-lm-1.7B">1.7B recommended</option>
+            <option value="acestep-5Hz-lm-4B">4B large GPU</option>
+          </select>
         </label>
+        <label class="toggle-field">
+          <input type="checkbox" bind:checked={autoCaption} />
+          <span>
+            <strong>auto-caption missing sidecars</strong>
+            <small>starts a temporary LM-backed ACE captioner for full-track understand_music, then releases GPU memory.</small>
+          </span>
+        </label>
+        <label class="toggle-field">
+          <input type="checkbox" bind:checked={overwriteCaptions} />
+          <span>
+            <strong>overwrite existing sidecars</strong>
+            <small>use this only when you want to replace human edits.</small>
+          </span>
+        </label>
+        <label class="field">
+          <span>genre prompt ratio</span>
+          <input type="number" min="0" max="100" step="1" bind:value={genreRatio} />
+          <small>Each epoch, {genreRatio}% of tracks use genre instead of caption.</small>
+        </label>
+        <label class="toggle-field">
+          <input type="checkbox" bind:checked={bpmAnalysis} />
+          <span>
+            <strong>BPM sanity check</strong>
+            <small>local tempo estimate can override obvious LM mistakes.</small>
+          </span>
+        </label>
+        <label class="toggle-field">
+          <input type="checkbox" bind:checked={keyAnalysis} />
+          <span>
+            <strong>key sanity check</strong>
+            <small>conservative local chroma estimate; ambiguous keys stay editable.</small>
+          </span>
+        </label>
+        <label class="toggle-field">
+          <input type="checkbox" bind:checked={includeAutoTimesignature} />
+          <span>
+            <strong>include LM signature</strong>
+            <small>off by default because signatures are easy to hallucinate and optional.</small>
+          </span>
+        </label>
+        <label class="toggle-field">
+          <input type="checkbox" bind:checked={instrumental} />
+          <span>
+            <strong>instrumental default</strong>
+            <small>empty lyrics become [Instrumental]; pasted lyrics still win.</small>
+          </span>
+        </label>
+      </div>
+      <div class="captioner-prepare">
+        <div>
+          <strong>caption and prepare dataset</strong>
+          {#if autoCaption}
+            <small>runs understand_music for missing sidecars, applies BPM/key checks, then writes dataset metadata for review.</small>
+          {:else}
+            <small>skips LM captioning and prepares dataset metadata from your existing editable sidecars.</small>
+          {/if}
+        </div>
+        <button type="button" class="accent" onclick={() => void startJob(true)} disabled={!canPrepare}>
+          {starting ? "launching..." : "caption / prepare"}
+        </button>
       </div>
 
       <div class="section-label">training</div>
       <div class="settings-grid">
         <label class="field">
-          <span>steps</span>
-          <input type="number" min="1" step="100" bind:value={maxSteps} />
+          <span>base model</span>
+          <select bind:value={model}>
+            <option value="base">ace-step-v15-base</option>
+            <option value="xl-base">ace-step-v15-xl-base</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>adapter</span>
+          <select bind:value={adapterType}>
+            <option value="dora">DoRA</option>
+            <option value="lora">LoRA</option>
+          </select>
         </label>
         <label class="field">
           <span>rank</span>
           <input type="number" min="1" step="1" bind:value={rank} />
         </label>
         <label class="field">
+          <span>epochs</span>
+          <input type="number" min="1" step="1" bind:value={epochs} />
+        </label>
+        <label class="field">
+          <span>save every</span>
+          <input type="number" min="1" step="1" bind:value={saveEvery} />
+        </label>
+        <label class="field">
           <span>batch size</span>
           <input type="number" min="1" step="1" bind:value={batchSize} />
         </label>
         <label class="field">
-          <span>checkpoint every</span>
-          <input type="number" min="1" step="100" bind:value={checkpointEvery} />
-        </label>
-        <label class="field">
-          <span>crop seconds</span>
-          <input type="number" min="1" step="1" bind:value={latentCropSeconds} />
+          <span>grad accum</span>
+          <input type="number" min="1" step="1" bind:value={gradientAccumulation} />
         </label>
         <label class="field">
           <span>learning rate</span>
           <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} />
-          <small class:invalid={learningRateDecimal === "invalid"}>
-            decimal: {learningRateDecimal}
-          </small>
+          <small class:invalid={learningRateDecimal === "invalid"}>decimal: {learningRateDecimal}</small>
         </label>
-        <label class="toggle-field wide">
-          <input type="checkbox" bind:checked={loudnessFixEnabled} />
-          <span>
-            <strong>experimental loudness fix</strong>
-            <small>normalizes each track's encoded latent RMS; pre-encoding will take longer.</small>
-          </span>
+        <label class="field">
+          <span>max track seconds</span>
+          <input type="number" min="1" step="1" bind:value={maxDuration} />
         </label>
-        {#if loudnessFixEnabled}
-          <label class="field">
-            <span>target latent RMS</span>
-            <input type="number" min="0.5" max="1.3" step="0.01" bind:value={targetLatentRms} />
-            <small>0.90 matches base-model loudness. Lower is quieter; higher is hotter.</small>
-          </label>
-        {/if}
       </div>
 
       <div class="note">
-        defaults favor 8-16 GB cards: DoRA, fp16 base weights, batch 1, random 47s crops, and no training demos.
+        Use caption/prepare first, review the sidecars, then train; the trainer owns its captioning process separately from Carey inference.
+        <button type="button" class="inline-link" onclick={onShowModels}>open Carey models</button>
       </div>
 
       <div class="actions">
-        <button class="accent" onclick={startTraining} disabled={!canStart}>
-          {starting ? "launching..." : "train LoRA"}
+        <button type="button" class="accent-secondary" onclick={() => void startJob(false)} disabled={!canTrain}>
+          {starting ? "launching..." : `train ${adapterType === "dora" ? "DoRA" : "LoRA"}`}
         </button>
         {#if isTraining}
-          <button class="danger" onclick={cancelTraining} disabled={cancelling}>
-            {cancelling ? "cancelling..." : "cancel training"}
+          <button type="button" class="danger" onclick={cancelTraining} disabled={cancelling}>
+            {cancelling ? "cancelling..." : "cancel job"}
           </button>
         {/if}
-        <button onclick={() => void loadTrainingState()} disabled={loading}>refresh</button>
-        <button onclick={onClose}>close</button>
+        <button type="button" onclick={() => void loadTrainingState()} disabled={loading}>refresh</button>
+        <button type="button" onclick={onClose}>close</button>
       </div>
 
       {#if error}
@@ -433,7 +579,9 @@
               <div class="job-name">{trainingState.name ?? trainingState.jobId ?? "idle"}</div>
               <div class="job-meta">
                 {trainingState.status || "idle"} / {trainingState.phase || "idle"}
-                {#if trainingState.currentStep !== null && trainingState.maxSteps}
+                {#if trainingState.currentFile !== null && trainingState.totalFiles}
+                  / file {trainingState.currentFile} of {trainingState.totalFiles}
+                {:else if trainingState.currentStep !== null && trainingState.maxSteps}
                   / step {Math.min(trainingState.currentStep, trainingState.maxSteps)} of {trainingState.maxSteps}
                 {/if}
               </div>
@@ -446,9 +594,17 @@
           {#if trainingState.error}
             <div class="error-note">{trainingState.error}</div>
           {/if}
+          {#if trainingState.captionedCount !== null}
+            <div class="success-note">captioned {trainingState.captionedCount} track{trainingState.captionedCount === 1 ? "" : "s"}</div>
+          {/if}
           {#if trainingState.finalCheckpointPath}
             <button type="button" class="success-note path-link" onclick={() => void revealPath(trainingState.finalCheckpointPath!)} title="Show checkpoint in folder">
               registered checkpoint: {trainingState.finalCheckpointPath}
+            </button>
+          {/if}
+          {#if trainingState.datasetJsonPath}
+            <button type="button" class="job-path path-link" onclick={() => void revealPath(trainingState.datasetJsonPath!)} title="Show dataset in folder">
+              dataset: {trainingState.datasetJsonPath}
             </button>
           {/if}
           {#if trainingState.runDir}
@@ -476,26 +632,17 @@
             {/if}
           </div>
         </div>
-        <div
-          class="log-wrap"
-          role="presentation"
-          onmousedown={handleLogMouseDown}
-          onmouseup={handleLogMouseUp}
-        >
-          <pre
-            class="output"
-            bind:this={logOutput}
-            tabindex="-1"
-            onscroll={handleLogScroll}
-          >{trainingState?.logTail || "No output yet."}</pre>
+        <div class="log-wrap" role="presentation" onmousedown={handleLogMouseDown} onmouseup={handleLogMouseUp}>
+          <pre class="output" bind:this={logOutput} tabindex="-1" onscroll={handleLogScroll}>{trainingState?.logTail || "No output yet."}</pre>
         </div>
       </div>
     </div>
   </div>
-  <Sa3DatasetSidecarModal
+  <CareyAceDatasetSidecarModal
     open={sidecarModalOpen}
     {datasetPath}
-    sharedPrompt={fixedPrompt}
+    sharedTrigger={trigger}
+    defaultInstrumental={instrumental}
     onClose={() => sidecarModalOpen = false}
   />
 {/if}
@@ -508,7 +655,7 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    z-index: 72;
+    z-index: 74;
   }
 
   .backdrop {
@@ -519,25 +666,10 @@
     padding: 0;
   }
 
-  .upstream-credit {
-    margin-top: 8px;
-    color: var(--text-secondary);
-  }
-
-  .upstream-credit button {
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    font: inherit;
-    font-weight: 600;
-    padding: 0;
-    text-decoration: underline;
-  }
-
   .modal {
     position: relative;
     z-index: 1;
-    width: min(780px, 100%);
+    width: min(840px, 100%);
     max-height: min(88vh, 980px);
     overflow: auto;
     border: 1px solid var(--border);
@@ -565,6 +697,22 @@
     font-size: 13px;
     color: var(--text-primary);
     line-height: 1.55;
+  }
+
+  .upstream-credit {
+    margin-top: 8px;
+    color: var(--text-secondary);
+  }
+
+  .upstream-credit button,
+  .inline-link {
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 600;
+    padding: 0;
+    text-decoration: underline;
   }
 
   .note,
@@ -631,6 +779,10 @@
     margin-top: 12px;
   }
 
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .settings-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -658,16 +810,18 @@
     grid-column: 1 / -1;
   }
 
+  .path-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+  }
+
   .toggle-field {
     display: flex;
     align-items: flex-start;
     gap: 9px;
     color: var(--text-primary);
     cursor: pointer;
-  }
-
-  .toggle-field.wide {
-    grid-column: 1 / -1;
   }
 
   .toggle-field input {
@@ -694,10 +848,39 @@
     line-height: 1.45;
   }
 
-  .path-row {
+  .captioner-prepare {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-top: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    padding: 12px;
+  }
+
+  .captioner-prepare div {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 8px;
+    gap: 4px;
+  }
+
+  .captioner-prepare strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .captioner-prepare small {
+    color: var(--text-muted);
+    font: 10px var(--font-mono);
+    line-height: 1.45;
+  }
+
+  .captioner-prepare .accent {
+    flex: 0 0 auto;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
   }
 
   .actions {
@@ -707,16 +890,44 @@
     margin-top: 16px;
   }
 
-  .actions .accent {
-    background: var(--accent);
+  .actions .accent-secondary {
     border-color: var(--accent);
-    color: white;
+    color: var(--text-primary);
   }
 
   .actions .danger {
     border-color: rgba(255, 120, 120, 0.72);
     background: rgba(155, 42, 42, 0.28);
     color: #ffb3b3;
+  }
+
+  .job-card {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    padding: 12px;
+  }
+
+  .job-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .job-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .live {
+    border: 1px solid var(--green);
+    color: var(--green);
+    padding: 2px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
   }
 
   .log-section {
@@ -756,39 +967,6 @@
     gap: 6px;
   }
 
-  .log-wrap {
-    overflow: hidden;
-  }
-
-  .job-card {
-    margin-top: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
-    padding: 12px;
-  }
-
-  .job-top {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    align-items: flex-start;
-  }
-
-  .job-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .live {
-    border: 1px solid var(--green);
-    color: var(--green);
-    padding: 2px 8px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-  }
-
   .output {
     margin: 0;
     padding: 10px;
@@ -799,7 +977,7 @@
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 260px;
+    height: clamp(200px, 28vh, 260px);
     overflow: auto;
     user-select: text;
     -webkit-user-select: text;
@@ -813,7 +991,7 @@
     color: var(--text-secondary);
   }
 
-  @media (max-width: 700px) {
+  @media (max-width: 760px) {
     .overlay {
       padding: 12px;
     }
@@ -824,8 +1002,14 @@
     }
 
     .path-row,
+    .form-grid,
     .settings-grid {
       grid-template-columns: 1fr;
+    }
+
+    .captioner-prepare {
+      align-items: stretch;
+      flex-direction: column;
     }
   }
 </style>

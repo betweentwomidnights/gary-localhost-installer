@@ -59,6 +59,15 @@
     return error instanceof Error ? error.message : String(error);
   }
 
+  async function revealPath(path: string) {
+    error = null;
+    try {
+      await invoke("reveal_path", { path });
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+
   function basename(path: string): string {
     const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
     const parts = normalized.split("/");
@@ -301,9 +310,13 @@
                 <button class="danger" onclick={() => removeLora(entry.name)}>remove</button>
               </div>
 
-              <div class="entry-path">checkpoint: {entry.path}</div>
+              <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.path)} title="Show checkpoint in folder">
+                checkpoint: {entry.path}
+              </button>
               {#if entry.captionsPath}
-                <div class="entry-path">captions source: {entry.captionsPath}</div>
+                <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.captionsPath!)} title="Open captions folder">
+                  captions source: {entry.captionsPath}
+                </button>
               {:else if entry.resolvedCaptionsPath}
                 <div class="entry-path">captions source: using checkpoint folder sidecars</div>
               {:else}
@@ -412,6 +425,22 @@
   .entry-meta,
   .entry-path {
     color: var(--text-secondary);
+  }
+
+  .path-link {
+    display: block;
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .path-link:hover,
+  .path-link:focus-visible {
+    text-decoration: underline;
   }
 
   .warning {

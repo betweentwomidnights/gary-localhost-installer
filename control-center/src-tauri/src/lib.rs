@@ -203,6 +203,128 @@ struct CareyCaptionsBuildResult {
     output: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CareyAceSidecarFields {
+    #[serde(default)]
+    caption: String,
+    #[serde(default)]
+    genre: String,
+    #[serde(default)]
+    bpm: String,
+    #[serde(default)]
+    bpm_source: String,
+    #[serde(default)]
+    lm_bpm: String,
+    #[serde(default)]
+    local_bpm: String,
+    #[serde(default)]
+    filename_bpm: String,
+    #[serde(default)]
+    keyscale: String,
+    #[serde(default)]
+    key_source: String,
+    #[serde(default)]
+    lm_keyscale: String,
+    #[serde(default)]
+    local_keyscale: String,
+    #[serde(default)]
+    timesignature: String,
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    is_instrumental: bool,
+    #[serde(default)]
+    custom_tag: String,
+    #[serde(default)]
+    lyrics: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyAceDatasetSidecarEntry {
+    audio_path: String,
+    relative_path: String,
+    sidecar_path: String,
+    exists: bool,
+    raw_content: String,
+    fields: CareyAceSidecarFields,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyAceDatasetSidecarUpdate {
+    audio_path: String,
+    fields: CareyAceSidecarFields,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyAceDatasetSidecarSaveResult {
+    saved: usize,
+    removed: usize,
+    entries: Vec<CareyAceDatasetSidecarEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CareyAceTrainingState {
+    #[serde(default)]
+    job_id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    child_pid: Option<u32>,
+    #[serde(default)]
+    run_dir: Option<String>,
+    #[serde(default)]
+    log_path: Option<String>,
+    #[serde(default)]
+    cancel_path: Option<String>,
+    #[serde(default)]
+    final_checkpoint_path: Option<String>,
+    #[serde(default)]
+    current_step: Option<u32>,
+    #[serde(default)]
+    max_steps: Option<u32>,
+    #[serde(default)]
+    current_file: Option<u32>,
+    #[serde(default)]
+    total_files: Option<u32>,
+    #[serde(default)]
+    sample_count: Option<u32>,
+    #[serde(default)]
+    captioned_count: Option<u32>,
+    #[serde(default)]
+    caption_lm_model: Option<String>,
+    #[serde(default)]
+    model_family: Option<String>,
+    #[serde(default)]
+    adapter_type: Option<String>,
+    #[serde(default)]
+    captions_path: Option<String>,
+    #[serde(default)]
+    dataset_json_path: Option<String>,
+    #[serde(default)]
+    training_plan_path: Option<String>,
+    #[serde(default)]
+    result_path: Option<String>,
+    #[serde(default)]
+    registered_lora_name: Option<String>,
+    #[serde(default)]
+    log_tail: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoraCatalogEntry {
@@ -438,6 +560,26 @@ fn carey_lora_registry_path() -> PathBuf {
 
 fn carey_captions_path() -> PathBuf {
     carey_runtime_dir().join("captions.json")
+}
+
+fn carey_training_dir() -> PathBuf {
+    carey_runtime_dir().join("training")
+}
+
+fn carey_training_jobs_dir() -> PathBuf {
+    carey_training_dir().join("jobs")
+}
+
+fn carey_training_logs_dir() -> PathBuf {
+    carey_training_dir().join("logs")
+}
+
+fn carey_training_current_job_path() -> PathBuf {
+    carey_training_dir().join("current_job.json")
+}
+
+fn carey_checkpoint_dir(runtime_root: &Path) -> PathBuf {
+    runtime_root.join("services").join("carey").join("checkpoints")
 }
 
 fn sa3_runtime_dir() -> PathBuf {
@@ -1138,6 +1280,311 @@ fn save_sa3_dataset_sidecar_updates(
     })
 }
 
+fn is_carey_ace_dataset_audio_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "wav" | "flac" | "mp3" | "ogg" | "opus" | "m4a"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn canonical_carey_ace_dataset_root(dataset_path: &str) -> Result<PathBuf, String> {
+    let trimmed = dataset_path.trim();
+    if trimmed.is_empty() {
+        return Err("Choose a dataset folder first".to_string());
+    }
+    let requested = PathBuf::from(trimmed);
+    if !requested.is_dir() {
+        return Err(format!(
+            "{} is not a valid dataset folder",
+            requested.display()
+        ));
+    }
+    requested
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))
+}
+
+fn collect_carey_ace_dataset_audio_files(
+    root: &Path,
+    directory: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let canonical_directory = directory
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", directory.display(), e))?;
+    if !canonical_directory.starts_with(root) || !visited.insert(canonical_directory.clone()) {
+        return Ok(());
+    }
+
+    for entry in read_dir_sorted(&canonical_directory)? {
+        let Ok(canonical_entry) = entry.canonicalize() else {
+            continue;
+        };
+        if !canonical_entry.starts_with(root) {
+            continue;
+        }
+        if canonical_entry.is_dir() {
+            collect_carey_ace_dataset_audio_files(root, &canonical_entry, visited, files)?;
+        } else if canonical_entry.is_file() && is_carey_ace_dataset_audio_file(&canonical_entry) {
+            files.push(canonical_entry);
+        }
+    }
+    Ok(())
+}
+
+fn normalize_carey_ace_sidecar_key(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().replace(' ', "_").as_str() {
+        "caption" => Some("caption"),
+        "genre" => Some("genre"),
+        "bpm" => Some("bpm"),
+        "bpm_source" => Some("bpm_source"),
+        "lm_bpm" => Some("lm_bpm"),
+        "local_bpm" => Some("local_bpm"),
+        "filename_bpm" => Some("filename_bpm"),
+        "key" | "keyscale" => Some("keyscale"),
+        "key_source" => Some("key_source"),
+        "lm_keyscale" => Some("lm_keyscale"),
+        "local_keyscale" => Some("local_keyscale"),
+        "signature" | "timesignature" | "time_signature" => Some("timesignature"),
+        "language" => Some("language"),
+        "is_instrumental" => Some("is_instrumental"),
+        "custom_tag" => Some("custom_tag"),
+        "lyrics" => Some("lyrics"),
+        _ => None,
+    }
+}
+
+fn commit_carey_ace_sidecar_value(
+    values: &mut BTreeMap<String, String>,
+    key: &mut Option<&'static str>,
+    lines: &mut Vec<String>,
+) {
+    if let Some(name) = key.take() {
+        values.insert(name.to_string(), lines.join("\n").trim().to_string());
+        lines.clear();
+    }
+}
+
+fn parse_carey_ace_sidecar_content(raw: &str) -> CareyAceSidecarFields {
+    let mut values = BTreeMap::<String, String>::new();
+    let mut current_key: Option<&'static str> = None;
+    let mut current_lines: Vec<String> = Vec::new();
+    let mut saw_known_key = false;
+
+    for line in raw.trim_start_matches('\u{feff}').lines() {
+        let parsed = line.split_once(':').and_then(|(key, value)| {
+            if key
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ' ')
+            {
+                normalize_carey_ace_sidecar_key(key).map(|name| (name, value.trim_start()))
+            } else {
+                None
+            }
+        });
+
+        if let Some((name, value)) = parsed {
+            commit_carey_ace_sidecar_value(&mut values, &mut current_key, &mut current_lines);
+            saw_known_key = true;
+            current_key = Some(name);
+            current_lines.push(value.trim_end().to_string());
+        } else if current_key.is_some() {
+            current_lines.push(line.trim_end().to_string());
+        }
+    }
+    commit_carey_ace_sidecar_value(&mut values, &mut current_key, &mut current_lines);
+
+    if !saw_known_key && !raw.trim().is_empty() {
+        return CareyAceSidecarFields {
+            lyrics: raw.trim().to_string(),
+            ..CareyAceSidecarFields::default()
+        };
+    }
+
+    CareyAceSidecarFields {
+        caption: values.remove("caption").unwrap_or_default(),
+        genre: values.remove("genre").unwrap_or_default(),
+        bpm: values.remove("bpm").unwrap_or_default(),
+        bpm_source: values.remove("bpm_source").unwrap_or_default(),
+        lm_bpm: values.remove("lm_bpm").unwrap_or_default(),
+        local_bpm: values.remove("local_bpm").unwrap_or_default(),
+        filename_bpm: values.remove("filename_bpm").unwrap_or_default(),
+        keyscale: values.remove("keyscale").unwrap_or_default(),
+        key_source: values.remove("key_source").unwrap_or_default(),
+        lm_keyscale: values.remove("lm_keyscale").unwrap_or_default(),
+        local_keyscale: values.remove("local_keyscale").unwrap_or_default(),
+        timesignature: values.remove("timesignature").unwrap_or_default(),
+        language: values.remove("language").unwrap_or_default(),
+        is_instrumental: values
+            .remove("is_instrumental")
+            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false),
+        custom_tag: values.remove("custom_tag").unwrap_or_default(),
+        lyrics: values.remove("lyrics").unwrap_or_default(),
+    }
+}
+
+fn clean_carey_ace_scalar(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn carey_ace_fields_are_empty(fields: &CareyAceSidecarFields) -> bool {
+    fields.caption.trim().is_empty()
+        && fields.genre.trim().is_empty()
+        && fields.bpm.trim().is_empty()
+        && fields.keyscale.trim().is_empty()
+        && fields.timesignature.trim().is_empty()
+        && fields.language.trim().is_empty()
+        && fields.custom_tag.trim().is_empty()
+        && fields.lyrics.trim().is_empty()
+        && !fields.is_instrumental
+}
+
+fn render_carey_ace_sidecar(fields: &CareyAceSidecarFields) -> String {
+    let mut lines = Vec::new();
+    for (key, value) in [
+        ("caption", fields.caption.as_str()),
+        ("genre", fields.genre.as_str()),
+        ("bpm", fields.bpm.as_str()),
+        ("bpm_source", fields.bpm_source.as_str()),
+        ("lm_bpm", fields.lm_bpm.as_str()),
+        ("local_bpm", fields.local_bpm.as_str()),
+        ("filename_bpm", fields.filename_bpm.as_str()),
+        ("keyscale", fields.keyscale.as_str()),
+        ("key_source", fields.key_source.as_str()),
+        ("lm_keyscale", fields.lm_keyscale.as_str()),
+        ("local_keyscale", fields.local_keyscale.as_str()),
+        ("timesignature", fields.timesignature.as_str()),
+        ("language", fields.language.as_str()),
+    ] {
+        let scalar = clean_carey_ace_scalar(value);
+        if !scalar.is_empty() {
+            lines.push(format!("{}: {}", key, scalar));
+        }
+    }
+    lines.push(format!(
+        "is_instrumental: {}",
+        if fields.is_instrumental { "true" } else { "false" }
+    ));
+    let tag = clean_carey_ace_scalar(&fields.custom_tag);
+    if !tag.is_empty() {
+        lines.push(format!("custom_tag: {}", tag));
+    }
+
+    let mut lyrics = fields.lyrics.trim().to_string();
+    if lyrics.is_empty() && fields.is_instrumental {
+        lyrics = "[Instrumental]".to_string();
+    }
+    let mut lyric_lines = lyrics.lines();
+    let first = lyric_lines.next().unwrap_or("");
+    lines.push(format!("lyrics: {}", first));
+    lines.extend(lyric_lines.map(|line| line.to_string()));
+    format!("{}\n", lines.join("\n"))
+}
+
+fn read_carey_ace_dataset_sidecars(
+    dataset_path: &str,
+) -> Result<Vec<CareyAceDatasetSidecarEntry>, String> {
+    let root = canonical_carey_ace_dataset_root(dataset_path)?;
+    let mut files = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    collect_carey_ace_dataset_audio_files(&root, &root, &mut visited, &mut files)?;
+    files.sort_by(|left, right| {
+        left.strip_prefix(&root)
+            .unwrap_or(left)
+            .to_string_lossy()
+            .to_lowercase()
+            .cmp(
+                &right
+                    .strip_prefix(&root)
+                    .unwrap_or(right)
+                    .to_string_lossy()
+                    .to_lowercase(),
+            )
+    });
+
+    Ok(files
+        .into_iter()
+        .map(|audio_path| {
+            let sidecar_path = audio_path.with_extension("txt");
+            let exists = sidecar_path.is_file();
+            let raw_content = if exists {
+                std::fs::read_to_string(&sidecar_path)
+                    .unwrap_or_default()
+                    .trim_start_matches('\u{feff}')
+                    .to_string()
+            } else {
+                String::new()
+            };
+            let fields = parse_carey_ace_sidecar_content(&raw_content);
+            CareyAceDatasetSidecarEntry {
+                relative_path: audio_path
+                    .strip_prefix(&root)
+                    .unwrap_or(&audio_path)
+                    .to_string_lossy()
+                    .to_string(),
+                audio_path: user_facing_windows_path(&audio_path),
+                sidecar_path: user_facing_windows_path(&sidecar_path),
+                exists,
+                raw_content,
+                fields,
+            }
+        })
+        .collect())
+}
+
+fn save_carey_ace_dataset_sidecar_updates(
+    dataset_path: &str,
+    sidecars: Vec<CareyAceDatasetSidecarUpdate>,
+) -> Result<CareyAceDatasetSidecarSaveResult, String> {
+    let root = canonical_carey_ace_dataset_root(dataset_path)?;
+    let mut saved = 0;
+    let mut removed = 0;
+
+    for sidecar in sidecars {
+        let requested_audio = PathBuf::from(sidecar.audio_path.trim());
+        let audio_path = requested_audio
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve {}: {}", requested_audio.display(), e))?;
+        if !audio_path.starts_with(&root)
+            || !audio_path.is_file()
+            || !is_carey_ace_dataset_audio_file(&audio_path)
+        {
+            return Err(format!(
+                "{} is not an audio file inside {}",
+                audio_path.display(),
+                root.display()
+            ));
+        }
+
+        let sidecar_path = audio_path.with_extension("txt");
+        if carey_ace_fields_are_empty(&sidecar.fields) {
+            if sidecar_path.is_file() {
+                std::fs::remove_file(&sidecar_path)
+                    .map_err(|e| format!("Cannot remove {}: {}", sidecar_path.display(), e))?;
+                removed += 1;
+            }
+            continue;
+        }
+
+        std::fs::write(&sidecar_path, render_carey_ace_sidecar(&sidecar.fields))
+            .map_err(|e| format!("Cannot save {}: {}", sidecar_path.display(), e))?;
+        saved += 1;
+    }
+
+    Ok(CareyAceDatasetSidecarSaveResult {
+        saved,
+        removed,
+        entries: read_carey_ace_dataset_sidecars(dataset_path)?,
+    })
+}
+
 fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
     let path = carey_lora_catalog_path();
     if !path.exists() {
@@ -1693,6 +2140,165 @@ fn read_sa3_lora_training_state() -> Sa3LoraTrainingState {
     }
 }
 
+fn carey_ace_current_training_status_path() -> Option<PathBuf> {
+    std::fs::read_to_string(carey_training_current_job_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("statusPath")
+                .and_then(|value| value.as_str())
+                .map(PathBuf::from)
+        })
+}
+
+fn default_carey_ace_training_state() -> CareyAceTrainingState {
+    CareyAceTrainingState {
+        job_id: None,
+        name: None,
+        status: "idle".to_string(),
+        phase: "idle".to_string(),
+        message: "No ACE-Step LoRA training job has been started.".to_string(),
+        error: None,
+        pid: None,
+        child_pid: None,
+        run_dir: None,
+        log_path: None,
+        cancel_path: None,
+        final_checkpoint_path: None,
+        current_step: None,
+        max_steps: None,
+        current_file: None,
+        total_files: None,
+        sample_count: None,
+        captioned_count: None,
+        caption_lm_model: None,
+        model_family: None,
+        adapter_type: None,
+        captions_path: None,
+        dataset_json_path: None,
+        training_plan_path: None,
+        result_path: None,
+        registered_lora_name: None,
+        log_tail: String::new(),
+    }
+}
+
+fn read_carey_ace_training_status_file(path: &Path) -> CareyAceTrainingState {
+    let mut state = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<CareyAceTrainingState>(&raw).ok())
+        .unwrap_or_else(default_carey_ace_training_state);
+
+    if let Some(log_path) = state.log_path.as_ref().map(PathBuf::from) {
+        state.log_tail = read_text_tail(&log_path, 16 * 1024);
+    }
+    state
+}
+
+fn read_carey_ace_lora_training_state() -> CareyAceTrainingState {
+    match carey_ace_current_training_status_path() {
+        Some(path) => read_carey_ace_training_status_file(&path),
+        None => read_carey_ace_training_status_file(Path::new("")),
+    }
+}
+
+fn write_carey_ace_training_launch_state(
+    status_path: &Path,
+    job_id: &str,
+    name: &str,
+    run_dir: &Path,
+    log_path: &Path,
+    cancel_path: &Path,
+    max_steps: u32,
+    message: &str,
+) -> Result<(), String> {
+    if let Some(parent) = status_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let payload = serde_json::json!({
+        "jobId": job_id,
+        "name": name,
+        "status": "starting",
+        "phase": "starting",
+        "message": message,
+        "runDir": run_dir.to_string_lossy(),
+        "logPath": log_path.to_string_lossy(),
+        "cancelPath": cancel_path.to_string_lossy(),
+        "currentStep": 0,
+        "maxSteps": max_steps,
+        "updatedAt": now_epoch_seconds(),
+    });
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize ACE training state: {}", e))?;
+    std::fs::write(status_path, json)
+        .map_err(|e| format!("Cannot save {}: {}", status_path.display(), e))?;
+
+    let current_payload = serde_json::json!({
+        "jobId": job_id,
+        "statusPath": status_path.to_string_lossy(),
+    });
+    let current_json = serde_json::to_string_pretty(&current_payload)
+        .map_err(|e| format!("Cannot serialize ACE current job: {}", e))?;
+    let current_path = carey_training_current_job_path();
+    if let Some(parent) = current_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(&current_path, current_json)
+        .map_err(|e| format!("Cannot save {}: {}", current_path.display(), e))?;
+    Ok(())
+}
+
+fn patch_carey_ace_training_status(
+    status_path: &Path,
+    updates: &[(&str, serde_json::Value)],
+) -> Result<(), String> {
+    let mut payload = std::fs::read_to_string(status_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    for (key, value) in updates {
+        payload.insert((*key).to_string(), value.clone());
+    }
+    payload.insert(
+        "updatedAt".to_string(),
+        serde_json::json!(now_epoch_seconds()),
+    );
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(payload))
+        .map_err(|e| format!("Cannot serialize ACE training state: {}", e))?;
+    std::fs::write(status_path, json)
+        .map_err(|e| format!("Cannot save {}: {}", status_path.display(), e))
+}
+
+fn write_carey_ace_training_process_id(status_path: &Path, pid: u32) -> Result<(), String> {
+    patch_carey_ace_training_status(status_path, &[("pid", serde_json::json!(pid))])
+}
+
+fn write_carey_ace_training_cancelled_state(
+    status_path: &Path,
+    cancel_path: Option<&Path>,
+    message: &str,
+) -> Result<(), String> {
+    let mut updates = vec![
+        ("status", serde_json::json!("cancelled")),
+        ("phase", serde_json::json!("cancelled")),
+        ("message", serde_json::json!(message)),
+        ("error", serde_json::Value::Null),
+        ("childPid", serde_json::Value::Null),
+    ];
+    if let Some(cancel_path) = cancel_path {
+        updates.push((
+            "cancelPath",
+            serde_json::json!(cancel_path.to_string_lossy()),
+        ));
+    }
+    patch_carey_ace_training_status(status_path, &updates)
+}
+
 fn write_sa3_training_launch_state(
     status_path: &Path,
     job_id: &str,
@@ -1903,6 +2509,64 @@ fn discover_sa3_training_pids(state: &Sa3LoraTrainingState) -> Vec<u32> {
 
 #[cfg(not(target_os = "windows"))]
 fn discover_sa3_training_pids(_state: &Sa3LoraTrainingState) -> Vec<u32> {
+    Vec::new()
+}
+
+#[cfg(target_os = "windows")]
+fn discover_carey_ace_training_pids(state: &CareyAceTrainingState) -> Vec<u32> {
+    let mut command = std::process::Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+    ]);
+    hide_std_console_window(&mut command);
+    let output = command.output();
+
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw.trim()) else {
+        return Vec::new();
+    };
+
+    let mut needles = Vec::new();
+    if let Some(job_id) = state.job_id.as_deref().filter(|value| !value.is_empty()) {
+        needles.push(job_id.to_lowercase());
+    }
+    if let Some(run_dir) = state.run_dir.as_deref().filter(|value| !value.is_empty()) {
+        needles.push(run_dir.to_lowercase());
+    }
+    if needles.is_empty() {
+        return Vec::new();
+    }
+
+    let rows: Vec<serde_json::Value> = match value {
+        serde_json::Value::Array(rows) => rows,
+        serde_json::Value::Object(_) => vec![value],
+        _ => Vec::new(),
+    };
+
+    rows.into_iter()
+        .filter_map(|row| {
+            let command_line = row.get("CommandLine")?.as_str()?.to_lowercase();
+            if !needles.iter().any(|needle| command_line.contains(needle)) {
+                return None;
+            }
+            row.get("ProcessId")
+                .and_then(|pid| pid.as_u64())
+                .and_then(|pid| u32::try_from(pid).ok())
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn discover_carey_ace_training_pids(_state: &CareyAceTrainingState) -> Vec<u32> {
     Vec::new()
 }
 
@@ -2395,6 +3059,11 @@ pub fn run() {
             upsert_carey_lora,
             remove_carey_lora,
             build_carey_lora_captions,
+            get_carey_ace_dataset_sidecars,
+            save_carey_ace_dataset_sidecars,
+            get_carey_ace_lora_training_state,
+            start_carey_ace_lora_training,
+            cancel_carey_ace_lora_training,
             get_sa3_lora_state,
             upsert_sa3_lora,
             remove_sa3_lora,
@@ -2414,6 +3083,7 @@ pub fn run() {
             install_app_update,
             resolve_close_request,
             open_url,
+            reveal_path,
         ])
         .run(tauri::generate_context!())
     {
@@ -3268,6 +3938,359 @@ async fn build_carey_lora_captions(
 }
 
 #[tauri::command]
+fn get_carey_ace_dataset_sidecars(
+    dataset_path: String,
+) -> Result<Vec<CareyAceDatasetSidecarEntry>, String> {
+    read_carey_ace_dataset_sidecars(&dataset_path)
+}
+
+#[tauri::command]
+fn save_carey_ace_dataset_sidecars(
+    dataset_path: String,
+    sidecars: Vec<CareyAceDatasetSidecarUpdate>,
+) -> Result<CareyAceDatasetSidecarSaveResult, String> {
+    save_carey_ace_dataset_sidecar_updates(&dataset_path, sidecars)
+}
+
+#[tauri::command]
+fn get_carey_ace_lora_training_state() -> Result<CareyAceTrainingState, String> {
+    Ok(read_carey_ace_lora_training_state())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_carey_ace_lora_training(
+    name: String,
+    dataset_path: String,
+    model: String,
+    adapter_type: String,
+    trigger: String,
+    instrumental: bool,
+    auto_caption: bool,
+    caption_lm_model: String,
+    overwrite_captions: bool,
+    genre_ratio: u32,
+    prepare_only: bool,
+    include_auto_timesignature: bool,
+    bpm_analysis: bool,
+    key_analysis: bool,
+    analysis_duration: f64,
+    rank: u32,
+    epochs: u32,
+    save_every: u32,
+    batch_size: u32,
+    gradient_accumulation: u32,
+    learning_rate: f64,
+    cfg_ratio: f64,
+    max_duration: f64,
+    manager: tauri::State<'_, ManagerState>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyAceTrainingState, String> {
+    let normalized_name = sanitize_lora_name(&name)
+        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    let model = match model.trim() {
+        "base" => "base",
+        "xl-base" => "xl-base",
+        other => return Err(format!("Unknown ACE-Step model: {}", other)),
+    };
+    let adapter_type = match adapter_type.trim() {
+        "lora" => "lora",
+        "dora" => "dora",
+        other => return Err(format!("Unknown adapter type: {}", other)),
+    };
+    match caption_lm_model.trim() {
+        "acestep-5Hz-lm-0.6B" | "acestep-5Hz-lm-1.7B" | "acestep-5Hz-lm-4B" => {}
+        other => return Err(format!("Unknown ACE-Step LM model: {}", other)),
+    }
+    if rank == 0 {
+        return Err("LoRA rank must be greater than 0".to_string());
+    }
+    if epochs == 0 {
+        return Err("epochs must be greater than 0".to_string());
+    }
+    if save_every == 0 {
+        return Err("save interval must be greater than 0".to_string());
+    }
+    if batch_size == 0 || gradient_accumulation == 0 {
+        return Err("batch size and gradient accumulation must be greater than 0".to_string());
+    }
+    if !learning_rate.is_finite() || learning_rate <= 0.0 {
+        return Err("learning rate must be greater than 0".to_string());
+    }
+    if !cfg_ratio.is_finite() || !(0.0..1.0).contains(&cfg_ratio) {
+        return Err("CFG ratio must be in [0, 1).".to_string());
+    }
+    if !max_duration.is_finite() || max_duration <= 0.0 {
+        return Err("max duration must be greater than 0".to_string());
+    }
+    if !analysis_duration.is_finite() || analysis_duration < 0.0 {
+        return Err("analysis duration must be 0 or greater".to_string());
+    }
+    if genre_ratio > 100 {
+        return Err("genre ratio must be between 0 and 100".to_string());
+    }
+
+    {
+        let mut mgr = manager.lock().await;
+        if mgr.is_running("carey") {
+            mgr.stop("carey").map_err(|e| {
+                format!(
+                    "Could not stop Carey inference before ACE-Step training: {}",
+                    e
+                )
+            })?;
+        }
+    }
+
+    let current_state = read_carey_ace_lora_training_state();
+    if matches!(current_state.status.as_str(), "starting" | "running") {
+        return Err(format!(
+            "ACE-Step LoRA training job '{}' is already {}.",
+            current_state
+                .name
+                .as_deref()
+                .unwrap_or(current_state.job_id.as_deref().unwrap_or("current")),
+            current_state.phase
+        ));
+    }
+
+    let dataset_dir = PathBuf::from(dataset_path.trim());
+    if !dataset_dir.is_dir() {
+        return Err(format!(
+            "{} is not a valid dataset folder",
+            dataset_dir.display()
+        ));
+    }
+
+    let python_exe = repo_root
+        .join("services")
+        .join("carey")
+        .join("env")
+        .join("Scripts")
+        .join("python.exe");
+    if !python_exe.exists() {
+        return Err("Carey must be built before ACE-Step LoRA training can start.".to_string());
+    }
+
+    let script_path = repo_root
+        .join("services")
+        .join("carey")
+        .join("train_lora_job.py");
+    if !script_path.exists() {
+        return Err(format!("Missing {}", script_path.display()));
+    }
+
+    let checkpoint_dir = carey_checkpoint_dir(repo_root.inner());
+    let model_folder = if model == "xl-base" {
+        "acestep-v15-xl-base"
+    } else {
+        "acestep-v15-base"
+    };
+    if !checkpoint_dir.join(model_folder).join("config.json").is_file() {
+        return Err(format!(
+            "Download {} from Carey's Models panel before training.",
+            model_folder
+        ));
+    }
+
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let job_id = format!("{}-{}", normalized_name, epoch);
+    let run_dir = carey_training_jobs_dir().join(&job_id);
+    let log_path = carey_training_logs_dir().join(format!("{}.log", job_id));
+    let status_path = run_dir.join("status.json");
+    let cancel_path = run_dir.join("cancel.requested");
+
+    std::fs::create_dir_all(&run_dir)
+        .map_err(|e| format!("Cannot create {}: {}", run_dir.display(), e))?;
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    if let Some(parent) = carey_lora_catalog_path().parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    write_carey_ace_training_launch_state(
+        &status_path,
+        &job_id,
+        &normalized_name,
+        &run_dir,
+        &log_path,
+        &cancel_path,
+        epochs,
+        if prepare_only {
+            "Launching ACE-Step dataset preparation."
+        } else {
+            "Launching ACE-Step LoRA training."
+        },
+    )?;
+
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Cannot create {}: {}", log_path.display(), e))?;
+    let log_file_err = log_file
+        .try_clone()
+        .map_err(|e| format!("Cannot clone log handle: {}", e))?;
+
+    let mut cmd = tokio::process::Command::new(&python_exe);
+    hide_console_window(&mut cmd);
+    cmd.arg("-u")
+        .arg(&script_path)
+        .arg("--job-id")
+        .arg(&job_id)
+        .arg("--name")
+        .arg(&normalized_name)
+        .arg("--dataset-dir")
+        .arg(&dataset_dir)
+        .arg("--checkpoint-dir")
+        .arg(&checkpoint_dir)
+        .arg("--run-dir")
+        .arg(&run_dir)
+        .arg("--status-path")
+        .arg(&status_path)
+        .arg("--current-job-path")
+        .arg(carey_training_current_job_path())
+        .arg("--cancel-path")
+        .arg(&cancel_path)
+        .arg("--log-path")
+        .arg(&log_path)
+        .arg("--model")
+        .arg(model)
+        .arg("--trigger")
+        .arg(trigger.trim())
+        .arg("--tag-position")
+        .arg("prepend")
+        .arg("--genre-ratio")
+        .arg(genre_ratio.to_string())
+        .arg("--caption")
+        .arg(if auto_caption { "understand_music" } else { "skip" })
+        .arg("--carey-url")
+        .arg("http://127.0.0.1:8013")
+        .arg("--inference-carey-url")
+        .arg("http://127.0.0.1:8003")
+        .arg("--caption-lm-model")
+        .arg(caption_lm_model.trim())
+        .arg("--analysis-duration")
+        .arg(analysis_duration.to_string())
+        .arg("--rank")
+        .arg(rank.to_string())
+        .arg("--alpha")
+        .arg((rank.saturating_mul(2)).to_string())
+        .arg("--learning-rate")
+        .arg(learning_rate.to_string())
+        .arg("--cfg-ratio")
+        .arg(cfg_ratio.to_string())
+        .arg("--epochs")
+        .arg(epochs.to_string())
+        .arg("--save-every")
+        .arg(save_every.to_string())
+        .arg("--batch-size")
+        .arg(batch_size.to_string())
+        .arg("--gradient-accumulation")
+        .arg(gradient_accumulation.to_string())
+        .arg("--max-duration")
+        .arg(max_duration.to_string())
+        .arg("--adapter-type")
+        .arg(adapter_type)
+        .arg("--lora-catalog-path")
+        .arg(carey_lora_catalog_path())
+        .arg("--lora-registry-path")
+        .arg(carey_lora_registry_path())
+        .arg("--captions-json-path")
+        .arg(carey_captions_path());
+    if instrumental {
+        cmd.arg("--instrumental");
+    }
+    if overwrite_captions {
+        cmd.arg("--overwrite-captions");
+    }
+    if prepare_only {
+        cmd.arg("--prepare-only");
+    }
+    if include_auto_timesignature {
+        cmd.arg("--include-auto-timesignature");
+    }
+    if !bpm_analysis {
+        cmd.arg("--no-bpm-analysis");
+    }
+    if !key_analysis {
+        cmd.arg("--no-key-analysis");
+    }
+
+    cmd.current_dir(repo_root.join("services").join("carey"))
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(log_file_err))
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUNBUFFERED", "1");
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to launch ACE-Step LoRA training: {}", e))?;
+    if let Some(pid) = child.id() {
+        write_carey_ace_training_process_id(&status_path, pid)?;
+    }
+
+    Ok(read_carey_ace_lora_training_state())
+}
+
+#[tauri::command]
+fn cancel_carey_ace_lora_training() -> Result<CareyAceTrainingState, String> {
+    let state = read_carey_ace_lora_training_state();
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(state);
+    }
+
+    let cancel_path = state.cancel_path.as_deref().map(PathBuf::from).or_else(|| {
+        state
+            .run_dir
+            .as_deref()
+            .map(|run_dir| PathBuf::from(run_dir).join("cancel.requested"))
+    });
+    if let Some(path) = cancel_path.as_ref() {
+        write_cancel_marker(path)?;
+    }
+
+    let mut pids = Vec::new();
+    if let Some(pid) = state.child_pid {
+        pids.push(pid);
+    }
+    if let Some(pid) = state.pid {
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    for pid in discover_carey_ace_training_pids(&state) {
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+
+    let mut warnings = Vec::new();
+    for pid in pids {
+        if let Err(error) = terminate_process_tree(pid) {
+            warnings.push(error);
+        }
+    }
+
+    let message = if warnings.is_empty() {
+        "Training cancelled.".to_string()
+    } else {
+        format!(
+            "Training cancelled. Process cleanup warning: {}",
+            warnings.join("; ")
+        )
+    };
+    if let Some(status_path) = carey_ace_current_training_status_path() {
+        write_carey_ace_training_cancelled_state(&status_path, cancel_path.as_deref(), &message)?;
+    }
+
+    Ok(read_carey_ace_lora_training_state())
+}
+
+#[tauri::command]
 fn get_sa3_lora_state(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3LoraState, String> {
@@ -3850,5 +4873,61 @@ fn open_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+
+    let target = PathBuf::from(trimmed);
+    if !target.exists() {
+        return Err(format!("Path does not exist: {}", target.display()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        let mut command = std::process::Command::new("explorer.exe");
+        command.creation_flags(CREATE_NO_WINDOW);
+        if target.is_file() {
+            command.arg("/select,").arg(&target);
+        } else {
+            command.arg(&target);
+        }
+        command
+            .spawn()
+            .map_err(|error| format!("Failed to reveal path: {}", error))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = std::process::Command::new("open");
+        if target.is_file() {
+            command.arg("-R");
+        }
+        command
+            .arg(&target)
+            .spawn()
+            .map_err(|error| format!("Failed to reveal path: {}", error))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let open_target = if target.is_file() {
+            target.parent().unwrap_or(Path::new("."))
+        } else {
+            target.as_path()
+        };
+        std::process::Command::new("xdg-open")
+            .arg(open_target)
+            .spawn()
+            .map_err(|error| format!("Failed to reveal path: {}", error))?;
+    }
+
     Ok(())
 }

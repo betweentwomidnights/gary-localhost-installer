@@ -1,5 +1,6 @@
 """Tests for LoRA/LoKr lifecycle loading behavior."""
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,6 +33,24 @@ class _DummyDecoder:
 
     def eval(self):
         """Match torch module ``eval`` API."""
+        return self
+
+
+class _DummyPeftDecoder(_DummyDecoder):
+    """PEFT-like decoder stub that exposes both unload and get_base_model."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_decoder = _DummyDecoder()
+        self.unload_called = False
+        self.get_base_model_called = False
+
+    def unload(self):
+        self.unload_called = True
+        return self.base_decoder
+
+    def get_base_model(self):
+        self.get_base_model_called = True
         return self
 
 
@@ -110,6 +129,7 @@ class LifecycleTests(unittest.TestCase):
     def test_load_lora_accepts_lokr_directory_without_adapter_config(self):
         """LoKr directory should bypass PEFT config-file requirement."""
         handler = _DummyHandler()
+        handler._base_decoder = {"w": torch.full((1,), 9.0)}
         with tempfile.TemporaryDirectory() as tmp:
             adapter_dir = Path(tmp) / "adapter"
             adapter_dir.mkdir(parents=True, exist_ok=True)
@@ -120,6 +140,7 @@ class LifecycleTests(unittest.TestCase):
 
         self.assertEqual(message, f"✅ LoKr loaded from {weights}")
         mock_load_lokr.assert_called_once_with(handler.model.decoder, str(weights))
+        self.assertTrue(torch.equal(handler._base_decoder["w"], torch.zeros(1)))
 
     def test_load_lora_invalid_adapter_message_mentions_lokr(self):
         """Invalid adapter error should mention both LoRA and LoKr expectations."""
@@ -198,6 +219,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNone(handler.model.decoder._lycoris_net)
         self.assertFalse(handler.lora_loaded)
         self.assertFalse(handler.use_lora)
+        self.assertIsNone(handler._base_decoder)
 
     def test_unload_lora_fails_when_lokr_restore_raises(self):
         """Unload should fail fast if LyCORIS restore() raises an exception."""
@@ -214,6 +236,25 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("❌ Failed to unload LoRA", message)
         self.assertIn("restore failed", message)
         handler.model.decoder.load_state_dict.assert_not_called()
+
+    def test_unload_lora_uses_peft_unload_instead_of_get_base_model(self):
+        """PEFT unload should remove adapter layers before restoring base weights."""
+        handler = _DummyHandler()
+        decoder = _DummyPeftDecoder()
+        handler.model.decoder = decoder
+        handler.lora_loaded = True
+        handler._base_decoder = {"w": torch.ones(1)}
+
+        with patch.dict(sys.modules, {"peft": SimpleNamespace(PeftModel=_DummyPeftDecoder)}):
+            message = lifecycle.unload_lora(handler)
+
+        self.assertIn("LoRA unloaded, using base model", message)
+        self.assertTrue(decoder.unload_called)
+        self.assertFalse(decoder.get_base_model_called)
+        self.assertIs(handler.model.decoder, decoder.base_decoder)
+        self.assertFalse(handler.lora_loaded)
+        self.assertFalse(handler.use_lora)
+        self.assertIsNone(handler._base_decoder)
 
 
 if __name__ == "__main__":

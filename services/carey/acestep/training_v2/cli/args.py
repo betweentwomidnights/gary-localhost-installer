@@ -231,6 +231,7 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
     g_lora.add_argument("--target-modules", nargs="+", default=["q_proj", "k_proj", "v_proj", "o_proj"], help="Modules to apply adapter to")
     g_lora.add_argument("--bias", type=str, default="none", choices=["none", "all", "lora_only"], help="Bias training mode (default: none)")
     g_lora.add_argument("--attention-type", type=str, default="both", choices=["self", "cross", "both"], help="Attention layers to target (default: both)")
+    g_lora.add_argument("--use-dora", action="store_true", help="Enable PEFT DoRA weight decomposition for LoRA adapters")
 
     # -- LoKR hyperparams ---------------------------------------------------
     g_lokr = parser.add_argument_group("LoKR (used when --adapter-type=lokr)")

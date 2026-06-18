@@ -10,9 +10,13 @@ import carey_wrapper
 class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._original_current_model = carey_wrapper._current_model
+        self._original_manage_model_lifecycle = carey_wrapper.MANAGE_MODEL_LIFECYCLE
+        self._original_unload_model_after_job = carey_wrapper.UNLOAD_MODEL_AFTER_JOB
 
     def tearDown(self):
         carey_wrapper._current_model = self._original_current_model
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = self._original_manage_model_lifecycle
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = self._original_unload_model_after_job
 
     def test_cover_form_data_uses_turbo_generation_defaults_and_cover_nofsq(self):
         job = carey_wrapper.Job(task_id="job-1", task_type="cover", bpm=120, duration=42.0)
@@ -212,6 +216,68 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
         unload_mock.assert_awaited_once()
         load_mock.assert_awaited_once_with(client, carey_wrapper.ACESTEP_LEGO_CONFIG)
         self.assertEqual(carey_wrapper._current_model, carey_wrapper.ACESTEP_LEGO_CONFIG)
+
+    async def test_teardown_unloads_full_model_after_completed_job(self):
+        job = carey_wrapper.Job(task_id="job-5", task_type="complete", bpm=120)
+        job.status = carey_wrapper.JobStatus.COMPLETED
+        req = SimpleNamespace(model="turbo", track_name="")
+        client = object()
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = True
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = True
+        carey_wrapper._current_model = carey_wrapper.ACESTEP_TURBO_CONFIG
+
+        with patch.object(carey_wrapper, "_unload_model", AsyncMock()) as unload_model:
+            await carey_wrapper._teardown_generation_resources(
+                client,
+                job,
+                req,
+                lora_config=None,
+                lora_name="",
+            )
+
+        unload_model.assert_awaited_once_with(client)
+        self.assertIsNone(carey_wrapper._current_model)
+        self.assertEqual(job.status, carey_wrapper.JobStatus.COMPLETED)
+
+    async def test_teardown_completed_job_survives_model_unload_failure(self):
+        job = carey_wrapper.Job(task_id="job-6", task_type="complete", bpm=120)
+        job.status = carey_wrapper.JobStatus.COMPLETED
+        req = SimpleNamespace(model="turbo", track_name="")
+        client = object()
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = True
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = True
+        carey_wrapper._current_model = carey_wrapper.ACESTEP_TURBO_CONFIG
+
+        with patch.object(carey_wrapper, "_unload_model", AsyncMock(side_effect=RuntimeError("boom"))):
+            await carey_wrapper._teardown_generation_resources(
+                client,
+                job,
+                req,
+                lora_config=None,
+                lora_name="",
+            )
+
+        self.assertEqual(carey_wrapper._current_model, carey_wrapper.ACESTEP_TURBO_CONFIG)
+        self.assertEqual(job.status, carey_wrapper.JobStatus.COMPLETED)
+
+    async def test_teardown_unloads_lora_when_full_model_unload_disabled(self):
+        job = carey_wrapper.Job(task_id="job-7", task_type="complete", bpm=120)
+        job.status = carey_wrapper.JobStatus.COMPLETED
+        req = SimpleNamespace(model="turbo", track_name="")
+        client = object()
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = True
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = False
+
+        with patch.object(carey_wrapper, "_unload_lora", AsyncMock()) as unload_lora:
+            await carey_wrapper._teardown_generation_resources(
+                client,
+                job,
+                req,
+                lora_config={"path": "adapter"},
+                lora_name="adapter",
+            )
+
+        unload_lora.assert_awaited_once_with(client)
 
     def test_sync_checkpoint_overrides_copies_python_files_into_runtime_checkpoints(self):
         with tempfile.TemporaryDirectory() as tmp:

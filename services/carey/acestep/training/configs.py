@@ -26,6 +26,7 @@ class LoRAConfig:
         "q_proj", "k_proj", "v_proj", "o_proj"
     ])
     bias: str = "none"
+    use_dora: bool = False
     
     def to_dict(self):
         """Convert to dictionary for PEFT config."""
@@ -35,6 +36,7 @@ class LoRAConfig:
             "lora_dropout": self.dropout,
             "target_modules": self.target_modules,
             "bias": self.bias,
+            "use_dora": self.use_dora,
         }
 
 

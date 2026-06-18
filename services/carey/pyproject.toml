@@ -45,7 +45,8 @@ dependencies = [
     "mlx>=0.25.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.20.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # Training dependencies
-    "peft>=0.18.0",
+    # PEFT 0.19+ requires torchao>=0.16, incompatible with Windows torch 2.7.1.
+    "peft==0.18.1",
     "lycoris-lora",
     "lightning>=2.0.0",
     "tensorboard>=2.0.0",
