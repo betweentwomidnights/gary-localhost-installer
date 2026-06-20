@@ -39,7 +39,13 @@ npm.cmd run tauri build -- --config src-tauri/tauri.updater.conf.json
 4. Upload both files from `control-center\src-tauri\target\release\bundle\nsis\`:
    - `gary4local_<version>_x64-setup.exe`
    - `gary4local_<version>_x64-setup.exe.sig`
-5. In the GitHub release notes and updater feed notes, link the gary4juce compatibility line to the current recommended gary4juce release tag.
+5. Keep the gary4juce compatibility line appropriate for where it appears:
+   - In the GitHub release notes, link to the current recommended gary4juce
+     release tag.
+   - In the updater feed notes, use a short plain-text line such as
+     `Compatible with gary4juce v4.0.2.` Do not include a URL. The current
+     update prompt does not provide clickable links, and the raw URL wastes
+     limited UI space.
 6. Generate both updater feeds from the exact built installer and signature:
 
 ```powershell

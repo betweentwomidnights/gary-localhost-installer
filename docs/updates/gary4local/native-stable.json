@@ -1,6 +1,6 @@
 {
   "version": "0.1.15",
-  "notes": "adds ACE-Step LoRA training and improves carey model offloading.\nfair warning... ACE-Step training is only tested on a 5070 laptop GPU with ace-step-v15-base. plz report xl-base issues.\ncompatible with gary4juce v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1",
+  "notes": "adds ACE-Step LoRA training and improves carey model offloading.\nfair warning... ACE-Step training is only tested on a 5070 laptop GPU with ace-step-v15-base. plz report xl-base issues.\ncompatible with gary4juce v4.0.2.",
   "pub_date": "2026-06-20T09:58:29.3506249Z",
   "platforms": {
     "windows-x86_64": {

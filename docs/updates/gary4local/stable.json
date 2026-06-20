@@ -7,6 +7,6 @@
   "notes": [
     "adds ACE-Step LoRA training and improves carey model offloading.",
     "fair warning... ACE-Step training is only tested on a 5070 laptop GPU with ace-step-v15-base. plz report xl-base issues.",
-    "compatible with gary4juce v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1"
+    "compatible with gary4juce v4.0.2."
   ]
 }
