@@ -31,6 +31,7 @@ from acestep.training.lokr_utils import (
 
 # V2 modules
 from acestep.training_v2.configs import LoRAConfigV2, LoKRConfigV2, TrainingConfigV2
+from acestep.training_v2.loss_weighting import flow_min_snr_weights
 from acestep.training_v2.timestep_sampling import apply_cfg_dropout, sample_timesteps
 from acestep.training_v2.ui import TrainingUpdate
 
@@ -165,6 +166,13 @@ class FixedLoRAModule(nn.Module):
         self._timestep_sigma = training_config.timestep_sigma
         self._data_proportion = training_config.data_proportion
         self._cfg_ratio = training_config.cfg_ratio
+        self._loss_weighting = training_config.loss_weighting
+        self._snr_gamma = training_config.snr_gamma
+
+        if self._loss_weighting == "min_snr":
+            logger.info("[Gary] Loss weighting: Min-SNR (gamma=%.3f)", self._snr_gamma)
+        else:
+            logger.info("[Gary] Loss weighting: flat MSE")
 
         # When gradient checkpointing is enabled via wrapper layers that don't
         # expose enable_input_require_grads(), force at least one forward input
@@ -302,7 +310,16 @@ class FixedLoRAModule(nn.Module):
 
             # ---- Flow matching loss ----------------------------------------
             flow = x1 - x0
-            diffusion_loss = F.mse_loss(decoder_outputs[0], flow)
+            if self._loss_weighting == "min_snr":
+                element_loss = F.mse_loss(
+                    decoder_outputs[0], flow, reduction="none"
+                )
+                reduce_dims = tuple(range(1, element_loss.ndim))
+                per_sample_loss = element_loss.mean(dim=reduce_dims).float()
+                weights = flow_min_snr_weights(t, gamma=self._snr_gamma)
+                diffusion_loss = (weights * per_sample_loss).mean()
+            else:
+                diffusion_loss = F.mse_loss(decoder_outputs[0], flow)
 
         # fp32 for stable backward
         diffusion_loss = diffusion_loss.float()

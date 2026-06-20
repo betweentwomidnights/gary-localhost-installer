@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import mimetypes
 import os
 import re
@@ -53,9 +54,22 @@ CAPTION_LM_MODELS = (
     "acestep-5Hz-lm-1.7B",
     "acestep-5Hz-lm-4B",
 )
-# Keep the smallest model as the low-VRAM default. The UI can recommend 1.7B
-# from 12GB and 4B from 24GB while still allowing an explicit override.
-REQUIRED_MODULES = ("torch", "torchaudio", "peft", "lightning", "soundfile")
+# Torch wheels must come from Carey's platform-specific build path. Installing
+# them from generic PyPI during job startup could silently replace CUDA Torch.
+CORE_RUNTIME_MODULES = ("torch", "torchaudio")
+JOB_DEPENDENCIES = {
+    "transformers": "transformers>=4.51.0,<4.58.0",
+    "diffusers": "diffusers",
+    "accelerate": "accelerate>=1.12.0",
+    "einops": "einops>=0.8.1",
+    "safetensors": "safetensors==0.7.0",
+    "httpx": "httpx>=0.27.0",
+    "scipy": "scipy>=1.10.1",
+    "soundfile": "soundfile>=0.13.1",
+    "peft": "peft==0.18.1",
+    "lightning": "lightning>=2.0.0",
+    "tensorboard": "tensorboard>=2.0.0",
+}
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -150,6 +164,9 @@ def run_step(
     cwd: Path | None = None,
 ) -> None:
     check_cancel(args)
+    failure_report = (cwd or SERVICE_DIR) / ".training-failure.txt"
+    if phase == "training":
+        failure_report.unlink(missing_ok=True)
     update_status(args, status="running", phase=phase, message=message)
     print(f"\n[{phase}] {subprocess.list2cmdline(command)}", flush=True)
     env = os.environ.copy()
@@ -170,6 +187,10 @@ def run_step(
             code = proc.poll()
             if code is not None:
                 if code != 0:
+                    if phase == "training" and failure_report.is_file():
+                        reason = failure_report.read_text(encoding="utf-8").strip()
+                        if reason:
+                            raise RuntimeError(reason)
                     raise RuntimeError(f"{phase} failed with exit code {code}")
                 return
             if cancel_requested(args):
@@ -181,18 +202,74 @@ def run_step(
             update_status(args, childPid=None)
 
 
-def missing_training_modules() -> list[str]:
-    return [module for module in REQUIRED_MODULES if importlib.util.find_spec(module) is None]
+def missing_core_runtime_modules() -> list[str]:
+    return [
+        module
+        for module in CORE_RUNTIME_MODULES
+        if importlib.util.find_spec(module) is None
+    ]
+
+
+def missing_job_dependencies() -> list[str]:
+    return [
+        requirement
+        for module, requirement in JOB_DEPENDENCIES.items()
+        if importlib.util.find_spec(module) is None
+    ]
+
+
+def ensure_job_dependencies(args: argparse.Namespace) -> None:
+    """Repair safe missing packages before captioning or training starts."""
+    missing_core = missing_core_runtime_modules()
+    if missing_core:
+        raise RuntimeError(
+            "Carey's core CUDA environment is incomplete (missing "
+            + ", ".join(missing_core)
+            + "). Use 'rebuild env' for Carey and try again."
+        )
+
+    missing = missing_job_dependencies()
+    if not missing:
+        return
+
+    print(
+        "[environment-setup] Installing missing Carey captioning/training dependencies: "
+        + ", ".join(missing),
+        flush=True,
+    )
+    try:
+        run_step(
+            args,
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                *missing,
+            ],
+            "environment-setup",
+            "Installing missing Carey captioning/training dependencies",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Could not install the missing Carey captioning/training dependencies "
+            "automatically. Use 'rebuild env' for Carey and try again."
+        ) from exc
+
+    importlib.invalidate_caches()
+    unresolved = missing_job_dependencies()
+    if unresolved:
+        raise RuntimeError(
+            "Carey captioning/training dependencies are still missing after "
+            "automatic repair: "
+            + ", ".join(unresolved)
+            + ". Use 'rebuild env' for Carey and try again."
+        )
 
 
 def require_training_environment(args: argparse.Namespace) -> None:
-    missing = missing_training_modules()
-    if missing:
-        raise RuntimeError(
-            "Carey's training environment is incomplete (missing "
-            + ", ".join(missing)
-            + "). Rebuild the Carey environment before training."
-        )
+    ensure_job_dependencies(args)
     check_cancel(args)
     update_status(args, status="running", phase="checking-gpu", message="Checking CUDA GPU")
     import torch
@@ -274,12 +351,16 @@ def build_train_command(
         str(tensors_dir),
         "--output-dir",
         str(output_dir),
+        "--max-duration",
+        str(args.max_duration),
         "--adapter-type",
         "lora",
         "--rank",
         str(args.rank),
         "--alpha",
         str(args.alpha),
+        "--module-profile",
+        str(getattr(args, "module_profile", "balanced")),
         "--lr",
         str(args.learning_rate),
         "--optimizer-type",
@@ -292,14 +373,23 @@ def build_train_command(
         str(args.epochs),
         "--save-every",
         str(args.save_every),
+        "--save-best-after",
+        str(getattr(args, "save_best_after", 25)),
         "--cfg-ratio",
         str(args.cfg_ratio),
+        "--timestep-mu",
+        str(resolve_timestep_mu(args)),
+        "--loss-weighting",
+        str(args.loss_weighting),
+        "--snr-gamma",
+        str(args.snr_gamma),
         "--shift",
         "1.0",
         "--num-inference-steps",
         "50",
         "--gradient-checkpointing",
         "--offload-encoder",
+        "--vram-preflight",
         "--device",
         "cuda:0",
         "--precision",
@@ -310,9 +400,27 @@ def build_train_command(
         "0",
         "--no-persistent-workers",
     ]
+    command.append(
+        "--save-best" if getattr(args, "save_best", True) else "--no-save-best"
+    )
     if getattr(args, "adapter_type", "dora") == "dora":
         command.append("--use-dora")
     return command
+
+
+def resolve_timestep_mu(args: argparse.Namespace) -> float:
+    """Resolve the explicit override or the instrumental/vocal dataset default."""
+    explicit = getattr(args, "timestep_mu", None)
+    if explicit is not None:
+        return float(explicit)
+    return -0.4 if getattr(args, "instrumental", True) else 0.0
+
+
+def is_complete_peft_adapter(path: Path) -> bool:
+    return (
+        (path / "adapter_model.safetensors").is_file()
+        and (path / "adapter_config.json").is_file()
+    )
 
 
 def parse_carey_endpoint(url: str) -> tuple[str, int]:
@@ -1008,6 +1116,11 @@ def write_plan(
             "outputDir": str(output_dir),
             "fisher": False,
             "adapterType": args.adapter_type,
+            "moduleProfile": args.module_profile,
+            "timestepMu": resolve_timestep_mu(args),
+            "saveBest": args.save_best,
+            "saveBestAfter": args.save_best_after,
+            "vramPreflight": True,
             "optimizer": "adamw",
             "quantization": "disabled",
             "preprocessCommand": build_preprocess_command(
@@ -1074,6 +1187,9 @@ def register_trained_lora(args: argparse.Namespace, final_checkpoint: Path) -> N
         "scale": 1.0,
         "backends": ["base", "turbo"],
         "modelFamily": family,
+        "adapterType": args.adapter_type,
+        "moduleProfile": args.module_profile,
+        "timestepMu": resolve_timestep_mu(args),
     }
 
     if args.lora_catalog_path:
@@ -1092,6 +1208,9 @@ def register_trained_lora(args: argparse.Namespace, final_checkpoint: Path) -> N
             "scale": 1.0,
             "backends": ["base", "turbo"],
             "model_family": family,
+            "adapter_type": args.adapter_type,
+            "module_profile": args.module_profile,
+            "timestep_mu": resolve_timestep_mu(args),
         }
         write_json(args.lora_registry_path, registry)
 
@@ -1192,10 +1311,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overwrite-captions", action="store_true")
     parser.add_argument("--rank", type=int, default=64)
     parser.add_argument("--alpha", type=int, default=128)
+    parser.add_argument(
+        "--module-profile",
+        choices=("attention", "balanced"),
+        default="balanced",
+    )
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--cfg-ratio", type=float, default=0.15)
+    parser.add_argument(
+        "--timestep-mu",
+        type=float,
+        default=None,
+        help="Advanced override; otherwise instrumental=-0.4 and vocal=0.0",
+    )
+    parser.add_argument(
+        "--loss-weighting",
+        choices=("none", "min_snr"),
+        default="min_snr",
+    )
+    parser.add_argument("--snr-gamma", type=float, default=5.0)
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--save-every", type=int, default=25)
+    parser.add_argument(
+        "--save-best",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--save-best-after", type=int, default=25)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation", type=int, default=1)
     parser.add_argument("--max-duration", type=float, default=240.0)
@@ -1216,12 +1358,18 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("batch size and gradient accumulation must be greater than zero")
     if args.epochs <= 0 or args.save_every <= 0:
         raise ValueError("epochs and save interval must be greater than zero")
+    if args.save_best_after <= 0:
+        raise ValueError("best-checkpoint start epoch must be greater than zero")
     if not 0 <= args.genre_ratio <= 100:
         raise ValueError("genre ratio must be between 0 and 100")
     if not 0 <= args.cfg_ratio < 1:
         raise ValueError("cfg ratio must be in [0, 1)")
     if args.learning_rate <= 0:
         raise ValueError("learning rate must be greater than zero")
+    if args.snr_gamma <= 0:
+        raise ValueError("SNR gamma must be greater than zero")
+    if not math.isfinite(resolve_timestep_mu(args)):
+        raise ValueError("timestep mu must be finite")
     if args.fisher:
         raise RuntimeError(
             "Fisher/Preprocessing++ is not enabled in this trainer slice yet. "
@@ -1242,6 +1390,7 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = args.run_dir / "output"
     tensors_dir = output_dir / "tensors"
     final_checkpoint = output_dir / "final"
+    best_checkpoint = output_dir / "best"
 
     try:
         validate_args(args)
@@ -1262,6 +1411,10 @@ def main(argv: list[str] | None = None) -> int:
             ),
             adapterType=args.adapter_type,
         )
+
+        # Caption/prepare and training share the Carey environment. Repair
+        # safe missing packages before either path imports the ML stack.
+        ensure_job_dependencies(args)
 
         captioned = 0
         if args.caption == "understand_music" and not args.dry_run:
@@ -1333,42 +1486,59 @@ def main(argv: list[str] | None = None) -> int:
             "Training ACE-Step LoRA",
             cwd=output_dir,
         )
-        if not (
-            (final_checkpoint / "adapter_model.safetensors").is_file()
-            and (final_checkpoint / "adapter_config.json").is_file()
-        ):
+        if not is_complete_peft_adapter(final_checkpoint):
             raise RuntimeError(
                 f"Training finished without a complete PEFT adapter in {final_checkpoint}"
             )
+
+        selected_checkpoint = (
+            best_checkpoint
+            if args.save_best and is_complete_peft_adapter(best_checkpoint)
+            else final_checkpoint
+        )
 
         result_path = args.run_dir / "result.json"
         result = {
             "jobId": args.job_id,
             "name": args.name,
-            "finalCheckpointPath": str(final_checkpoint),
+            # Kept for UI compatibility: this is the checkpoint selected for
+            # registration, normally best/ rather than the final epoch.
+            "finalCheckpointPath": str(selected_checkpoint),
+            "bestCheckpointPath": (
+                str(best_checkpoint) if is_complete_peft_adapter(best_checkpoint) else None
+            ),
+            "lastEpochCheckpointPath": str(final_checkpoint),
             "captionsPath": str(args.dataset_dir),
             "modelFamily": MODEL_MAP[args.model]["family"],
             "adapterType": args.adapter_type,
+            "moduleProfile": args.module_profile,
+            "timestepMu": resolve_timestep_mu(args),
+            "checkpointSelection": (
+                "best_ma5" if selected_checkpoint == best_checkpoint else "final_epoch"
+            ),
             "captionLmModel": (
                 args.caption_lm_model if args.caption == "understand_music" else None
             ),
             "backends": ["base", "turbo"],
             "scale": 1.0,
         }
-        write_json(final_checkpoint / "metadata.json", result)
+        write_json(selected_checkpoint / "metadata.json", result)
         write_json(result_path, result)
-        register_trained_lora(args, final_checkpoint)
+        register_trained_lora(args, selected_checkpoint)
         update_status(
             args,
             status="completed",
             phase="completed",
             message="ACE-Step LoRA training complete",
-            finalCheckpointPath=str(final_checkpoint),
+            finalCheckpointPath=str(selected_checkpoint),
             captionsPath=str(args.dataset_dir),
             resultPath=str(result_path),
             datasetJsonPath=str(dataset_json),
             sampleCount=dataset_result["samples"],
-            captionedCount=captioned,
+            # Caption counts belong to the caption/prepare result. A completed
+            # training run should describe training, not report that it
+            # intentionally captioned zero tracks.
+            captionedCount=None,
             captionLmModel=(
                 args.caption_lm_model if args.caption == "understand_music" else None
             ),

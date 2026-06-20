@@ -77,6 +77,8 @@ class TrainingStats:
     steps_this_session: int = 0
     peak_vram_mb: float = 0.0
     last_epoch_time: float = 0.0
+    failed: bool = False
+    failure_message: str = ""
     steps_per_epoch: int = 0
     """Total optimizer steps per epoch (for step-level progress bar)."""
     step_in_epoch: int = 0
@@ -466,6 +468,9 @@ def _process_structured(update: TrainingUpdate, stats: TrainingStats) -> None:
             "loss": update.loss,
             "path": update.checkpoint_path,
         })
+    elif update.kind == "fail":
+        stats.failed = True
+        stats.failure_message = update.msg
 
 
 def _process_tuple(step: int, loss: float, msg: str, stats: TrainingStats) -> None:
@@ -479,6 +484,10 @@ def _process_tuple(step: int, loss: float, msg: str, stats: TrainingStats) -> No
         stats.best_loss = loss
 
     msg_lower = msg.lower()
+    if msg.lstrip().startswith("[FAIL]"):
+        stats.failed = True
+        stats.failure_message = msg
+
     if "epoch" in msg_lower:
         try:
             idx = msg.lower().index("epoch")

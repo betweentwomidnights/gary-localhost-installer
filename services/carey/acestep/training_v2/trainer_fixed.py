@@ -30,6 +30,7 @@ from acestep.training.data_module import PreprocessedDataModule
 
 # V2 modules
 from acestep.training_v2.configs import TrainingConfigV2
+from acestep.training_v2.checkpoint_selection import SmoothedBestCheckpointTracker
 from acestep.training_v2.tensorboard_utils import TrainingLogger
 from acestep.training_v2.ui import TrainingUpdate
 
@@ -51,6 +52,11 @@ from acestep.training_v2.trainer_helpers import (
     verify_saved_adapter,
 )
 from acestep.training_v2.trainer_basic_loop import run_basic_training_loop
+from acestep.training_v2.vram_preflight import (
+    capture_cuda_vram_preflight,
+    vram_preflight_detail,
+    vram_preflight_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -320,9 +326,44 @@ class FixedLoRATrainer:
                 yield TrainingUpdate(0, 0.0, f"[INFO] Offloaded {offloaded} model components to CPU (saves VRAM)", kind="info")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+            else:
+                yield TrainingUpdate(
+                    0, 0.0,
+                    "[WARN] Encoder offload requested but no frozen components were moved",
+                    kind="warn",
+                )
 
         # -- dtype / Fabric setup -------------------------------------------
         self.module.model = self.module.model.to(self.module.dtype)
+
+        # -- Runtime VRAM preflight -----------------------------------------
+        if getattr(cfg, "vram_preflight", True):
+            budget = capture_cuda_vram_preflight(self.module.model, cfg)
+            if budget is not None:
+                summary = vram_preflight_summary(budget)
+                detail = vram_preflight_detail(budget)
+                logger.info(summary)
+                logger.info("[VRAM preflight] %s", detail)
+                if not budget.safe:
+                    tb.close()
+                    yield TrainingUpdate(
+                        0,
+                        0.0,
+                        (
+                            f"[FAIL] {summary}\n"
+                            f"       {detail}\n"
+                            "       Reduce rank, adapter coverage, batch size, or max track seconds."
+                        ),
+                        kind="fail",
+                    )
+                    return
+                yield TrainingUpdate(
+                    0,
+                    0.0,
+                    f"[INFO] {summary}",
+                    kind="warn" if budget.margin_mb < 512 else "info",
+                )
+
         self.module.model.decoder, optimizer = self.fabric.setup(self.module.model.decoder, optimizer)
 
         # -- Resume ---------------------------------------------------------
@@ -348,6 +389,10 @@ class FixedLoRATrainer:
         accumulated_loss = 0.0
         optimizer.zero_grad(set_to_none=True)
         self.module.model.decoder.train()
+        best_tracker = SmoothedBestCheckpointTracker(
+            enabled=getattr(cfg, "save_best", True),
+            start_epoch=getattr(cfg, "save_best_after", 25),
+        )
 
         for epoch in range(start_epoch, cfg.max_epochs):
             epoch_loss = 0.0
@@ -437,11 +482,54 @@ class FixedLoRATrainer:
             epoch_time = time.time() - epoch_start
             avg_epoch_loss = epoch_loss / max(num_updates, 1)
             tb.log_epoch_loss(avg_epoch_loss, epoch + 1)
+            best_decision = best_tracker.update(epoch + 1, avg_epoch_loss)
+            if best_decision.activated:
+                yield TrainingUpdate(
+                    step=global_step,
+                    loss=avg_epoch_loss,
+                    msg=f"[INFO] Best-checkpoint tracking active from epoch {epoch + 1}",
+                    kind="info",
+                    epoch=epoch + 1,
+                    max_epochs=cfg.max_epochs,
+                )
+
+            ma5_text = (
+                f", MA5: {best_decision.smoothed_loss:.4f}"
+                if best_decision.smoothed_loss is not None
+                else ""
+            )
+            best_text = (
+                f" (best: {best_decision.best_loss:.4f} @ ep{best_decision.best_epoch})"
+                if best_decision.active and best_decision.best_epoch > 0
+                else ""
+            )
             yield TrainingUpdate(
                 step=global_step, loss=avg_epoch_loss,
-                msg=f"[OK] Epoch {epoch + 1}/{cfg.max_epochs} in {epoch_time:.1f}s, Loss: {avg_epoch_loss:.4f}",
+                msg=(
+                    f"[OK] Epoch {epoch + 1}/{cfg.max_epochs} in {epoch_time:.1f}s, "
+                    f"Loss: {avg_epoch_loss:.4f}{ma5_text}{best_text}"
+                ),
                 kind="epoch", epoch=epoch + 1, max_epochs=cfg.max_epochs, epoch_time=epoch_time,
             )
+
+            if best_decision.is_new_best:
+                best_path = str(output_dir / "best")
+                self.module.model.decoder.eval()
+                self._save_adapter_flat(best_path)
+                self._verify_saved_adapter(best_path)
+                self.module.model.decoder.train()
+                yield TrainingUpdate(
+                    step=global_step,
+                    loss=avg_epoch_loss,
+                    msg=(
+                        f"[OK] Best adapter saved at epoch {epoch + 1} "
+                        f"(MA5: {best_decision.best_loss:.4f})"
+                    ),
+                    kind="checkpoint",
+                    epoch=epoch + 1,
+                    max_epochs=cfg.max_epochs,
+                    checkpoint_path=best_path,
+                )
 
             # Checkpoint
             if (epoch + 1) % cfg.save_every_n_epochs == 0:
@@ -486,7 +574,7 @@ class FixedLoRATrainer:
         yield TrainingUpdate(
             step=global_step, loss=final_loss,
             msg=(
-                f"[OK] Training complete! {adapter_label} saved to {final_path}\n"
+                f"[OK] Training complete! {adapter_label} final epoch saved to {final_path}\n"
                 f"     For inference, set your LoRA path to: {final_path}"
             ),
             kind="complete",

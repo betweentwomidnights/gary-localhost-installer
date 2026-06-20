@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import gc
 import sys
+from pathlib import Path
 
 from acestep.training_v2.cli.common import build_configs
 from acestep.training_v2.model_loader import load_decoder_for_training
@@ -100,6 +101,12 @@ def run_fixed(args: argparse.Namespace) -> int:
                 max_epochs=train_cfg.max_epochs,
                 device=train_cfg.device,
             )
+
+            if stats.failed:
+                failure_report = Path(train_cfg.output_dir) / ".training-failure.txt"
+                failure_report.parent.mkdir(parents=True, exist_ok=True)
+                failure_report.write_text(stats.failure_message, encoding="utf-8")
+                return 1
 
             # -- Summary ------------------------------------------------------
             show_summary(

@@ -160,6 +160,8 @@ def inject_lora_into_dit(
         lora_alpha=lora_config.alpha,
         lora_dropout=lora_config.dropout,
         target_modules=lora_config.target_modules,
+        rank_pattern=getattr(lora_config, "rank_pattern", {}),
+        alpha_pattern=getattr(lora_config, "alpha_pattern", {}),
         bias=lora_config.bias,
         use_dora=getattr(lora_config, "use_dora", False),
         task_type=TaskType.FEATURE_EXTRACTION,  # For diffusion models
@@ -189,6 +191,8 @@ def inject_lora_into_dit(
         "lora_r": lora_config.r,
         "lora_alpha": lora_config.alpha,
         "target_modules": lora_config.target_modules,
+        "rank_pattern": getattr(lora_config, "rank_pattern", {}),
+        "alpha_pattern": getattr(lora_config, "alpha_pattern", {}),
     }
     
     logger.info(f"LoRA injected into DiT decoder:")

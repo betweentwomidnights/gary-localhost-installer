@@ -2071,6 +2071,36 @@ fn read_text_tail(path: &Path, max_bytes: usize) -> String {
     String::from_utf8_lossy(&bytes[start..]).to_string()
 }
 
+fn parse_carey_epoch_progress(log_tail: &str) -> Option<(u32, Option<u32>)> {
+    for line in log_tail.lines().rev() {
+        let Some((_, raw_progress)) = line.rsplit_once("Epoch ") else {
+            continue;
+        };
+        let progress = raw_progress.trim_start();
+        let current_len = progress
+            .bytes()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if current_len == 0 {
+            continue;
+        }
+        let current = progress[..current_len].parse::<u32>().ok()?;
+        let remainder = progress[current_len..].trim_start();
+        let maximum = remainder.strip_prefix('/').and_then(|value| {
+            let value = value.trim_start();
+            let max_len = value
+                .bytes()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            (max_len > 0)
+                .then(|| value[..max_len].parse::<u32>().ok())
+                .flatten()
+        });
+        return Some((current, maximum));
+    }
+    None
+}
+
 fn now_epoch_seconds() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2192,8 +2222,40 @@ fn read_carey_ace_training_status_file(path: &Path) -> CareyAceTrainingState {
 
     if let Some(log_path) = state.log_path.as_ref().map(PathBuf::from) {
         state.log_tail = read_text_tail(&log_path, 16 * 1024);
+        if let Some((epoch, maximum)) = parse_carey_epoch_progress(&state.log_tail) {
+            state.current_step = Some(state.current_step.unwrap_or(0).max(epoch));
+            if let Some(maximum) = maximum {
+                state.max_steps = Some(maximum);
+            }
+        }
     }
     state
+}
+
+#[cfg(test)]
+mod carey_epoch_progress_tests {
+    use super::parse_carey_epoch_progress;
+
+    #[test]
+    fn parses_training_update_progress() {
+        let log = "Epoch 136/150, Step 1360, Loss: 0.42\n[OK] Epoch 137/150 in 16.8s";
+
+        assert_eq!(parse_carey_epoch_progress(log), Some((137, Some(150))));
+    }
+
+    #[test]
+    fn parses_prompt_mix_epoch_using_status_maximum() {
+        let log = "2026-06-18 | INFO | [Gary] Epoch 137 prompt mix: 2/10 tracks use genre";
+
+        assert_eq!(parse_carey_epoch_progress(log), Some((137, None)));
+    }
+
+    #[test]
+    fn ignores_unrelated_step_and_epoch_path_text() {
+        let log = "Training checkpoint saved to output/checkpoints/epoch_150 (epoch 150, step 1500)";
+
+        assert_eq!(parse_carey_epoch_progress(log), None);
+    }
 }
 
 fn read_carey_ace_lora_training_state() -> CareyAceTrainingState {
@@ -3964,6 +4026,7 @@ async fn start_carey_ace_lora_training(
     dataset_path: String,
     model: String,
     adapter_type: String,
+    module_profile: String,
     trigger: String,
     instrumental: bool,
     auto_caption: bool,
@@ -3982,6 +4045,8 @@ async fn start_carey_ace_lora_training(
     gradient_accumulation: u32,
     learning_rate: f64,
     cfg_ratio: f64,
+    loss_weighting: String,
+    snr_gamma: f64,
     max_duration: f64,
     manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
@@ -3997,6 +4062,16 @@ async fn start_carey_ace_lora_training(
         "lora" => "lora",
         "dora" => "dora",
         other => return Err(format!("Unknown adapter type: {}", other)),
+    };
+    let module_profile = match module_profile.trim() {
+        "attention" => "attention",
+        "balanced" => "balanced",
+        other => return Err(format!("Unknown adapter module profile: {}", other)),
+    };
+    let loss_weighting = match loss_weighting.trim() {
+        "none" => "none",
+        "min_snr" => "min_snr",
+        other => return Err(format!("Unknown loss weighting: {}", other)),
     };
     match caption_lm_model.trim() {
         "acestep-5Hz-lm-0.6B" | "acestep-5Hz-lm-1.7B" | "acestep-5Hz-lm-4B" => {}
@@ -4019,6 +4094,9 @@ async fn start_carey_ace_lora_training(
     }
     if !cfg_ratio.is_finite() || !(0.0..1.0).contains(&cfg_ratio) {
         return Err("CFG ratio must be in [0, 1).".to_string());
+    }
+    if !snr_gamma.is_finite() || snr_gamma <= 0.0 {
+        return Err("SNR gamma must be greater than 0".to_string());
     }
     if !max_duration.is_finite() || max_duration <= 0.0 {
         return Err("max duration must be greater than 0".to_string());
@@ -4183,6 +4261,10 @@ async fn start_carey_ace_lora_training(
         .arg(learning_rate.to_string())
         .arg("--cfg-ratio")
         .arg(cfg_ratio.to_string())
+        .arg("--loss-weighting")
+        .arg(loss_weighting)
+        .arg("--snr-gamma")
+        .arg(snr_gamma.to_string())
         .arg("--epochs")
         .arg(epochs.to_string())
         .arg("--save-every")
@@ -4195,6 +4277,8 @@ async fn start_carey_ace_lora_training(
         .arg(max_duration.to_string())
         .arg("--adapter-type")
         .arg(adapter_type)
+        .arg("--module-profile")
+        .arg(module_profile)
         .arg("--lora-catalog-path")
         .arg(carey_lora_catalog_path())
         .arg("--lora-registry-path")

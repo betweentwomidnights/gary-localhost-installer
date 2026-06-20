@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,6 +6,73 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import carey_wrapper
+
+
+class CareyWrapperLoraFamilyTest(unittest.TestCase):
+    def setUp(self):
+        self._original_registry = dict(carey_wrapper.LORA_REGISTRY)
+        self._original_caption_pools = dict(carey_wrapper._caption_pools)
+
+    def tearDown(self):
+        carey_wrapper.LORA_REGISTRY.clear()
+        carey_wrapper.LORA_REGISTRY.update(self._original_registry)
+        carey_wrapper._caption_pools.clear()
+        carey_wrapper._caption_pools.update(self._original_caption_pools)
+
+    def test_registry_and_caption_pools_follow_active_model_family(self):
+        registry = {
+            "legacy-standard": {
+                "path": "C:/loras/legacy-standard",
+                "backends": ["base", "turbo"],
+            },
+            "standard-style": {
+                "path": "C:/loras/standard-style",
+                "model_family": "standard",
+                "backends": ["base", "turbo"],
+            },
+            "xl-style": {
+                "path": "C:/loras/xl-style",
+                "model_family": "xl",
+                "backends": ["base", "turbo"],
+            },
+        }
+        captions = {
+            "default": ["default caption"],
+            "legacy-standard": ["legacy caption"],
+            "standard-style": ["standard caption"],
+            "xl-style": ["xl caption"],
+            "orphaned-pool": ["should not be exposed"],
+        }
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            registry_path = root / "lora_registry.json"
+            captions_path = root / "captions.json"
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
+            captions_path.write_text(json.dumps(captions), encoding="utf-8")
+
+            for active_family, expected_loras, expected_pools in (
+                (
+                    "standard",
+                    {"legacy-standard", "standard-style"},
+                    {"default", "legacy-standard", "standard-style"},
+                ),
+                ("xl", {"xl-style"}, {"default", "xl-style"}),
+            ):
+                with self.subTest(active_family=active_family), patch.object(
+                    carey_wrapper, "LORA_REGISTRY_PATH", registry_path
+                ), patch.object(
+                    carey_wrapper, "CAPTIONS_PATH", captions_path
+                ), patch.object(
+                    carey_wrapper,
+                    "_primary_runtime_family",
+                    return_value=active_family,
+                ):
+                    carey_wrapper._load_lora_registry()
+                    carey_wrapper._load_captions()
+
+                    self.assertEqual(set(carey_wrapper.LORA_REGISTRY), expected_loras)
+                    self.assertEqual(set(carey_wrapper._caption_pools), expected_pools)
 
 
 class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):

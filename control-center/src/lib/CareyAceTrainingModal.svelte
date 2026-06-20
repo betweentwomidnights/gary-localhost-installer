@@ -84,6 +84,7 @@
   let error = $state<string | null>(null);
   let sidecarModalOpen = $state(false);
   let modalElement: HTMLDivElement | null = $state(null);
+  let errorNote: HTMLDivElement | null = $state(null);
   let logSection: HTMLDivElement | null = $state(null);
   let logOutput: HTMLPreElement | null = $state(null);
   let autoScrollLog = $state(true);
@@ -97,15 +98,13 @@
   let datasetPath = $state("");
   let model = $state<"base" | "xl-base">("base");
   let adapterType = $state<"lora" | "dora">("dora");
+  let moduleProfile = $state<"attention" | "balanced">("balanced");
   let trigger = $state("");
   let instrumental = $state(true);
-  let autoCaption = $state(true);
   let captionLmModel = $state("acestep-5Hz-lm-1.7B");
   let overwriteCaptions = $state(false);
   let genreRatio = $state(20);
-  let bpmAnalysis = $state(true);
-  let keyAnalysis = $state(true);
-  let includeAutoTimesignature = $state(false);
+  let bpmKeySanityCheck = $state(true);
   let analysisDuration = $state(0);
   let rank = $state(64);
   let epochs = $state(150);
@@ -114,6 +113,8 @@
   let gradientAccumulation = $state(1);
   let learningRateText = $state("3e-4");
   const cfgRatio = 0.15;
+  let lossWeighting = $state<"min_snr" | "none">("min_snr");
+  let snrGamma = $state(5);
   let maxDuration = $state(240);
 
   function describeError(value: unknown): string {
@@ -213,6 +214,11 @@
     scrollModalToBottom();
   }
 
+  async function revealLaunchError() {
+    await waitForLayout();
+    errorNote?.scrollIntoView({ behavior: "auto", block: "center" });
+  }
+
   function handleLogScroll() {
     if (!logOutput || isLogAutoScrolling) return;
     const { scrollTop, scrollHeight, clientHeight } = logOutput;
@@ -254,16 +260,17 @@
         datasetPath,
         model,
         adapterType,
+        moduleProfile,
         trigger,
         instrumental,
-        autoCaption: prepareOnly ? autoCaption : false,
+        autoCaption: prepareOnly,
         captionLmModel,
         overwriteCaptions,
         genreRatio,
         prepareOnly,
-        includeAutoTimesignature,
-        bpmAnalysis,
-        keyAnalysis,
+        includeAutoTimesignature: false,
+        bpmAnalysis: bpmKeySanityCheck,
+        keyAnalysis: bpmKeySanityCheck,
         analysisDuration,
         rank,
         epochs,
@@ -272,12 +279,15 @@
         gradientAccumulation,
         learningRate,
         cfgRatio,
+        lossWeighting,
+        snrGamma,
         maxDuration,
       });
       shouldRevealLog = true;
       await revealLogOutput();
     } catch (e) {
       error = describeError(e);
+      await revealLaunchError();
     } finally {
       starting = false;
     }
@@ -300,6 +310,17 @@
   );
   let learningRate = $derived(Number(learningRateText.trim()));
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
+  let vramAdvisory = $derived(
+    model === "xl-base"
+      ? "XL-base training requires substantially more VRAM; the runtime preflight will verify measured headroom before the first batch."
+      : moduleProfile === "balanced" && rank >= 128 && maxDuration > 240
+        ? "High-VRAM combination: balanced rank 128+ with tracks over 240 seconds. The runtime preflight may stop this run on an 8 GB GPU."
+        : moduleProfile === "balanced" && rank >= 128
+          ? "Balanced rank 128+ is an advanced VRAM configuration. The runtime preflight will measure the real post-offload budget."
+          : maxDuration > 240
+            ? "Tracks over 240 seconds increase activation memory. The runtime preflight will verify headroom before training."
+            : null
+  );
   let commonValid = $derived(
     open &&
       serviceEnvExists &&
@@ -314,13 +335,16 @@
       batchSize > 0 &&
       gradientAccumulation > 0 &&
       maxDuration > 0 &&
+      Number.isFinite(genreRatio) &&
       genreRatio >= 0 &&
       genreRatio <= 100 &&
       Number.isFinite(learningRate) &&
       learningRate > 0 &&
       Number.isFinite(cfgRatio) &&
       cfgRatio >= 0 &&
-      cfgRatio < 1
+      cfgRatio < 1 &&
+      Number.isFinite(snrGamma) &&
+      snrGamma > 0
   );
   let canPrepare = $derived(commonValid);
   let canTrain = $derived(commonValid);
@@ -394,11 +418,6 @@
       <div class="title" id="ace-train-title">train a local ACE-Step LoRA</div>
       <div class="body">
         prepare ACE sidecars with understand_music, edit the metadata, then train a LoRA or DoRA adapter against base or xl-base. Successful runs register themselves in Carey's LoRA registry.
-        <div class="upstream-credit">
-          trainer references koda-dernet's
-          <button type="button" onclick={() => void invoke("open_url", { url: "https://github.com/koda-dernet/Side-Step" })}>Side-Step</button>
-          project, adapted into Gary's local workflow.
-        </div>
       </div>
 
       {#if !serviceEnvExists}
@@ -435,17 +454,10 @@
         <label class="field">
           <span>LM model</span>
           <select bind:value={captionLmModel}>
-            <option value="acestep-5Hz-lm-0.6B">0.6B low VRAM</option>
-            <option value="acestep-5Hz-lm-1.7B">1.7B recommended</option>
-            <option value="acestep-5Hz-lm-4B">4B large GPU</option>
+            <option value="acestep-5Hz-lm-0.6B">0.6B · not recommended</option>
+            <option value="acestep-5Hz-lm-1.7B">1.7B · good quality</option>
+            <option value="acestep-5Hz-lm-4B">4B · best quality, large GPU</option>
           </select>
-        </label>
-        <label class="toggle-field">
-          <input type="checkbox" bind:checked={autoCaption} />
-          <span>
-            <strong>auto-caption missing sidecars</strong>
-            <small>starts a temporary LM-backed ACE captioner for full-track understand_music, then releases GPU memory.</small>
-          </span>
         </label>
         <label class="toggle-field">
           <input type="checkbox" bind:checked={overwriteCaptions} />
@@ -454,48 +466,18 @@
             <small>use this only when you want to replace human edits.</small>
           </span>
         </label>
-        <label class="field">
-          <span>genre prompt ratio</span>
-          <input type="number" min="0" max="100" step="1" bind:value={genreRatio} />
-          <small>Each epoch, {genreRatio}% of tracks use genre instead of caption.</small>
-        </label>
         <label class="toggle-field">
-          <input type="checkbox" bind:checked={bpmAnalysis} />
+          <input type="checkbox" bind:checked={bpmKeySanityCheck} />
           <span>
-            <strong>BPM sanity check</strong>
-            <small>local tempo estimate can override obvious LM mistakes.</small>
-          </span>
-        </label>
-        <label class="toggle-field">
-          <input type="checkbox" bind:checked={keyAnalysis} />
-          <span>
-            <strong>key sanity check</strong>
-            <small>conservative local chroma estimate; ambiguous keys stay editable.</small>
-          </span>
-        </label>
-        <label class="toggle-field">
-          <input type="checkbox" bind:checked={includeAutoTimesignature} />
-          <span>
-            <strong>include LM signature</strong>
-            <small>off by default because signatures are easy to hallucinate and optional.</small>
-          </span>
-        </label>
-        <label class="toggle-field">
-          <input type="checkbox" bind:checked={instrumental} />
-          <span>
-            <strong>instrumental default</strong>
-            <small>empty lyrics become [Instrumental]; pasted lyrics still win.</small>
+            <strong>BPM/key sanity check</strong>
+            <small>local tempo and chroma estimates correct obvious LM mistakes; ambiguous values stay editable.</small>
           </span>
         </label>
       </div>
       <div class="captioner-prepare">
         <div>
           <strong>caption and prepare dataset</strong>
-          {#if autoCaption}
-            <small>runs understand_music for missing sidecars, applies BPM/key checks, then writes dataset metadata for review.</small>
-          {:else}
-            <small>skips LM captioning and prepares dataset metadata from your existing editable sidecars.</small>
-          {/if}
+          <small>captions missing sidecars with understand_music, applies optional BPM/key checks, then writes editable dataset metadata for review.</small>
         </div>
         <button type="button" class="accent" onclick={() => void startJob(true)} disabled={!canPrepare}>
           {starting ? "launching..." : "caption / prepare"}
@@ -512,19 +494,58 @@
           </select>
         </label>
         <label class="field">
-          <span>adapter</span>
+          <span>content / timestep μ</span>
+          <select bind:value={instrumental}>
+            <option value={true}>instrumental · μ −0.4</option>
+            <option value={false}>vocal · μ 0.0</option>
+          </select>
+          <small>also supplies the captioner’s default instrumental hint.</small>
+        </label>
+        <label class="field">
+          <span>adapter type</span>
           <select bind:value={adapterType}>
             <option value="dora">DoRA</option>
             <option value="lora">LoRA</option>
           </select>
-        </label>
-        <label class="field">
-          <span>rank</span>
-          <input type="number" min="1" step="1" bind:value={rank} />
+          <small>DoRA is recommended; LoRA is the lighter, simpler option.</small>
         </label>
         <label class="field">
           <span>epochs</span>
           <input type="number" min="1" step="1" bind:value={epochs} />
+          <small>one epoch is one pass over every track.</small>
+        </label>
+        <label class="field">
+          <span>learning rate</span>
+          <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} />
+          <small class:invalid={learningRateDecimal === "invalid"}>1e-4 trains lightly; 3e-4 trains hard. Current: {learningRateDecimal}.</small>
+        </label>
+        <label class="field">
+          <span>max track seconds</span>
+          <input type="number" min="1" step="1" bind:value={maxDuration} />
+          <small>longer tracks require more VRAM.</small>
+        </label>
+      </div>
+
+      <details class="advanced-panel">
+        <summary>
+          <span>
+            <strong>advanced / power user settings</strong>
+            <small>{moduleProfile === "balanced" ? "balanced" : "attention only"} · rank {rank} · {lossWeighting === "min_snr" ? "Min-SNR" : "flat MSE"}</small>
+          </span>
+        </summary>
+        <div class="settings-grid advanced-grid">
+        <label class="field">
+          <span>adapter coverage</span>
+          <select bind:value={moduleProfile}>
+            <option value="balanced">balanced attention + MLP</option>
+            <option value="attention">attention only · legacy</option>
+          </select>
+          <small>recommended; distributes rank across attention and feed-forward projections.</small>
+        </label>
+        <label class="field">
+          <span>rank</span>
+          <input type="number" min="1" step="1" bind:value={rank} />
+          <small>{moduleProfile === "balanced" ? "reference rank; projection families scale around it." : "uniform attention rank."}</small>
         </label>
         <label class="field">
           <span>save every</span>
@@ -539,19 +560,36 @@
           <input type="number" min="1" step="1" bind:value={gradientAccumulation} />
         </label>
         <label class="field">
-          <span>learning rate</span>
-          <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} />
-          <small class:invalid={learningRateDecimal === "invalid"}>decimal: {learningRateDecimal}</small>
+          <span>loss weighting</span>
+          <select bind:value={lossWeighting}>
+            <option value="min_snr">Min-SNR (recommended)</option>
+            <option value="none">none (flat MSE)</option>
+          </select>
         </label>
         <label class="field">
-          <span>max track seconds</span>
-          <input type="number" min="1" step="1" bind:value={maxDuration} />
+          <span>Min-SNR gamma</span>
+          <input type="number" min="0.1" step="0.1" bind:value={snrGamma} disabled={lossWeighting === "none"} />
+          <small>5.0 is the reference setting.</small>
         </label>
-      </div>
+        <label class="field">
+          <span>genre prompt ratio</span>
+          <input type="number" min="0" max="100" step="1" bind:value={genreRatio} />
+          <small>Each epoch, {genreRatio}% of tracks use genre instead of caption.</small>
+        </label>
+        </div>
+      </details>
+
+      {#if vramAdvisory}
+        <div class="warning">{vramAdvisory}</div>
+      {/if}
 
       <div class="note">
-        Use caption/prepare first, review the sidecars, then train; the trainer owns its captioning process separately from Carey inference.
+        Use caption/prepare first, review the sidecars, then train. Every run measures post-offload VRAM and stops before the first batch when the remaining budget is unsafe.
         <button type="button" class="inline-link" onclick={onShowModels}>open Carey models</button>
+      </div>
+      <div class="training-resource">
+        To learn more about LoRA training—or use a more advanced setup—try
+        <button type="button" onclick={() => void invoke("open_url", { url: "https://github.com/koda-dernet/Side-Step" })}>koda-dernet’s Side-Step</button>.
       </div>
 
       <div class="actions">
@@ -568,7 +606,7 @@
       </div>
 
       {#if error}
-        <div class="error-note">{error}</div>
+        <div class="error-note" bind:this={errorNote}>{error}</div>
       {/if}
 
       <div class="section-label">current job</div>
@@ -581,8 +619,8 @@
                 {trainingState.status || "idle"} / {trainingState.phase || "idle"}
                 {#if trainingState.currentFile !== null && trainingState.totalFiles}
                   / file {trainingState.currentFile} of {trainingState.totalFiles}
-                {:else if trainingState.currentStep !== null && trainingState.maxSteps}
-                  / step {Math.min(trainingState.currentStep, trainingState.maxSteps)} of {trainingState.maxSteps}
+                {:else if trainingState.currentStep !== null && trainingState.currentStep > 0 && trainingState.maxSteps}
+                  / epoch {Math.min(trainingState.currentStep, trainingState.maxSteps)} of {trainingState.maxSteps}
                 {/if}
               </div>
             </div>
@@ -594,7 +632,7 @@
           {#if trainingState.error}
             <div class="error-note">{trainingState.error}</div>
           {/if}
-          {#if trainingState.captionedCount !== null}
+          {#if trainingState.phase === "prepared" && trainingState.captionedCount !== null}
             <div class="success-note">captioned {trainingState.captionedCount} track{trainingState.captionedCount === 1 ? "" : "s"}</div>
           {/if}
           {#if trainingState.finalCheckpointPath}
@@ -699,12 +737,14 @@
     line-height: 1.55;
   }
 
-  .upstream-credit {
+  .training-resource {
     margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.45;
     color: var(--text-secondary);
   }
 
-  .upstream-credit button,
+  .training-resource button,
   .inline-link {
     border: none;
     background: transparent;
@@ -790,6 +830,15 @@
   .field {
     display: grid;
     gap: 6px;
+    min-width: 0;
+  }
+
+  .settings-grid .field > input,
+  .settings-grid .field > select {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .field span {
@@ -881,6 +930,62 @@
     background: var(--accent);
     border-color: var(--accent);
     color: white;
+  }
+
+  .advanced-panel {
+    margin-top: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .advanced-panel summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+
+  .advanced-panel summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .advanced-panel summary::before {
+    content: "›";
+    color: var(--accent);
+    font-size: 18px;
+    line-height: 1;
+    transform: rotate(0deg);
+    transition: transform 120ms ease;
+  }
+
+  .advanced-panel[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  .advanced-panel summary > span {
+    display: grid;
+    gap: 3px;
+  }
+
+  .advanced-panel summary strong {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+  }
+
+  .advanced-panel summary small {
+    color: var(--text-muted);
+    font: 10px var(--font-mono);
+  }
+
+  .advanced-grid {
+    margin-top: 0;
+    padding: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .actions {

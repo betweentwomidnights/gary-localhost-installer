@@ -364,6 +364,8 @@ def _load_lora_registry() -> None:
         if not isinstance(data, dict):
             raise ValueError("registry must be a JSON object")
 
+        active_family = _primary_runtime_family()
+        skipped_families = 0
         for name, cfg in data.items():
             if not isinstance(cfg, dict):
                 continue
@@ -372,20 +374,34 @@ def _load_lora_registry() -> None:
             if not path:
                 continue
 
+            model_family = (
+                "xl"
+                if str(cfg.get("model_family", "standard")).strip().lower() == "xl"
+                else "standard"
+            )
+            if model_family != active_family:
+                skipped_families += 1
+                continue
+
             LORA_REGISTRY[str(name)] = {
                 "path": path,
                 "scale": float(cfg.get("scale", 1.0)),
                 "backends": _sanitize_backend_list(cfg.get("backends")),
-                "model_family": "xl" if str(cfg.get("model_family", "standard")).strip().lower() == "xl" else "standard",
+                "model_family": model_family,
             }
 
-        print(f"[carey] Loaded {len(LORA_REGISTRY)} LoRAs from registry", flush=True)
+        print(
+            f"[carey] Loaded {len(LORA_REGISTRY)} {active_family} LoRAs from registry"
+            f" (skipped {skipped_families} other-family entries)",
+            flush=True,
+        )
     except Exception as exc:
         print(f"[carey] LoRA registry load failed: {exc}", flush=True)
 
 
 def _load_captions() -> None:
     _caption_pools.clear()
+    allowed_pools = {"default", *LORA_REGISTRY.keys()}
     loaded_primary = False
     if CAPTIONS_PATH.is_file():
         try:
@@ -394,11 +410,14 @@ def _load_captions() -> None:
                 raise ValueError("captions must be a JSON object")
 
             for pool_name, entries in data.items():
+                pool_name = str(pool_name)
+                if pool_name not in allowed_pools:
+                    continue
                 if not isinstance(entries, list):
                     continue
                 cleaned = [str(entry).strip() for entry in entries if str(entry).strip()]
                 if cleaned:
-                    _caption_pools[str(pool_name)] = cleaned
+                    _caption_pools[pool_name] = cleaned
             loaded_primary = True
         except Exception as exc:
             print(f"[carey] captions.json load failed: {exc}", flush=True)

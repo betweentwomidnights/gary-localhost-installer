@@ -118,14 +118,65 @@ def configure_memory_features(decoder: nn.Module) -> tuple:
 
 
 def offload_non_decoder(model: nn.Module) -> int:
-    """Move encoder/VAE/non-decoder submodules to CPU. Returns count offloaded."""
+    """Move frozen components unused by preprocessed training to CPU.
+
+    ACE-Step's preprocessed training step consumes cached target latents and
+    condition embeddings, so only ``decoder`` and ``null_condition_emb`` need
+    to remain on the accelerator.  The explicit legacy aliases are retained
+    for compatibility with older model wrappers.
+
+    Returns the number of components placed on CPU. Trainable components are
+    never moved.
+    """
     count = 0
-    for name in ("music_encoder", "lyric_encoder", "timbre_encoder",
-                  "condition_projection", "vae", "text_encoder", "attention_pooler"):
+    total_bytes = 0
+    component_names = (
+        # ACE-Step 1.5 model structure.
+        "encoder",
+        "tokenizer",
+        "detokenizer",
+        # Compatibility with older/alternate wrappers.
+        "music_encoder",
+        "lyric_encoder",
+        "timbre_encoder",
+        "condition_projection",
+        "vae",
+        "text_encoder",
+        "attention_pooler",
+    )
+    seen: set[int] = set()
+    for name in component_names:
         sub = getattr(model, name, None)
-        if sub is not None and isinstance(sub, nn.Module):
-            sub.to("cpu")
-            count += 1
+        if sub is None or not isinstance(sub, nn.Module) or id(sub) in seen:
+            continue
+        seen.add(id(sub))
+
+        if any(param.requires_grad for param in sub.parameters()):
+            logger.warning(
+                "[WARN] Refusing to offload trainable model component: %s", name
+            )
+            continue
+
+        component_bytes = sum(
+            tensor.numel() * tensor.element_size()
+            for tensor in (*sub.parameters(), *sub.buffers())
+        )
+        sub.eval()
+        sub.to("cpu")
+        count += 1
+        total_bytes += component_bytes
+        logger.info(
+            "[Gary] Offloaded frozen %s to CPU (%.1f MiB)",
+            name,
+            component_bytes / (1024 ** 2),
+        )
+
+    if count:
+        logger.info(
+            "[Gary] Offloaded %d frozen components to CPU (%.1f MiB total)",
+            count,
+            total_bytes / (1024 ** 2),
+        )
     return count
 
 

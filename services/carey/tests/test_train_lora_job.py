@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 CAREY_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CAREY_DIR))
@@ -22,16 +22,71 @@ def make_args(root: Path) -> argparse.Namespace:
         max_duration=240.0,
         rank=64,
         alpha=128,
+        module_profile="balanced",
         learning_rate=3e-4,
         batch_size=1,
         gradient_accumulation=1,
         epochs=150,
         save_every=25,
+        save_best=True,
+        save_best_after=25,
         cfg_ratio=0.15,
+        timestep_mu=-0.4,
+        instrumental=True,
+        loss_weighting="min_snr",
+        snr_gamma=5.0,
     )
 
 
 class TrainLoraJobTests(unittest.TestCase):
+    def test_registration_records_base_and_xl_model_families(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            checkpoint = root / "adapter"
+            checkpoint.mkdir()
+            registry_path = root / "lora_registry.json"
+
+            for model, expected_family in (("base", "standard"), ("xl-base", "xl")):
+                args = make_args(root)
+                args.model = model
+                args.name = f"test-{expected_family}"
+                args.dataset_dir = root
+                args.adapter_type = "dora"
+                args.lora_catalog_path = None
+                args.lora_registry_path = registry_path
+                args.captions_json_path = None
+
+                train_lora_job.register_trained_lora(args, checkpoint)
+
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            self.assertEqual(registry["test-standard"]["model_family"], "standard")
+            self.assertEqual(registry["test-xl"]["model_family"], "xl")
+
+    def test_run_step_surfaces_trainer_failure_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp)
+            failure = "[FAIL] VRAM preflight needs 512 MiB more free GPU memory"
+            proc = Mock(pid=1234)
+            proc.poll.return_value = 1
+
+            def start_trainer(*_args, **_kwargs):
+                (output_dir / ".training-failure.txt").write_text(failure, encoding="utf-8")
+                return proc
+
+            with (
+                patch.object(train_lora_job, "check_cancel"),
+                patch.object(train_lora_job, "update_status"),
+                patch.object(train_lora_job.subprocess, "Popen", side_effect=start_trainer),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "VRAM preflight"):
+                    train_lora_job.run_step(
+                        argparse.Namespace(),
+                        ["trainer"],
+                        "training",
+                        "Training ACE-Step LoRA",
+                        cwd=output_dir,
+                    )
+
     def test_command_builders_match_existing_carey_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -52,9 +107,17 @@ class TrainLoraJobTests(unittest.TestCase):
             self.assertIn("--dataset-json", preprocess)
             self.assertIn("--gradient-checkpointing", train)
             self.assertIn("--offload-encoder", train)
+            self.assertIn("--vram-preflight", train)
             self.assertIn("--use-dora", train)
             self.assertEqual(train[train.index("--shift") + 1], "1.0")
             self.assertEqual(train[train.index("--gradient-accumulation") + 1], "1")
+            self.assertEqual(train[train.index("--max-duration") + 1], "240.0")
+            self.assertEqual(train[train.index("--module-profile") + 1], "balanced")
+            self.assertEqual(train[train.index("--timestep-mu") + 1], "-0.4")
+            self.assertIn("--save-best", train)
+            self.assertEqual(train[train.index("--save-best-after") + 1], "25")
+            self.assertEqual(train[train.index("--loss-weighting") + 1], "min_snr")
+            self.assertEqual(train[train.index("--snr-gamma") + 1], "5.0")
 
     def test_normalize_analysis_result_handles_query_result_shapes(self) -> None:
         nested = json.dumps(
@@ -120,6 +183,48 @@ class TrainLoraJobTests(unittest.TestCase):
         parser = train_lora_job.build_parser()
         action = next(item for item in parser._actions if item.dest == "adapter_type")
         self.assertEqual(action.default, "dora")
+
+    def test_min_snr_defaults_to_settled_recipe(self) -> None:
+        parser = train_lora_job.build_parser()
+        loss_action = next(
+            item for item in parser._actions if item.dest == "loss_weighting"
+        )
+        gamma_action = next(item for item in parser._actions if item.dest == "snr_gamma")
+
+        self.assertEqual(loss_action.default, "min_snr")
+        self.assertEqual(gamma_action.default, 5.0)
+
+    def test_training_defaults_to_balanced_profile_and_best_checkpoint(self) -> None:
+        parser = train_lora_job.build_parser()
+        profile = next(item for item in parser._actions if item.dest == "module_profile")
+        save_best = next(item for item in parser._actions if item.dest == "save_best")
+        save_after = next(
+            item for item in parser._actions if item.dest == "save_best_after"
+        )
+
+        self.assertEqual(profile.default, "balanced")
+        self.assertTrue(save_best.default)
+        self.assertEqual(save_after.default, 25)
+
+    def test_dataset_type_controls_timestep_mu_unless_overridden(self) -> None:
+        self.assertEqual(
+            train_lora_job.resolve_timestep_mu(
+                argparse.Namespace(timestep_mu=None, instrumental=True)
+            ),
+            -0.4,
+        )
+        self.assertEqual(
+            train_lora_job.resolve_timestep_mu(
+                argparse.Namespace(timestep_mu=None, instrumental=False)
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            train_lora_job.resolve_timestep_mu(
+                argparse.Namespace(timestep_mu=-0.2, instrumental=False)
+            ),
+            -0.2,
+        )
 
     def test_auto_timesignature_is_omitted_unless_requested(self) -> None:
         result = {"timesignature": "3"}

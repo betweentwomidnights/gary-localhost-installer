@@ -118,50 +118,17 @@
     }
   }
 
-  function applyInstrumentalTemplate() {
-    let changed = 0;
-    entries = entries.map((entry) => {
-      if (entry.exists || entry.fields.caption.trim() || entry.fields.lyrics.trim()) return entry;
-      changed += 1;
-      return {
-        ...entry,
-        fields: {
-          ...entry.fields,
-          isInstrumental: true,
-          lyrics: "[Instrumental]",
-          customTag: sharedTrigger.trim() || entry.fields.customTag,
-        },
-      };
-    });
-    message = changed
-      ? `Prepared ${changed} empty instrumental draft${changed === 1 ? "" : "s"}.`
-      : "No empty tracks needed the instrumental template.";
-  }
-
-  function applyTriggerToAll() {
-    const trigger = sharedTrigger.trim();
-    if (!trigger) {
-      error = "Enter a trigger tag in the trainer first.";
-      return;
-    }
-    error = null;
-    entries = entries.map((entry) => ({
-      ...entry,
-      fields: { ...entry.fields, customTag: trigger },
-    }));
-    message = `Applied custom_tag: ${trigger}`;
-  }
-
-  function setAllInstrumental(value: boolean) {
+  function replaceAllLyricsWithInstrumental() {
     entries = entries.map((entry) => ({
       ...entry,
       fields: {
         ...entry.fields,
-        isInstrumental: value,
-        lyrics: value && !entry.fields.lyrics.trim() ? "[Instrumental]" : entry.fields.lyrics,
+        isInstrumental: true,
+        lyrics: "[Instrumental]",
       },
     }));
-    message = value ? "Marked all tracks instrumental." : "Cleared instrumental flag on all tracks.";
+    error = null;
+    message = "Replaced every lyrics draft with [Instrumental]. Review the changes, then save when ready.";
   }
 
   function clearCurrent() {
@@ -273,27 +240,19 @@
       </div>
 
       <div class="body">
-        Same-name `.txt` sidecars are loaded beside each audio file. Captions and genres can come from understand_music; BPM/key get local sanity checks. Lyrics stay editable because human ears still win.
+        Review each track’s caption and metadata. Your edits are saved to the matching `.txt` file beside the audio.
       </div>
 
       <div class="template-band">
         <div class="template-actions">
-          <button type="button" onclick={applyInstrumentalTemplate} disabled={loading || !entries.length}>
-            fill empty instrumental drafts
+          <button type="button" onclick={replaceAllLyricsWithInstrumental} disabled={loading || !entries.length}>
+            replace all lyrics with [Instrumental]
           </button>
-          <button type="button" onclick={applyTriggerToAll} disabled={loading || !entries.length || !sharedTrigger.trim()}>
-            apply trigger tag
-          </button>
-          <button type="button" onclick={() => setAllInstrumental(true)} disabled={loading || !entries.length}>
-            all instrumental
-          </button>
-          <button type="button" onclick={() => setAllInstrumental(false)} disabled={loading || !entries.length}>
-            clear instrumental
-          </button>
+          <small>optional cleanup; this overwrites generated lyric descriptions only after you save.</small>
         </div>
         <span>{captionedCount} captions, {metadataCount} sidecars, {entries.length} tracks</span>
         {#if defaultInstrumental}
-          <small>trainer default is instrumental; new caption jobs will use that hint.</small>
+          <small>training is set to instrumental; individual lyric drafts remain your choice.</small>
         {/if}
       </div>
 
@@ -361,7 +320,7 @@
                   {/if}
                 </label>
                 <label class="field">
-                  <span>signature</span>
+                  <span>time signature</span>
                   <input type="text" bind:value={selectedEntry.fields.timesignature} placeholder="optional" />
                 </label>
                 <label class="field">
@@ -369,8 +328,9 @@
                   <input type="text" bind:value={selectedEntry.fields.language} placeholder="unknown" />
                 </label>
                 <label class="field">
-                  <span>custom tag</span>
+                  <span>per-track tag override</span>
                   <input type="text" bind:value={selectedEntry.fields.customTag} placeholder={sharedTrigger || "optional trigger"} />
+                  <small class="provenance">used only when the trainer’s shared trigger tag is blank.</small>
                 </label>
               </div>
 

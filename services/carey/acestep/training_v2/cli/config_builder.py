@@ -12,6 +12,10 @@ import logging
 from pathlib import Path
 from typing import Tuple, Union
 
+from acestep.training_v2.adapter_profiles import (
+    BALANCED_PROFILE,
+    build_balanced_projection_profile,
+)
 from acestep.training_v2.configs import LoRAConfigV2, LoKRConfigV2, TrainingConfigV2
 from acestep.training_v2.gpu_utils import detect_gpu
 from acestep.training_v2.cli.args import VARIANT_DIR_MAP
@@ -87,6 +91,10 @@ def build_configs(args: argparse.Namespace) -> Tuple[AdapterConfig, TrainingConf
         timestep_mu = defaults.get("timestep_mu", timestep_mu)
         timestep_sigma = defaults.get("timestep_sigma", timestep_sigma)
 
+    timestep_mu_override = getattr(args, "timestep_mu", None)
+    if timestep_mu_override is not None:
+        timestep_mu = float(timestep_mu_override)
+
     # -- GPU info -----------------------------------------------------------
     gpu_info = detect_gpu(
         requested_device=args.device,
@@ -95,7 +103,15 @@ def build_configs(args: argparse.Namespace) -> Tuple[AdapterConfig, TrainingConf
 
     # -- Adapter config (LoRA or LoKR) --------------------------------------
     attention_type = getattr(args, "attention_type", "both")
-    resolved_modules = resolve_target_modules(args.target_modules, attention_type)
+    module_profile = getattr(args, "module_profile", "attention")
+    rank_pattern = {}
+    alpha_pattern = {}
+    if adapter_type == "lora" and module_profile == BALANCED_PROFILE:
+        resolved_modules, rank_pattern, alpha_pattern = (
+            build_balanced_projection_profile(args.rank, args.alpha)
+        )
+    else:
+        resolved_modules = resolve_target_modules(args.target_modules, attention_type)
 
     adapter_cfg: AdapterConfig
     if adapter_type == "lokr":
@@ -119,6 +135,9 @@ def build_configs(args: argparse.Namespace) -> Tuple[AdapterConfig, TrainingConf
             bias=args.bias,
             use_dora=getattr(args, "use_dora", False),
             attention_type=attention_type,
+            module_profile=module_profile,
+            rank_pattern=rank_pattern,
+            alpha_pattern=alpha_pattern,
         )
 
     # -- Clamp DataLoader flags when num_workers <= 0 -----------------------
@@ -158,7 +177,10 @@ def build_configs(args: argparse.Namespace) -> Tuple[AdapterConfig, TrainingConf
         scheduler_type=getattr(args, "scheduler_type", "cosine"),
         gradient_checkpointing=getattr(args, "gradient_checkpointing", True),
         offload_encoder=getattr(args, "offload_encoder", False),
+        vram_preflight=getattr(args, "vram_preflight", True),
         cfg_ratio=getattr(args, "cfg_ratio", 0.15),
+        loss_weighting=getattr(args, "loss_weighting", "none"),
+        snr_gamma=getattr(args, "snr_gamma", 5.0),
         timestep_mu=timestep_mu,
         timestep_sigma=timestep_sigma,
         data_proportion=data_proportion,
@@ -168,6 +190,8 @@ def build_configs(args: argparse.Namespace) -> Tuple[AdapterConfig, TrainingConf
         device=gpu_info.device,
         precision=gpu_info.precision,
         resume_from=args.resume_from,
+        save_best=getattr(args, "save_best", True),
+        save_best_after=getattr(args, "save_best_after", 25),
         log_dir=args.log_dir,
         log_every=args.log_every,
         log_heavy_every=args.log_heavy_every,
