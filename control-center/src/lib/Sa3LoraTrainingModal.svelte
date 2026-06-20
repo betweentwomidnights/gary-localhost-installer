@@ -81,6 +81,15 @@
     return value instanceof Error ? value.message : String(value);
   }
 
+  async function revealPath(path: string) {
+    error = null;
+    try {
+      await invoke("reveal_path", { path });
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+
   function formatLearningRate(value: number): string {
     if (!Number.isFinite(value) || value <= 0) return "invalid";
     return value.toFixed(12).replace(/0+$/, "").replace(/\.$/, "");
@@ -438,13 +447,19 @@
             <div class="error-note">{trainingState.error}</div>
           {/if}
           {#if trainingState.finalCheckpointPath}
-            <div class="success-note">registered checkpoint: {trainingState.finalCheckpointPath}</div>
+            <button type="button" class="success-note path-link" onclick={() => void revealPath(trainingState.finalCheckpointPath!)} title="Show checkpoint in folder">
+              registered checkpoint: {trainingState.finalCheckpointPath}
+            </button>
           {/if}
           {#if trainingState.runDir}
-            <div class="job-path">run: {trainingState.runDir}</div>
+            <button type="button" class="job-path path-link" onclick={() => void revealPath(trainingState.runDir!)} title="Open run folder">
+              run: {trainingState.runDir}
+            </button>
           {/if}
           {#if trainingState.logPath}
-            <div class="job-path">log: {trainingState.logPath}</div>
+            <button type="button" class="job-path path-link" onclick={() => void revealPath(trainingState.logPath!)} title="Show log in folder">
+              log: {trainingState.logPath}
+            </button>
           {/if}
         </div>
       {:else}
@@ -570,6 +585,22 @@
   .job-message,
   .job-path {
     color: var(--text-secondary);
+  }
+
+  .path-link {
+    display: block;
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .path-link:hover,
+  .path-link:focus-visible {
+    text-decoration: underline;
   }
 
   .warning {

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 # Vendored base configs -- no base ACE-Step installation required
 from acestep.training.configs import (  # noqa: F401
@@ -37,9 +37,21 @@ class LoRAConfigV2(LoRAConfig):
     attention_type: str = "both"
     """Which attention layers to target: 'self', 'cross', or 'both'."""
 
+    module_profile: str = "attention"
+    """Static adapter profile: 'attention' or 'balanced'."""
+
+    rank_pattern: Dict[str, int] = field(default_factory=dict)
+    """Optional PEFT per-projection rank overrides."""
+
+    alpha_pattern: Dict[str, int] = field(default_factory=dict)
+    """Optional PEFT per-projection alpha overrides."""
+
     def to_dict(self) -> dict:
         base = super().to_dict()
         base["attention_type"] = self.attention_type
+        base["module_profile"] = self.module_profile
+        base["rank_pattern"] = self.rank_pattern
+        base["alpha_pattern"] = self.alpha_pattern
         return base
 
     # --- Data loading (declared here for compatibility with base packages
@@ -133,7 +145,10 @@ class TrainingConfigV2(TrainingConfig):
     activation VRAM.  Adds ~10-30% training time overhead."""
 
     offload_encoder: bool = False
-    """Move encoder/VAE to CPU after setup to free ~2-4 GB VRAM."""
+    """Move frozen encoder/tokenizer/detokenizer to CPU after setup."""
+
+    vram_preflight: bool = True
+    """Abort before the first batch when measured CUDA headroom is unsafe."""
 
     vram_profile: str = "auto"
     """VRAM preset: 'auto', 'comfortable', 'standard', 'tight', 'minimal'."""
@@ -141,6 +156,12 @@ class TrainingConfigV2(TrainingConfig):
     # --- Corrected training params ------------------------------------------
     cfg_ratio: float = 0.15
     """Classifier-free guidance dropout probability."""
+
+    loss_weighting: str = "none"
+    """Loss weighting strategy: 'none' or 'min_snr'."""
+
+    snr_gamma: float = 5.0
+    """SNR clamp used when loss_weighting is 'min_snr'."""
 
     timestep_mu: float = -0.4
     """Mean for logit-normal timestep sampling (from model config)."""
@@ -175,6 +196,12 @@ class TrainingConfigV2(TrainingConfig):
     # --- Checkpointing ------------------------------------------------------
     resume_from: Optional[str] = None
     """Path to checkpoint directory to resume training from."""
+
+    save_best: bool = True
+    """Save the adapter with the lowest smoothed epoch loss."""
+
+    save_best_after: int = 25
+    """First epoch eligible for MA5 best-checkpoint tracking."""
 
     # --- Extended TensorBoard logging ---------------------------------------
     log_dir: Optional[str] = None
@@ -250,9 +277,12 @@ class TrainingConfigV2(TrainingConfig):
                 "scheduler_type": self.scheduler_type,
                 "gradient_checkpointing": self.gradient_checkpointing,
                 "offload_encoder": self.offload_encoder,
+                "vram_preflight": self.vram_preflight,
                 "vram_profile": self.vram_profile,
                 "adapter_type": self.adapter_type,
                 "cfg_ratio": self.cfg_ratio,
+                "loss_weighting": self.loss_weighting,
+                "snr_gamma": self.snr_gamma,
                 "timestep_mu": self.timestep_mu,
                 "timestep_sigma": self.timestep_sigma,
                 "data_proportion": self.data_proportion,
@@ -262,6 +292,8 @@ class TrainingConfigV2(TrainingConfig):
                 "device": self.device,
                 "precision": self.precision,
                 "resume_from": self.resume_from,
+                "save_best": self.save_best,
+                "save_best_after": self.save_best_after,
                 "log_dir": self.log_dir,
                 "log_every": self.log_every,
                 "log_heavy_every": self.log_heavy_every,

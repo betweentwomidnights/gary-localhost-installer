@@ -80,6 +80,12 @@ MANAGE_MODEL_LIFECYCLE = _env_bool("ACESTEP_MANAGE_MODEL_LIFECYCLE", True)
 BACKEND_STARTS_LOADED = not _env_bool("ACESTEP_NO_INIT", False)
 EFFECTIVE_MAX_CONCURRENT = 1 if MANAGE_MODEL_LIFECYCLE else MAX_CONCURRENT
 MODEL_LOAD_TIMEOUT = int(os.getenv("ACESTEP_MODEL_LOAD_TIMEOUT", "1800"))
+RESTART_BACKEND_ON_MODEL_SWITCH = _env_bool("ACESTEP_RESTART_ON_MODEL_SWITCH", False)
+RESTART_BACKEND_AFTER_LORA = _env_bool("ACESTEP_RESTART_AFTER_LORA", False)
+BACKEND_RESTART_COOLDOWN_SECONDS = float(
+    os.getenv("ACESTEP_BACKEND_RESTART_COOLDOWN_SECONDS", "2.0" if os.name == "nt" else "0")
+)
+UNLOAD_MODEL_AFTER_JOB = _env_bool("ACESTEP_UNLOAD_MODEL_AFTER_JOB", MANAGE_MODEL_LIFECYCLE)
 CHECKPOINTS_ROOT = Path(__file__).parent / "checkpoints"
 LORA_REGISTRY_PATH = Path(
     (os.getenv("CAREY_LORA_REGISTRY") or "").strip()
@@ -232,11 +238,12 @@ def _sync_checkpoint_overrides(script_dir: Optional[Path] = None) -> list[Path]:
     return synced
 
 
-def _start_backend():
+def _start_backend(config_path: Optional[str] = None):
     """Launch acestep/api_server.py as a subprocess."""
     global _backend_process
     script_dir = Path(__file__).parent
     api_server = script_dir / "acestep" / "api_server.py"
+    startup_config = (config_path or DEFAULT_STARTUP_CONFIG).strip()
     synced_overrides = _sync_checkpoint_overrides(script_dir)
     if synced_overrides:
         synced_names = ", ".join(path.parent.name + "/" + path.name for path in synced_overrides)
@@ -246,6 +253,8 @@ def _start_backend():
     env["PYTHONPATH"] = str(script_dir)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    if startup_config:
+        env["ACESTEP_CONFIG_PATH"] = startup_config
 
     python_exe = sys.executable
     _backend_process = subprocess.Popen(
@@ -255,7 +264,11 @@ def _start_backend():
         stdout=sys.stdout,
         stderr=sys.stderr,
     )
-    print(f"[wrapper] Started api_server.py (pid={_backend_process.pid}) on port {ACESTEP_PORT}")
+    print(
+        f"[wrapper] Started api_server.py (pid={_backend_process.pid}) on port {ACESTEP_PORT} "
+        f"with config {startup_config or 'default'}",
+        flush=True,
+    )
 
 
 def _stop_backend():
@@ -268,8 +281,64 @@ def _stop_backend():
             _backend_process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             _backend_process.kill()
+            try:
+                _backend_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
         print("[wrapper] api_server.py stopped.")
     _backend_process = None
+
+
+async def _wait_backend_ready(client: Optional[httpx.AsyncClient] = None, timeout_seconds: int = 120) -> bool:
+    """Wait until the child ACE server answers /health."""
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=5)
+
+    deadline = time.time() + timeout_seconds
+    try:
+        while time.time() < deadline:
+            try:
+                r = await client.get(f"{ACESTEP_URL}/health", timeout=5)
+                if r.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+        return False
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+async def _restart_backend_for_model(
+    client: httpx.AsyncClient,
+    config_path: str,
+    *,
+    reason: str,
+) -> str:
+    """Restart the child ACE server and bring it up with the requested model."""
+    global _current_model
+    config_path = (config_path or DEFAULT_STARTUP_CONFIG).strip()
+    if not config_path:
+        raise RuntimeError("Cannot restart ACE backend without a model config")
+
+    print(f"[wrapper] Restarting api_server.py for {config_path} ({reason})", flush=True)
+    _current_model = None
+    _stop_backend()
+    if BACKEND_RESTART_COOLDOWN_SECONDS > 0:
+        await asyncio.sleep(BACKEND_RESTART_COOLDOWN_SECONDS)
+    _start_backend(config_path)
+
+    ready = await _wait_backend_ready(client, timeout_seconds=MODEL_LOAD_TIMEOUT)
+    if not ready:
+        raise RuntimeError(f"api_server.py did not become ready after restart for {config_path}")
+
+    if BACKEND_STARTS_LOADED:
+        _current_model = config_path
+    else:
+        _current_model = await _load_model(client, config_path)
+    return _current_model
 
 
 def _sanitize_backend_list(values: object) -> list[str]:
@@ -295,6 +364,8 @@ def _load_lora_registry() -> None:
         if not isinstance(data, dict):
             raise ValueError("registry must be a JSON object")
 
+        active_family = _primary_runtime_family()
+        skipped_families = 0
         for name, cfg in data.items():
             if not isinstance(cfg, dict):
                 continue
@@ -303,20 +374,34 @@ def _load_lora_registry() -> None:
             if not path:
                 continue
 
+            model_family = (
+                "xl"
+                if str(cfg.get("model_family", "standard")).strip().lower() == "xl"
+                else "standard"
+            )
+            if model_family != active_family:
+                skipped_families += 1
+                continue
+
             LORA_REGISTRY[str(name)] = {
                 "path": path,
                 "scale": float(cfg.get("scale", 1.0)),
                 "backends": _sanitize_backend_list(cfg.get("backends")),
-                "model_family": "xl" if str(cfg.get("model_family", "standard")).strip().lower() == "xl" else "standard",
+                "model_family": model_family,
             }
 
-        print(f"[carey] Loaded {len(LORA_REGISTRY)} LoRAs from registry", flush=True)
+        print(
+            f"[carey] Loaded {len(LORA_REGISTRY)} {active_family} LoRAs from registry"
+            f" (skipped {skipped_families} other-family entries)",
+            flush=True,
+        )
     except Exception as exc:
         print(f"[carey] LoRA registry load failed: {exc}", flush=True)
 
 
 def _load_captions() -> None:
     _caption_pools.clear()
+    allowed_pools = {"default", *LORA_REGISTRY.keys()}
     loaded_primary = False
     if CAPTIONS_PATH.is_file():
         try:
@@ -325,11 +410,14 @@ def _load_captions() -> None:
                 raise ValueError("captions must be a JSON object")
 
             for pool_name, entries in data.items():
+                pool_name = str(pool_name)
+                if pool_name not in allowed_pools:
+                    continue
                 if not isinstance(entries, list):
                     continue
                 cleaned = [str(entry).strip() for entry in entries if str(entry).strip()]
                 if cleaned:
-                    _caption_pools[str(pool_name)] = cleaned
+                    _caption_pools[pool_name] = cleaned
             loaded_primary = True
         except Exception as exc:
             print(f"[carey] captions.json load failed: {exc}", flush=True)
@@ -539,20 +627,13 @@ async def lifespan(_app: FastAPI):
     _install_windows_asyncio_exception_filter()
     _load_lora_registry()
     _load_captions()
-    _start_backend()
+    _start_backend(DEFAULT_STARTUP_CONFIG)
 
     # Wait for backend to be ready
     print("[wrapper] Waiting for api_server to be ready...")
     async with httpx.AsyncClient(timeout=5) as client:
-        for _ in range(60):
-            try:
-                r = await client.get(f"{ACESTEP_URL}/health")
-                if r.status_code == 200:
-                    print("[wrapper] api_server is ready!")
-                    break
-            except Exception:
-                pass
-            await asyncio.sleep(2)
+        if await _wait_backend_ready(client, timeout_seconds=120):
+            print("[wrapper] api_server is ready!")
         else:
             print("[wrapper] WARNING: api_server did not become ready within 120s")
 
@@ -825,6 +906,26 @@ async def _unload_model(client: httpx.AsyncClient) -> None:
     )
     if resp.status_code != 200:
         raise RuntimeError(f"/v1/unload failed: {resp.text}")
+    try:
+        body = resp.json()
+        data = body.get("data") or {}
+        before = data.get("cuda_before") or {}
+        after = data.get("cuda_after") or {}
+        before_alloc = before.get("allocated_gb")
+        after_alloc = after.get("allocated_gb")
+        before_reserved = before.get("reserved_gb")
+        after_reserved = after.get("reserved_gb")
+        if before_alloc is not None and after_alloc is not None:
+            print(
+                "[wrapper] Model unloaded; CUDA allocated "
+                f"{before_alloc:.2f}GB -> {after_alloc:.2f}GB, reserved "
+                f"{before_reserved:.2f}GB -> {after_reserved:.2f}GB",
+                flush=True,
+            )
+        else:
+            print("[wrapper] Model unloaded.", flush=True)
+    except Exception:
+        print("[wrapper] Model unloaded.", flush=True)
 
 
 async def _load_lora(client: httpx.AsyncClient, lora_path: str, scale: float = 1.0) -> None:
@@ -854,21 +955,66 @@ async def _load_lora(client: httpx.AsyncClient, lora_path: str, scale: float = 1
 
 
 async def _unload_lora(client: httpx.AsyncClient) -> None:
+    resp = await client.post(
+        f"{ACESTEP_URL}/v1/lora/unload",
+        headers=_acestep_headers(),
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"/v1/lora/unload failed: {resp.text}")
+
+
+async def _teardown_generation_resources(
+    client: httpx.AsyncClient,
+    job: Job,
+    req,
+    *,
+    lora_config: Optional[dict[str, object]],
+    lora_name: str,
+) -> None:
+    """Release model/adapter resources after an ACE generation attempt."""
+    global _current_model
+
+    if UNLOAD_MODEL_AFTER_JOB and MANAGE_MODEL_LIFECYCLE:
+        try:
+            print("[wrapper] Releasing ACE model after generation...", flush=True)
+            await _unload_model(client)
+            _current_model = None
+            print("[wrapper] ACE model released after generation.", flush=True)
+        except Exception as exc:
+            print(f"[wrapper] Model teardown failed after generation: {exc}", flush=True)
+            if job.status != JobStatus.COMPLETED:
+                raise
+        return
+
+    if not lora_config:
+        return
+
     try:
-        await client.post(
-            f"{ACESTEP_URL}/v1/lora/unload",
-            headers=_acestep_headers(),
-            timeout=30,
+        required_model = _required_model_for_task(
+            job.task_type,
+            getattr(req, "model", ""),
+            getattr(req, "track_name", ""),
         )
-    except Exception:
-        pass
+        if RESTART_BACKEND_AFTER_LORA:
+            await _restart_backend_for_model(
+                client,
+                required_model,
+                reason=f"LoRA cleanup after {lora_name}",
+            )
+        else:
+            await _unload_lora(client)
+    except Exception as exc:
+        print(f"[wrapper] LoRA teardown failed after generation: {exc}", flush=True)
+        if job.status != JobStatus.COMPLETED:
+            raise
 
 
-async def _ensure_required_model(client: httpx.AsyncClient, job: Job, req) -> None:
+async def _ensure_required_model(client: httpx.AsyncClient, job: Job, req) -> bool:
     global _current_model
 
     if not MANAGE_MODEL_LIFECYCLE:
-        return
+        return False
 
     required_model = _required_model_for_task(
         job.task_type,
@@ -876,17 +1022,22 @@ async def _ensure_required_model(client: httpx.AsyncClient, job: Job, req) -> No
         getattr(req, "track_name", ""),
     )
     if _current_model == required_model:
-        return
+        return False
 
     job.status = JobStatus.LOADING
     job.progress = max(job.progress, 3)
     job.progress_text = _loading_status_message(required_model)
+
+    if RESTART_BACKEND_ON_MODEL_SWITCH:
+        await _restart_backend_for_model(client, required_model, reason="model switch")
+        return True
 
     if _current_model is not None:
         await _unload_model(client)
         _current_model = None
 
     _current_model = await _load_model(client, required_model)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1024,8 +1175,9 @@ async def _run_generation(job: Job, req):
             send_path = raw_audio_path
 
             async with httpx.AsyncClient() as client:
-                await _ensure_required_model(client, job, req)
-                await _unload_lora(client)
+                backend_restarted = await _ensure_required_model(client, job, req)
+                if not backend_restarted:
+                    await _unload_lora(client)
 
                 try:
                     if lora_config:
@@ -1158,8 +1310,13 @@ async def _run_generation(job: Job, req):
                     job.progress = 100
                     job.progress_text = "complete"
                 finally:
-                    if lora_config:
-                        await _unload_lora(client)
+                    await _teardown_generation_resources(
+                        client,
+                        job,
+                        req,
+                        lora_config=lora_config,
+                        lora_name=lora_name,
+                    )
 
         except Exception as e:
             import traceback
@@ -1522,6 +1679,9 @@ async def health():
         "acestep_status": ace_status,
         "manage_model_lifecycle": MANAGE_MODEL_LIFECYCLE,
         "lazy_model_loading": not BACKEND_STARTS_LOADED,
+        "restart_backend_on_model_switch": RESTART_BACKEND_ON_MODEL_SWITCH,
+        "restart_backend_after_lora": RESTART_BACKEND_AFTER_LORA,
+        "unload_model_after_job": UNLOAD_MODEL_AFTER_JOB,
         "current_model": _current_model,
         "base_model": ACESTEP_BASE_CONFIG,
         "sft_model": ACESTEP_SFT_CONFIG,

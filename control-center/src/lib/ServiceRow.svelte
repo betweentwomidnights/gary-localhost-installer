@@ -29,6 +29,8 @@
     onShowModels = () => {},
     hasCareyLoras = false,
     onManageCareyLoras = () => {},
+    hasCareyAceTraining = false,
+    onTrainCareyAce = () => {},
     hasSa3Loras = false,
     onManageSa3Loras = () => {},
     hasSa3LoraTraining = false,
@@ -41,6 +43,8 @@
     onShowModels?: () => void;
     hasCareyLoras?: boolean;
     onManageCareyLoras?: () => void;
+    hasCareyAceTraining?: boolean;
+    onTrainCareyAce?: () => void;
     hasSa3Loras?: boolean;
     onManageSa3Loras?: () => void;
     hasSa3LoraTraining?: boolean;
@@ -135,6 +139,11 @@
     {#if hasCareyLoras}
       <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onManageCareyLoras(); }}>
         add lora
+      </button>
+    {/if}
+    {#if hasCareyAceTraining}
+      <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onTrainCareyAce(); }}>
+        train lora
       </button>
     {/if}
     {#if hasSa3Loras}

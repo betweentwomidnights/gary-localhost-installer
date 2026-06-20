@@ -10,6 +10,7 @@
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
+  import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
@@ -104,6 +105,7 @@
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
   let careyLoraModalOpen = $state(false);
+  let careyAceTrainingModalOpen = $state(false);
   let sa3LoraModalOpen = $state(false);
   let sa3LoraTrainingModalOpen = $state(false);
 
@@ -149,6 +151,15 @@
 
   function closeCareyLoras() {
     careyLoraModalOpen = false;
+  }
+
+  function showCareyAceTraining() {
+    selectedServiceId = "carey";
+    careyAceTrainingModalOpen = true;
+  }
+
+  function closeCareyAceTraining() {
+    careyAceTrainingModalOpen = false;
   }
 
   function showSa3Loras() {
@@ -447,6 +458,7 @@
         onSelect={selectService}
         onShowModels={showModels}
         onManageCareyLoras={showCareyLoras}
+        onTrainCareyAce={showCareyAceTraining}
         onManageSa3Loras={showSa3Loras}
         onTrainSa3Lora={showSa3LoraTraining}
       />
@@ -514,6 +526,13 @@
     serviceEnvExists={careyService?.env_exists ?? false}
     careyXlEnabled={appSettings.careyUseXlModels}
     onClose={closeCareyLoras}
+  />
+  <CareyAceTrainingModal
+    open={careyAceTrainingModalOpen}
+    serviceStatus={careyService?.status ?? "stopped"}
+    serviceEnvExists={careyService?.env_exists ?? false}
+    onClose={closeCareyAceTraining}
+    onShowModels={() => showModels("carey")}
   />
   <Sa3LoraModal
     open={sa3LoraModalOpen}

@@ -11,6 +11,7 @@ import sys
 import hashlib
 import shutil
 import argparse
+import time
 from typing import Optional, List, Dict, Tuple
 from pathlib import Path
 
@@ -313,6 +314,98 @@ MAIN_MODEL_COMPONENTS = [
 # Default LM model (included in main model)
 DEFAULT_LM_MODEL = "acestep-5Hz-lm-1.7B"
 
+EXPECTED_MODEL_FILE_SHA256: Dict[str, Dict[str, str]] = {
+    # ACE-Step 5Hz LMs. Wrong-but-shape-compatible LM weights can load
+    # successfully while causing understand_music to emit corrupted text, so
+    # pin the known upstream blobs for every captioner option we expose.
+    "acestep-5Hz-lm-0.6B": {
+        "model.safetensors": (
+            "5d92a60806e2e88c04de58ddc6dde93f2bc8f1336162b3ad5853886c9bcc6b82"
+        ),
+    },
+    "acestep-5Hz-lm-1.7B": {
+        "model.safetensors": (
+            "f161689da73e5ecefa28ff780d51c2d92a00f056d021d7933c779ed5c6cd7db8"
+        ),
+    },
+    "acestep-5Hz-lm-4B": {
+        "model-00001-of-00002.safetensors": (
+            "ada9d0d4ff48f112de3f7b82cd4e7d57b4245932657e8b8edc9a5ded6a23b77f"
+        ),
+        "model-00002-of-00002.safetensors": (
+            "6302100c3577e2f1dbf32573e9b5e6e6b1bea7af101b433c2d3d6280faa8ab68"
+        ),
+    },
+}
+
+
+def _checkpoint_file_mismatches(
+    model_name: str,
+    checkpoints_dir,
+) -> List[Tuple[Path, str, str]]:
+    if isinstance(checkpoints_dir, str):
+        checkpoints_dir = Path(checkpoints_dir)
+
+    expected_files = EXPECTED_MODEL_FILE_SHA256.get(model_name, {})
+    if not expected_files:
+        return []
+
+    model_path = checkpoints_dir / model_name
+    mismatches: List[Tuple[Path, str, str]] = []
+    for relative_path, expected_hash in expected_files.items():
+        file_path = model_path / relative_path
+        if not file_path.exists():
+            mismatches.append((file_path, "missing", expected_hash))
+            continue
+
+        actual_hash = _file_hash(file_path)
+        if actual_hash.lower() != expected_hash.lower():
+            mismatches.append((file_path, actual_hash, expected_hash))
+
+    return mismatches
+
+
+def checkpoint_files_valid(model_name: str, checkpoints_dir) -> bool:
+    """Return False when a known checkpoint file is missing or has bad bytes."""
+    mismatches = _checkpoint_file_mismatches(model_name, checkpoints_dir)
+    for file_path, actual_hash, expected_hash in mismatches:
+        logger.warning(
+            "[Model Download] Checkpoint validation failed for {}: {} "
+            "(actual {}, expected {})",
+            model_name,
+            file_path,
+            actual_hash,
+            expected_hash,
+        )
+    return not mismatches
+
+
+def quarantine_invalid_checkpoint_files(model_name: str, checkpoints_dir) -> List[Path]:
+    """Move known-bad checkpoint files aside so downloaders refresh them."""
+    mismatches = _checkpoint_file_mismatches(model_name, checkpoints_dir)
+    quarantined: List[Path] = []
+    for file_path, actual_hash, expected_hash in mismatches:
+        if actual_hash == "missing" or not file_path.exists():
+            continue
+
+        suffix = actual_hash[:8] if actual_hash else "unknown"
+        backup = file_path.with_name(f"{file_path.name}.bad-{suffix}.backup")
+        if backup.exists():
+            backup = file_path.with_name(
+                f"{file_path.name}.bad-{suffix}.{int(time.time())}.backup"
+            )
+        file_path.replace(backup)
+        quarantined.append(backup)
+        logger.warning(
+            "[Model Download] Quarantined invalid checkpoint file for {}: {} -> {} "
+            "(expected {})",
+            model_name,
+            file_path,
+            backup,
+            expected_hash,
+        )
+    return quarantined
+
 
 def get_project_root() -> Path:
     """Get the project root directory."""
@@ -343,6 +436,8 @@ def check_main_model_exists(checkpoints_dir: Optional[Path] = None) -> bool:
         component_path = checkpoints_dir / component
         if not component_path.exists():
             return False
+        if not checkpoint_files_valid(component, checkpoints_dir):
+            return False
     return True
 
 
@@ -366,7 +461,7 @@ def check_model_exists(model_name: str, checkpoints_dir: Optional[Path] = None) 
         checkpoints_dir = Path(checkpoints_dir)
 
     model_path = checkpoints_dir / model_name
-    return model_path.exists()
+    return model_path.exists() and checkpoint_files_valid(model_name, checkpoints_dir)
 
 
 def list_available_models() -> Dict[str, str]:
@@ -418,6 +513,9 @@ def download_main_model(
     if not force and check_main_model_exists(checkpoints_dir):
         return True, f"Main model already exists at {checkpoints_dir}"
 
+    for component in MAIN_MODEL_COMPONENTS:
+        quarantine_invalid_checkpoint_files(component, checkpoints_dir)
+
     print(f"Downloading main model from {MAIN_MODEL_REPO}...")
     print(f"Destination: {checkpoints_dir}")
     print("This may take a while depending on your internet connection...")
@@ -431,6 +529,8 @@ def download_main_model(
                 synced = _sync_model_code_files(component, checkpoints_dir)
                 if synced:
                     logger.info(f"[Model Download] Synced code files for {component}: {synced}")
+        if not check_main_model_exists(checkpoints_dir):
+            return False, "Main model download completed, but checkpoint validation failed"
     return success, msg
 
 
@@ -468,8 +568,10 @@ def download_submodel(
 
     model_path = checkpoints_dir / model_name
 
-    if not force and model_path.exists():
+    if not force and model_path.exists() and checkpoint_files_valid(model_name, checkpoints_dir):
         return True, f"Model '{model_name}' already exists at {model_path}"
+
+    quarantine_invalid_checkpoint_files(model_name, checkpoints_dir)
 
     repo_id = SUBMODEL_REGISTRY[model_name]
 
@@ -483,6 +585,8 @@ def download_submodel(
         synced = _sync_model_code_files(model_name, checkpoints_dir)
         if synced:
             logger.info(f"[Model Download] Synced code files for {model_name}: {synced}")
+    if success and not check_model_exists(model_name, checkpoints_dir):
+        return False, f"Model '{model_name}' download completed, but checkpoint validation failed"
     return success, msg
 
 
@@ -586,6 +690,9 @@ def ensure_lm_model(
 
     if check_model_exists(model_name, checkpoints_dir):
         return True, f"LM model '{model_name}' is available"
+
+    if model_name == DEFAULT_LM_MODEL:
+        return ensure_main_model(checkpoints_dir, token, prefer_source)
 
     # Check if this is a known LM model
     if model_name not in SUBMODEL_REGISTRY:

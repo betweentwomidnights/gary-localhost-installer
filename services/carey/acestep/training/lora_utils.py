@@ -160,7 +160,10 @@ def inject_lora_into_dit(
         lora_alpha=lora_config.alpha,
         lora_dropout=lora_config.dropout,
         target_modules=lora_config.target_modules,
+        rank_pattern=getattr(lora_config, "rank_pattern", {}),
+        alpha_pattern=getattr(lora_config, "alpha_pattern", {}),
         bias=lora_config.bias,
+        use_dora=getattr(lora_config, "use_dora", False),
         task_type=TaskType.FEATURE_EXTRACTION,  # For diffusion models
     )
     
@@ -188,6 +191,8 @@ def inject_lora_into_dit(
         "lora_r": lora_config.r,
         "lora_alpha": lora_config.alpha,
         "target_modules": lora_config.target_modules,
+        "rank_pattern": getattr(lora_config, "rank_pattern", {}),
+        "alpha_pattern": getattr(lora_config, "alpha_pattern", {}),
     }
     
     logger.info(f"LoRA injected into DiT decoder:")
@@ -196,6 +201,14 @@ def inject_lora_into_dit(
     logger.info(f"  LoRA rank: {lora_config.r}, alpha: {lora_config.alpha}")
     
     return model, info
+
+
+def _unwrap_decoder(model):
+    """Reach the PEFT decoder beneath ACE-Step and Fabric wrappers."""
+    decoder = model.decoder if hasattr(model, "decoder") else model
+    while hasattr(decoder, "_forward_module"):
+        decoder = decoder._forward_module
+    return decoder
 
 
 def save_lora_weights(
@@ -215,11 +228,12 @@ def save_lora_weights(
     """
     output_dir = safe_path(output_dir)
     os.makedirs(output_dir, exist_ok=True)
-    
-    if hasattr(model, 'decoder') and hasattr(model.decoder, 'save_pretrained'):
+
+    decoder = _unwrap_decoder(model)
+    if hasattr(decoder, 'save_pretrained'):
         # Save PEFT adapter
         adapter_path = os.path.join(output_dir, "adapter")
-        model.decoder.save_pretrained(adapter_path)
+        decoder.save_pretrained(adapter_path)
         logger.info(f"LoRA adapter saved to {adapter_path}")
         return adapter_path
     elif save_full_model:

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,12 +8,83 @@ from unittest.mock import AsyncMock, patch
 import carey_wrapper
 
 
+class CareyWrapperLoraFamilyTest(unittest.TestCase):
+    def setUp(self):
+        self._original_registry = dict(carey_wrapper.LORA_REGISTRY)
+        self._original_caption_pools = dict(carey_wrapper._caption_pools)
+
+    def tearDown(self):
+        carey_wrapper.LORA_REGISTRY.clear()
+        carey_wrapper.LORA_REGISTRY.update(self._original_registry)
+        carey_wrapper._caption_pools.clear()
+        carey_wrapper._caption_pools.update(self._original_caption_pools)
+
+    def test_registry_and_caption_pools_follow_active_model_family(self):
+        registry = {
+            "legacy-standard": {
+                "path": "C:/loras/legacy-standard",
+                "backends": ["base", "turbo"],
+            },
+            "standard-style": {
+                "path": "C:/loras/standard-style",
+                "model_family": "standard",
+                "backends": ["base", "turbo"],
+            },
+            "xl-style": {
+                "path": "C:/loras/xl-style",
+                "model_family": "xl",
+                "backends": ["base", "turbo"],
+            },
+        }
+        captions = {
+            "default": ["default caption"],
+            "legacy-standard": ["legacy caption"],
+            "standard-style": ["standard caption"],
+            "xl-style": ["xl caption"],
+            "orphaned-pool": ["should not be exposed"],
+        }
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            registry_path = root / "lora_registry.json"
+            captions_path = root / "captions.json"
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
+            captions_path.write_text(json.dumps(captions), encoding="utf-8")
+
+            for active_family, expected_loras, expected_pools in (
+                (
+                    "standard",
+                    {"legacy-standard", "standard-style"},
+                    {"default", "legacy-standard", "standard-style"},
+                ),
+                ("xl", {"xl-style"}, {"default", "xl-style"}),
+            ):
+                with self.subTest(active_family=active_family), patch.object(
+                    carey_wrapper, "LORA_REGISTRY_PATH", registry_path
+                ), patch.object(
+                    carey_wrapper, "CAPTIONS_PATH", captions_path
+                ), patch.object(
+                    carey_wrapper,
+                    "_primary_runtime_family",
+                    return_value=active_family,
+                ):
+                    carey_wrapper._load_lora_registry()
+                    carey_wrapper._load_captions()
+
+                    self.assertEqual(set(carey_wrapper.LORA_REGISTRY), expected_loras)
+                    self.assertEqual(set(carey_wrapper._caption_pools), expected_pools)
+
+
 class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._original_current_model = carey_wrapper._current_model
+        self._original_manage_model_lifecycle = carey_wrapper.MANAGE_MODEL_LIFECYCLE
+        self._original_unload_model_after_job = carey_wrapper.UNLOAD_MODEL_AFTER_JOB
 
     def tearDown(self):
         carey_wrapper._current_model = self._original_current_model
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = self._original_manage_model_lifecycle
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = self._original_unload_model_after_job
 
     def test_cover_form_data_uses_turbo_generation_defaults_and_cover_nofsq(self):
         job = carey_wrapper.Job(task_id="job-1", task_type="cover", bpm=120, duration=42.0)
@@ -212,6 +284,68 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
         unload_mock.assert_awaited_once()
         load_mock.assert_awaited_once_with(client, carey_wrapper.ACESTEP_LEGO_CONFIG)
         self.assertEqual(carey_wrapper._current_model, carey_wrapper.ACESTEP_LEGO_CONFIG)
+
+    async def test_teardown_unloads_full_model_after_completed_job(self):
+        job = carey_wrapper.Job(task_id="job-5", task_type="complete", bpm=120)
+        job.status = carey_wrapper.JobStatus.COMPLETED
+        req = SimpleNamespace(model="turbo", track_name="")
+        client = object()
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = True
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = True
+        carey_wrapper._current_model = carey_wrapper.ACESTEP_TURBO_CONFIG
+
+        with patch.object(carey_wrapper, "_unload_model", AsyncMock()) as unload_model:
+            await carey_wrapper._teardown_generation_resources(
+                client,
+                job,
+                req,
+                lora_config=None,
+                lora_name="",
+            )
+
+        unload_model.assert_awaited_once_with(client)
+        self.assertIsNone(carey_wrapper._current_model)
+        self.assertEqual(job.status, carey_wrapper.JobStatus.COMPLETED)
+
+    async def test_teardown_completed_job_survives_model_unload_failure(self):
+        job = carey_wrapper.Job(task_id="job-6", task_type="complete", bpm=120)
+        job.status = carey_wrapper.JobStatus.COMPLETED
+        req = SimpleNamespace(model="turbo", track_name="")
+        client = object()
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = True
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = True
+        carey_wrapper._current_model = carey_wrapper.ACESTEP_TURBO_CONFIG
+
+        with patch.object(carey_wrapper, "_unload_model", AsyncMock(side_effect=RuntimeError("boom"))):
+            await carey_wrapper._teardown_generation_resources(
+                client,
+                job,
+                req,
+                lora_config=None,
+                lora_name="",
+            )
+
+        self.assertEqual(carey_wrapper._current_model, carey_wrapper.ACESTEP_TURBO_CONFIG)
+        self.assertEqual(job.status, carey_wrapper.JobStatus.COMPLETED)
+
+    async def test_teardown_unloads_lora_when_full_model_unload_disabled(self):
+        job = carey_wrapper.Job(task_id="job-7", task_type="complete", bpm=120)
+        job.status = carey_wrapper.JobStatus.COMPLETED
+        req = SimpleNamespace(model="turbo", track_name="")
+        client = object()
+        carey_wrapper.MANAGE_MODEL_LIFECYCLE = True
+        carey_wrapper.UNLOAD_MODEL_AFTER_JOB = False
+
+        with patch.object(carey_wrapper, "_unload_lora", AsyncMock()) as unload_lora:
+            await carey_wrapper._teardown_generation_resources(
+                client,
+                job,
+                req,
+                lora_config={"path": "adapter"},
+                lora_name="adapter",
+            )
+
+        unload_lora.assert_awaited_once_with(client)
 
     def test_sync_checkpoint_overrides_copies_python_files_into_runtime_checkpoints(self):
         with tempfile.TemporaryDirectory() as tmp:

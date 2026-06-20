@@ -37,6 +37,22 @@ class InitServiceOrchestratorMixin:
                     "[initialize_service] config_path not set; defaulting to 'acestep-v15-turbo'."
                 )
 
+            self.lora_loaded = False
+            self.use_lora = False
+            self.lora_scale = 1.0
+            self._base_decoder = None
+            self._active_loras = {}
+            self._lora_adapter_registry = {}
+            self._lora_active_adapter = None
+            self._lora_scale_state = {}
+            self._adapter_type = None
+            lora_service = getattr(self, "_lora_service", None)
+            if lora_service is not None:
+                lora_service.registry = {}
+                lora_service.scale_state = {}
+                lora_service.active_adapter = None
+                lora_service.last_scale_report = {}
+
             resolved_device = self._resolve_initialize_device(device)
             self.device = resolved_device
             self.offload_to_cpu = offload_to_cpu
@@ -138,4 +154,3 @@ class InitServiceOrchestratorMixin:
             error_msg = f"Error initializing model: {str(exc)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.exception(error_msg)
             return error_msg, False
-

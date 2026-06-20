@@ -217,7 +217,8 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
     g_train.add_argument("--optimizer-type", type=str, default="adamw", choices=["adamw", "adamw8bit", "adafactor", "prodigy"], help="Optimizer (default: adamw)")
     g_train.add_argument("--scheduler-type", type=str, default="cosine", choices=["cosine", "cosine_restarts", "linear", "constant", "constant_with_warmup"], help="LR scheduler (default: cosine)")
     g_train.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True, help="Recompute activations to save VRAM (~40-60%% less, ~10-30%% slower). On by default; use --no-gradient-checkpointing to disable")
-    g_train.add_argument("--offload-encoder", action=argparse.BooleanOptionalAction, default=False, help="Move encoder/VAE to CPU after setup (saves ~2-4GB VRAM)")
+    g_train.add_argument("--offload-encoder", action=argparse.BooleanOptionalAction, default=False, help="Move frozen ACE encoder/tokenizer/detokenizer to CPU after setup (~1.5GB on base)")
+    g_train.add_argument("--vram-preflight", action=argparse.BooleanOptionalAction, default=True, help="Measure post-offload CUDA headroom and abort before training when unsafe (default: on)")
 
     # -- Adapter selection ---------------------------------------------------
     g_adapter = parser.add_argument_group("Adapter")
@@ -231,6 +232,13 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
     g_lora.add_argument("--target-modules", nargs="+", default=["q_proj", "k_proj", "v_proj", "o_proj"], help="Modules to apply adapter to")
     g_lora.add_argument("--bias", type=str, default="none", choices=["none", "all", "lora_only"], help="Bias training mode (default: none)")
     g_lora.add_argument("--attention-type", type=str, default="both", choices=["self", "cross", "both"], help="Attention layers to target (default: both)")
+    g_lora.add_argument(
+        "--module-profile",
+        choices=("attention", "balanced"),
+        default="attention",
+        help="Adapter projection profile: attention (legacy) or balanced attention+MLP",
+    )
+    g_lora.add_argument("--use-dora", action="store_true", help="Enable PEFT DoRA weight decomposition for LoRA adapters")
 
     # -- LoKR hyperparams ---------------------------------------------------
     g_lokr = parser.add_argument_group("LoKR (used when --adapter-type=lokr)")
@@ -246,6 +254,18 @@ def _add_common_training_args(parser: argparse.ArgumentParser) -> None:
     g_ckpt = parser.add_argument_group("Checkpointing")
     g_ckpt.add_argument("--output-dir", type=str, required=True, help="Output directory for LoRA weights")
     g_ckpt.add_argument("--save-every", type=int, default=10, help="Save checkpoint every N epochs (default: 10)")
+    g_ckpt.add_argument(
+        "--save-best",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Save the adapter with the lowest MA5 epoch loss (default: on)",
+    )
+    g_ckpt.add_argument(
+        "--save-best-after",
+        type=int,
+        default=25,
+        help="Start best-checkpoint tracking at this epoch (default: 25)",
+    )
     g_ckpt.add_argument("--resume-from", type=str, default=None, help="Path to checkpoint dir to resume from")
 
     # -- Logging / TensorBoard -----------------------------------------------
@@ -268,6 +288,24 @@ def _add_fixed_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments specific to the fixed subcommand."""
     g = parser.add_argument_group("Corrected training")
     g.add_argument("--cfg-ratio", type=float, default=0.15, help="CFG dropout probability (default: 0.15)")
+    g.add_argument(
+        "--timestep-mu",
+        type=float,
+        default=None,
+        help="Override model timestep mu (instrumental=-0.4, vocal=0.0)",
+    )
+    g.add_argument(
+        "--loss-weighting",
+        choices=("none", "min_snr"),
+        default="none",
+        help="Loss weighting strategy (default: none)",
+    )
+    g.add_argument(
+        "--snr-gamma",
+        type=float,
+        default=5.0,
+        help="Min-SNR gamma clamp (default: 5.0)",
+    )
 
 
 

@@ -113,6 +113,10 @@ For localhost we intentionally do **not** enable `torch.compile` by default. Gar
 
 The local `carey` service now tracks more of the custom [ace-lego](https://github.com/betweentwomidnights/ace-lego) behavior while still being practical on smaller Windows GPUs:
 
+See the [ACE-Step LoRA training guide](docs/ace-step-lora-training.md) for the
+integrated trainer workflow, hardware caveats, captioning notes, and current
+experimental recommendations.
+
 - `lego`, `extract`, `complete`, and `cover` are all exposed through the localhost wrapper.
 - `cover` always routes to the turbo checkpoint and stays fixed at 8 steps / CFG 1.0.
 - `complete` now accepts `base`, `turbo`, or `sft` from localhost clients. `turbo` stays fixed at 8 steps / CFG 1.0, while `base` and `sft` keep editable steps and CFG.

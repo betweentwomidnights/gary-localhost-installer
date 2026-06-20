@@ -16,6 +16,7 @@ Input modes:
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -26,7 +27,6 @@ from acestep.training_v2.preprocess_discovery import (
     discover_audio_files as _discover_audio_files,
     load_dataset_metadata as _load_dataset_metadata,
     load_sample_metadata as _load_sample_metadata,
-    select_genre_indices as _select_genre_indices,
 )
 from acestep.training_v2.preprocess_prompt import (
     build_simple_prompt as _build_simple_prompt,
@@ -140,17 +140,27 @@ def preprocess_audio_files(
         progress_callback=progress_callback,
         cancel_check=cancel_check,
     )
+    manifest_entries = _write_variant_manifest(
+        out_path=out_path,
+        audio_files=audio_files,
+        sample_meta=sample_meta,
+        ds_meta=ds_meta,
+    )
 
     failed = pass1_failed + pass2_failed
     result = {
         "processed": processed,
+        "processed_tensors": processed,
         "failed": failed,
         "total": total,
+        "audio_files": total,
         "output_dir": str(out_path),
+        "manifest_samples": manifest_entries,
     }
     logger.info(
-        "[Side-Step] Preprocessing complete: %d/%d processed, %d failed",
-        processed, total, failed,
+        "[Gary] Preprocessing complete: %d tensor files from %d audio files, "
+        "%d manifest entries, %d failed",
+        processed, total, manifest_entries, failed,
     )
     return result
 
@@ -205,14 +215,19 @@ def _pass1_light(
     # Dataset-level prompt settings from ACE-Step's metadata block
     tag_position = ds_meta.get("tag_position", "prepend")
     genre_ratio = ds_meta.get("genre_ratio", 0)
-    genre_indices = _select_genre_indices(total, genre_ratio)
-    if genre_indices:
+    genre_variant_count = sum(
+        1
+        for af in audio_files
+        if "genre" in _prompt_variants_for_sample(sample_meta.get(af.name, {}), genre_ratio)
+    )
+    if genre_variant_count:
         logger.info(
-            "[Side-Step] genre_ratio=%d%% -- %d/%d samples will use genre as prompt",
-            genre_ratio, len(genre_indices), total,
+            "[Gary] genre_ratio=%d%% -- encoding genre prompts for %d/%d tracks "
+            "(training will swap a rotating subset each epoch)",
+            genre_ratio, genre_variant_count, total,
         )
     if tag_position != "prepend":
-        logger.info("[Side-Step] tag_position=%s (from dataset metadata)", tag_position)
+        logger.info("[Gary] tag_position=%s (from dataset metadata)", tag_position)
 
     try:
         for i, af in enumerate(audio_files):
@@ -223,13 +238,17 @@ def _pass1_light(
             if progress_callback:
                 progress_callback(i, total, f"[Pass 1] {af.name}")
 
-            # Skip if final .pt already exists (resumable)
-            final_pt = out_path / f"{af.stem}.pt"
-            if final_pt.exists():
-                logger.info("[Side-Step] Skipping (final exists): %s", af.name)
-                continue
-
             try:
+                sm = sample_meta.get(af.name, {})
+                prompt_variants = _prompt_variants_for_sample(sm, genre_ratio)
+                expected_final_paths = [
+                    _variant_final_path(out_path, af, variant)
+                    for variant in prompt_variants
+                ]
+                if expected_final_paths and all(path.exists() for path in expected_final_paths):
+                    logger.info("[Gary] Skipping (final variants exist): %s", af.name)
+                    continue
+
                 # 1. Load audio (stereo, 48 kHz)
                 audio, _sr = load_audio_stereo(str(af), _TARGET_SR, max_duration)
                 audio = audio.unsqueeze(0).to(device=device, dtype=vae.dtype)
@@ -245,57 +264,68 @@ def _pass1_light(
                 attention_mask = torch.ones(1, latent_length, device=device, dtype=dtype)
 
                 # 3. Text encode
-                sm = sample_meta.get(af.name, {})
                 caption = sm.get("caption", af.stem)
                 lyrics = sm.get("lyrics", "[Instrumental]")
 
-                # Build text prompt using dataset-level tag_position and genre_ratio
-                use_genre = i in genre_indices
-                text_prompt = _build_simple_prompt(sm, tag_position=tag_position, use_genre=use_genre)
-
                 with torch.no_grad():
-                    text_hs, text_mask = encode_text(text_enc, tokenizer, text_prompt, device, dtype)
                     lyric_hs, lyric_mask = encode_lyrics(text_enc, tokenizer, lyrics, device, dtype)
 
-                # 4. Save intermediate
-                tmp_path = out_path / f"{af.stem}.tmp.pt"
-                torch.save({
-                    "target_latents": target_latents.squeeze(0).cpu(),
-                    "attention_mask": attention_mask.squeeze(0).cpu(),
-                    "text_hidden_states": text_hs.cpu(),
-                    "text_attention_mask": text_mask.cpu(),
-                    "lyric_hidden_states": lyric_hs.cpu(),
-                    "lyric_attention_mask": lyric_mask.cpu(),
-                    "silence_latent": silence_latent.cpu(),
-                    "latent_length": latent_length,
-                    "metadata": {
-                        "audio_path": str(af),
-                        "filename": af.name,
-                        "caption": caption,
-                        "lyrics": lyrics,
-                        "duration": sm.get("duration", 0),
-                        "bpm": sm.get("bpm"),
-                        "keyscale": sm.get("keyscale", ""),
-                        "timesignature": sm.get("timesignature", ""),
-                        "genre": sm.get("genre", ""),
-                        "is_instrumental": sm.get("is_instrumental", True),
-                        "custom_tag": sm.get("custom_tag", ""),
-                        "prompt_override": sm.get("prompt_override"),
-                    },
-                }, tmp_path)
+                for prompt_variant in prompt_variants:
+                    use_genre = prompt_variant == "genre"
+                    text_prompt = _build_simple_prompt(
+                        sm, tag_position=tag_position, use_genre=use_genre
+                    )
+
+                    with torch.no_grad():
+                        text_hs, text_mask = encode_text(
+                            text_enc, tokenizer, text_prompt, device, dtype
+                        )
+
+                    # 4. Save intermediate
+                    tmp_path = _variant_tmp_path(out_path, af, prompt_variant)
+                    torch.save({
+                        "target_latents": target_latents.squeeze(0).cpu(),
+                        "attention_mask": attention_mask.squeeze(0).cpu(),
+                        "text_hidden_states": text_hs.cpu(),
+                        "text_attention_mask": text_mask.cpu(),
+                        "lyric_hidden_states": lyric_hs.cpu(),
+                        "lyric_attention_mask": lyric_mask.cpu(),
+                        "silence_latent": silence_latent.cpu(),
+                        "latent_length": latent_length,
+                        "metadata": {
+                            "audio_path": str(af),
+                            "filename": af.name,
+                            "caption": caption,
+                            "lyrics": lyrics,
+                            "duration": sm.get("duration", 0),
+                            "bpm": sm.get("bpm"),
+                            "keyscale": sm.get("keyscale", ""),
+                            "timesignature": sm.get("timesignature", ""),
+                            "genre": sm.get("genre", ""),
+                            "is_instrumental": sm.get("is_instrumental", True),
+                            "custom_tag": sm.get("custom_tag", ""),
+                            "prompt_override": sm.get("prompt_override"),
+                            "prompt_variant": prompt_variant,
+                        },
+                    }, tmp_path)
+                    intermediates.append(tmp_path)
+                    del text_hs, text_mask
 
                 # Free GPU tensors from this iteration before the next one
-                del target_latents, attention_mask, text_hs, text_mask
+                del target_latents, attention_mask
                 del lyric_hs, lyric_mask
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                intermediates.append(tmp_path)
-                logger.info("[Side-Step] Pass 1 OK: %s", af.name)
+                logger.info(
+                    "[Gary] Pass 1 OK: %s (%s)",
+                    af.name,
+                    ", ".join(prompt_variants),
+                )
 
             except Exception as exc:
                 failed += 1
-                logger.error("[Side-Step] Pass 1 FAIL %s: %s", af.name, exc)
+                logger.error("[Gary] Pass 1 FAIL %s: %s", af.name, exc)
 
     finally:
         logger.info("[Side-Step] Unloading VAE + Text Encoder ...")
@@ -415,11 +445,11 @@ def _pass2_heavy(
                 tmp_path.unlink(missing_ok=True)
 
                 processed += 1
-                logger.info("[Side-Step] Pass 2 OK: %s", tmp_path.stem)
+                logger.info("[Gary] Pass 2 OK: %s", tmp_path.stem)
 
             except Exception as exc:
                 failed += 1
-                logger.error("[Side-Step] Pass 2 FAIL %s: %s", tmp_path.stem, exc)
+                logger.error("[Gary] Pass 2 FAIL %s: %s", tmp_path.stem, exc)
 
     finally:
         logger.info("[Side-Step] Unloading DIT model ...")
@@ -429,3 +459,116 @@ def _pass2_heavy(
         progress_callback(total, total, "[Pass 2] Done")
 
     return processed, failed
+
+
+def _prompt_variants_for_sample(meta: Dict[str, Any], genre_ratio: int) -> List[str]:
+    """Return prompt variants to encode for one sample.
+
+    A positive genre ratio means Gary encodes the caption prompt and, when the
+    sidecar has a distinct genre, a genre prompt for the same audio. The
+    manifest then controls the effective caption/genre sampling ratio.
+    """
+    override = str(meta.get("prompt_override") or "").strip().lower()
+    has_genre = _has_distinct_genre(meta)
+    if override == "genre":
+        return ["genre" if has_genre else "caption"]
+    if override == "caption":
+        return ["caption"]
+    if genre_ratio >= 100 and has_genre:
+        return ["genre"]
+    variants = ["caption"]
+    if genre_ratio > 0 and has_genre:
+        variants.append("genre")
+    return variants
+
+
+def _has_distinct_genre(meta: Dict[str, Any]) -> bool:
+    genre = str(meta.get("genre") or "").strip()
+    if not genre:
+        return False
+    caption = str(meta.get("caption") or "").strip()
+    return genre.casefold() != caption.casefold()
+
+
+def _variant_tmp_path(out_path: Path, audio_path: Path, variant: str) -> Path:
+    if variant == "caption":
+        return out_path / f"{audio_path.stem}.tmp.pt"
+    return out_path / f"{audio_path.stem}.{variant}.tmp.pt"
+
+
+def _variant_final_path(out_path: Path, audio_path: Path, variant: str) -> Path:
+    if variant == "caption":
+        return out_path / f"{audio_path.stem}.pt"
+    return out_path / f"{audio_path.stem}.{variant}.pt"
+
+
+def _write_variant_manifest(
+    *,
+    out_path: Path,
+    audio_files: List[Path],
+    sample_meta: Dict[str, Dict[str, Any]],
+    ds_meta: Dict[str, Any],
+) -> int:
+    """Write one logical training row per audio track.
+
+    Caption and genre tensors remain separate cache files.  The data loader
+    chooses the genre path for a rotating subset of tracks each epoch, so a
+    20% ratio does not multiply the number of training samples per epoch.
+    """
+    genre_ratio = int(ds_meta.get("genre_ratio", 0) or 0)
+    manifest_samples: List[str] = []
+    sample_groups: List[Dict[str, str]] = []
+    tensor_files: List[str] = []
+    genre_variant_tracks = 0
+
+    for af in audio_files:
+        variants = _prompt_variants_for_sample(sample_meta.get(af.name, {}), genre_ratio)
+        caption_path = _variant_final_path(out_path, af, "caption")
+        genre_path = _variant_final_path(out_path, af, "genre")
+        has_caption = "caption" in variants and caption_path.exists()
+        has_genre = "genre" in variants and genre_path.exists()
+
+        if has_caption:
+            group = {"path": caption_path.name}
+            manifest_samples.append(caption_path.name)
+            tensor_files.append(caption_path.name)
+            if has_genre:
+                group["genre_path"] = genre_path.name
+                tensor_files.append(genre_path.name)
+                genre_variant_tracks += 1
+            sample_groups.append(group)
+        elif has_genre:
+            # Explicit genre overrides and 100% genre mode use the genre
+            # tensor as the track's sole/default prompt.
+            manifest_samples.append(genre_path.name)
+            sample_groups.append({"path": genre_path.name})
+            tensor_files.append(genre_path.name)
+
+    metadata = dict(ds_meta)
+    metadata.update(
+        {
+            "prompt_variant_strategy": "epoch_rotating_track_swap",
+            "target_genre_ratio": genre_ratio,
+            "genre_variant_tracks": genre_variant_tracks,
+            "samples_per_epoch": len(sample_groups),
+            "tensor_files": sorted(set(tensor_files)),
+            "num_tensor_files": len(set(tensor_files)),
+        }
+    )
+    manifest = {
+        "metadata": metadata,
+        "samples": manifest_samples,
+        "sample_groups": sample_groups,
+        "num_samples": len(manifest_samples),
+    }
+    manifest_path = out_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    logger.info(
+        "[Gary] Wrote manifest: %d tracks per epoch from %d cached tensors "
+        "(%d tracks can swap to genre; target %d%%)",
+        len(manifest_samples),
+        len(set(tensor_files)),
+        genre_variant_tracks,
+        genre_ratio,
+    )
+    return len(manifest_samples)

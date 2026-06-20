@@ -67,6 +67,10 @@ services/**/*.safetensors
 services/**/*.bin
 services/**/*.pt
 services/**/*.ckpt
+outputs/carey-training-smoke/
+outputs/carey-caption-*/
+outputs/carey-train-job-*/
+/tmp/
 
 # Reference folder (local-only context, not shipped)
 reference/

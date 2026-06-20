@@ -277,7 +277,7 @@ def step_advanced_vram(a: dict) -> None:
         allow_back=True,
     )
     a["offload_encoder"] = ask_bool(
-        "Offload encoder/VAE to CPU? (saves ~2-4GB VRAM after setup)",
+        "Offload frozen encoder/tokenizers to CPU? (saves ~1.5GB VRAM after setup)",
         default=a.get("offload_encoder", False),
         allow_back=True,
     )

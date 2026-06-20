@@ -224,6 +224,19 @@ class LLMHandler:
         Returns:
             Computed max_new_tokens value, capped at model's max length.
         """
+        if generation_phase == "understand":
+            env_max = os.getenv("ACESTEP_UNDERSTAND_MAX_NEW_TOKENS", "").strip()
+            if env_max:
+                try:
+                    max_new_tokens = max(1, int(env_max))
+                    if hasattr(self, "max_model_len"):
+                        max_new_tokens = min(max_new_tokens, self.max_model_len - 64)
+                    return max_new_tokens
+                except ValueError:
+                    logger.warning(
+                        f"Ignoring invalid ACESTEP_UNDERSTAND_MAX_NEW_TOKENS={env_max!r}"
+                    )
+
         if target_duration is not None and target_duration > 0:
             # Determine the effective upper bound from GPU config (if available)
             # so that max_new_tokens does not exceed what the constrained decoder
@@ -540,6 +553,17 @@ class LLMHandler:
             if not os.path.exists(full_lm_model_path):
                 return f"❌ 5Hz LM model not found at {full_lm_model_path}", False
 
+            def _success(status_message: str) -> Tuple[str, bool]:
+                self.last_init_params = {
+                    "checkpoint_dir": checkpoint_dir,
+                    "lm_model_path": lm_model_path,
+                    "backend": backend,
+                    "device": device,
+                    "offload_to_cpu": offload_to_cpu,
+                    "dtype": dtype,
+                }
+                return status_message, True
+
             # Proactive CUDA cleanup before LM load to reduce fragmentation on mode/model switch
             if device == "cuda" and torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -586,7 +610,7 @@ class LLMHandler:
                     logger.info("Attempting MLX backend for Apple Silicon acceleration...")
                     mlx_success, mlx_status = self._load_mlx_model(full_lm_model_path)
                     if mlx_success:
-                        return mlx_status, True
+                        return _success(mlx_status)
                     else:
                         logger.warning(f"MLX backend failed: {mlx_status}")
                         if backend == "mlx":
@@ -596,7 +620,7 @@ class LLMHandler:
                             if not success:
                                 return status_msg, False
                             status_msg = f"✅ 5Hz LM initialized (PyTorch fallback from MLX)\nModel: {full_lm_model_path}\nBackend: PyTorch"
-                            return status_msg, True
+                            return _success(status_msg)
                         # else: backend was "vllm" on MPS, continue to vllm attempt below
                 elif backend == "mlx":
                     logger.warning("MLX not available (requires Apple Silicon + mlx-lm package)")
@@ -605,7 +629,7 @@ class LLMHandler:
                     if not success:
                         return status_msg, False
                     status_msg = f"✅ 5Hz LM initialized (PyTorch fallback, MLX not available)\nModel: {full_lm_model_path}\nBackend: PyTorch"
-                    return status_msg, True
+                    return _success(status_msg)
 
             if backend == "vllm" and device != "cuda":
                 logger.info(
@@ -648,7 +672,7 @@ class LLMHandler:
                                 logger.warning("vllm failed on MPS, trying MLX backend...")
                                 mlx_success, mlx_status = self._load_mlx_model(full_lm_model_path)
                                 if mlx_success:
-                                    return mlx_status, True
+                                    return _success(mlx_status)
                                 logger.warning(f"MLX also failed: {mlx_status}, falling back to PyTorch")
                             logger.warning("Falling back to PyTorch backend")
                             success, status_msg = self._load_pytorch_model(full_lm_model_path, device)
@@ -660,7 +684,7 @@ class LLMHandler:
                 if not success:
                     return status_msg, False
 
-            return status_msg, True
+            return _success(status_msg)
 
         except Exception as e:
             return f"❌ Error initializing 5Hz LM: {str(e)}\n\nTraceback:\n{traceback.format_exc()}", False
@@ -1702,7 +1726,11 @@ class LLMHandler:
 
         # Build formatted prompt for understanding
         formatted_prompt = self.build_formatted_prompt_for_understanding(audio_codes)
-        print(f"formatted_prompt: {formatted_prompt}")
+        logger.info(
+            "Understanding formatted prompt length: "
+            f"{len(formatted_prompt)} chars, "
+            f"{audio_codes.count('<|audio_code_')} audio codes"
+        )
         # Generate using constrained decoding (understand phase)
         # We want to generate metadata first (CoT), then lyrics (natural text)
         # Note: cfg_scale and negative_prompt are not used in understand mode

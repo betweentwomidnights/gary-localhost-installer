@@ -8,6 +8,7 @@ Supports both raw audio loading and preprocessed tensor loading.
 import os
 import json
 import random
+import math
 from typing import Optional, List, Dict, Any, Tuple
 from loguru import logger
 
@@ -15,7 +16,7 @@ from acestep.training.path_safety import safe_path
 
 import torch
 import torchaudio
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Sampler
 
 try:
     from lightning.pytorch import LightningDataModule
@@ -59,17 +60,28 @@ class PreprocessedTensorDataset(Dataset):
             raise ValueError(f"Not an existing directory: {tensor_dir}")
         self.tensor_dir = validated_dir
         self.sample_paths: List[str] = []
+        self.sample_groups: List[Dict[str, Optional[str]]] = []
+        self.genre_ratio = 0
         
         # Load manifest if exists
         manifest_path = safe_path("manifest.json", base=self.tensor_dir)
         if os.path.exists(manifest_path):
             with open(manifest_path, 'r') as f:
                 manifest = json.load(f)
-            raw_paths = manifest.get("samples", [])
-            for raw in raw_paths:
-                resolved = self._resolve_manifest_path(raw)
-                if resolved is not None:
-                    self.sample_paths.append(resolved)
+            metadata = manifest.get("metadata", {})
+            self.genre_ratio = max(0, min(100, int(metadata.get("genre_ratio", 0) or 0)))
+            raw_groups = manifest.get("sample_groups", [])
+            if (
+                metadata.get("prompt_variant_strategy") == "epoch_rotating_track_swap"
+                and isinstance(raw_groups, list)
+            ):
+                self._load_sample_groups(raw_groups)
+            else:
+                raw_paths = manifest.get("samples", [])
+                for raw in raw_paths:
+                    resolved = self._resolve_manifest_path(raw)
+                    if resolved is not None:
+                        self.sample_paths.append(resolved)
         else:
             # Fallback: scan directory for .pt files (already inside tensor_dir)
             for f in os.listdir(self.tensor_dir):
@@ -91,6 +103,43 @@ class PreprocessedTensorDataset(Dataset):
             f"PreprocessedTensorDataset: {len(self.valid_paths)} samples "
             f"from {self.tensor_dir}"
         )
+        if self.has_prompt_variants:
+            logger.info(
+                "[Gary] Prompt variants: {} tracks per epoch, {} genre-capable, "
+                "{}% target genre exposure",
+                len(self.valid_paths),
+                len(self.genre_variant_indices),
+                self.genre_ratio,
+            )
+
+    def _load_sample_groups(self, raw_groups: List[Dict[str, Any]]) -> None:
+        """Load validated caption/genre path pairs from a Gary manifest."""
+        for raw_group in raw_groups:
+            if not isinstance(raw_group, dict):
+                continue
+            default_path = self._resolve_manifest_path(raw_group.get("path", ""))
+            if default_path is None or not os.path.exists(default_path):
+                continue
+            genre_path = None
+            raw_genre = raw_group.get("genre_path")
+            if raw_genre:
+                candidate = self._resolve_manifest_path(raw_genre)
+                if candidate is not None and os.path.exists(candidate):
+                    genre_path = candidate
+            self.sample_groups.append({"path": default_path, "genre_path": genre_path})
+            self.sample_paths.append(default_path)
+
+    @property
+    def genre_variant_indices(self) -> List[int]:
+        return [
+            index
+            for index, group in enumerate(self.sample_groups)
+            if group.get("genre_path")
+        ]
+
+    @property
+    def has_prompt_variants(self) -> bool:
+        return bool(self.sample_groups and self.genre_variant_indices and self.genre_ratio > 0)
     
     def _resolve_manifest_path(self, raw: str) -> Optional[str]:
         """Resolve a single manifest sample path to a validated absolute path.
@@ -136,7 +185,13 @@ class PreprocessedTensorDataset(Dataset):
         Returns:
             Dictionary containing all pre-computed tensors for training
         """
+        use_genre = False
+        if isinstance(idx, (tuple, list)):
+            idx, use_genre = int(idx[0]), bool(idx[1])
+
         tensor_path = self.valid_paths[idx]
+        if self.sample_groups and use_genre:
+            tensor_path = self.sample_groups[idx].get("genre_path") or tensor_path
         data = torch.load(tensor_path, map_location='cpu', weights_only=True)
         
         return {
@@ -147,6 +202,53 @@ class PreprocessedTensorDataset(Dataset):
             "context_latents": data["context_latents"],  # [T, 65]
             "metadata": data.get("metadata", {}),
         }
+
+
+class PromptVariantSampler(Sampler):
+    """Yield each track once while rotating genre prompt substitutions.
+
+    The cumulative rounding keeps the requested ratio accurate for tiny
+    datasets over multiple epochs.  Genre-capable tracks are drawn from a
+    shuffled cycle so each one is used before the cycle starts over.
+    """
+
+    def __init__(self, dataset: PreprocessedTensorDataset, seed: int = 0):
+        self.dataset = dataset
+        self.seed = seed
+        self.epoch = 0
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __iter__(self):
+        num_tracks = len(self.dataset)
+        indices = list(range(num_tracks))
+        random.Random(self.seed + self.epoch).shuffle(indices)
+
+        eligible = self.dataset.genre_variant_indices
+        ideal_per_epoch = num_tracks * self.dataset.genre_ratio / 100.0
+        draw_start = math.floor(self.epoch * ideal_per_epoch + 0.5)
+        draw_end = math.floor((self.epoch + 1) * ideal_per_epoch + 0.5)
+        genre_count = min(len(eligible), max(0, draw_end - draw_start))
+
+        selected = set()
+        if eligible and genre_count:
+            cycle_order = list(eligible)
+            random.Random(self.seed + 10_000).shuffle(cycle_order)
+            selected.update(
+                cycle_order[(draw_start + offset) % len(cycle_order)]
+                for offset in range(genre_count)
+            )
+
+        logger.info(
+            "[Gary] Epoch {} prompt mix: {}/{} tracks use genre; {} use caption",
+            self.epoch + 1,
+            len(selected),
+            num_tracks,
+            num_tracks - len(selected),
+        )
+        self.epoch += 1
+        return iter((index, index in selected) for index in indices)
 
 
 def collate_preprocessed_batch(batch: List[Dict]) -> Dict[str, torch.Tensor]:
@@ -281,10 +383,16 @@ class PreprocessedDataModule(LightningDataModule if LIGHTNING_AVAILABLE else obj
         """Create training dataloader."""
         prefetch_factor = None if self.num_workers == 0 else self.prefetch_factor
         persistent_workers = False if self.num_workers == 0 else self.persistent_workers
+        sampler = None
+        shuffle = True
+        if getattr(self.train_dataset, "has_prompt_variants", False):
+            sampler = PromptVariantSampler(self.train_dataset)
+            shuffle = False
         kwargs = dict(
             dataset=self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             collate_fn=collate_preprocessed_batch,
