@@ -1,10 +1,9 @@
 # gary4local
 
-gary4local is a local Windows control center for running our music-generation
-models, managing their environments, and sharing those services with multiple
-frontends.
+this is a windows control center for running 6 music models directly on your
+computer.
 
-this project is now designed to support multiple frontends:
+this project now supports multiple frontends:
 
 - [betweentwomidnights/sa3-ableton-extension](https://github.com/betweentwomidnights/sa3-ableton-extension)
   (more extensions planned)
