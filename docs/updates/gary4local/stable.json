@@ -1,12 +1,12 @@
 {
   "channel": "stable",
-  "latest_version": "0.1.14",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.14/gary4local_0.1.14_x64-setup.exe",
-  "sha256": "62198c911d6888d7a4a9dcfcf6edb72197858fefeaf92eeef32650444b58d734",
-  "published_at": "2026-06-09T08:51:30.7217940Z",
+  "latest_version": "0.1.15",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.15/gary4local_0.1.15_x64-setup.exe",
+  "sha256": "b71b567120f7f82d31d6c81ce5a23da10572757f5037a9224bca0959dd493b51",
+  "published_at": "2026-06-20T09:58:29.3506249Z",
   "notes": [
-    "Clarifies Hugging Face gated-model permission failures.",
-    "Repairs missing SA3 LoRA training dependencies and hides cancellation helper windows.",
-    "Compatible with Gary4JUCE v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1"
+    "adds ACE-Step LoRA training and improves carey model offloading.",
+    "fair warning... ACE-Step training is only tested on a 5070 laptop GPU with ace-step-v15-base. plz report xl-base issues.",
+    "compatible with gary4juce v4.0.1: https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1"
   ]
 }

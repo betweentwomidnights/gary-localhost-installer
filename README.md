@@ -1,10 +1,33 @@
 # gary4local
 
-local Windows control center and bundled backend services for [gary4juce v4.0.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.1).
+gary4local is a local Windows control center for running our music-generation
+models, managing their environments, and sharing those services with multiple
+frontends.
 
-find the macOS version here: <https://github.com/betweentwomidnights/gary-localhost-installer-mac>
+this project is now designed to support multiple frontends:
 
-This branch is the `v2-refactor` Tauri/Rust implementation. The old PyInstaller/Inno Setup flow is intentionally not part of this branch anymore; that legacy path stays preserved on the old branch history.
+- [betweentwomidnights/sa3-ableton-extension](https://github.com/betweentwomidnights/sa3-ableton-extension)
+  (more extensions planned)
+- [betweentwomidnights/gary4juce](https://github.com/betweentwomidnights/gary4juce)
+
+find the macOS version here:
+[gary-localhost-installer-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac).
+
+gary4local is built with Tauri, Rust, and Svelte. the old
+PyInstaller/Inno Setup flow remains available in the older branch history.
+
+## v0.1.15
+
+we've got ACE-Step LoRA training now. you can caption and edit a dataset, train
+against regular base or XL-base, and automatically register the finished LoRA
+with carey. see the
+[ACE-Step LoRA training guide](docs/ace-step-lora-training.md) for where we're
+at with it, what i've actually tested, and which parts are still experimental.
+
+i also fixed up the carey service itself to offload models more cleanly so they
+can be swapped around freely while you're using gary4juce.
+
+older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
 ## preview
 
@@ -12,63 +35,15 @@ install and startup flow:
 
 ![gary4local install and startup preview](docs/gary4local-install-startup.gif)
 
-## version 0.1.14
-
-Version 0.1.14 makes Hugging Face permission failures explicit when downloading
-gated Stable Audio 3 models.
-
-- Preserves the underlying Hugging Face error when a generic cache error wraps
-  a `401` or `403` response.
-- Explains when a fine-grained token needs public gated-repository read access.
-- Labels a stored token as saved rather than implying its permissions have
-  already been validated.
-- Places the gated-token permission guide directly on the SA3 model screen.
-- Repairs older SA3 environments by installing missing LoRA training
-  dependencies before preprocessing begins.
-- Cancels SA3 LoRA training without flashing PowerShell or taskkill windows.
-
-## version 0.1.13
-
-Version 0.1.13 hardens Hugging Face onboarding and model downloads, especially
-for users who are new to gated repositories and fine-grained access tokens.
-
-- Adds an in-app visual guide for enabling public gated-repository access on a
-  fine-grained Hugging Face token.
-- Shows actionable model-download errors directly in the model list.
-- Uses Hugging Face's official snapshot downloader for resumable downloads and
-  reliable cache layout on Windows.
-- Detects incomplete SA3 snapshots instead of presenting them as ready.
-- Loads complete SA3 Medium and bundled T5Gemma files directly from the local
-  cache, avoiding unnecessary Hub checks during inference.
-
-## version 0.1.12
-
-Version 0.1.12 adds Stable Audio 3 LoRA training directly to the Windows
-control center. The trainer is a focused integration of
-[dada-bots' underfit project](https://github.com/dada-bots/underfit), adapted
-to use Gary4local's existing SA3 environment, saved Hugging Face token, model
-storage, and LoRA registry.
-
-- Choose an audio dataset, edit optional text-sidecar prompts, and start
-  training with practical defaults for consumer NVIDIA GPUs.
-- Follow selectable, auto-scrolling logs and persisted job progress, or cancel
-  preprocessing and training from the same window.
-- Completed `.safetensors` adapters are copied into Gary4local's SA3 LoRA
-  folder and registered for generation automatically.
-- An optional experimental loudness fix can normalize each track's encoded
-  latent RMS to the base-model target before training.
-- The SA3 runtime now aligns sampler latents with the decoder's device and
-  precision before decode, and converts half-precision models before moving
-  them to the GPU to reduce peak loading memory.
-
 ## what lives here
 
 - `control-center/`
-  Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into `%APPDATA%\Gary4JUCE`.
+  the Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into `%APPDATA%\Gary4JUCE`.
 - `services/`
-  The Python backends and model-specific code for Gary, Terry, Jerry, Carey, Foundation, and SA3.
+  the Python backends and model-specific code for gary, terry, jerry, carey,
+  foundation, and sa3.
 - `keygen_music_for_installer.wav`
-  Source loop used to generate the tiny installer music asset. cuz why not?
+  source loop used to generate the tiny installer music asset. cuz why not?
 
 ## services
 
@@ -79,115 +54,33 @@ storage, and LoRA registry.
 - `sa3` / Stable Audio 3: `http://localhost:8006` via [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
 - `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
 
-## sa3 localhost notes
+## custom model backends
 
-The local `sa3` service mirrors the remote gary4juce contract for generate,
-loop, transform, continue, prompt dice, LoRA listing, and poll status.
-It was built from the same backend contract as
-[sa3-api](https://github.com/betweentwomidnights/sa3-api), which remains the
-clean reference for the remote SA3 API shape.
-
-- SA3 runs on `http://localhost:8006`.
-- LoRA entries are managed in the control center and written to `%APPDATA%\Gary4JUCE\sa3\lora_registry.json`.
-- The integrated LoRA trainer uses a stripped-down version of [underfit](https://github.com/dada-bots/underfit) and automatically registers completed adapters.
-- The optional dataset prompt editor creates and edits same-name `.txt` sidecars using the literal prompt format consumed during training.
-- Training jobs expose live logs, persist their status when the control center closes, and can be cancelled gracefully.
-- Prompt dice pools live under `%APPDATA%\Gary4JUCE\sa3\prompts`.
-- `continue` supports both `inpaint` and `latent_prefix` continuation modes.
-- Output shaping controls expose the first pass at local loudness management for hot LoRA outputs.
-- Manual and preview decode paths normalize latents to the decoder's device and dtype, including CFG paths that may return float32 latents.
-- Half-precision SA3 models are converted before transfer to CUDA, reducing transient GPU memory pressure during load and reload.
-
-## gary localhost optimizations
-
-The local `gary` service applies several MusicGen inference optimizations that are specific to the localhost deployment:
-
-- `musicgen_fast.py` converts remaining float32 parameters and buffers to fp16 to avoid extra dtype conversion overhead during generation.
-- Self-attention layers are patched to use a pre-allocated static KV cache instead of repeatedly growing tensors with `torch.cat`.
-- If available in the local Gary environment, Flash Attention 2 is patched in directly for MusicGen self-attention.
-- The service performs a small first-load kernel warmup pass per model/device so later generations start faster.
-
-For localhost we intentionally do **not** enable `torch.compile` by default. Gary unloads models after generation so we can support many finetunes on smaller GPUs without keeping large model instances resident, and that model lifecycle usually makes compile overhead a poor tradeoff.
-
-## carey localhost notes
-
-The local `carey` service now tracks more of the custom [ace-lego](https://github.com/betweentwomidnights/ace-lego) behavior while still being practical on smaller Windows GPUs:
-
-See the [ACE-Step LoRA training guide](docs/ace-step-lora-training.md) for the
-integrated trainer workflow, hardware caveats, captioning notes, and current
-experimental recommendations.
-
-- `lego`, `extract`, `complete`, and `cover` are all exposed through the localhost wrapper.
-- `cover` always routes to the turbo checkpoint and stays fixed at 8 steps / CFG 1.0.
-- `complete` now accepts `base`, `turbo`, or `sft` from localhost clients. `turbo` stays fixed at 8 steps / CFG 1.0, while `base` and `sft` keep editable steps and CFG.
-- The `gary4local` Carey UI now includes an XL toggle. When enabled, those same localhost model choices map to `acestep-v15-xl-base`, `acestep-v15-xl-sft`, and `acestep-v15-xl-turbo` under the hood instead of the regular checkpoints.
-- The Carey panel now has a separate `add lora` flow instead of mixing user adapters into the checkpoint download UI.
-- Each local LoRA entry stores a name, `model family` (`standard` or `xl`), a checkpoint folder, and an optional separate captions/source folder. This supports the common Side-Step workflow where the exported adapter and the training sidecars do not live together.
-- If a checkpoint folder includes `metadata.json`, gary4local will read `scale`, `backends`, and `model_family` from it. Accepted backend tags are `base`, `turbo`, and `regular`. If metadata is missing, the app defaults to `scale: 1.0`, `backends: ["base", "turbo"]`, and infers the family from the folder name or current XL mode.
-- Saving entries writes `%APPDATA%\Gary4JUCE\carey\lora_registry.json`. Building captions writes `%APPDATA%\Gary4JUCE\carey\captions.json` by scanning `.txt` sidecars from the chosen captions/source folder or, if omitted, from the checkpoint folder itself.
-- The bundled `default` caption pool is seeded from `services/carey/default_captions.json`. Per-LoRA pools are built from the sidecar `caption:` and `genre:` lines. LoRAs without sidecars still work for generation, but the Gary4JUCE dice button will fall back to the default pool.
-- Gary4JUCE only sees LoRAs whose `model family` matches the current Carey XL toggle. `standard` LoRAs are hidden when XL is on, and `xl` LoRAs are hidden when XL is off.
-- We currently recommend 16 GB of VRAM for the XL toggle even though some slower first-use generations may still succeed below that on certain cards.
-- Model startup is intentionally lazy. Switching the XL toggle updates the routing config, but Carey waits until the first request to download or initialize the required checkpoint.
-- During decode, localhost Carey can temporarily offload the DiT model so the VAE decode step has more VRAM available.
-- The decode path falls back through progressively safer modes, including tiled decode, CPU-offloaded decode, and full CPU decode, instead of hard-failing immediately on lower-memory GPUs.
-
-This keeps ACE-Step usable on consumer cards where generation may fit in VRAM but decode is the step that would otherwise tip the process into an out-of-memory failure.
-
-## terry localhost optimizations
-
-The local `terry` service now supports an optional Flash Attention 2 path for MelodyFlow on CUDA:
-
-- Terry runs MelodyFlow on `torch 2.7.1` with the same Windows FA2 wheel family used by the other CUDA services.
-- `melodyflow_fast.py` patches the DiT self-attention blocks at runtime to call FA2 directly when the wheel is installed and the tensors are in a supported CUDA dtype.
-- Cross-attention stays on the existing AudioCraft attention path because those blocks can carry masks, so the FA2 patch stays focused on the large self-attention passes over audio latents.
-- The optimization is disabled by default and can be enabled with `MELODYFLOW_USE_FLASH_ATTN=1` or from the `gary4local` Terry panel when that feature is included in the build.
+for more info about some of the custom model backends and localhost-specific
+optimizations in this project, see the
+[custom model backend notes](docs/custom-model-backends.md).
 
 ## repo layout notes
 
-- Development runs directly from the repo.
-- Production syncs the bundled service source into `%APPDATA%\Gary4JUCE\services`.
-- Mutable runtime data such as logs, virtual environments, caches, and models live under `%APPDATA%\Gary4JUCE`, not inside the installed app folder.
+- development runs directly from the repo.
+- production syncs the bundled service source into `%APPDATA%\Gary4JUCE\services`.
+- mutable runtime data such as logs, virtual environments, caches, and models live under `%APPDATA%\Gary4JUCE`, not inside the installed app folder.
 
-## auto-update
+## auto-updater
 
-`gary4local` now includes a lightweight updater UI:
-
-- checks a static HTTPS manifest on startup
-- shows in-app release notes from the manifest
-- offers `not now` and `skip this version`
-- falls back to `download update` when only the Phase 1 manifest is available
-- offers `install update` when a signed native updater feed is also available
-
-Production builds use baked-in stable updater defaults:
-
-- `docs/updates/gary4local/stable.json`
-- `docs/updates/gary4local/native-stable.json`
-
-For local preview testing, you can override those defaults at runtime:
+this project has an auto-updater inside the UI. you can read about how that's
+handled in the [auto-updater notes](docs/auto-updater.md), or just build it
+without one:
 
 ```powershell
-$env:GARY4LOCAL_UPDATE_MANIFEST_URL="https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/preview.json"
-$env:GARY4LOCAL_NATIVE_UPDATER_ENDPOINT="https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-preview.json"
-$env:GARY4LOCAL_NATIVE_UPDATER_PUBKEY = Get-Content C:\path\to\gary4local-updater.key.pub -Raw
-& "$env:LOCALAPPDATA\gary4local\gary4local.exe"
-```
-
-If you are compiling from source and do not want your build to check the public updater manifest, disable the updater UI at build time:
-
-```powershell
+cd control-center
+npm ci
 $env:VITE_ENABLE_APP_UPDATER='0'
-npm run tauri dev
+npm run tauri build
 Remove-Item Env:VITE_ENABLE_APP_UPDATER
 ```
 
-notes:
-
-- `VITE_ENABLE_APP_UPDATER` is a build-time flag, not a runtime toggle.
-- `GARY4LOCAL_UPDATE_MANIFEST_URL`, `GARY4LOCAL_NATIVE_UPDATER_ENDPOINT`, and `GARY4LOCAL_NATIVE_UPDATER_PUBKEY` are runtime-only overrides and are not baked into production builds.
-- When this flag is set to `0`, the `check updates` UI is removed and backend update checks are disabled for that build.
-- This is useful for forks, local-only builds, and source builds that should not advertise public GitHub releases.
-- Maintainer release instructions live in [docs/releasing/PHASE2_RELEASE.md](docs/releasing/PHASE2_RELEASE.md).
+that flag removes the updater UI and manifest checks from the build.
 
 ## development
 
@@ -217,7 +110,7 @@ npm ci
 npm run tauri build
 ```
 
-the build now stages `control-center/src-tauri/resources/services` automatically from the tracked repo `services/` tree, so a clean clone does not need a pre-populated bundled-services folder or extra `bash` / `rsync` tooling just to package the app.
+the build now stages `control-center/src-tauri/resources/services` automatically from the tracked repo `services/` tree, so a clean clone doesn't need a pre-populated bundled-services folder or extra `bash` / `rsync` tooling just to package the app.
 
 if you want a build that hides the experimental Terry Flash Attention toggle entirely, set the feature flag before building:
 
@@ -229,22 +122,11 @@ npm run tauri build
 Remove-Item Env:VITE_ENABLE_MELODYFLOW_FA2_TOGGLE
 ```
 
-if you want a source build without the updater UI, set the updater flag before building:
-
-```powershell
-cd control-center
-npm ci
-$env:VITE_ENABLE_APP_UPDATER='0'
-npm run tauri build
-Remove-Item Env:VITE_ENABLE_APP_UPDATER
-```
-
 notes:
 
 - `VITE_ENABLE_MELODYFLOW_FA2_TOGGLE` is a build-time flag, not a runtime toggle.
-- When this flag is set to `0`, the Terry Flash Attention setting is removed from the UI and the packaged app forces MelodyFlow to stay on the standard attention path.
-- Leaving the flag unset keeps the Terry Flash Attention panel available, but the optimization itself still defaults to off unless the user enables it.
-- `VITE_ENABLE_APP_UPDATER` is also a build-time flag. When set to `0`, packaged builds omit the updater UI and skip manifest checks entirely.
+- when this flag is set to `0`, the terry Flash Attention setting is removed from the UI and the packaged app forces MelodyFlow to stay on the standard attention path.
+- leaving the flag unset keeps the terry Flash Attention panel available, but the optimization itself still defaults to off unless the user enables it.
 
 artifacts land in:
 
@@ -255,10 +137,10 @@ the current preferred Windows artifact is the NSIS setup executable.
 
 ## unsigned builds
 
-the installers are currently unsigned. The intended verification flow is:
+the installers are currently unsigned. the intended verification flow is:
 
-1. Build the installer locally from this branch with one of the commands above.
-2. Compare the generated hash against the release artifact hash.
+1. build the installer locally from this branch with one of the commands above.
+2. compare the generated hash against the release artifact hash.
 
 example:
 

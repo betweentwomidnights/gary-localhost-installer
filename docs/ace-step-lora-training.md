@@ -1,177 +1,177 @@
 # ACE-Step LoRA training in gary4local
 
-This guide covers the ACE-Step trainer built into gary4local. It is not meant
-to be the final word on training ACE-Step LoRAs. This is still experimental,
-and part of the fun is figuring out what works for your own music.
+this isn't meant to be the definitive guide to training ACE-Step LoRAs. it's
+mostly a collection of what i've tested so far, what seems to be working for
+me, and enough explanation to help you start your own experiments.
 
-## Fair warning: what has actually been tested
+## fair warning
 
-This trainer has only been tested on an NVIDIA RTX 5070 Laptop GPU with 8 GB of
-VRAM. Regular `acestep-v15-base` training works there. I have not yet been able
-to validate training against `acestep-v15-xl-base`, although the pipeline is
-designed to support it.
+this trainer has only been tested on an NVIDIA RTX 5070 Laptop GPU with 8 GB of
+VRAM, so i haven't been able to validate whether training on
+`acestep-v15-xl-base` works yet. it should. you'll probably want 16-24 GB of
+VRAM to train on XL-base.
 
-You will probably want 16–24 GB of VRAM for XL-base training. The trainer
-offloads frozen model components and performs a VRAM preflight before the first
-batch, but that check cannot make an oversized model fit on a small GPU.
+the trainer does offload frozen model components and run a VRAM safety check
+before the first batch. that's made regular `acestep-v15-base` training work
+on my 8 GB card, but it obviously can't make an XL model fit where it doesn't
+fit.
 
-I have gotten decent instrumental results from regular base. In my testing,
-though, Stable Audio 3 has generally been the better option for purely
-instrumental datasets. ACE-Step seems especially interesting when the dataset
-contains vocalists.
+i was able to get some decent instrumental results with regular base, but i'm
+finding that sa3 seems to be the better option for purely instrumental data.
+ACE-Step seems better suited to data with vocalists in it. that's just where my
+own testing has landed so far; your data may disagree.
 
-## The basic workflow
+## the basic workflow
 
-1. Choose a folder of audio files and give the LoRA a name and trigger word.
-2. Run **caption / prepare**. This fills missing sidecars with ACE-Step's
-   captioner and performs the optional BPM/key sanity check.
-3. Open **edit prompts / sidecars** and review the generated metadata. Human
-   ears still win.
-4. Choose the model, instrumental/vocal mode, adapter type, epochs, learning
-   rate, and maximum track length.
-5. Leave the advanced settings alone for a first run unless you have a reason
-   to change them.
-6. Start training. The trainer saves periodic checkpoints, keeps a smoothed
-   best-loss checkpoint, and registers the selected adapter with Carey when the
-   run finishes.
+1. pick a folder of audio files and choose a name and trigger word for the
+   LoRA.
+2. press **caption / prepare** to fill in missing sidecars and run the optional
+   BPM/key helper.
+3. open **edit prompts / sidecars** and fix anything obviously wrong.
+4. choose your model, instrumental/vocal setting, adapter type, epochs,
+   learning rate, and maximum track length.
+5. press **train LoRA** and let the VRAM preflight decide whether the selected
+   settings are safe enough to begin.
 
-## A note about the captioner
+the trainer saves checkpoints along the way and keeps a smoothed best-loss
+checkpoint separately from the final epoch. it registers the selected adapter
+with carey when training finishes.
 
-The captioner's results will not be perfect. We use ACE-Step's own captioner
-because the base model was trained around this style of metadata. Even when a
-caption or genre does not perfectly describe your music, it still resembles
-the conditioning language ACE-Step expects.
+## fun fact: base, turbo, and SFT
 
-Use the 4B captioner when you have enough GPU memory; it should produce the best
-metadata. The 1.7B model is a practical good-quality choice. The 0.6B model is
-available for constrained hardware, but it is not recommended when either of
-the larger models fits.
+one of the cool parts about training ACE-Step LoRAs is that you can apply a
+LoRA trained on regular base to regular turbo and SFT too. my early results
+seem to favor applying a LoRA trained on regular base to the SFT model.
 
-Do not be afraid to edit the results. BPM, key, time signature, lyrics, genre,
-and captions remain editable in the sidecar UI. The local BPM/key check is also
-deliberately conservative: it is there to catch obvious captioner mistakes,
-not to overrule a musician.
+gary4local handles the standard/XL family separation for you. if you train on
+regular base, the LoRA is registered as standard. if you train on XL-base, it's
+registered as XL. carey only loads LoRAs and caption pools belonging to the
+currently selected family.
 
-At generation time, Gary4JUCE's dice button draws from the caption and genre
-pool associated with the LoRA. In practice, that means the exact wording of
-every training caption may matter less than you expect. I personally hate
-prompting, so I often let RNGesus keep rolling until I hear something I like.
+i'm not sure XL LoRAs will be as successful on XL-SFT. there's an
+[ACE-Step issue reporting tempo, rhythm, and key instability with XL-SFT](https://github.com/ace-step/ACE-Step-1.5/issues/1203).
+that issue was closed automatically due to inactivity rather than confirmed
+fixed, so i'm treating it as an unresolved question rather than proof that
+XL-SFT is always broken.
 
-## Trigger words and varied prompts
+## a note about the captioner
 
-The trigger word is prepended during preprocessing like this:
+the results aren't going to be perfect. the reason we use ACE-Step's captioner
+is because, in my mind, the base model was originally trained on a pipeline
+using this kind of captioner model. even when the captions and genres don't
+perfectly represent your music, they do represent the style of caption this
+model seems to prefer.
+
+use the 4B captioner if you have the GPU memory. it should give you the best
+results. the 1.7B model is a good practical option. the 0.6B model is there for
+low-memory situations, but i don't recommend it if one of the larger models
+fits.
+
+everything remains editable. the captioner can get the caption, genre, lyrics,
+BPM, or key wrong. the BPM/key helper is intentionally conservative, and a
+musician should trust their ears over either model.
+
+at the end of the day, your prompt is probably going to get populated by the
+dice button in gary4juce, so it doesn't matter all that much what every caption
+says, in my opinion. the sidecars still matter because their captions and
+genres become the dice pool associated with your LoRA.
+
+the trigger word gets applied like this:
 
 ```text
 your-trigger-word, original caption
 ```
 
-This lets you try the learned distribution against prompts beyond the exact
-captions in the dataset. The trigger should be distinctive and easy to type.
-How literally you use it—or whether you mostly rely on the dice button—is up to
-you.
+that lets you try applying your LoRA's fine-tuned distribution to more varied
+captions instead of only repeating the training text. like everything else,
+this is going to be experimental for you, and you'll have to figure out how
+you prefer to work. i personally hate prompting, so i mostly let rnjesus decide
+through the dice button until i hear what i like.
 
-## Base, Turbo, and SFT
+## a few training controls worth explaining
 
-One of the useful parts of ACE-Step LoRAs is that an adapter trained against
-the standard base checkpoint can also be applied to the standard Turbo and SFT
-checkpoints. Early results here have favored applying a regular-base LoRA to
-the regular SFT model.
+### epochs
 
-You do not have to keep the model families straight by hand. Gary4local records
-whether you trained against regular base or XL-base, then keeps that LoRA with
-the matching standard or XL family automatically.
+one epoch is one pass over every track. more epochs means more chances for the
+LoRA to learn your data, but more isn't automatically better. the best
+checkpoint may happen before the final epoch, which is why the trainer saves
+them separately.
 
-XL-SFT remains more uncertain. There is an
-[ACE-Step issue describing rhythm, tempo, and key instability in XL-SFT](https://github.com/ace-step/ACE-Step-1.5/issues/1203).
-The issue was closed automatically for inactivity rather than confirmed fixed,
-so treat it as an unresolved caveat—not proof that every XL-SFT generation is
-broken.
+### learning rate
 
-## Understanding the training controls
+learning rate is basically how hard you want it to train. `1e-4` is a lighter
+touch; `3e-4` trains harder and is our current default. if the result becomes
+harsh, unstable, or far too literal, lowering the learning rate is a sensible
+first experiment.
 
-### Adapter type
+### rank
 
-DoRA is the recommended default. Plain LoRA is a somewhat lighter and simpler
-alternative. If memory is extremely tight, LoRA may be worth trying.
+rank is basically how much room you give the adapter to adjust the model. it
+isn't rewriting the original base-model weights directly, but a higher rank
+does let the LoRA train more adapter parameters.
 
-### Epochs
+the best results with ACE-Step seem to come from rank 64 or possibly 128. be
+careful with 128 if your GPU is already close to its limit at 64, especially
+with balanced attention + MLP enabled. the preflight will reject configurations
+that are clearly unsafe, but i still prefer leaving some breathing room on a
+GPU that's also driving the display.
 
-One epoch is one complete pass over every track in the dataset. More epochs
-mean more opportunities to learn the material, but training for longer is not
-automatically better. Listen to saved checkpoints when possible instead of
-assuming the last epoch must be the best one.
+### balanced attention + MLP
 
-### Learning rate
+the **balanced attention + MLP** option in the advanced settings is pretty
+experimental. it's based on some of the ideas explored in
+[koda-dernet's Side-Step](https://github.com/koda-dernet/Side-Step).
 
-Learning rate controls how aggressively each optimizer step changes the
-adapter. `1e-4` is a lighter touch; `3e-4` trains harder and is the current
-default. If a LoRA becomes harsh, unstable, or too literal, a lower learning
-rate is one of the first things to try.
+rather than add adaptive Fisher analysis to our training pipeline, we opted to
+do something simpler that should hopefully achieve good results. gary uses a
+fixed distribution of rank across self-attention, cross-attention, and MLP
+projections. so far, in testing, it's made my LoRA sound cleaner. that's an
+early personal result, not a promise.
 
-### Rank
-
-Rank controls the capacity of the adapter: roughly, how much room it has to
-learn changes to the base model without modifying the full model weights.
-Ranks 64 and 128 currently appear to be the most useful range for ACE-Step.
-
-Rank 128 consumes substantially more VRAM, especially with balanced attention
-and MLP coverage. If rank 64 is already near your GPU's limit, do not assume
-128 will fit. The VRAM preflight will block configurations that are clearly
-unsafe, but leaving additional headroom is still wise on a display GPU.
-
-### Balanced attention + MLP
-
-The **balanced attention + MLP** profile is experimental. It is informed by
-ideas explored in [koda-dernet's Side-Step](https://github.com/koda-dernet/Side-Step),
-but Gary does not perform Side-Step's adaptive Fisher analysis. Instead, it
-uses a fixed, architecture-level distribution of rank across self-attention,
-cross-attention, and feed-forward projections.
-
-That is intentionally simpler and less dataset-specific. So far it has made my
-test LoRAs sound cleaner, but that is an early result—not a guarantee.
-
-If you want adaptive analysis and a more advanced training setup, use
+if you want Fisher analysis or a more advanced setup, use
 [Side-Step](https://github.com/koda-dernet/Side-Step).
 
-### Batch size and gradient accumulation
+### batch size and gradient accumulation
 
-Batch size and gradient accumulation should usually remain at 1 for a small
-dataset such as a single album. That gives each track its own optimizer update
-instead of averaging several tracks into one update.
+batch size and gradient accumulation should probably remain at 1 unless you're
+using a lot of data. if you're training on a single album, i'd rather let each
+track produce its own optimizer update than average a bunch of tracks together
+before updating.
 
-Larger datasets may benefit from accumulating gradients across multiple
-examples. The tradeoff is fewer, smoother optimizer updates and additional
-memory or time. Change these settings because the dataset calls for it, not
-because larger numbers look more powerful.
+larger datasets may benefit from larger batches or gradient accumulation, but
+they trade more frequent, noisy updates for fewer, smoother updates. i'd only
+change these because your dataset gives you a reason to.
 
-### Min-SNR loss weighting
+### Min-SNR loss weighting (the codexplanation)
 
-ACE-Step training samples different flow timesteps, which correspond to
-different mixtures of clean audio and noise. With a flat mean-squared-error
-loss, high-signal timesteps can produce disproportionately strong gradients and
-dominate the update.
+ACE-Step trains at many different flow timesteps. you can think of those as
+different mixtures of clean audio and noise. with ordinary flat loss
+weighting, the cleaner, high-signal timesteps can produce much stronger
+gradients and start shouting over the rest of the training problem.
 
 Min-SNR estimates the signal-to-noise ratio at each sampled timestep and caps
-the influence of those high-SNR examples. In plain language, it keeps the easy,
-cleaner parts of the denoising problem from shouting over everything else. The
-goal is a more balanced learning signal across noise levels, not a stronger
-effect or a replacement for good data.
+the influence of those high-SNR examples. in plainer language: it asks the
+easy, cleaner examples to stop hogging the conversation so the LoRA can learn
+from a better-balanced range of noise levels.
 
-The default gamma of 5 is a sensible starting point. Leave it there unless you
-are deliberately comparing loss-weighting behavior. Gary's implementation is
-adapted to ACE-Step's flow interpolation and follows the method described by
-[Hang et al., “Efficient Diffusion Training via Min-SNR Weighting Strategy”](https://openaccess.thecvf.com/content/ICCV2023/html/Hang_Efficient_Diffusion_Training_via_Min-SNR_Weighting_Strategy_ICCV_2023_paper.html).
+it doesn't rescue bad data, improve the captions, or simply make the LoRA
+stronger. it only changes how the loss is balanced. gamma 5 is a sensible
+starting point, and i'd leave it there unless you're specifically testing loss
+weighting. gary's implementation adapts the method from
+[Hang et al., "Efficient Diffusion Training via Min-SNR Weighting Strategy"](https://openaccess.thecvf.com/content/ICCV2023/html/Hang_Efficient_Diffusion_Training_via_Min-SNR_Weighting_Strategy_ICCV_2023_paper.html)
+to ACE-Step's flow interpolation.
 
-## What is still on the wish list
+## some TODOs
 
-Gary4JUCE's Lego mode currently keeps LoRAs disabled. Now that regular
-v1.5-base training works locally, I want to open that path and test whether a
-vocal LoRA can influence Lego-mode vocals.
+now that i've actually been able to train regular v1.5-base, i'd like to open
+up the Lego mode in [gary4juce](https://github.com/betweentwomidnights/gary4juce)
+so we can test our LoRAs there. it's kind of the dream to get Lego-mode vocals
+using your own vocal LoRA, but it's completely untested.
 
-Training a LoRA on a specific guitar style and using it in Lego mode also
-sounds incredibly based. I do not think many people have tried LoRAs with Lego
-mode yet, so I would like to confirm whether it is cool or stupid before
-presenting it as a feature.
+it also sounds incredibly based to train on a specific guitar style and get
+good Lego-mode results there. i don't think anyone has really tried to use
+LoRAs with Lego mode yet, so i'm going to confirm whether it's cool or stupid
+before presenting it as a feature.
 
-Until then: save checkpoints, change one variable at a time, and trust your
-ears more than the loss graph.
+for now: save checkpoints, change one thing at a time, and trust your ears more
+than the loss graph.
