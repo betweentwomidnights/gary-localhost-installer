@@ -97,7 +97,9 @@ acestep-api = "acestep.api_server:main"
 acestep-download = "acestep.model_downloader:main"
 
 [build-system]
-requires = ["hatchling"]
+# The 2026.6.1.19 wheel is missing required package-name metadata and uv
+# correctly rejects it while creating Hatchling's isolated build environment.
+requires = ["hatchling", "trove-classifiers!=2026.6.1.19"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
