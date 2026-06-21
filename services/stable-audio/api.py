@@ -1253,17 +1253,24 @@ def generate_loop():
         if not detected_bpm:
             return jsonify({"error": "BPM must be specified in prompt (e.g., '120bpm')"}), 400
         
-        # Calculate bars if not specified
+        # Parse and validate an explicit bar count before loading the model.
         if bars:
             bars = int(bars)
-        else:
-            # ---- NEW: Get timing from model config ----
-            if input_audio is None:
-                model, config, device = load_model(model_type, finetune_repo, finetune_checkpoint)
-            
-            sample_rate = int(config.get("sample_rate", 44100))
-            model_sample_size = int(config.get("sample_size", 524288))
-            max_duration = model_sample_size / sample_rate
+            if bars not in [1, 2, 4, 8]:
+                return jsonify({"error": "bars must be 1, 2, 4, or 8"}), 400
+
+        # Explicit and automatic bar counts both need the active model's
+        # duration limit. Keep this outside the auto-bars branch so supplying
+        # `bars` cannot leave max_duration uninitialized.
+        if input_audio is None:
+            model, config, device = load_model(model_type, finetune_repo, finetune_checkpoint)
+
+        sample_rate = int(config.get("sample_rate", 44100))
+        model_sample_size = int(config.get("sample_size", 524288))
+        max_duration = model_sample_size / sample_rate
+
+        # Calculate bars if not specified.
+        if not bars:
             
             seconds_per_beat = 60.0 / detected_bpm
             seconds_per_bar = seconds_per_beat * 4
@@ -1279,10 +1286,6 @@ def generate_loop():
                     break
             
             print(f"[AUDIO] Auto-selected {bars} bars ({bars * seconds_per_bar:.2f}s) for {detected_bpm} BPM")
-        
-        # Validate parameters
-        if bars not in [1, 2, 4, 8]:
-            return jsonify({"error": "bars must be 1, 2, 4, or 8"}), 400
         
         # Pre-calculate loop timing
         seconds_per_beat = 60.0 / detected_bpm
@@ -1317,10 +1320,6 @@ def generate_loop():
         print(f"   Enhanced prompt: {enhanced_prompt}")
         print(f"   Negative: {negative_prompt}")
         print(f"   Input audio: {'Yes' if input_audio is not None else 'No'}")
-        
-        # ---- NEW: Load model if not already loaded ----
-        if input_audio is None:
-            model, config, device = load_model(model_type, finetune_repo, finetune_checkpoint)
         
         # Set seed
         if seed != -1:

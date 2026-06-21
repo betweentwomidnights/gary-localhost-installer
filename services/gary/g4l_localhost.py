@@ -164,6 +164,11 @@ def get_last_input_audio(session_id: str):
 # CORE PROCESSING FUNCTIONS
 # =============================================================================
 
+def sampling_value(kwargs, key, default):
+    """Use API defaults when an optional Pydantic field was omitted or null."""
+    value = kwargs.get(key)
+    return default if value is None else value
+
 def run_audio_processing(session_id: str, audio_data: str, model_name: str,
                         prompt_duration: int, **kwargs):
     def progress_callback(current, total):
@@ -204,9 +209,9 @@ def run_audio_processing(session_id: str, audio_data: str, model_name: str,
                     model_name,
                     progress_callback,
                     prompt_duration=prompt_duration,
-                    top_k=kwargs.get('top_k', 250),
-                    temperature=kwargs.get('temperature', 1.0),
-                    cfg_coef=kwargs.get('cfg_coef', 3.0),
+                    top_k=sampling_value(kwargs, 'top_k', 250),
+                    temperature=sampling_value(kwargs, 'temperature', 1.0),
+                    cfg_coef=sampling_value(kwargs, 'cfg_coef', 3.0),
                     description=kwargs.get('description', '')
                 )
 
@@ -271,9 +276,9 @@ def run_continue_processing(session_id: str, audio_data: str, model_name: str,
                     model_name,
                     progress_callback,
                     prompt_duration=prompt_duration,
-                    top_k=kwargs.get('top_k', 250),
-                    temperature=kwargs.get('temperature', 1.0),
-                    cfg_coef=kwargs.get('cfg_coef', 3.0),
+                    top_k=sampling_value(kwargs, 'top_k', 250),
+                    temperature=sampling_value(kwargs, 'temperature', 1.0),
+                    cfg_coef=sampling_value(kwargs, 'cfg_coef', 3.0),
                     description=kwargs.get('description', '')
                 )
 

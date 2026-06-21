@@ -553,7 +553,13 @@ class CompleteRequest(BaseModel):
     """Complete mode: continue/extend audio with full arrangement."""
     audio_data: str = Field(..., description="Base64-encoded source audio")
     bpm: int = Field(..., description="BPM of the source audio")
-    audio_duration: float = Field(..., description="Target output duration in seconds")
+    audio_duration: float = Field(
+        ...,
+        description=(
+            "Final total output duration in seconds, including the source audio; "
+            "this is not the number of seconds to append"
+        ),
+    )
     caption: str = Field("", description="Style caption")
     lyrics: str = Field("", description="Optional lyrics with structure tags")
     language: str = Field("en", description="Language code for lyrics vocalization (e.g. en, ja, zh)")
