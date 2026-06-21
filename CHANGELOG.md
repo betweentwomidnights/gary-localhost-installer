@@ -4,6 +4,21 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.1.16
+
+this is a small hotfix for carey environment rebuilds on clean machines.
+
+- pin `trove-classifiers==2026.5.22.10` for Carey's isolated Hatchling build
+  environment because the newer `2026.6.1.19` wheel is missing required
+  package-name metadata
+- treat omitted and explicit `null` sampling controls the same way in gary
+- initialize Stable Audio's model duration before validating explicit loop
+  bars
+- clarify that carey's completion duration means final total duration, not
+  seconds appended
+
+compatible with gary4juce v4.0.2.
+
 ## v0.1.15
 
 we've got integrated ACE-Step LoRA training now.

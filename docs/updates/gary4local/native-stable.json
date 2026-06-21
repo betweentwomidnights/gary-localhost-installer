@@ -1,11 +1,11 @@
 {
-  "version": "0.1.15",
-  "notes": "adds ACE-Step LoRA training and improves carey model offloading.\nfair warning... ACE-Step training is only tested on a 5070 laptop GPU with ace-step-v15-base. plz report xl-base issues.\ncompatible with gary4juce v4.0.2.",
-  "pub_date": "2026-06-20T09:58:29.3506249Z",
+  "version": "0.1.16",
+  "notes": "fixes carey rebuild env failures caused by a malformed upstream build wheel.\nhardens request handling in gary, carey, and Stable Audio.\ncompatible with gary4juce v4.0.2.",
+  "pub_date": "2026-06-21T19:36:57.5489727Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVHUjh6MmxnU0lpVGk3S0FvL2o2MEh6WU8wWnJOTStSOHVXQmRvczNRKytIMk43enF1bUliWVVzOXdKUmV6NlI3VkM1SXQvUEIwTzFvSisrd0xsS3dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxOTQ5NDg1CWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTVfeDY0LXNldHVwLmV4ZQp3ZDlVczJNTEZ3UzJFMUFwbFVvU0ZzWTZBNjIzdk9IMW1uNVBwNVdZZUVZdllDTyt1eXRFaFJFaGwzeUNrZWw5MTNJWmp3QU5ZWXBYNStwcEhVekxDZz09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.15/gary4local_0.1.15_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMExYa3hqWlFLVjZBUHJLNkk0ZFFieUxQdjQ1MUlIVjZhMUhySUp6UDBFSFM1S0xST2Y2UWl4U3ZCcDMvZFFFMGIybVYyL0FoSGpHdlZySVg5T0ZEdWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMDcwNjA1CWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTZfeDY0LXNldHVwLmV4ZQpIN2h2d1lmbFlEK0loM0lMdWR5bnpDK1h0bFlBd3lxSU0wS00xSzlVZkd1Q09ueUhSU3oxYzZRUzl3WUhublUxaXFrSDBOYk1Yc2lucmh0N280d3dBdz09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.16/gary4local_0.1.16_x64-setup.exe"
     }
   }
 }

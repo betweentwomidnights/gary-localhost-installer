@@ -15,16 +15,13 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.1.15
+## v0.1.16
 
-we've got ACE-Step LoRA training now. you can caption and edit a dataset, train
-against regular base or XL-base, and automatically register the finished LoRA
-with carey. see the
-[ACE-Step LoRA training guide](docs/ace-step-lora-training.md) for where we're
-at with it, what i've actually tested, and which parts are still experimental.
+this is a small hotfix for carey environment rebuilds. a malformed upstream
+wheel could stop ACE-Step from installing on a clean machine, so we now pin its
+last known-good build dependency.
 
-i also fixed up the carey service itself to offload models more cleanly so they
-can be swapped around freely while you're using gary4juce.
+there are also small request-handling fixes for gary, carey, and Stable Audio.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

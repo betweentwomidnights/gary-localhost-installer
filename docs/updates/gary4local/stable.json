@@ -1,12 +1,12 @@
 {
   "channel": "stable",
-  "latest_version": "0.1.15",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.15/gary4local_0.1.15_x64-setup.exe",
-  "sha256": "b71b567120f7f82d31d6c81ce5a23da10572757f5037a9224bca0959dd493b51",
-  "published_at": "2026-06-20T09:58:29.3506249Z",
+  "latest_version": "0.1.16",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.16/gary4local_0.1.16_x64-setup.exe",
+  "sha256": "6334a9d62d4a106c64b4ec3eedc83c1a8ccc15f060fed0320136f0cdaa535fb0",
+  "published_at": "2026-06-21T19:36:57.5489727Z",
   "notes": [
-    "adds ACE-Step LoRA training and improves carey model offloading.",
-    "fair warning... ACE-Step training is only tested on a 5070 laptop GPU with ace-step-v15-base. plz report xl-base issues.",
+    "fixes carey rebuild env failures caused by a malformed upstream build wheel.",
+    "hardens request handling in gary, carey, and Stable Audio.",
     "compatible with gary4juce v4.0.2."
   ]
 }
