@@ -8,6 +8,7 @@
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
+  import CareyScragVaeBanner from "./lib/CareyScragVaeBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
@@ -49,6 +50,7 @@
   interface AppSettings {
     melodyflowUseFlashAttn: boolean;
     careyUseXlModels: boolean;
+    careyUseScragVae: boolean;
     sa3Loudness: Sa3LoudnessSettings;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
@@ -82,6 +84,7 @@
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
     careyUseXlModels: false,
+    careyUseScragVae: false,
     sa3Loudness: {
       peakNormalizeDb: "2.0",
       limiterCeilingDb: "-0.3",
@@ -337,6 +340,10 @@
     appSettings = { ...appSettings, careyUseXlModels: enabled };
   }
 
+  function onCareyScragVaeSettingUpdated(enabled: boolean) {
+    appSettings = { ...appSettings, careyUseScragVae: enabled };
+  }
+
   function onSa3LoudnessSettingUpdated(settings: Sa3LoudnessSettings) {
     appSettings = { ...appSettings, sa3Loudness: settings };
   }
@@ -482,6 +489,12 @@
             enabled={appSettings.careyUseXlModels}
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onCareyXlSettingUpdated}
+          />
+          <CareyScragVaeBanner
+            enabled={appSettings.careyUseScragVae}
+            serviceStatus={selectedService?.status ?? "stopped"}
+            onUpdated={onCareyScragVaeSettingUpdated}
+            onShowModels={() => showModels("carey")}
           />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner

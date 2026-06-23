@@ -124,7 +124,27 @@ class InitServiceLoaderMixin:
         """Load and optionally compile the VAE module."""
         from diffusers.models import AutoencoderOobleck
 
-        vae_checkpoint_path = os.path.join(checkpoint_dir, "vae")
+        vae_override = os.environ.get("ACESTEP_VAE_PATH", "").strip()
+        if vae_override:
+            vae_checkpoint_path = (
+                vae_override
+                if os.path.isabs(vae_override)
+                else os.path.join(checkpoint_dir, vae_override)
+            )
+            if os.path.exists(vae_checkpoint_path):
+                logger.info(
+                    f"[_load_vae_model] ACESTEP_VAE_PATH set -> loading alternate VAE from {vae_checkpoint_path}"
+                )
+            else:
+                fallback = os.path.join(checkpoint_dir, "vae")
+                logger.warning(
+                    f"[_load_vae_model] ACESTEP_VAE_PATH='{vae_override}' not found at "
+                    f"{vae_checkpoint_path}; falling back to stock VAE at {fallback}"
+                )
+                vae_checkpoint_path = fallback
+        else:
+            vae_checkpoint_path = os.path.join(checkpoint_dir, "vae")
+
         if not os.path.exists(vae_checkpoint_path):
             raise FileNotFoundError(f"VAE checkpoint not found at {vae_checkpoint_path}")
 

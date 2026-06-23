@@ -1,11 +1,11 @@
 {
-  "version": "0.1.16",
-  "notes": "fixes carey rebuild env failures caused by a malformed upstream build wheel.\nhardens request handling in gary, carey, and Stable Audio.\ncompatible with gary4juce v4.0.2.",
-  "pub_date": "2026-06-21T19:36:57.5489727Z",
+  "version": "0.1.17",
+  "notes": "adds seed support for Carey lego, complete, and cover requests.\nadds optional ScragVAE download and toggle for ACE-Step generation.\nmoves LoRA training timestep mu into advanced settings and keeps -0.4 as the default.\nadds friendlier Windows Smart App Control guidance during environment rebuilds.\ncompatible with gary4juce v4.0.3.",
+  "pub_date": "2026-06-23T06:50:01.9134924Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMExYa3hqWlFLVjZBUHJLNkk0ZFFieUxQdjQ1MUlIVjZhMUhySUp6UDBFSFM1S0xST2Y2UWl4U3ZCcDMvZFFFMGIybVYyL0FoSGpHdlZySVg5T0ZEdWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMDcwNjA1CWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTZfeDY0LXNldHVwLmV4ZQpIN2h2d1lmbFlEK0loM0lMdWR5bnpDK1h0bFlBd3lxSU0wS00xSzlVZkd1Q09ueUhSU3oxYzZRUzl3WUhublUxaXFrSDBOYk1Yc2lucmh0N280d3dBdz09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.16/gary4local_0.1.16_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME14bmQwTytJT2s0VHZoQ1BMVVRaWFpjQTg1TCsyYnFieVpQb0tXNGUwK3JwYmEzenluM2dCK3hVejFxT3lOd1lnNVpnOElPNnZpVTRKNS82QlcrY2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMTk3MzMxCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTdfeDY0LXNldHVwLmV4ZQplbS9uR2JkOHNVV01GL1RneWQxOXlqRVBtTEI4NTBxTlM0VHdFbkN0MVdtZjMyQStFVkhxa0VTSXNRa0Qvbk04YmdXL2NGV3ZkSTl6eCtsSUVJN21CUT09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.17/gary4local_0.1.17_x64-setup.exe"
     }
   }
 }

@@ -215,6 +215,80 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["inference_steps"], "32")
         self.assertEqual(data["key_scale"], "C minor")
 
+    def test_generation_request_models_expose_seed(self):
+        requests = (
+            carey_wrapper.LegoRequest(audio_data="audio", track_name="drums", bpm=120),
+            carey_wrapper.CompleteRequest(audio_data="audio", bpm=120, audio_duration=16.0),
+            carey_wrapper.CoverRequest(audio_data="audio", bpm=120, caption="dub remix"),
+        )
+
+        for request in requests:
+            with self.subTest(request_type=type(request).__name__):
+                self.assertEqual(request.seed, -1)
+                fixed_request = request.model_copy(update={"seed": 42})
+                self.assertEqual(fixed_request.seed, 42)
+
+    def test_generation_form_data_forwards_fixed_and_random_seed(self):
+        cases = (
+            (
+                carey_wrapper.Job(task_id="seed-lego", task_type="lego", bpm=120, duration=8.0),
+                carey_wrapper.LegoRequest(
+                    audio_data="audio", track_name="drums", bpm=120, caption="drum break"
+                ),
+            ),
+            (
+                carey_wrapper.Job(task_id="seed-complete", task_type="complete", bpm=120, duration=8.0),
+                carey_wrapper.CompleteRequest(
+                    audio_data="audio", bpm=120, audio_duration=16.0, caption="synthwave"
+                ),
+            ),
+            (
+                carey_wrapper.Job(task_id="seed-cover", task_type="cover", bpm=120, duration=8.0),
+                carey_wrapper.CoverRequest(
+                    audio_data="audio", bpm=120, caption="dub remix"
+                ),
+            ),
+        )
+
+        for job, request in cases:
+            with self.subTest(task_type=job.task_type, seed="fixed"):
+                fixed_data = carey_wrapper._build_form_data(
+                    job, request.model_copy(update={"seed": 42}), "ignored.wav"
+                )
+                self.assertEqual(fixed_data["seed"], "42")
+                self.assertEqual(fixed_data["use_random_seed"], "false")
+
+            with self.subTest(task_type=job.task_type, seed="random"):
+                random_data = carey_wrapper._build_form_data(job, request, "ignored.wav")
+                self.assertNotIn("seed", random_data)
+                self.assertEqual(random_data["use_random_seed"], "true")
+
+    def test_extract_form_data_does_not_expose_seed_controls(self):
+        job = carey_wrapper.Job(task_id="seed-extract", task_type="extract", bpm=120, duration=8.0)
+        request = carey_wrapper.ExtractRequest(
+            audio_data="audio", track_name="drums", bpm=120
+        )
+
+        data = carey_wrapper._build_form_data(job, request, "ignored.wav")
+
+        self.assertNotIn("seed", data)
+        self.assertNotIn("use_random_seed", data)
+
+    def test_completed_status_returns_backend_seed(self):
+        job = carey_wrapper.Job(
+            task_id="seed-status",
+            task_type="cover",
+            bpm=120,
+            status=carey_wrapper.JobStatus.COMPLETED,
+            audio_b64="audio",
+            seed_used="42,84",
+        )
+
+        response = carey_wrapper._build_status_response(job)
+        payload = json.loads(response.body)
+
+        self.assertEqual(payload["seed"], "42,84")
+
     async def test_ensure_required_model_swaps_only_when_needed(self):
         cover_job = carey_wrapper.Job(task_id="job-3", task_type="cover", bpm=120)
         carey_wrapper._current_model = carey_wrapper.ACESTEP_BASE_CONFIG

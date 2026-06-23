@@ -348,6 +348,12 @@ impl ServiceManager {
                 .env("ACESTEP_LEGO_CONFIG_PATH", "acestep-v15-base")
                 .env("ACESTEP_REGULAR_CONFIG_PATH", "acestep-v15-base")
                 .env("ACESTEP_NO_INIT", "true");
+
+            if crate::carey_use_scrag_vae_enabled() {
+                cmd.env("ACESTEP_VAE_PATH", "scrag-vae");
+            } else {
+                cmd.env_remove("ACESTEP_VAE_PATH");
+            }
         }
 
         // Prevent console window on Windows

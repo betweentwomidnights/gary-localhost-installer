@@ -304,6 +304,15 @@ impl ModelManager {
                 &["vae/config.json", "vae/diffusion_pytorch_model.safetensors"],
             ),
             (
+                "carey::scrag-vae",
+                "ScragVAE (alternate decoder)",
+                "shared",
+                &[
+                    "scrag-vae/config.json",
+                    "scrag-vae/diffusion_pytorch_model.safetensors",
+                ],
+            ),
+            (
                 "carey::Qwen3-Embedding-0.6B",
                 "Qwen3 Embedding (text)",
                 "shared",
@@ -1066,26 +1075,34 @@ pub async fn download_carey_model(
     // Extract component name from "carey::component_name"
     let component = model_id.strip_prefix("carey::").unwrap_or(&model_id);
 
-    // Map component to HF repo and allow_patterns
-    let (repo_id, allow_pattern) = match component {
-        "acestep-v15-base" => ("ACE-Step/acestep-v15-base", ""),
-        "acestep-v15-sft" => ("ACE-Step/acestep-v15-sft", ""),
-        "acestep-v15-turbo" => ("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**"),
-        "acestep-v15-xl-base" => ("ACE-Step/acestep-v15-xl-base", ""),
-        "acestep-v15-xl-sft" => ("ACE-Step/acestep-v15-xl-sft", ""),
-        "acestep-v15-xl-turbo" => ("ACE-Step/acestep-v15-xl-turbo", ""),
-        "vae" => ("ACE-Step/Ace-Step1.5", "vae/**"),
-        "Qwen3-Embedding-0.6B" => ("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**"),
-        "acestep-5Hz-lm-0.6B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-0.6B/**"),
-        "acestep-5Hz-lm-1.7B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**"),
-        "acestep-5Hz-lm-4B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-4B/**"),
+    // Map component to HF repo, optional subfolder filters, and optional root allow-lists.
+    let (repo_id, allow_pattern, root_allow_files): (&str, &str, &[&str]) = match component {
+        "acestep-v15-base" => ("ACE-Step/acestep-v15-base", "", &[]),
+        "acestep-v15-sft" => ("ACE-Step/acestep-v15-sft", "", &[]),
+        "acestep-v15-turbo" => ("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**", &[]),
+        "acestep-v15-xl-base" => ("ACE-Step/acestep-v15-xl-base", "", &[]),
+        "acestep-v15-xl-sft" => ("ACE-Step/acestep-v15-xl-sft", "", &[]),
+        "acestep-v15-xl-turbo" => ("ACE-Step/acestep-v15-xl-turbo", "", &[]),
+        "vae" => ("ACE-Step/Ace-Step1.5", "vae/**", &[]),
+        "scrag-vae" => (
+            "scragnog/Ace-Step-1.5-ScragVAE",
+            "",
+            &["config.json", "diffusion_pytorch_model.safetensors"],
+        ),
+        "Qwen3-Embedding-0.6B" => ("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**", &[]),
+        "acestep-5Hz-lm-0.6B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-0.6B/**", &[]),
+        "acestep-5Hz-lm-1.7B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**", &[]),
+        "acestep-5Hz-lm-4B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-4B/**", &[]),
         other => return Err(format!("Unknown Carey component: {}", other)),
     };
 
     let ckpt_str = checkpoint_dir.to_string_lossy().to_string();
+    let root_allow_files_json =
+        serde_json::to_string(root_allow_files).unwrap_or_else(|_| "[]".to_string());
 
     // For separate repos (acestep-v15-base), download to checkpoints/component_name/
     // For unified repo components (vae, Qwen3), download matching files to checkpoints/
+    // Separate repos may also provide an exact root file allow-list (ScragVAE skips GGUF).
     //
     // Uses streaming requests with byte-level progress (same approach as Gary),
     // placing files directly in the target directory instead of HF cache.
@@ -1110,6 +1127,7 @@ repo_id = "{repo_id}"
 ckpt_dir = r"{ckpt_dir}"
 component = "{component}"
 prefix_filter = "{prefix_filter}"
+root_allow_files = set(json.loads(r'''{root_allow_files_json}'''))
 
 def report(pct, msg):
     print(json.dumps({{"p": round(pct, 4), "m": msg}}), flush=True)
@@ -1129,6 +1147,8 @@ try:
     # Filter to only the files we need
     if prefix_filter:
         siblings = [s for s in siblings if s.rfilename.startswith(prefix_filter + "/")]
+    elif root_allow_files:
+        siblings = [s for s in siblings if s.rfilename in root_allow_files]
 
     file_entries = [(s.rfilename, s.size or (s.lfs.size if s.lfs else 0) or 0) for s in siblings]
     total_bytes = sum(sz for _, sz in file_entries)
@@ -1202,6 +1222,7 @@ except Exception as e:
         ckpt_dir = ckpt_str,
         component = component,
         prefix_filter = prefix_filter,
+        root_allow_files_json = root_allow_files_json,
     );
 
     let mut cmd = tokio::process::Command::new(python_exe.to_str().unwrap());
@@ -1498,7 +1519,8 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
 
 #[cfg(test)]
 mod tests {
-    use super::friendly_hf_download_error;
+    use super::{friendly_hf_download_error, ModelManager, ModelStatus};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn explains_missing_public_gated_repo_permission() {
@@ -1529,5 +1551,26 @@ fine-grained token settings to view this repository."#;
         let raw = "ConnectionError: connection timed out";
 
         assert_eq!(friendly_hf_download_error(raw), raw);
+    }
+
+    #[test]
+    fn carey_catalog_includes_scrag_vae_as_optional_shared_component() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_root = std::env::temp_dir().join(format!("gary-scrag-vae-catalog-{unique}"));
+        let manager = ModelManager::new(repo_root);
+
+        let scrag = manager
+            .get_carey_models()
+            .into_iter()
+            .find(|model| model.id == "carey::scrag-vae")
+            .expect("ScragVAE should be listed in the Carey model catalog");
+
+        assert_eq!(scrag.display_name, "ScragVAE (alternate decoder)");
+        assert_eq!(scrag.service, "carey");
+        assert_eq!(scrag.size_category.as_deref(), Some("shared"));
+        assert_eq!(scrag.status, ModelStatus::Available);
     }
 }

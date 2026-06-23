@@ -5,6 +5,7 @@ import importlib.util
 import os
 import builtins
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -449,6 +450,84 @@ class InitServiceMixinTests(unittest.TestCase):
         self.assertEqual(host._lora_service.scale_state, {})
         self.assertIsNone(host._lora_service.active_adapter)
         self.assertEqual(host._lora_service.last_scale_report, {})
+
+    def test_load_vae_model_honors_relative_acestep_vae_path(self):
+        """It resolves ACESTEP_VAE_PATH relative to the checkpoint directory."""
+        host = _Host(project_root="K:/fake_root", device="cpu")
+
+        class _FakeVae:
+            def to(self, *_args, **_kwargs):
+                return self
+
+            def eval(self):
+                return None
+
+        fake_autoencoder = types.SimpleNamespace(from_pretrained=Mock(return_value=_FakeVae()))
+        fake_models_module = types.ModuleType("diffusers.models")
+        fake_models_module.AutoencoderOobleck = fake_autoencoder
+        fake_diffusers_module = types.ModuleType("diffusers")
+        fake_diffusers_module.models = fake_models_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp)
+            alternate_vae = checkpoint_dir / "scrag-vae"
+            alternate_vae.mkdir()
+
+            with patch.dict(os.environ, {"ACESTEP_VAE_PATH": "scrag-vae"}):
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "diffusers": fake_diffusers_module,
+                        "diffusers.models": fake_models_module,
+                    },
+                ):
+                    selected_path = host._load_vae_model(
+                        checkpoint_dir=str(checkpoint_dir),
+                        device="cpu",
+                        compile_model=False,
+                    )
+
+        self.assertEqual(os.path.normpath(selected_path), os.path.normpath(str(alternate_vae)))
+        fake_autoencoder.from_pretrained.assert_called_once_with(str(alternate_vae))
+
+    def test_load_vae_model_falls_back_when_acestep_vae_path_is_missing(self):
+        """It falls back to the stock VAE when the configured alternate path is absent."""
+        host = _Host(project_root="K:/fake_root", device="cpu")
+
+        class _FakeVae:
+            def to(self, *_args, **_kwargs):
+                return self
+
+            def eval(self):
+                return None
+
+        fake_autoencoder = types.SimpleNamespace(from_pretrained=Mock(return_value=_FakeVae()))
+        fake_models_module = types.ModuleType("diffusers.models")
+        fake_models_module.AutoencoderOobleck = fake_autoencoder
+        fake_diffusers_module = types.ModuleType("diffusers")
+        fake_diffusers_module.models = fake_models_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp)
+            stock_vae = checkpoint_dir / "vae"
+            stock_vae.mkdir()
+
+            with patch.dict(os.environ, {"ACESTEP_VAE_PATH": "missing-vae"}):
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "diffusers": fake_diffusers_module,
+                        "diffusers.models": fake_models_module,
+                    },
+                ):
+                    selected_path = host._load_vae_model(
+                        checkpoint_dir=str(checkpoint_dir),
+                        device="cpu",
+                        compile_model=False,
+                    )
+
+        self.assertEqual(os.path.normpath(selected_path), os.path.normpath(str(stock_vae)))
+        fake_autoencoder.from_pretrained.assert_called_once_with(str(stock_vae))
 
     def test_initialize_service_returns_error_payload_when_loader_raises(self):
         """It catches init errors and returns a formatted failure message."""

@@ -100,7 +100,7 @@
   let adapterType = $state<"lora" | "dora">("dora");
   let moduleProfile = $state<"attention" | "balanced">("balanced");
   let trigger = $state("");
-  let instrumental = $state(true);
+  let timestepMuText = $state("-0.4");
   let captionLmModel = $state("acestep-5Hz-lm-1.7B");
   let overwriteCaptions = $state(false);
   let genreRatio = $state(20);
@@ -262,7 +262,7 @@
         adapterType,
         moduleProfile,
         trigger,
-        instrumental,
+        timestepMu,
         autoCaption: prepareOnly,
         captionLmModel,
         overwriteCaptions,
@@ -309,6 +309,7 @@
     trainingState?.status === "starting" || trainingState?.status === "running"
   );
   let learningRate = $derived(Number(learningRateText.trim()));
+  let timestepMu = $derived(Number(timestepMuText));
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
   let vramAdvisory = $derived(
     model === "xl-base"
@@ -340,6 +341,7 @@
       genreRatio <= 100 &&
       Number.isFinite(learningRate) &&
       learningRate > 0 &&
+      Number.isFinite(timestepMu) &&
       Number.isFinite(cfgRatio) &&
       cfgRatio >= 0 &&
       cfgRatio < 1 &&
@@ -494,14 +496,6 @@
           </select>
         </label>
         <label class="field">
-          <span>content / timestep μ</span>
-          <select bind:value={instrumental}>
-            <option value={true}>instrumental · μ −0.4</option>
-            <option value={false}>vocal · μ 0.0</option>
-          </select>
-          <small>also supplies the captioner’s default instrumental hint.</small>
-        </label>
-        <label class="field">
           <span>adapter type</span>
           <select bind:value={adapterType}>
             <option value="dora">DoRA</option>
@@ -534,6 +528,14 @@
           </span>
         </summary>
         <div class="settings-grid advanced-grid">
+        <label class="field">
+          <span>timestep μ</span>
+          <select bind:value={timestepMuText}>
+            <option value="-0.4">default · μ −0.4</option>
+            <option value="0.0">experimental vocal · μ 0.0</option>
+          </select>
+          <small>advanced training schedule only; try 0.0 for datasets with vocals.</small>
+        </label>
         <label class="field">
           <span>adapter coverage</span>
           <select bind:value={moduleProfile}>
@@ -680,7 +682,7 @@
     open={sidecarModalOpen}
     {datasetPath}
     sharedTrigger={trigger}
-    defaultInstrumental={instrumental}
+    defaultInstrumental={false}
     onClose={() => sidecarModalOpen = false}
   />
 {/if}

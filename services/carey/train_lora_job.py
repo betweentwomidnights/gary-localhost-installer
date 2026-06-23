@@ -409,11 +409,11 @@ def build_train_command(
 
 
 def resolve_timestep_mu(args: argparse.Namespace) -> float:
-    """Resolve the explicit override or the instrumental/vocal dataset default."""
+    """Resolve the explicit override or the ACE-Step/Side-Step default."""
     explicit = getattr(args, "timestep_mu", None)
     if explicit is not None:
         return float(explicit)
-    return -0.4 if getattr(args, "instrumental", True) else 0.0
+    return -0.4
 
 
 def is_complete_peft_adapter(path: Path) -> bool:
@@ -1322,7 +1322,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--timestep-mu",
         type=float,
         default=None,
-        help="Advanced override; otherwise instrumental=-0.4 and vocal=0.0",
+        help="Advanced training schedule override. Default: -0.4.",
     )
     parser.add_argument(
         "--loss-weighting",

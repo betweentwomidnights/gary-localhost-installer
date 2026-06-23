@@ -97,6 +97,8 @@ struct AppSettings {
     #[serde(default)]
     carey_use_xl_models: bool,
     #[serde(default)]
+    carey_use_scrag_vae: bool,
+    #[serde(default)]
     sa3_loudness: Sa3LoudnessSettings,
     #[serde(default)]
     close_action_on_x: CloseActionOnX,
@@ -113,6 +115,7 @@ impl Default for AppSettings {
         Self {
             melodyflow_use_flash_attn: false,
             carey_use_xl_models: false,
+            carey_use_scrag_vae: false,
             sa3_loudness: Sa3LoudnessSettings::default(),
             close_action_on_x: CloseActionOnX::Ask,
             auto_check_updates: default_auto_check_updates(),
@@ -147,6 +150,8 @@ struct AppSettingsPatch {
     melodyflow_use_flash_attn: Option<bool>,
     #[serde(default)]
     carey_use_xl_models: Option<bool>,
+    #[serde(default)]
+    carey_use_scrag_vae: Option<bool>,
     #[serde(default)]
     sa3_loudness: Option<Sa3LoudnessSettingsPatch>,
     #[serde(default)]
@@ -990,6 +995,10 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(carey_use_xl_models) = patch.carey_use_xl_models {
         current.carey_use_xl_models = carey_use_xl_models;
+    }
+
+    if let Some(carey_use_scrag_vae) = patch.carey_use_scrag_vae {
+        current.carey_use_scrag_vae = carey_use_scrag_vae;
     }
 
     if let Some(sa3_loudness) = patch.sa3_loudness {
@@ -2668,6 +2677,10 @@ pub(crate) fn carey_use_xl_models_enabled() -> bool {
     read_app_settings().carey_use_xl_models
 }
 
+pub(crate) fn carey_use_scrag_vae_enabled() -> bool {
+    read_app_settings().carey_use_scrag_vae
+}
+
 pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
     let settings = read_app_settings().sa3_loudness;
     vec![
@@ -3281,6 +3294,40 @@ async fn rebuild_all_envs(
 // Build pipeline: uv bootstrap -> Python 3.11 -> venv -> install steps
 // ---------------------------------------------------------------------------
 
+const WINDOWS_APPLICATION_CONTROL_HELP: &str = "Windows got a little overprotective and blocked this environment's Python from starting.\n\nOpen Windows Security -> App & browser control -> Smart App Control settings, temporarily turn Smart App Control off, then rebuild the environment. You can turn it back on afterward.";
+
+fn is_windows_application_control_block(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("an application control policy has blocked this file")
+        || message.contains("os error 4551")
+}
+
+#[cfg(test)]
+mod windows_application_control_tests {
+    use super::is_windows_application_control_block;
+
+    #[test]
+    fn recognizes_application_control_policy_message() {
+        assert!(is_windows_application_control_block(
+            "An Application Control policy has blocked this file."
+        ));
+    }
+
+    #[test]
+    fn recognizes_windows_error_code() {
+        assert!(is_windows_application_control_block(
+            "Failed to query Python interpreter (os error 4551)"
+        ));
+    }
+
+    #[test]
+    fn ignores_unrelated_build_errors() {
+        assert!(!is_windows_application_control_block(
+            "Failed to resolve package dependencies (exit code 1)"
+        ));
+    }
+}
+
 /// Ensure uv is installed. Returns the path to the uv executable.
 async fn ensure_uv(
     service_id: &str,
@@ -3587,18 +3634,25 @@ async fn run_build(
             .spawn()
             .map_err(|e| format!("Build step failed '{}': {}", uv_command_str, e))?;
 
-        // Stream stdout and stderr
+        // Stream stdout and stderr, remembering whether Windows Application
+        // Control blocked the environment's Python interpreter.
+        let application_control_blocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
         let mgr_stdout = manager.clone();
         let sid_stdout = service_id.clone();
+        let stdout_application_control_blocked = application_control_blocked.clone();
 
         let stdout_task = tauri::async_runtime::spawn(async move {
             if let Some(stdout) = stdout {
                 use tokio::io::{AsyncBufReadExt, BufReader};
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
+                    if is_windows_application_control_block(&line) {
+                        stdout_application_control_blocked
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     let mut mgr = mgr_stdout.lock().await;
                     mgr.append_build_log(&sid_stdout, &line);
                 }
@@ -3607,12 +3661,17 @@ async fn run_build(
 
         let mgr_stderr = manager.clone();
         let sid_stderr = service_id.clone();
+        let stderr_application_control_blocked = application_control_blocked.clone();
 
         let stderr_task = tauri::async_runtime::spawn(async move {
             if let Some(stderr) = stderr {
                 use tokio::io::{AsyncBufReadExt, BufReader};
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
+                    if is_windows_application_control_block(&line) {
+                        stderr_application_control_blocked
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     let mut mgr = mgr_stderr.lock().await;
                     mgr.append_build_log(&sid_stderr, &line);
                 }
@@ -3633,11 +3692,22 @@ async fn run_build(
                 exit_status.code().unwrap_or(-1),
                 uv_command_str
             );
+            let was_application_control_blocked =
+                application_control_blocked.load(std::sync::atomic::Ordering::Relaxed);
             {
                 let mut mgr = manager.lock().await;
                 mgr.append_build_log(&service_id, &format!("\nERROR: {}", msg));
+                if was_application_control_blocked {
+                    mgr.append_build_log(
+                        &service_id,
+                        &format!("\n{}", WINDOWS_APPLICATION_CONTROL_HELP),
+                    );
+                }
             }
             emit_status(&manager, &handle).await;
+            if was_application_control_blocked {
+                return Err(WINDOWS_APPLICATION_CONTROL_HELP.to_string());
+            }
             return Err(msg);
         }
 
@@ -4028,7 +4098,7 @@ async fn start_carey_ace_lora_training(
     adapter_type: String,
     module_profile: String,
     trigger: String,
-    instrumental: bool,
+    timestep_mu: f64,
     auto_caption: bool,
     caption_lm_model: String,
     overwrite_captions: bool,
@@ -4091,6 +4161,9 @@ async fn start_carey_ace_lora_training(
     }
     if !learning_rate.is_finite() || learning_rate <= 0.0 {
         return Err("learning rate must be greater than 0".to_string());
+    }
+    if !timestep_mu.is_finite() {
+        return Err("timestep mu must be finite".to_string());
     }
     if !cfg_ratio.is_finite() || !(0.0..1.0).contains(&cfg_ratio) {
         return Err("CFG ratio must be in [0, 1).".to_string());
@@ -4259,6 +4332,8 @@ async fn start_carey_ace_lora_training(
         .arg((rank.saturating_mul(2)).to_string())
         .arg("--learning-rate")
         .arg(learning_rate.to_string())
+        .arg("--timestep-mu")
+        .arg(timestep_mu.to_string())
         .arg("--cfg-ratio")
         .arg(cfg_ratio.to_string())
         .arg("--loss-weighting")
@@ -4285,9 +4360,6 @@ async fn start_carey_ace_lora_training(
         .arg(carey_lora_registry_path())
         .arg("--captions-json-path")
         .arg(carey_captions_path());
-    if instrumental {
-        cmd.arg("--instrumental");
-    }
     if overwrite_captions {
         cmd.arg("--overwrite-captions");
     }

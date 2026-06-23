@@ -473,6 +473,7 @@ class Job:
     duration: Optional[float] = None       # actual source duration
     target_duration: Optional[float] = None # user-requested output duration (complete)
     track_name: Optional[str] = None       # lego/extract only
+    seed_used: Optional[str] = None        # actual seed(s) used by the backend
     error: Optional[str] = None
 
 
@@ -547,6 +548,13 @@ class LegoRequest(BaseModel):
     audio_format: str = Field("wav", description="Output format: wav, mp3, flac")
     lora: str = Field("", description="Optional LoRA adapter name. Empty = no adapter.")
     lora_scale: float = Field(-1.0, description="Override LoRA scale 0.0-1.0. -1 = use registry default.")
+    seed: int = Field(
+        -1,
+        description=(
+            "Fixed seed for reproducible generation. -1 = random each run. "
+            "Re-submit the seed returned in the status response to lock a take."
+        ),
+    )
 
 
 class CompleteRequest(BaseModel):
@@ -580,6 +588,13 @@ class CompleteRequest(BaseModel):
     )
     lora: str = Field("", description="Optional LoRA adapter name. Empty = no adapter.")
     lora_scale: float = Field(-1.0, description="Override LoRA scale 0.0-1.0. -1 = use registry default.")
+    seed: int = Field(
+        -1,
+        description=(
+            "Fixed seed for a reproducible continuation. -1 = random each run. "
+            "Re-submit the seed returned in /complete/status to lock a take."
+        ),
+    )
 
 
 class ExtractRequest(BaseModel):
@@ -620,6 +635,13 @@ class CoverRequest(BaseModel):
     )
     lora: str = Field("", description="Optional LoRA adapter name. Empty = no adapter.")
     lora_scale: float = Field(-1.0, description="Override LoRA scale 0.0-1.0. -1 = use registry default.")
+    seed: int = Field(
+        -1,
+        description=(
+            "Fixed seed for a reproducible cover. -1 = random each run. "
+            "Re-submit the seed returned in /cover/status to lock a take."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1116,6 +1138,14 @@ def _build_form_data(job: Job, req, send_path: str) -> dict:
         data["repainting_end"] = str(req.audio_duration)
         data["inference_steps"] = str(effective_inference_steps)
 
+    if job.task_type in {"lego", "complete", "cover"}:
+        seed = getattr(req, "seed", -1)
+        if seed is not None and seed >= 0:
+            data["seed"] = str(seed)
+            data["use_random_seed"] = "false"
+        else:
+            data["use_random_seed"] = "true"
+
     if hasattr(req, 'key_scale') and req.key_scale.strip():
         data["key_scale"] = req.key_scale.strip()
 
@@ -1302,6 +1332,8 @@ async def _run_generation(job: Job, req):
                     if not files_list:
                         raise RuntimeError("No audio files in result")
 
+                    job.seed_used = files_list[0].get("seed_value") or None
+
                     file_path = files_list[0]["file"]
                     resp = await client.get(
                         f"{ACESTEP_URL}{file_path}",
@@ -1390,6 +1422,8 @@ def _build_status_response(job: Job) -> JSONResponse:
         }
         if job.track_name:
             resp["track_name"] = job.track_name
+        if job.seed_used:
+            resp["seed"] = job.seed_used
         return JSONResponse(resp)
 
     return JSONResponse({

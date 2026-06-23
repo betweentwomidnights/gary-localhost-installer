@@ -206,7 +206,7 @@ class TrainLoraJobTests(unittest.TestCase):
         self.assertTrue(save_best.default)
         self.assertEqual(save_after.default, 25)
 
-    def test_dataset_type_controls_timestep_mu_unless_overridden(self) -> None:
+    def test_timestep_mu_defaults_to_model_config_unless_overridden(self) -> None:
         self.assertEqual(
             train_lora_job.resolve_timestep_mu(
                 argparse.Namespace(timestep_mu=None, instrumental=True)
@@ -217,7 +217,7 @@ class TrainLoraJobTests(unittest.TestCase):
             train_lora_job.resolve_timestep_mu(
                 argparse.Namespace(timestep_mu=None, instrumental=False)
             ),
-            0.0,
+            -0.4,
         )
         self.assertEqual(
             train_lora_job.resolve_timestep_mu(

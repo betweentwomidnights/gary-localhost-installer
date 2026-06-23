@@ -292,7 +292,7 @@ def _add_fixed_args(parser: argparse.ArgumentParser) -> None:
         "--timestep-mu",
         type=float,
         default=None,
-        help="Override model timestep mu (instrumental=-0.4, vocal=0.0)",
+        help="Override model timestep mu. Default: -0.4.",
     )
     g.add_argument(
         "--loss-weighting",
