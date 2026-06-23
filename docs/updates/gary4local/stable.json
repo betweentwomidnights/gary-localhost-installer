@@ -3,12 +3,11 @@
   "latest_version": "0.1.17",
   "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.17/gary4local_0.1.17_x64-setup.exe",
   "sha256": "fef042b9d13c5e09666f24e8b31af9c00b4c5f90e8eb44b8569e19a9c9fa4ecb",
-  "published_at": "2026-06-23T06:50:01.9134924Z",
+  "published_at": "2026-06-23T07:16:39.5551829Z",
   "notes": [
     "adds seed support for Carey lego, complete, and cover requests.",
     "adds optional ScragVAE download and toggle for ACE-Step generation.",
     "moves LoRA training timestep mu into advanced settings and keeps -0.4 as the default.",
-    "adds friendlier Windows Smart App Control guidance during environment rebuilds.",
     "compatible with gary4juce v4.0.3."
   ]
 }

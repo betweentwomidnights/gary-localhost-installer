@@ -1,7 +1,7 @@
 {
   "version": "0.1.17",
-  "notes": "adds seed support for Carey lego, complete, and cover requests.\nadds optional ScragVAE download and toggle for ACE-Step generation.\nmoves LoRA training timestep mu into advanced settings and keeps -0.4 as the default.\nadds friendlier Windows Smart App Control guidance during environment rebuilds.\ncompatible with gary4juce v4.0.3.",
-  "pub_date": "2026-06-23T06:50:01.9134924Z",
+  "notes": "adds seed support for Carey lego, complete, and cover requests.\nadds optional ScragVAE download and toggle for ACE-Step generation.\nmoves LoRA training timestep mu into advanced settings and keeps -0.4 as the default.\ncompatible with gary4juce v4.0.3.",
+  "pub_date": "2026-06-23T07:16:39.5551829Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME14bmQwTytJT2s0VHZoQ1BMVVRaWFpjQTg1TCsyYnFieVpQb0tXNGUwK3JwYmEzenluM2dCK3hVejFxT3lOd1lnNVpnOElPNnZpVTRKNS82QlcrY2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMTk3MzMxCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTdfeDY0LXNldHVwLmV4ZQplbS9uR2JkOHNVV01GL1RneWQxOXlqRVBtTEI4NTBxTlM0VHdFbkN0MVdtZjMyQStFVkhxa0VTSXNRa0Qvbk04YmdXL2NGV3ZkSTl6eCtsSUVJN21CUT09Cg==",
