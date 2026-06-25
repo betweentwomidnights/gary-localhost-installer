@@ -345,8 +345,8 @@ impl ServiceManager {
                 .env("ACESTEP_BASE_CONFIG_PATH", base_config)
                 .env("ACESTEP_SFT_CONFIG_PATH", sft_config)
                 .env("ACESTEP_TURBO_CONFIG_PATH", turbo_config)
-                .env("ACESTEP_LEGO_CONFIG_PATH", "acestep-v15-base")
-                .env("ACESTEP_REGULAR_CONFIG_PATH", "acestep-v15-base")
+                .env("ACESTEP_LEGO_CONFIG_PATH", base_config)
+                .env("ACESTEP_REGULAR_CONFIG_PATH", base_config)
                 .env("ACESTEP_NO_INIT", "true");
 
             if crate::carey_use_scrag_vae_enabled() {

@@ -324,23 +324,51 @@ class CareyWrapperModelSelectionTest(unittest.IsolatedAsyncioTestCase):
         load_mock.assert_not_called()
         self.assertEqual(carey_wrapper._current_model, carey_wrapper.ACESTEP_BASE_CONFIG)
 
-    def test_lego_tracks_always_use_acestep_base_backend(self):
+    def test_lego_tracks_always_use_active_base_backend(self):
         for track_name in ("vocals", "backing_vocals", "drums"):
             with self.subTest(track_name=track_name):
                 self.assertEqual(
                     carey_wrapper._backend_key_for("lego", requested_model="sft", track_name=track_name),
-                    "regular",
+                    "base",
                 )
                 self.assertEqual(
                     carey_wrapper._required_model_for_task("lego", requested_model="sft", track_name=track_name),
                     carey_wrapper.ACESTEP_LEGO_CONFIG,
                 )
-                self.assertEqual(carey_wrapper.ACESTEP_LEGO_CONFIG, "acestep-v15-base")
 
-    def test_lego_lora_request_is_ignored(self):
-        req = SimpleNamespace(lora="unknown-adapter", model="sft", track_name="vocals")
+    def test_lego_lora_request_validates_base_backend_and_family(self):
+        carey_wrapper.LORA_REGISTRY.clear()
+        carey_wrapper.LORA_REGISTRY.update(
+            {
+                "standard-style": {
+                    "path": "C:/loras/standard-style",
+                    "model_family": "standard",
+                    "backends": ["base"],
+                },
+                "turbo-only": {
+                    "path": "C:/loras/turbo-only",
+                    "model_family": "standard",
+                    "backends": ["turbo"],
+                },
+                "xl-style": {
+                    "path": "C:/loras/xl-style",
+                    "model_family": "xl",
+                    "backends": ["base"],
+                },
+            }
+        )
 
-        carey_wrapper._validate_lora_request("lego", req)
+        carey_wrapper._validate_lora_request(
+            "lego",
+            SimpleNamespace(lora="standard-style", model="sft", track_name="vocals"),
+        )
+
+        for lora_name in ("unknown-adapter", "turbo-only", "xl-style"):
+            with self.subTest(lora_name=lora_name), self.assertRaises(carey_wrapper.HTTPException):
+                carey_wrapper._validate_lora_request(
+                    "lego",
+                    SimpleNamespace(lora=lora_name, model="sft", track_name="vocals"),
+                )
 
     async def test_ensure_required_model_swaps_vocal_lego_from_sft_to_base(self):
         lego_job = carey_wrapper.Job(task_id="job-4b", task_type="lego", bpm=120)

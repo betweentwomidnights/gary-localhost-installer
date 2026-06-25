@@ -74,8 +74,8 @@ DEFAULT_STARTUP_CONFIG = (os.getenv("ACESTEP_CONFIG_PATH") or "acestep-v15-base"
 ACESTEP_BASE_CONFIG = (os.getenv("ACESTEP_BASE_CONFIG_PATH") or DEFAULT_STARTUP_CONFIG).strip()
 ACESTEP_SFT_CONFIG = (os.getenv("ACESTEP_SFT_CONFIG_PATH") or "acestep-v15-sft").strip()
 ACESTEP_TURBO_CONFIG = (os.getenv("ACESTEP_TURBO_CONFIG_PATH") or "acestep-v15-turbo").strip()
-ACESTEP_LEGO_CONFIG = (os.getenv("ACESTEP_LEGO_CONFIG_PATH") or "acestep-v15-base").strip()
-ACESTEP_REGULAR_CONFIG = (os.getenv("ACESTEP_REGULAR_CONFIG_PATH") or ACESTEP_LEGO_CONFIG).strip()
+ACESTEP_LEGO_CONFIG = (os.getenv("ACESTEP_LEGO_CONFIG_PATH") or ACESTEP_BASE_CONFIG).strip()
+ACESTEP_REGULAR_CONFIG = (os.getenv("ACESTEP_REGULAR_CONFIG_PATH") or ACESTEP_BASE_CONFIG).strip()
 MANAGE_MODEL_LIFECYCLE = _env_bool("ACESTEP_MANAGE_MODEL_LIFECYCLE", True)
 BACKEND_STARTS_LOADED = not _env_bool("ACESTEP_NO_INIT", False)
 EFFECTIVE_MAX_CONCURRENT = 1 if MANAGE_MODEL_LIFECYCLE else MAX_CONCURRENT
@@ -866,7 +866,7 @@ def _loading_status_message(model_name: str) -> str:
 
 def _backend_key_for(task_type: str, requested_model: str = "", track_name: str = "") -> str:
     if task_type == "lego":
-        return "regular"
+        return "base"
     if task_type == "cover":
         if _cover_model_variant(requested_model) == "turbo":
             return "turbo"
@@ -1157,8 +1157,7 @@ async def _run_generation(job: Job, req):
     raw_audio_path = None
     requested_model = getattr(req, "model", "")
     track_name = getattr(req, "track_name", "")
-    # Lego is intentionally kept on unadapted regular/base ACE-Step.
-    lora_name = "" if job.task_type == "lego" else (getattr(req, "lora", "") or "").strip()
+    lora_name = (getattr(req, "lora", "") or "").strip()
     backend_key = _backend_key_for(job.task_type, requested_model, track_name)
     required_family = _required_model_family_for_task(job.task_type, requested_model, track_name)
     lora_config = None
@@ -1437,9 +1436,6 @@ def _build_status_response(job: Job) -> JSONResponse:
 
 
 def _validate_lora_request(task_type: str, req) -> None:
-    if task_type == "lego":
-        return
-
     lora_name = (getattr(req, "lora", "") or "").strip()
     if not lora_name:
         return

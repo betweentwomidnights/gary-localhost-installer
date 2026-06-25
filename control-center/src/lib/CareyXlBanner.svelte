@@ -62,7 +62,7 @@
 
   <div class="note">
     xl-base, xl-sft, and xl-turbo can be tight at 12 GB. we recommend 16 GB of GPU VRAM before turning
-    this on. lego always stays on unadapted acestep-v15-base and ignores LoRAs.
+    this on. lego uses the active base family and can use matching LoRAs.
     the first xl start may also download additional carey weights before the service becomes healthy.
   </div>
 

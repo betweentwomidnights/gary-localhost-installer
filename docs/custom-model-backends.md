@@ -53,6 +53,9 @@ experimental recommendations.
 
 - `lego`, `extract`, `complete`, and `cover` are all exposed through the
   localhost wrapper.
+- `lego` uses the active base checkpoint family only. when the XL toggle is
+  off it routes to `acestep-v15-base`; when the XL toggle is on it routes to
+  `acestep-v15-xl-base`. it does not expose turbo or SFT choices.
 - `cover` always routes to the turbo checkpoint and stays fixed at 8 steps /
   CFG 1.0.
 - `complete` accepts `base`, `turbo`, or `sft` from localhost clients. `turbo`
@@ -68,8 +71,8 @@ experimental recommendations.
   supports the common Side-Step workflow where the exported adapter and the
   training sidecars don't live together.
 - if a checkpoint folder includes `metadata.json`, gary4local reads `scale`,
-  `backends`, and `model_family` from it. accepted backend tags are `base`,
-  `turbo`, and `regular`. if metadata is missing, the app defaults to
+  `backends`, and `model_family` from it. accepted backend tags are `base`
+  and `turbo`; lego uses the `base` tag. if metadata is missing, the app defaults to
   `scale: 1.0`, `backends: ["base", "turbo"]`, and infers the family from the
   folder name or current XL mode.
 - saving entries writes `%APPDATA%\Gary4JUCE\carey\lora_registry.json`.

@@ -161,17 +161,12 @@ weighting. gary's implementation adapts the method from
 [Hang et al., "Efficient Diffusion Training via Min-SNR Weighting Strategy"](https://openaccess.thecvf.com/content/ICCV2023/html/Hang_Efficient_Diffusion_Training_via_Min-SNR_Weighting_Strategy_ICCV_2023_paper.html)
 to ACE-Step's flow interpolation.
 
-## some TODOs
+## lego mode
 
-now that i've actually been able to train regular v1.5-base, i'd like to open
-up the Lego mode in [gary4juce](https://github.com/betweentwomidnights/gary4juce)
-so we can test our LoRAs there. it's kind of the dream to get Lego-mode vocals
-using your own vocal LoRA, but it's completely untested.
-
-it also sounds incredibly based to train on a specific guitar style and get
-good Lego-mode results there. i don't think anyone has really tried to use
-LoRAs with Lego mode yet, so i'm going to confirm whether it's cool or stupid
-before presenting it as a feature.
+gary4juce can use Carey LoRAs in Lego mode too. Lego still only exposes the
+base route: regular base when XL mode is off, and XL-base when XL mode is on.
+The registry family tag decides which LoRAs are visible, so standard adapters
+stay with regular base and XL adapters stay with XL-base.
 
 for now: save checkpoints, change one thing at a time, and trust your ears more
 than the loss graph.
