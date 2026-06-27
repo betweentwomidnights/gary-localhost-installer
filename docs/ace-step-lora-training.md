@@ -6,10 +6,11 @@ me, and enough explanation to help you start your own experiments.
 
 ## fair warning
 
-this trainer has only been tested on an NVIDIA RTX 5070 Laptop GPU with 8 GB of
-VRAM, so i haven't been able to validate whether training on
-`acestep-v15-xl-base` works yet. it should. you'll probably want 16-24 GB of
-VRAM to train on XL-base.
+this trainer started on an NVIDIA RTX 5070 Laptop GPU with 8 GB of VRAM, which
+is enough for regular `acestep-v15-base` training with the current offload
+setup. `acestep-v15-xl-base` training has now worked in local testing too, but
+i'd still treat it as a bigger-card workflow. you'll probably want 16-24 GB of
+VRAM before spending much time there.
 
 the trainer does offload frozen model components and run a VRAM safety check
 before the first batch. that's made regular `acestep-v15-base` training work
@@ -27,9 +28,11 @@ own testing has landed so far; your data may disagree.
    LoRA.
 2. press **caption / prepare** to fill in missing sidecars and run the optional
    BPM/key helper.
-3. open **edit prompts / sidecars** and fix anything obviously wrong.
-4. choose your model, instrumental/vocal setting, adapter type, epochs,
-   learning rate, and maximum track length.
+3. open **edit prompts / sidecars** and fix anything obviously wrong. add your
+   own lyrics here if the dataset has vocals.
+4. choose your model, adapter type, epochs, learning rate, maximum track
+   length, and any advanced training-schedule settings you actually mean to
+   test.
 5. press **train LoRA** and let the VRAM preflight decide whether the selected
    settings are safe enough to begin.
 
@@ -67,9 +70,15 @@ results. the 1.7B model is a good practical option. the 0.6B model is there for
 low-memory situations, but i don't recommend it if one of the larger models
 fits.
 
-everything remains editable. the captioner can get the caption, genre, lyrics,
-BPM, or key wrong. the BPM/key helper is intentionally conservative, and a
-musician should trust their ears over either model.
+everything remains editable. the captioner can get the caption, genre, BPM, or
+key wrong. the BPM/key helper is intentionally conservative, and a musician
+should trust their ears over either model.
+
+lyrics are BYOL for now. ACE-Step has a separate transcriber model we may wire
+up later, but understand_music lyrics are hallucinated rather than transcribed,
+so gary4local does not write them into vocal sidecars. the lyrics editor shows
+a grey structure template when the field is empty; that template is only a
+guide and is not saved unless you type it yourself.
 
 at the end of the day, your prompt is probably going to get populated by the
 dice button in gary4juce, so it doesn't matter all that much what every caption
@@ -163,10 +172,20 @@ to ACE-Step's flow interpolation.
 
 ## lego mode
 
-gary4juce can use Carey LoRAs in Lego mode too. Lego still only exposes the
+gary4juce can use carey LoRAs in lego mode too. lego still only exposes the
 base route: regular base when XL mode is off, and XL-base when XL mode is on.
-The registry family tag decides which LoRAs are visible, so standard adapters
+the registry family tag decides which LoRAs are visible, so standard adapters
 stay with regular base and XL adapters stay with XL-base.
+
+right now, i would use regular `acestep-v15-base` for lego mode if you don't
+have a LoRA loaded. plain `acestep-v15-xl-base` vocals have been pretty awful
+for me so far.
+
+the story changes once you have an xl-base LoRA trained. with a matching LoRA,
+lego vocals and backing vocals can be incredible. some non-vocal lego tasks are
+still lightly tested, and i've heard occasional instrument bleed from xl-base
+vocal LoRAs. the bleed tends to fit the instrumental anyway, so it may
+still be useful in a mix.
 
 for now: save checkpoints, change one thing at a time, and trust your ears more
 than the loss graph.

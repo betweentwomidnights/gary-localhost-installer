@@ -362,16 +362,14 @@ def generate_music(
         # Determine actual batch size for chunk processing
         actual_batch_size = config.batch_size if config.batch_size is not None else 1
 
-        # Prepare seeds for batch generation
-        # Use config.seed if provided, otherwise fallback to params.seed
-        # Convert config.seed (None, int, or List[int]) to format that prepare_seeds accepts
+        # Prepare seeds once for the whole generation pipeline.
+        #
+        # This list is used for LM chunking, DiT diffusion, and saved response
+        # metadata.  Random-mode requests must be resolved here and then passed
+        # downstream as explicit locked seeds; otherwise the handler can roll a
+        # second random seed internally and the reported "last seed" no longer
+        # matches the audio that was actually generated.
         seed_for_generation = ""
-        # Original code (commented out because it crashes on int seeds):
-        # if config.seeds is not None and len(config.seeds) > 0:
-        #     if isinstance(config.seeds, list):
-        #         # Convert List[int] to comma-separated string
-        #         seed_for_generation = ",".join(str(s) for s in config.seeds)
-
         if config.seeds is not None:
             if isinstance(config.seeds, list) and len(config.seeds) > 0:
                 # Convert List[int] to comma-separated string
@@ -380,10 +378,13 @@ def generate_music(
                 # Fix: Explicitly handle single integer seeds by converting to string.
                 # Previously, this would crash because 'len()' was called on an int.
                 seed_for_generation = str(config.seeds)
+        elif not config.use_random_seed and params.seed is not None:
+            seed_for_generation = str(params.seed)
 
         # Use dit_handler.prepare_seeds to handle seed list generation and padding
         # This will handle all the logic: padding with random seeds if needed, etc.
         actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
+        resolved_seed_for_generation = ",".join(str(s) for s in actual_seed_list)
 
         # LM-based Chain-of-Thought reasoning
         # Skip LM for cover/repaint tasks - these tasks use reference/src audio directly
@@ -579,7 +580,9 @@ def generate_music(
             logger.info(f"[generate_music] Final inputs: dit_input_caption='{dit_input_caption}', dit_input_lyrics='{dit_input_lyrics}'")
 
         # Phase 2: DiT music generation
-        # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
+        # Pass the resolved seed list as explicit locked seeds.  This prevents
+        # the lower handler from generating a different random seed than the one
+        # returned in metadata.
         result = dit_handler.generate_music(
             captions=dit_input_caption,
             lyrics=dit_input_lyrics,
@@ -589,8 +592,8 @@ def generate_music(
             vocal_language=dit_input_vocal_language,
             inference_steps=params.inference_steps,
             guidance_scale=params.guidance_scale,
-            use_random_seed=config.use_random_seed,
-            seed=seed_for_generation,  # Use config.seed (or params.seed fallback) instead of params.seed directly
+            use_random_seed=False,
+            seed=resolved_seed_for_generation,
             reference_audio=params.reference_audio,
             audio_duration=audio_duration,
             batch_size=config.batch_size if config.batch_size is not None else 1,

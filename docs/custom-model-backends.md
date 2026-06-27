@@ -56,6 +56,13 @@ experimental recommendations.
 - `lego` uses the active base checkpoint family only. when the XL toggle is
   off it routes to `acestep-v15-base`; when the XL toggle is on it routes to
   `acestep-v15-xl-base`. it does not expose turbo or SFT choices.
+- for lego mode without a LoRA, regular `acestep-v15-base` is still the
+  recommended path. plain `acestep-v15-xl-base` has been rough in testing.
+  with a matching xl-base LoRA, though, lego vocals and backing vocals can be
+  excellent.
+- some lego targets with xl-base LoRAs are still lightly tested, and xl-base
+  vocal LoRAs can occasionally bleed a little instrumentation into the output.
+  the funny part is that the bleed usually fits the source audio anyway.
 - `cover` always routes to the turbo checkpoint and stays fixed at 8 steps /
   CFG 1.0.
 - `complete` accepts `base`, `turbo`, or `sft` from localhost clients. `turbo`

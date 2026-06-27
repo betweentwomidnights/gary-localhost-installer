@@ -4,6 +4,29 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.1.18
+
+v0.1.18 fixes Carey seed reporting so the seed shown after a random generation
+is the seed that actually produced the audio.
+
+ACE-Step LoRA sidecars now treat lyrics as BYOL metadata. the captioner still
+helps with captions, genres, BPM, and key metadata, but it no longer writes
+LM-hallucinated lyrics into vocal sidecars. the sidecar editor shows a grey
+lyrics template instead, so users can paste or write the real words themselves.
+
+compatible with gary4juce v4.0.4.
+
+## v0.1.17
+
+v0.1.17 adds carey seed support for lego, complete, and cover, plus an optional
+[ScragVAE](https://huggingface.co/scragnog/Ace-Step-1.5-ScragVAE) decoder
+toggle for ACE-Step.
+
+it also keeps the local ACE-Step LoRA trainer moving forward. early testing says
+regular `acestep-v15-base` is still the safer lego model when no LoRA is loaded,
+while `xl-base` gets much more exciting once you have a matching xl-base LoRA,
+especially for vocals and backing vocals.
+
 ## v0.1.16
 
 this is a small hotfix for carey environment rebuilds on clean machines.

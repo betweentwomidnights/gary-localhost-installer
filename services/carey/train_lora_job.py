@@ -713,7 +713,6 @@ def caption_with_understand_music(args: argparse.Namespace) -> int:
                 result = request_valid_music_analysis(args, client, audio_path)
                 bpm_decision = decide_sidecar_bpm(args, audio_path, result)
                 key_decision = decide_sidecar_key(args, audio_path, result)
-                lyrics = str(result.get("lyrics") or "")
                 is_instrumental = analysis_is_instrumental(
                     result,
                     default=args.instrumental,
@@ -725,7 +724,10 @@ def caption_with_understand_music(args: argparse.Namespace) -> int:
                     audio_path.with_suffix(".txt"),
                     caption=str(result.get("prompt") or result.get("caption") or ""),
                     genre=str(result.get("genre") or result.get("genres") or ""),
-                    lyrics=lyrics,
+                    lyrics=sidecar_lyrics_from_analysis(
+                        result,
+                        is_instrumental=is_instrumental,
+                    ),
                     bpm=bpm_decision.bpm,
                     bpm_source=bpm_decision.source,
                     lm_bpm=bpm_decision.lm_bpm,
@@ -957,11 +959,12 @@ def validate_caption_analysis_result(
 ) -> None:
     caption = result.get("prompt") or result.get("caption")
     genre = result.get("genre") or result.get("genres")
-    lyrics = result.get("lyrics")
+    # understand_music often hallucinates plausible-looking lyrics. For now,
+    # Gary treats lyrics as BYOL metadata, so quality checks only protect the
+    # caption/genre fields that we actually consume from the LM.
     checks = (
         ("caption", caption),
         ("genre", genre),
-        ("lyrics", lyrics),
     )
     for field, value in checks:
         if field == "caption" and not require_caption and not str(value or "").strip():
@@ -1013,6 +1016,22 @@ def analysis_is_instrumental(
         or "[instrumental]" in lyrics.lower()
         or lyrics_are_structural_only(lyrics)
     )
+
+
+def sidecar_lyrics_from_analysis(
+    result: dict[str, Any],
+    *,
+    is_instrumental: bool,
+) -> str:
+    """Return lyrics to write from LM analysis.
+
+    The ACE understand_music LM is useful for captions and rough metadata, but
+    its lyrics are hallucinated rather than transcribed. Keep vocal sidecars
+    blank so users can bring their own lyrics in the editor. Instrumental
+    sidecars also return blank here; write_canonical_sidecar writes the
+    canonical [Instrumental] marker when is_instrumental is true.
+    """
+    return ""
 
 
 def lyrics_are_structural_only(lyrics: str) -> bool:

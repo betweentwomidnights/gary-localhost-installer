@@ -15,13 +15,14 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.1.16
+## v0.1.18
 
-this is a small hotfix for carey environment rebuilds. a malformed upstream
-wheel could stop ACE-Step from installing on a clean machine, so we now pin its
-last known-good build dependency.
+v0.1.18 fixes Carey seed reporting so the seed shown after a random generation
+is the seed that actually produced the audio.
 
-there are also small request-handling fixes for gary, carey, and Stable Audio.
+it also treats ACE-Step training lyrics as BYOL. the captioner still helps with
+captions, genres, BPM, and key metadata, but vocal sidecars now leave lyrics
+blank for human edits and show a grey lyrics template in the sidecar editor.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

@@ -1,11 +1,11 @@
 {
-  "version": "0.1.17",
-  "notes": "adds seed support for Carey lego, complete, and cover requests.\nadds optional ScragVAE download and toggle for ACE-Step generation.\nmoves LoRA training timestep mu into advanced settings and keeps -0.4 as the default.\ncompatible with gary4juce v4.0.3.",
-  "pub_date": "2026-06-23T07:16:39.5551829Z",
+  "version": "0.1.18",
+  "notes": "fixes Carey seed reporting so the displayed last seed matches the generated audio.\nomits LM-hallucinated lyrics from ACE-Step LoRA sidecars; lyrics are BYOL for now.\nupdates Carey lego/LoRA guidance; v15-base remains recommended when no LoRA is loaded.\ncompatible with gary4juce v4.0.4.",
+  "pub_date": "2026-06-27T08:59:45.0016625Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME14bmQwTytJT2s0VHZoQ1BMVVRaWFpjQTg1TCsyYnFieVpQb0tXNGUwK3JwYmEzenluM2dCK3hVejFxT3lOd1lnNVpnOElPNnZpVTRKNS82QlcrY2djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMTk3MzMxCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTdfeDY0LXNldHVwLmV4ZQplbS9uR2JkOHNVV01GL1RneWQxOXlqRVBtTEI4NTBxTlM0VHdFbkN0MVdtZjMyQStFVkhxa0VTSXNRa0Qvbk04YmdXL2NGV3ZkSTl6eCtsSUVJN21CUT09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.17/gary4local_0.1.17_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVnWlUvek45a3ZFbzFhSS9EZ0o2dHNwMFYrbGFBVkorMTgxcHpIcUJFSGpFWkRBdWxFd3drNkNvRUNkR2taNGRGS0dWY1VCNEVKa3c2Y1FXa0ExY1F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNTQ3ODAxCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMThfeDY0LXNldHVwLmV4ZQpVRm9ISHFrSm9GWjltRGZiV25qaVN3N1ZneWk1cWxta0hzMEEvTjVVTncwcys1SGhneXNqTU92M2EzenNtR3NVYTUxNnd6cDh3T3Y0bG13bVEzeDZCQT09Cg==",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.18/gary4local_0.1.18_x64-setup.exe"
     }
   }
 }

@@ -1,13 +1,13 @@
 {
   "channel": "stable",
-  "latest_version": "0.1.17",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.17/gary4local_0.1.17_x64-setup.exe",
-  "sha256": "fef042b9d13c5e09666f24e8b31af9c00b4c5f90e8eb44b8569e19a9c9fa4ecb",
-  "published_at": "2026-06-23T07:16:39.5551829Z",
+  "latest_version": "0.1.18",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.18/gary4local_0.1.18_x64-setup.exe",
+  "sha256": "9539a80378affdce70540a4c04b596a247b1384aaa5fba2aca3f3b55ab972797",
+  "published_at": "2026-06-27T08:59:45.0016625Z",
   "notes": [
-    "adds seed support for Carey lego, complete, and cover requests.",
-    "adds optional ScragVAE download and toggle for ACE-Step generation.",
-    "moves LoRA training timestep mu into advanced settings and keeps -0.4 as the default.",
-    "compatible with gary4juce v4.0.3."
+    "fixes Carey seed reporting so the displayed last seed matches the generated audio.",
+    "omits LM-hallucinated lyrics from ACE-Step LoRA sidecars; lyrics are BYOL for now.",
+    "updates Carey lego/LoRA guidance; v15-base remains recommended when no LoRA is loaded.",
+    "compatible with gary4juce v4.0.4."
   ]
 }

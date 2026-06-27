@@ -61,6 +61,21 @@
   let message = $state<string | null>(null);
   let loadedPath = $state("");
   let wasOpen = false;
+  const lyricsTemplate = `[Intro - a few words describing instrumentation]
+
+[Verse - 0:27 timestamps work here too]
+
+lyrics go here
+even numbers
+of syllables help, too
+
+[Chorus]
+
+you can do this (woo!)
+if a background
+singer goes (yeah!)
+
+[Outro - description]`;
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -341,7 +356,8 @@
 
               <label class="prompt-field">
                 <span>lyrics</span>
-                <textarea rows="6" bind:value={selectedEntry.fields.lyrics} placeholder="[Instrumental] or pasted lyrics"></textarea>
+                <textarea rows="6" bind:value={selectedEntry.fields.lyrics} placeholder={lyricsTemplate}></textarea>
+                <small class="provenance">lyrics are BYOL; this grey template is only a guide and is not saved unless you type it.</small>
               </label>
 
               <div class="track-actions">
@@ -563,6 +579,11 @@
 
   textarea {
     resize: vertical;
+  }
+
+  textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 0.74;
   }
 
   .provenance {
