@@ -114,21 +114,22 @@
       "port": 8006,
       "entryPoint": "api.py",
       "workingDir": "services/sa3",
-      "pythonVersion": "3.11",
-      "torchVersion": "2.7.1",
-      "torchIndex": "https://download.pytorch.org/whl/cu128",
-      "torchPackages": ["torch==2.7.1", "torchaudio==2.7.1"],
+      "pythonVersion": "3.12",
+      "acceleratorProfile": "amd-rocm-windows-7.2.1",
+      "torchVersion": "2.9.1+rocm7.2.1",
+      "torchIndex": "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1",
+      "torchPackages": ["torch==2.9.1+rocm7.2.1", "torchaudio==2.9.1+rocm7.2.1"],
       "requirementsFile": "requirements.txt",
       "editableInstall": true,
       "editablePackagePath": ".",
       "editableInstallFlags": "--no-deps",
       "forceTorchReinstall": true,
       "buildSteps": [
-        "pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip install https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz",
+        "pip install https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
         "pip install -e . --no-deps",
         "pip install -r requirements.txt",
-        "pip install https://github.com/sdbds/flash-attention-for-windows/releases/download/2.8.2/flash_attn-2.8.2+cu128torch2.7.1cxx11abiFALSEfullbackward-cp311-cp311-win_amd64.whl",
-        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
+        "pip install --force-reinstall --no-deps https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
       ],
       "healthCheck": {
         "endpoint": "/health",
@@ -139,10 +140,14 @@
       "env": {
         "PYTHONIOENCODING": "utf-8",
         "HF_TOKEN": "${HF_TOKEN}",
+        "ENABLE_TORCH_COMPILE": "0",
+        "SA3_ACCELERATOR_PROFILE": "amd-rocm-windows-7.2.1",
+        "SA3_EXPECT_HIP": "1",
+        "SA3_REQUIRE_ACCELERATOR": "1",
         "SA3_MODEL": "medium",
-        "SA3_PROMPTS_DIR": "${APPDATA}/Gary4JUCE/sa3/prompts",
-        "SA3_LORA_REGISTRY": "${APPDATA}/Gary4JUCE/sa3/lora_registry.json",
-        "SA3_LORA_DIR": "${APPDATA}/Gary4JUCE/sa3/loras",
+        "SA3_PROMPTS_DIR": "${GARY_RUNTIME}/sa3/prompts",
+        "SA3_LORA_REGISTRY": "${GARY_RUNTIME}/sa3/lora_registry.json",
+        "SA3_LORA_DIR": "${GARY_RUNTIME}/sa3/loras",
         "SA3_PEAK_NORMALIZE_DB": "2.0",
         "SA3_LIMITER_CEILING_DB": "-0.3",
         "SA3_LIMITER_KNEE": "0.8",
@@ -154,7 +159,7 @@
         "SA3_CONTINUE_TAIL_MODE": "regen_past",
         "SA3_CONTINUE_TAIL_PAD": "6",
         "SA3_LATENT_DIAG": "0",
-        "OUTPUT_DIR": "${APPDATA}/Gary4JUCE/sa3/outputs"
+        "OUTPUT_DIR": "${GARY_RUNTIME}/sa3/outputs"
       },
       "dependsOn": []
     },
@@ -192,8 +197,8 @@
         "ACESTEP_INIT_LLM": "false",
         "ACESTEP_CONFIG_PATH": "acestep-v15-base",
         "ACESTEP_NO_INIT": "true",
-        "CAREY_LORA_REGISTRY": "${APPDATA}/Gary4JUCE/carey/lora_registry.json",
-        "CAREY_CAPTIONS": "${APPDATA}/Gary4JUCE/carey/captions.json"
+        "CAREY_LORA_REGISTRY": "${GARY_RUNTIME}/carey/lora_registry.json",
+        "CAREY_CAPTIONS": "${GARY_RUNTIME}/carey/captions.json"
       },
       "dependsOn": []
     },
@@ -240,8 +245,8 @@
   "infrastructure": {},
   "defaults": {
     "pythonVersion": "3.11",
-    "modelsDir": "${APPDATA}/Gary4JUCE/models",
-    "logsDir": "${APPDATA}/Gary4JUCE/logs",
-    "servicesDir": "${APPDATA}/Gary4JUCE/services"
+    "modelsDir": "${GARY_RUNTIME}/models",
+    "logsDir": "${GARY_RUNTIME}/logs",
+    "servicesDir": "${GARY_RUNTIME}/services"
   }
 }

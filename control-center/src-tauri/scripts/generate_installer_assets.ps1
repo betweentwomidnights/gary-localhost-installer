@@ -97,7 +97,7 @@ try {
         $titleBrush = New-Object System.Drawing.SolidBrush($brandNavy)
         $subtitleBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 76, 84, 102))
         try {
-            $headerGraphics.DrawString("gary4local", $titleFont, $titleBrush, 48, 8)
+            $headerGraphics.DrawString("gary4local-rocm", $titleFont, $titleBrush, 48, 8)
             $headerGraphics.DrawString("current-user install", $subtitleFont, $subtitleBrush, 50, 31)
         } finally {
             $titleFont.Dispose()

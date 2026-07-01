@@ -1,7 +1,7 @@
 [package]
-name = "gary4local"
-version = "0.1.18"
-description = "gary4local control center"
+name = "gary4local-rocm"
+version = "0.1.19-rocm.1"
+description = "gary4local-rocm control center"
 authors = ["betweentwomidnights"]
 license = "MIT"
 edition = "2021"

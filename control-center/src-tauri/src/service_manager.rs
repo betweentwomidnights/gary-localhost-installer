@@ -68,6 +68,46 @@ fn health_check_interval(
     }
 }
 
+fn is_successful_health_access_log(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    if !lower.contains("/health") {
+        return false;
+    }
+
+    let is_health_request = [
+        "\"get /health",
+        "\"head /health",
+        " get /health",
+        " head /health",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+    if !is_health_request {
+        return false;
+    }
+
+    ["\" 200", "\" 204", "\" 304", " 200 ", " 204 ", " 304 "]
+        .iter()
+        .any(|marker| lower.contains(marker) || lower.ends_with(marker.trim_end()))
+}
+
+fn filter_successful_health_access_logs(raw: &str) -> String {
+    let mut filtered = String::with_capacity(raw.len());
+    for line in raw.lines() {
+        if is_successful_health_access_log(line) {
+            continue;
+        }
+        if !filtered.is_empty() {
+            filtered.push('\n');
+        }
+        filtered.push_str(line);
+    }
+    if raw.ends_with('\n') && !filtered.is_empty() {
+        filtered.push('\n');
+    }
+    filtered
+}
+
 impl ServiceManager {
     pub fn new(services: Vec<ServiceDef>, repo_root: PathBuf) -> Self {
         Self {
@@ -95,7 +135,7 @@ impl ServiceManager {
         self.services.iter().find(|s| s.id == id)
     }
 
-    /// Resolve template variables like ${APPDATA}, ${HF_TOKEN}, ${MODELS_DIR}
+    /// Resolve template variables like ${APPDATA}, ${GARY_RUNTIME}, ${HF_TOKEN}, ${MODELS_DIR}
     fn resolve_env_var(&self, value: &str) -> String {
         let mut result = value.to_string();
 
@@ -104,18 +144,26 @@ impl ServiceManager {
             result = result.replace("${APPDATA}", &appdata);
         }
 
+        if result.contains("${GARY_RUNTIME}") {
+            let runtime_root = crate::gary4juce_runtime_root()
+                .to_string_lossy()
+                .to_string();
+            result = result.replace("${GARY_RUNTIME}", &runtime_root);
+        }
+
         // Resolve ${HF_TOKEN} — check stored file first, then system env
         if result.contains("${HF_TOKEN}") {
             let hf_token = crate::read_hf_token().unwrap_or_default();
             result = result.replace("${HF_TOKEN}", &hf_token);
         }
 
-        // Resolve ${MODELS_DIR} — defaults to %APPDATA%/Gary4JUCE/models
+        // Resolve ${MODELS_DIR}; default to the current app runtime models dir.
         if result.contains("${MODELS_DIR}") {
             let models_dir = std::env::var("MODELS_DIR").unwrap_or_else(|_| {
-                std::env::var("APPDATA")
-                    .map(|a| format!("{}\\Gary4JUCE\\models", a))
-                    .unwrap_or_default()
+                crate::gary4juce_runtime_root()
+                    .join("models")
+                    .to_string_lossy()
+                    .to_string()
             });
             result = result.replace("${MODELS_DIR}", &models_dir);
         }
@@ -438,6 +486,8 @@ impl ServiceManager {
             service_id: svc.id.clone(),
             work_dir: self.service_dir(svc),
             env_dir: self.env_dir(svc),
+            python_version: svc.python_version.clone(),
+            accelerator_profile: svc.accelerator_profile.clone(),
             build_steps: svc.build_steps.clone(),
         })
     }
@@ -509,6 +559,8 @@ impl ServiceManager {
                     service_id: svc.id.clone(),
                     work_dir: self.service_dir(svc),
                     env_dir: self.env_dir(svc),
+                    python_version: svc.python_version.clone(),
+                    accelerator_profile: svc.accelerator_profile.clone(),
                     build_steps: svc.build_steps.clone(),
                 })
             })
@@ -582,13 +634,16 @@ impl ServiceManager {
             let mut buf = String::new();
             file.read_to_string(&mut buf)
                 .map_err(|e| format!("Read error: {}", e))?;
-            if let Some(pos) = buf.find('\n') {
-                Ok(buf[pos + 1..].to_string())
+            let trimmed = if let Some(pos) = buf.find('\n') {
+                buf[pos + 1..].to_string()
             } else {
-                Ok(buf)
-            }
+                buf
+            };
+            Ok(filter_successful_health_access_logs(&trimmed))
         } else {
-            std::fs::read_to_string(log_path).map_err(|e| format!("Cannot read log: {}", e))
+            let raw = std::fs::read_to_string(log_path)
+                .map_err(|e| format!("Cannot read log: {}", e))?;
+            Ok(filter_successful_health_access_logs(&raw))
         }
     }
 }
@@ -597,6 +652,8 @@ pub struct BuildInfo {
     pub service_id: String,
     pub work_dir: PathBuf,
     pub env_dir: PathBuf,
+    pub python_version: String,
+    pub accelerator_profile: String,
     pub build_steps: Vec<String>,
 }
 
@@ -682,5 +739,27 @@ mod tests {
             health_check_interval(&health, false, Duration::from_secs(121)),
             Duration::from_secs(5)
         );
+    }
+
+    #[test]
+    fn successful_health_access_logs_are_filtered() {
+        let raw = concat!(
+            "loading model\n",
+            "127.0.0.1 - - [01/Jul/2026 12:00:00] \"GET /health HTTP/1.1\" 200 -\n",
+            "INFO:     127.0.0.1:54000 - \"GET /health HTTP/1.1\" 200 OK\n",
+            "model ready\n",
+        );
+
+        assert_eq!(
+            filter_successful_health_access_logs(raw),
+            "loading model\nmodel ready\n"
+        );
+    }
+
+    #[test]
+    fn failed_health_access_logs_are_kept() {
+        let raw = "127.0.0.1 - - [01/Jul/2026] \"GET /health HTTP/1.1\" 503 -\n";
+
+        assert_eq!(filter_successful_health_access_logs(raw), raw);
     }
 }

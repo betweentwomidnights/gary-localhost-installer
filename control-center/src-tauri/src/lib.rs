@@ -22,6 +22,10 @@ type ModelState = Arc<Mutex<ModelManager>>;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const APP_NAME: &str = "gary4local-rocm";
+const RUNTIME_ROOT_DIR_NAME: &str = "Gary4JUCE-ROCm";
+const LOCAL_DATA_DIR_NAME: &str = "com.betweentwomidnights.gary4local.rocm";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoudnessSettings {
@@ -126,7 +130,7 @@ impl Default for AppSettings {
 }
 
 fn default_auto_check_updates() -> bool {
-    true
+    update::app_updater_enabled()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -448,25 +452,19 @@ fn default_lora_model_family() -> String {
 
 /// Get the path to the stored HF token file.
 fn hf_token_path() -> std::path::PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Roaming", home)
-    });
-    std::path::PathBuf::from(appdata)
-        .join("Gary4JUCE")
-        .join("hf_token.txt")
+    gary4juce_runtime_root().join("hf_token.txt")
 }
 
 fn app_settings_path() -> std::path::PathBuf {
     gary4juce_runtime_root().join("app_settings.json")
 }
 
-fn gary4juce_runtime_root() -> PathBuf {
+pub(crate) fn gary4juce_runtime_root() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Roaming", home)
     });
-    PathBuf::from(appdata).join("Gary4JUCE")
+    PathBuf::from(appdata).join(RUNTIME_ROOT_DIR_NAME)
 }
 
 fn gary4local_local_data_root() -> PathBuf {
@@ -474,7 +472,7 @@ fn gary4local_local_data_root() -> PathBuf {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Local", home)
     });
-    PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+    PathBuf::from(localappdata).join(LOCAL_DATA_DIR_NAME)
 }
 
 fn startup_diagnostic_log_path() -> PathBuf {
@@ -511,7 +509,7 @@ fn append_startup_diagnostic(message: &str) {
 fn install_panic_diagnostics() {
     std::panic::set_hook(Box::new(|panic_info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
-        let message = format!("gary4local panic: {}\n\n{}", panic_info, backtrace);
+        let message = format!("{} panic: {}\n\n{}", APP_NAME, panic_info, backtrace);
         append_startup_diagnostic(&message);
         eprintln!("{}", message);
     }));
@@ -584,7 +582,10 @@ fn carey_training_current_job_path() -> PathBuf {
 }
 
 fn carey_checkpoint_dir(runtime_root: &Path) -> PathBuf {
-    runtime_root.join("services").join("carey").join("checkpoints")
+    runtime_root
+        .join("services")
+        .join("carey")
+        .join("checkpoints")
 }
 
 fn sa3_runtime_dir() -> PathBuf {
@@ -1432,7 +1433,12 @@ fn parse_carey_ace_sidecar_content(raw: &str) -> CareyAceSidecarFields {
         language: values.remove("language").unwrap_or_default(),
         is_instrumental: values
             .remove("is_instrumental")
-            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false),
         custom_tag: values.remove("custom_tag").unwrap_or_default(),
         lyrics: values.remove("lyrics").unwrap_or_default(),
@@ -1479,7 +1485,11 @@ fn render_carey_ace_sidecar(fields: &CareyAceSidecarFields) -> String {
     }
     lines.push(format!(
         "is_instrumental: {}",
-        if fields.is_instrumental { "true" } else { "false" }
+        if fields.is_instrumental {
+            "true"
+        } else {
+            "false"
+        }
     ));
     let tag = clean_carey_ace_scalar(&fields.custom_tag);
     if !tag.is_empty() {
@@ -2261,7 +2271,8 @@ mod carey_epoch_progress_tests {
 
     #[test]
     fn ignores_unrelated_step_and_epoch_path_text() {
-        let log = "Training checkpoint saved to output/checkpoints/epoch_150 (epoch 150, step 1500)";
+        let log =
+            "Training checkpoint saved to output/checkpoints/epoch_150 (epoch 150, step 1500)";
 
         assert_eq!(parse_carey_epoch_progress(log), None);
     }
@@ -2855,7 +2866,7 @@ pub fn run() {
 
             // --- Resolve runtime root ---
             // In dev, run directly from the repo.
-            // In production, sync bundled services into %APPDATA%\Gary4JUCE
+            // In production, sync bundled services into the app runtime root.
             // and run from there so logs/envs/source live in a writable location.
             let bundle_root = if cfg!(debug_assertions) {
                 let exe_dir = std::env::current_exe()
@@ -2970,7 +2981,7 @@ pub fn run() {
                 .build()?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                .tooltip("gary4local")
+                .tooltip(APP_NAME)
                 .menu(&tray_menu)
                 .on_menu_event(
                     move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
@@ -3218,6 +3229,9 @@ async fn rebuild_env(
 ) -> Result<(), String> {
     let build_info = {
         let mut mgr = manager.lock().await;
+        if mgr.is_running(&service_id) {
+            let _ = mgr.stop(&service_id);
+        }
         let info = mgr.get_build_info(&service_id)?;
         // +2 for "ensure uv" and "create venv" steps
         let total = info.build_steps.len() + 2;
@@ -3269,6 +3283,9 @@ async fn rebuild_all_envs(
 
             {
                 let mut mgr = mgr_clone.lock().await;
+                if mgr.is_running(&sid) {
+                    let _ = mgr.stop(&sid);
+                }
                 let total = info.build_steps.len() + 2;
                 mgr.set_build_started(&sid, total);
             }
@@ -3291,7 +3308,7 @@ async fn rebuild_all_envs(
 }
 
 // ---------------------------------------------------------------------------
-// Build pipeline: uv bootstrap -> Python 3.11 -> venv -> install steps
+// Build pipeline: uv bootstrap -> manifest Python -> venv -> install steps
 // ---------------------------------------------------------------------------
 
 const WINDOWS_APPLICATION_CONTROL_HELP: &str = "Windows got a little overprotective and blocked this environment's Python from starting.\n\nOpen Windows Security -> App & browser control -> Smart App Control settings, temporarily turn Smart App Control off, then rebuild the environment. You can turn it back on afterward.";
@@ -3462,27 +3479,65 @@ async fn run_build(
     let service_id = build_info.service_id.clone();
     let work_dir = &build_info.work_dir;
     let env_dir = &build_info.env_dir;
+    let python_version = build_info.python_version.trim();
+    let python_version = if python_version.is_empty() {
+        "3.11"
+    } else {
+        python_version
+    };
+    let accelerator_profile = build_info.accelerator_profile.trim();
+    let accelerator_profile = if accelerator_profile.is_empty() {
+        "cuda-nvidia"
+    } else {
+        accelerator_profile
+    };
 
     // Step 0: Ensure uv is available
     let uv = ensure_uv(&service_id, &manager, &handle).await?;
 
-    // Step 1: Create venv with uv (using Python 3.11)
+    // Step 1: Create venv with uv using the service manifest Python version.
+    {
+        let mut mgr = manager.lock().await;
+        mgr.append_build_log(
+            &service_id,
+            &format!(
+                "\n=== Build profile: {} / Python {} ===",
+                accelerator_profile, python_version
+            ),
+        );
+    }
+
+    if env_dir.exists() {
+        {
+            let mut mgr = manager.lock().await;
+            mgr.append_build_log(
+                &service_id,
+                &format!("Removing existing env at {}", env_dir.display()),
+            );
+        }
+        std::fs::remove_dir_all(env_dir)
+            .map_err(|e| format!("Failed to remove existing env {}: {}", env_dir.display(), e))?;
+    }
+
     if !env_dir.exists() {
         {
             let mut mgr = manager.lock().await;
             mgr.set_build_step(
                 &service_id,
                 1,
-                "Installing Python 3.11 and creating venv...",
+                &format!("Installing Python {} and creating venv...", python_version),
             );
-            mgr.append_build_log(&service_id, &format!("\n$ {} python install 3.11", uv));
+            mgr.append_build_log(
+                &service_id,
+                &format!("\n$ {} python install {}", uv, python_version),
+            );
         }
         emit_status(&manager, &handle).await;
 
-        // First ensure Python 3.11 is available via uv
+        // First ensure the requested Python version is available via uv.
         let py_install = run_command_streamed(
             &uv,
-            &["python", "install", "3.11"],
+            &["python", "install", python_version],
             work_dir,
             &service_id,
             &manager,
@@ -3500,14 +3555,14 @@ async fn run_build(
             let mut mgr = manager.lock().await;
             mgr.append_build_log(
                 &service_id,
-                &format!("\n$ {} venv --python 3.11 --seed env", uv),
+                &format!("\n$ {} venv --python {} --seed env", uv, python_version),
             );
         }
         emit_status(&manager, &handle).await;
 
         let mut venv_cmd = tokio::process::Command::new(&uv);
         venv_cmd
-            .args(["venv", "--python", "3.11", "--seed", "env"])
+            .args(["venv", "--python", python_version, "--seed", "env"])
             .current_dir(work_dir);
         hide_console_window(&mut venv_cmd);
         let venv_output = venv_cmd
@@ -3863,15 +3918,7 @@ async fn download_model(
             .await;
         });
     } else if model_id.starts_with("foundation::") {
-        // Foundation models go to %APPDATA%/Gary4JUCE/models/foundation-1/
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-            format!("{}\\AppData\\Roaming", home)
-        });
-        let model_dir = std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE")
-            .join("models")
-            .join("foundation-1");
+        let model_dir = gary4juce_runtime_root().join("models").join("foundation-1");
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_foundation_model(
                 model_id, python_exe, model_dir, mgr_clone, handle,
@@ -4237,7 +4284,11 @@ async fn start_carey_ace_lora_training(
     } else {
         "acestep-v15-base"
     };
-    if !checkpoint_dir.join(model_folder).join("config.json").is_file() {
+    if !checkpoint_dir
+        .join(model_folder)
+        .join("config.json")
+        .is_file()
+    {
         return Err(format!(
             "Download {} from Carey's Models panel before training.",
             model_folder
@@ -4317,7 +4368,11 @@ async fn start_carey_ace_lora_training(
         .arg("--genre-ratio")
         .arg(genre_ratio.to_string())
         .arg("--caption")
-        .arg(if auto_caption { "understand_music" } else { "skip" })
+        .arg(if auto_caption {
+            "understand_music"
+        } else {
+            "skip"
+        })
         .arg("--carey-url")
         .arg("http://127.0.0.1:8013")
         .arg("--inference-carey-url")

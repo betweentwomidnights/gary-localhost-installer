@@ -49,8 +49,8 @@ sys.excepthook = _excepthook
 
 # Write a 'got to python' marker so the diagnose helper can tell whether
 # the failure was before python even ran (bash / venv / source issue) or
-# after (python-side: ImportError, CUDA, etc.). Also records the torch+CUDA
-# build so we can confirm the venv has cu128 wheels (sm_120 support).
+# after (python-side: ImportError, CUDA/HIP, etc.). Also records the torch
+# accelerator build so we can confirm the venv has the expected wheels.
 _log_for_marker = os.environ.get("UNDERFIT_LOG_PATH") or "lora_train.log"
 try:
     with open(_log_for_marker + ".started", "w") as _f:
@@ -59,11 +59,27 @@ try:
         _f.write(f"python: {sys.executable}\n")
         try:
             import torch
-            _f.write(f"torch:  {torch.__version__}  (CUDA {torch.version.cuda})\n")
-            _f.write(f"archs:  {torch.cuda.get_arch_list()}\n")
+            _f.write(
+                f"torch:  {torch.__version__}  "
+                f"(CUDA {torch.version.cuda}, HIP {getattr(torch.version, 'hip', None)})\n"
+            )
+            try:
+                _f.write(f"archs:  {torch.cuda.get_arch_list()}\n")
+            except Exception as _arch_e:
+                _f.write(f"archs:  unavailable ({type(_arch_e).__name__}: {_arch_e})\n")
+            _f.write(f"cuda_available: {torch.cuda.is_available()}\n")
+            _f.write(f"device_count: {torch.cuda.device_count()}\n")
             if torch.cuda.is_available():
-                _f.write(f"device: {torch.cuda.get_device_name(0)} "
-                         f"(sm{''.join(map(str, torch.cuda.get_device_capability(0)))})\n")
+                _props = torch.cuda.get_device_properties(0)
+                _f.write(f"device: {torch.cuda.get_device_name(0)}\n")
+                _gcn_arch = getattr(_props, "gcnArchName", None)
+                if getattr(torch.version, "hip", None) and _gcn_arch:
+                    _f.write(f"gcn_arch: {_gcn_arch}\n")
+                try:
+                    _capability = torch.cuda.get_device_capability(0)
+                    _f.write(f"capability: {'.'.join(map(str, _capability))}\n")
+                except Exception as _cap_e:
+                    _f.write(f"capability: unavailable ({type(_cap_e).__name__}: {_cap_e})\n")
         except Exception as _e:
             _f.write(f"torch import failed: {type(_e).__name__}: {_e}\n")
 except Exception:

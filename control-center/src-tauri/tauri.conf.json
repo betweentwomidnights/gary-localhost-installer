@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "gary4local",
-  "version": "0.1.18",
-  "identifier": "com.betweentwomidnights.gary4local",
+  "productName": "gary4local-rocm",
+  "version": "0.1.19-rocm.1",
+  "identifier": "com.betweentwomidnights.gary4local.rocm",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "gary4local",
+        "title": "gary4local-rocm",
         "width": 1100,
         "height": 700,
         "minWidth": 900,
@@ -57,7 +57,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwQzIzMzA0NTlCQTQ1RkYKUldUL1JicFpCRFBDMEdLaDlQdkJYMmpLZ09FMHNwMjVVZlYrYVNCL0Z5Rmg5Y2JqOXp4am5xWlMK",
       "endpoints": [
-        "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json"
+        "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm/native-preview.json"
       ],
       "windows": {
         "installMode": "passive"

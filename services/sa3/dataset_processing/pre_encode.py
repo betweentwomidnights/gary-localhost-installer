@@ -851,7 +851,13 @@ def main():
     else:
         num_gpus = torch.cuda.device_count()
         if num_gpus == 0:
-            print("No CUDA GPUs found, falling back to CPU")
+            message = "No CUDA/HIP GPUs found"
+            if os.environ.get("SA3_REQUIRE_ACCELERATOR", "").strip().lower() in {"1", "true", "yes", "on"}:
+                raise RuntimeError(
+                    message
+                    + "; SA3_REQUIRE_ACCELERATOR is set, so pre-encode will not fall back to CPU."
+                )
+            print(message + ", falling back to CPU")
             args.device = "cpu"
             num_gpus = 1
 

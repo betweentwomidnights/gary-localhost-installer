@@ -180,13 +180,42 @@ def stage_base_model(args) -> tuple[Path, Path]:
     return config_dst, ckpt_dst
 
 
-def require_cuda(args) -> None:
+def torch_backend_label(torch_module) -> str:
+    parts = [
+        f"torch={torch_module.__version__}",
+        f"hip={getattr(torch_module.version, 'hip', None)}",
+        f"cuda_build={getattr(torch_module.version, 'cuda', None)}",
+        f"cuda_available={torch_module.cuda.is_available()}",
+        f"device_count={torch_module.cuda.device_count()}",
+    ]
+    if torch_module.cuda.is_available():
+        try:
+            props = torch_module.cuda.get_device_properties(0)
+            device = torch_module.cuda.get_device_name(0)
+            gcn_arch = getattr(props, "gcnArchName", None)
+            if getattr(torch_module.version, "hip", None) and gcn_arch:
+                device += f" gcn={gcn_arch}"
+            parts.append(f"device0={device}")
+        except Exception as exc:
+            parts.append(f"device_error={type(exc).__name__}: {exc}")
+    return "; ".join(parts)
+
+
+def require_accelerator(args) -> None:
     check_cancel(args)
-    update_status(args, status="running", phase="checking-gpu", message="Checking CUDA GPU")
+    update_status(args, status="running", phase="checking-gpu", message="Checking GPU accelerator")
     import torch
 
+    backend = torch_backend_label(torch)
+    print(f"[checking-gpu] {backend}", flush=True)
     if not torch.cuda.is_available():
-        raise RuntimeError("SA3 LoRA training requires an NVIDIA CUDA GPU.")
+        if getattr(torch.version, "hip", None):
+            raise RuntimeError(
+                "SA3 LoRA training found a ROCm/HIP PyTorch build, but torch/HIP cannot "
+                "see an AMD GPU. Confirm the Radeon driver supports this device and run "
+                "scripts/rocm/windows-pytorch-preflight.ps1."
+            )
+        raise RuntimeError("SA3 LoRA training requires a CUDA/HIP GPU accelerator.")
 
 
 def run_step(args, command: list[str], phase: str, message: str, cwd: Path | None = None) -> None:
@@ -387,7 +416,7 @@ def main() -> int:
         update_status(args, status="running", phase="starting", message="Starting SA3 LoRA training")
 
         ensure_training_dependencies(args)
-        require_cuda(args)
+        require_accelerator(args)
         _, base_ckpt = stage_base_model(args)
 
         encoded_root = args.run_dir / "encoded"

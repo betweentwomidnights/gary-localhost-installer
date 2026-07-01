@@ -44,12 +44,15 @@
 
   // Services that have downloadable models
   const servicesWithModels = new Set(["gary", "stable-audio", "sa3", "carey", "foundation"]);
+  const showRebuildAll = import.meta.env.VITE_ENABLE_REBUILD_ALL === "1";
 </script>
 
 <div class="service-list">
   <div class="list-header">
     <span class="label">services</span>
-    <button onclick={rebuildAll}>rebuild all envs</button>
+    {#if showRebuildAll}
+      <button onclick={rebuildAll}>rebuild all envs</button>
+    {/if}
   </div>
   {#each services as service (service.id)}
     <ServiceRow

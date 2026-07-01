@@ -15,11 +15,11 @@ Var InstallerMusicCheckbox
 !define MUI_CUSTOMFUNCTION_GUIINIT InstallerGuiInit
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomeMusicShow
 
-!define MUI_WELCOMEPAGE_TEXT "this installer uses current-user mode, so it does not require administrator access.$\r$\n$\r$\napplication files are installed under your windows user profile, usually:$\r$\n$\r$\n    $LOCALAPPDATA\gary4local$\r$\n$\r$\nruntime data, service environments, logs, and local models are stored in:$\r$\n$\r$\n    $APPDATA\Gary4JUCE$\r$\n$\r$\nthis means gary4local will not install to C:\Program Files in this mode."
+!define MUI_WELCOMEPAGE_TEXT "this installer uses current-user mode, so it does not require administrator access.$\r$\n$\r$\napplication files are installed under your windows user profile, usually:$\r$\n$\r$\n    $LOCALAPPDATA\gary4local-rocm$\r$\n$\r$\nruntime data, service environments, logs, and local models are stored in:$\r$\n$\r$\n    $APPDATA\Gary4JUCE-ROCm$\r$\n$\r$\nthis means gary4local-rocm will not install to C:\Program Files in this mode."
 
-!define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to place the installed application files.$\r$\n$\r$\ninstalled app files live in the folder you choose here.$\r$\n$\r$\nruntime data, service environments, logs, and local models stay in:$\r$\n$\r$\n    $APPDATA\Gary4JUCE"
+!define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to place the installed application files.$\r$\n$\r$\ninstalled app files live in the folder you choose here.$\r$\n$\r$\nruntime data, service environments, logs, and local models stay in:$\r$\n$\r$\n    $APPDATA\Gary4JUCE-ROCm"
 
-!define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local.$\r$\n$\r$\ninstalled app files:$\r$\n$INSTDIR$\r$\n$\r$\nruntime data:$\r$\n$APPDATA\Gary4JUCE$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
+!define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local-rocm.$\r$\n$\r$\ninstalled app files:$\r$\n$INSTDIR$\r$\n$\r$\nruntime data:$\r$\n$APPDATA\Gary4JUCE-ROCm$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
 
 Function InstallerGuiInit
   InitPluginsDir

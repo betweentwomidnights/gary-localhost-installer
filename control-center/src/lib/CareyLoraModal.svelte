@@ -214,7 +214,7 @@
       <div class="title" id="carey-lora-title">add local LoRAs and caption pools</div>
       <div class="body">
         pick the LoRA checkpoint folder that Carey should load. if your training sidecars live somewhere else,
-        add that folder too and gary4local will use it only for captions generation.
+        add that folder too and gary4local-rocm will use it only for captions generation.
       </div>
 
       <div class="note">

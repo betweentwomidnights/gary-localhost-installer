@@ -68,7 +68,7 @@
       aria-labelledby="update-modal-title"
       tabindex="-1"
     >
-      <div class="eyebrow">gary4local updater</div>
+      <div class="eyebrow">gary4local-rocm updater</div>
       <div class="title" id="update-modal-title">
         {#if error}
           update check failed
@@ -110,11 +110,11 @@
 
         {#if result.inAppInstallAvailable}
           <div class="note">
-            in-app install is configured for this build. on Windows, gary4local will close to hand off to the installer.
+            in-app install is configured for this build. on Windows, gary4local-rocm will close to hand off to the installer.
           </div>
         {/if}
       {:else if result}
-        <div class="body">gary4local v{result.currentVersion} is already the newest listed stable release.</div>
+        <div class="body">gary4local-rocm v{result.currentVersion} is already the newest listed release.</div>
         <div class="note">manifest source: {result.manifestUrl}</div>
       {/if}
 

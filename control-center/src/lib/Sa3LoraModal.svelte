@@ -200,7 +200,7 @@
       <div class="title" id="sa3-lora-title">add local LoRAs and prompt pools</div>
       <div class="body">
         pick the SA3 LoRA checkpoint file. if you still have the training dataset folder with txt sidecars,
-        add that folder too and gary4local can build a prompt dice pool for the plugin.
+        add that folder too and gary4local-rocm can build a prompt dice pool for the plugin.
       </div>
 
       <div class="note">

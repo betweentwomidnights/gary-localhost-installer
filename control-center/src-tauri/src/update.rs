@@ -4,14 +4,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_updater::UpdaterExt;
 
 pub const DEFAULT_UPDATE_MANIFEST_URL: &str =
-    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json";
+    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm/preview.json";
 pub const DEFAULT_NATIVE_UPDATER_ENDPOINT: &str =
-    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json";
+    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm/native-preview.json";
 pub const DEFAULT_NATIVE_UPDATER_PUBKEY: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwQzIzMzA0NTlCQTQ1RkYKUldUL1JicFpCRFBDMEdLaDlQdkJYMmpLZ09FMHNwMjVVZlYrYVNCL0Z5Rmg5Y2JqOXp4am5xWlMK";
 
 pub fn app_updater_enabled() -> bool {
-    option_env!("VITE_ENABLE_APP_UPDATER").unwrap_or("1") != "0"
+    option_env!("VITE_ENABLE_APP_UPDATER").unwrap_or("0") == "1"
 }
 
 #[derive(Default)]
@@ -194,7 +194,7 @@ pub async fn check_for_update(
         .header(reqwest::header::ACCEPT, "application/json")
         .header(
             reqwest::header::USER_AGENT,
-            format!("gary4local/{}", current_version),
+            format!("gary4local-rocm/{}", current_version),
         )
         .send()
         .await

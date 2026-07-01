@@ -1113,7 +1113,7 @@ def ensure_carey_stopped(args: argparse.Namespace) -> None:
             announced = True
         time.sleep(2)
     raise RuntimeError(
-        "Carey is still running. Stop it through gary4local before "
+        "Carey is still running. Stop it through gary4local-rocm before "
         "preprocessing or training so the full CUDA context is released."
     )
 

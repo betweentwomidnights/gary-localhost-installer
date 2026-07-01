@@ -2,7 +2,7 @@
 """
 Stable Audio 3 localhost API.
 
-Base-model first pass for gary4local. LoRA management is intentionally left for
+Base-model first pass for gary4local-rocm. LoRA management is intentionally left for
 the final implementation phase, but the API keeps stable extension endpoints so
 the Carey-style LoRA registry can plug in later.
 """
@@ -53,8 +53,18 @@ app = Flask(__name__)
 CORS(app)
 
 
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+
+
 MODEL_NAME = os.environ.get("SA3_MODEL", "medium")
 MODEL_HALF = os.environ.get("SA3_MODEL_HALF", "1") != "0"
+ACCELERATOR_PROFILE = os.environ.get("SA3_ACCELERATOR_PROFILE", "").strip()
+REQUIRE_ACCELERATOR = env_flag("SA3_REQUIRE_ACCELERATOR")
+EXPECT_HIP = env_flag("SA3_EXPECT_HIP") or "rocm" in ACCELERATOR_PROFILE.lower()
 DEFAULT_STEPS = int(os.environ.get("SA3_DEFAULT_STEPS", "8"))
 DEFAULT_CFG = float(os.environ.get("SA3_DEFAULT_CFG", "1.0"))
 DEFAULT_NEGATIVE = os.environ.get("SA3_DEFAULT_NEGATIVE", "low quality")
@@ -132,6 +142,97 @@ model_sample_rate = OUTPUT_SAMPLE_RATE
 model_device: str | None = None
 lora_registry: list[tuple[str, str]] = []
 lora_name_to_index: dict[str, int] = {}
+
+
+class AcceleratorUnavailableError(RuntimeError):
+    pass
+
+
+def torch_backend_summary() -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "torch": torch.__version__,
+        "cuda_version": getattr(torch.version, "cuda", None),
+        "hip_version": getattr(torch.version, "hip", None),
+        "cuda_available": torch.cuda.is_available(),
+        "device_count": 0,
+        "accelerator_profile": ACCELERATOR_PROFILE or None,
+        "requires_accelerator": REQUIRE_ACCELERATOR,
+        "expects_hip": EXPECT_HIP,
+    }
+
+    try:
+        summary["device_count"] = torch.cuda.device_count()
+        devices: list[dict[str, Any]] = []
+        for index in range(summary["device_count"]):
+            props = torch.cuda.get_device_properties(index)
+            total_memory = getattr(props, "total_memory", getattr(props, "total_mem", None))
+            device: dict[str, Any] = {
+                "index": index,
+                "name": torch.cuda.get_device_name(index),
+            }
+            if total_memory is not None:
+                device["total_memory_mb"] = round(total_memory / 1048576, 1)
+            gcn_arch = getattr(props, "gcnArchName", None)
+            if summary.get("hip_version") and gcn_arch:
+                device["gcn_arch_name"] = gcn_arch
+            try:
+                capability = torch.cuda.get_device_capability(index)
+                device["capability"] = ".".join(str(part) for part in capability)
+            except Exception as exc:
+                device["capability_error"] = f"{type(exc).__name__}: {exc}"
+            devices.append(device)
+        summary["devices"] = devices
+    except Exception as exc:
+        summary["device_error"] = f"{type(exc).__name__}: {exc}"
+
+    return summary
+
+
+def format_torch_backend_summary(summary: dict[str, Any]) -> str:
+    parts = [
+        f"torch={summary.get('torch')}",
+        f"hip={summary.get('hip_version')}",
+        f"cuda_build={summary.get('cuda_version')}",
+        f"cuda_available={summary.get('cuda_available')}",
+        f"device_count={summary.get('device_count')}",
+    ]
+    devices = summary.get("devices") or []
+    if devices:
+        names = []
+        for device in devices:
+            label = f"{device.get('index')}:{device.get('name')}"
+            if device.get("gcn_arch_name"):
+                label += f" gcn={device['gcn_arch_name']}"
+            names.append(label)
+        parts.append("devices=" + ", ".join(names))
+    if summary.get("accelerator_profile"):
+        parts.append(f"profile={summary['accelerator_profile']}")
+    return "; ".join(parts)
+
+
+def validate_accelerator_or_raise() -> dict[str, Any]:
+    summary = torch_backend_summary()
+    print(f"[sa3] torch backend: {format_torch_backend_summary(summary)}")
+
+    if EXPECT_HIP and not summary.get("hip_version"):
+        raise AcceleratorUnavailableError(
+            "SA3 ROCm profile expected a ROCm/HIP PyTorch build, but torch.version.hip "
+            "is empty. Rebuild the SA3 environment so the AMD ROCm wheels are installed."
+        )
+
+    if REQUIRE_ACCELERATOR and not summary.get("cuda_available"):
+        if summary.get("hip_version"):
+            raise AcceleratorUnavailableError(
+                "SA3 ROCm profile loaded a ROCm/HIP PyTorch build, but torch/HIP cannot "
+                "see an AMD GPU (torch.cuda.is_available() is false). Confirm the Radeon "
+                "driver supports this device, then run scripts/rocm/windows-pytorch-preflight.ps1."
+            )
+        raise AcceleratorUnavailableError(
+            "SA3 accelerator profile requires a CUDA/HIP GPU, but PyTorch cannot see one. "
+            "Run scripts/rocm/windows-pytorch-preflight.ps1 and rebuild the SA3 environment."
+        )
+
+    return summary
 
 
 def cuda_mem_mb() -> dict[str, float] | None:
@@ -244,6 +345,8 @@ def lora_payload(entries: list[tuple[str, str]]) -> list[dict[str, Any]]:
 
 def friendly_load_error(error: Exception) -> str:
     raw = str(error)
+    if isinstance(error, AcceleratorUnavailableError):
+        return raw
     details = [raw]
     current = error.__cause__ or error.__context__
     seen = {id(error)}
@@ -255,7 +358,7 @@ def friendly_load_error(error: Exception) -> str:
     if not hf_token_configured():
         return (
             "HF_TOKEN is not configured. Save a Hugging Face read token in "
-            "gary4local, then accept the model terms for Stable Audio 3 Medium. "
+            "gary4local-rocm, then accept the model terms for Stable Audio 3 Medium. "
             "Its T5Gemma files are included in the same model download."
         )
     if "enable access to public gated repositories" in lower:
@@ -293,6 +396,7 @@ def load_pipeline(force: bool = False) -> StableAudioModel:
         started = time.time()
         try:
             configure_hf_auth()
+            backend = validate_accelerator_or_raise()
             print(f"[sa3] loading Stable Audio 3 model={MODEL_NAME} half={MODEL_HALF}")
             loaded = StableAudioModel.from_pretrained(MODEL_NAME, model_half=MODEL_HALF)
 
@@ -313,7 +417,8 @@ def load_pipeline(force: bool = False) -> StableAudioModel:
             last_load_seconds = round(time.time() - started, 2)
             print(
                 f"[sa3] model ready in {last_load_seconds}s "
-                f"sr={model_sample_rate} device={model_device} mem={cuda_mem_mb()}"
+                f"sr={model_sample_rate} device={model_device} mem={cuda_mem_mb()} "
+                f"backend={format_torch_backend_summary(backend)}"
             )
             return loaded
         except Exception as exc:
@@ -931,6 +1036,7 @@ def health():
             "hf_token_configured": hf_token_configured(),
             "gate_links": SA3_MODEL_LINKS,
             "device": model_device,
+            "torch_backend": torch_backend_summary(),
             "cuda_available": torch.cuda.is_available(),
             "cuda_mem": cuda_mem_mb(),
             "sample_rate": model_sample_rate,
@@ -969,6 +1075,7 @@ def load():
                 "load_seconds": 0.0 if already_loaded else last_load_seconds,
                 "sample_rate": model_sample_rate,
                 "device": model_device,
+                "torch_backend": torch_backend_summary(),
                 "cuda_mem": cuda_mem_mb(),
             }
         )

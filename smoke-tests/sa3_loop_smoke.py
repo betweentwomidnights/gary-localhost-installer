@@ -146,7 +146,7 @@ def run_once(args: argparse.Namespace, run_index: int) -> dict:
 def default_output_dir() -> Path:
     appdata = os.environ.get("APPDATA")
     if appdata:
-        return Path(appdata) / "Gary4JUCE" / "sa3" / "outputs"
+        return Path(appdata) / "Gary4JUCE-ROCm" / "sa3" / "outputs"
     return Path.cwd() / "smoke-tests" / "outputs"
 
 
