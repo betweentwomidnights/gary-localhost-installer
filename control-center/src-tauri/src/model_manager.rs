@@ -391,9 +391,9 @@ impl ModelManager {
     }
 
     /// Get Foundation-1 model — single model with 2 files.
-    /// Foundation stores models in %APPDATA%/Gary4JUCE/models/foundation-1/
+    /// Foundation stores models under the current app runtime root.
     pub fn get_foundation_models(&self) -> Vec<ModelEntry> {
-        let models_dir = Self::foundation_models_dir();
+        let models_dir = self.foundation_models_dir();
         let model_dir = models_dir.join("foundation-1");
 
         let id = "foundation::foundation-1";
@@ -410,15 +410,9 @@ impl ModelManager {
         }]
     }
 
-    /// Get the Foundation models directory (%APPDATA%/Gary4JUCE/models)
-    fn foundation_models_dir() -> std::path::PathBuf {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-            format!("{}\\AppData\\Roaming", home)
-        });
-        std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE")
-            .join("models")
+    /// Get the Foundation models directory under the current app runtime root.
+    fn foundation_models_dir(&self) -> std::path::PathBuf {
+        self.repo_root.join("models")
     }
 
     /// Check if Foundation-1 model files are present
@@ -1307,7 +1301,7 @@ except Exception as e:
     }
 }
 
-/// Download Foundation-1 model files to %APPDATA%/Gary4JUCE/models/foundation-1/
+/// Download Foundation-1 model files to the current app runtime models dir.
 ///
 /// Uses streaming requests with byte-level progress (same approach as Gary/Carey).
 /// Downloads Foundation_1.safetensors and model_config.json from RoyalCities/Foundation-1.

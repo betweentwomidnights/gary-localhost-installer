@@ -135,7 +135,7 @@ impl ServiceManager {
         self.services.iter().find(|s| s.id == id)
     }
 
-    /// Resolve template variables like ${APPDATA}, ${HF_TOKEN}, ${MODELS_DIR}
+    /// Resolve template variables like ${APPDATA}, ${GARY_RUNTIME}, ${HF_TOKEN}, ${MODELS_DIR}
     fn resolve_env_var(&self, value: &str) -> String {
         let mut result = value.to_string();
 
@@ -144,18 +144,26 @@ impl ServiceManager {
             result = result.replace("${APPDATA}", &appdata);
         }
 
+        if result.contains("${GARY_RUNTIME}") {
+            let runtime_root = crate::gary4juce_runtime_root()
+                .to_string_lossy()
+                .to_string();
+            result = result.replace("${GARY_RUNTIME}", &runtime_root);
+        }
+
         // Resolve ${HF_TOKEN} — check stored file first, then system env
         if result.contains("${HF_TOKEN}") {
             let hf_token = crate::read_hf_token().unwrap_or_default();
             result = result.replace("${HF_TOKEN}", &hf_token);
         }
 
-        // Resolve ${MODELS_DIR} — defaults to %APPDATA%/Gary4JUCE/models
+        // Resolve ${MODELS_DIR}; default to the current app runtime models dir.
         if result.contains("${MODELS_DIR}") {
             let models_dir = std::env::var("MODELS_DIR").unwrap_or_else(|_| {
-                std::env::var("APPDATA")
-                    .map(|a| format!("{}\\Gary4JUCE\\models", a))
-                    .unwrap_or_default()
+                crate::gary4juce_runtime_root()
+                    .join("models")
+                    .to_string_lossy()
+                    .to_string()
             });
             result = result.replace("${MODELS_DIR}", &models_dir);
         }
@@ -481,6 +489,8 @@ impl ServiceManager {
             service_id: svc.id.clone(),
             work_dir: self.service_dir(svc),
             env_dir: self.env_dir(svc),
+            python_version: svc.python_version.clone(),
+            accelerator_profile: svc.accelerator_profile.clone(),
             build_steps: svc.build_steps.clone(),
         })
     }
@@ -552,6 +562,8 @@ impl ServiceManager {
                     service_id: svc.id.clone(),
                     work_dir: self.service_dir(svc),
                     env_dir: self.env_dir(svc),
+                    python_version: svc.python_version.clone(),
+                    accelerator_profile: svc.accelerator_profile.clone(),
                     build_steps: svc.build_steps.clone(),
                 })
             })
@@ -643,6 +655,8 @@ pub struct BuildInfo {
     pub service_id: String,
     pub work_dir: PathBuf,
     pub env_dir: PathBuf,
+    pub python_version: String,
+    pub accelerator_profile: String,
     pub build_steps: Vec<String>,
 }
 

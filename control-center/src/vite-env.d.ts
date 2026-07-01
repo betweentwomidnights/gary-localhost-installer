@@ -4,6 +4,7 @@
 interface ImportMetaEnv {
   readonly VITE_ENABLE_MELODYFLOW_FA2_TOGGLE?: string;
   readonly VITE_ENABLE_APP_UPDATER?: string;
+  readonly VITE_ENABLE_REBUILD_ALL?: string;
 }
 
 interface ImportMeta {

@@ -14,7 +14,7 @@ param(
     [ValidateSet("stable", "preview")]
     [string]$Channel = "stable",
 
-    [string]$OutputDir = "docs\updates\gary4local",
+    [string]$OutputDir = "docs\updates\gary4local-rocm",
 
     [string]$PublishedAt = (Get-Date).ToUniversalTime().ToString("o"),
 
@@ -36,7 +36,7 @@ function Ensure-ParentDirectory {
     }
 }
 
-$defaultOutputDir = "docs\updates\gary4local"
+$defaultOutputDir = "docs\updates\gary4local-rocm"
 $effectiveOutputDir = $OutputDir
 
 $effectiveNotes = @(
