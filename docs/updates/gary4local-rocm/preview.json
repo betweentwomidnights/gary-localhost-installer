@@ -6,8 +6,11 @@
   "published_at": "2026-07-01T12:00:22.8544274Z",
   "notes": [
     "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.",
+    "Save a Hugging Face read token in gary4local-rocm before testing SA3.",
+    "Trigger the real ROCm test from Gary4JUCE: Jerry > sa3 > generate, then make a short loop.",
+    "SA3 loads lazily on first generation; backend startup alone is not a full ROCm test.",
     "SA3 uses Python 3.12 with AMD ROCm Windows PyTorch 2.9.1+rocm7.2.1.",
-    "SA3 fails fast instead of falling back to CPU when HIP cannot see a GPU.",
+    "SA3 should fail fast at model load instead of falling back to CPU when HIP cannot see a GPU.",
     "Native in-app install is not enabled for this prerelease; use download update."
   ]
 }
