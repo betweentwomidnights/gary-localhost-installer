@@ -80,6 +80,7 @@
   let services: ServiceInfo[] = $state([]);
   let selectedServiceId: string | null = $state(null);
   let logText: string = $state("");
+  let logViewerLive = $state(true);
   let pollTimer: number;
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
@@ -127,18 +128,26 @@
     }
   }
 
-  async function fetchLog(serviceId: string) {
+  async function fetchLog(serviceId: string, options: { force?: boolean } = {}) {
+    if (!options.force && !logViewerLive) return;
     try {
-      logText = await invoke<string>("get_service_log", { serviceId });
+      const nextLog = await invoke<string>("get_service_log", { serviceId });
+      if (serviceId !== selectedServiceId) return;
+      if (options.force || logViewerLive) {
+        logText = nextLog;
+      }
     } catch (e) {
-      logText = `Error reading log: ${e}`;
+      if (options.force || logViewerLive) {
+        logText = `Error reading log: ${e}`;
+      }
     }
   }
 
   function selectService(id: string) {
     selectedServiceId = id;
+    logViewerLive = true;
     rightPanel = "logs";
-    fetchLog(id);
+    fetchLog(id, { force: true });
   }
 
   function showModels(serviceId: string) {
@@ -185,7 +194,15 @@
 
   function backToLogs() {
     rightPanel = "logs";
-    if (selectedServiceId) fetchLog(selectedServiceId);
+    logViewerLive = true;
+    if (selectedServiceId) fetchLog(selectedServiceId, { force: true });
+  }
+
+  function onLogLiveUpdatesChange(live: boolean) {
+    logViewerLive = live;
+    if (live && selectedServiceId && rightPanel === "logs") {
+      fetchLog(selectedServiceId, { force: true });
+    }
   }
 
   async function checkToken() {
@@ -409,7 +426,7 @@
     });
 
     pollTimer = setInterval(() => {
-      if (selectedServiceId && rightPanel === "logs") fetchLog(selectedServiceId);
+      if (selectedServiceId && rightPanel === "logs" && logViewerLive) fetchLog(selectedServiceId);
     }, 2000);
 
     return () => {
@@ -506,6 +523,7 @@
         <LogViewer
           serviceId={selectedServiceId}
           {logText}
+          onLiveUpdatesChange={onLogLiveUpdatesChange}
         />
       {/if}
     </div>
