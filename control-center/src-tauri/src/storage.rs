@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 pub const ACTIVE_RUNTIME_ROOT_ENV: &str = "GARY4LOCAL_ACTIVE_RUNTIME_ROOT";
 pub const RUNTIME_ROOT_OVERRIDE_ENV: &str = "GARY4LOCAL_RUNTIME_ROOT";
+const LOCAL_DATA_DIR_NAME: &str = "com.betweentwomidnights.gary4local.rocm";
+const LEGACY_RUNTIME_DIR_NAME: &str = "Gary4JUCE-ROCm";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,11 +40,11 @@ pub fn local_data_root() -> PathBuf {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Local", home)
     });
-    PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+    PathBuf::from(localappdata).join(LOCAL_DATA_DIR_NAME)
 }
 
 pub fn legacy_runtime_root() -> PathBuf {
-    roaming_app_data_dir().join("Gary4JUCE")
+    roaming_app_data_dir().join(LEGACY_RUNTIME_DIR_NAME)
 }
 
 pub fn storage_config_path() -> PathBuf {

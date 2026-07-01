@@ -15,11 +15,11 @@ Var InstallerMusicCheckbox
 !define MUI_CUSTOMFUNCTION_GUIINIT InstallerGuiInit
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomeMusicShow
 
-!define MUI_WELCOMEPAGE_TEXT "this installer uses current-user mode, so it does not require administrator access.$\r$\n$\r$\nthis setup screen chooses where the gary4local app files go, usually:$\r$\n$\r$\n    $LOCALAPPDATA\gary4local$\r$\n$\r$\nfresh installs store runtime data, service environments, logs, caches, and local models beside the app under:$\r$\n$\r$\n    gary4local-data$\r$\n$\r$\nreinstalls preserve existing runtime storage at $APPDATA\Gary4JUCE until you move it from gary4local's storage settings."
+!define MUI_WELCOMEPAGE_TEXT "this installer uses current-user mode, so it does not require administrator access.$\r$\n$\r$\nthis setup screen chooses where the gary4local-rocm app files go, usually:$\r$\n$\r$\n    $LOCALAPPDATA\gary4local-rocm$\r$\n$\r$\nfresh installs store runtime data, service environments, logs, caches, and local models beside the app under:$\r$\n$\r$\n    gary4local-data$\r$\n$\r$\nreinstalls preserve existing ROCm runtime storage at $APPDATA\Gary4JUCE-ROCm until you move it from gary4local-rocm's storage settings."
 
-!define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to install the gary4local app.$\r$\n$\r$\nfresh runtime data defaults to:$\r$\n    $INSTDIR\gary4local-data$\r$\n$\r$\nexisting $APPDATA\Gary4JUCE storage is preserved. move it later from gary4local > storage."
+!define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to install the gary4local-rocm app.$\r$\n$\r$\nfresh runtime data defaults to:$\r$\n    $INSTDIR\gary4local-data$\r$\n$\r$\nexisting $APPDATA\Gary4JUCE-ROCm storage is preserved. move it later from gary4local-rocm > storage."
 
-!define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local.$\r$\n$\r$\napp files:$\r$\n$INSTDIR$\r$\n$\r$\nfresh install runtime default:$\r$\n$INSTDIR\gary4local-data$\r$\n$\r$\nexisting runtime storage at $APPDATA\Gary4JUCE is preserved. open gary4local's storage settings to move it, migrate LoRAs, and clean old envs/models.$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
+!define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local-rocm.$\r$\n$\r$\napp files:$\r$\n$INSTDIR$\r$\n$\r$\nfresh install runtime default:$\r$\n$INSTDIR\gary4local-data$\r$\n$\r$\nexisting ROCm runtime storage at $APPDATA\Gary4JUCE-ROCm is preserved. open gary4local-rocm's storage settings to move it, copy LoRAs, and clean old envs/models.$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
 
 Function InstallerGuiInit
   InitPluginsDir

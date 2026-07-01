@@ -24,6 +24,8 @@ type ModelState = Arc<Mutex<ModelManager>>;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const APP_NAME: &str = "gary4local-rocm";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoudnessSettings {
@@ -128,7 +130,7 @@ impl Default for AppSettings {
 }
 
 fn default_auto_check_updates() -> bool {
-    true
+    update::app_updater_enabled()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -599,7 +601,7 @@ fn legacy_app_settings_path() -> std::path::PathBuf {
     storage::legacy_runtime_root().join("app_settings.json")
 }
 
-fn gary4juce_runtime_root() -> PathBuf {
+pub(crate) fn gary4juce_runtime_root() -> PathBuf {
     storage::active_runtime_root()
 }
 
@@ -641,7 +643,7 @@ fn append_startup_diagnostic(message: &str) {
 fn install_panic_diagnostics() {
     std::panic::set_hook(Box::new(|panic_info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
-        let message = format!("gary4local panic: {}\n\n{}", panic_info, backtrace);
+        let message = format!("{} panic: {}\n\n{}", APP_NAME, panic_info, backtrace);
         append_startup_diagnostic(&message);
         eprintln!("{}", message);
     }));
@@ -4789,7 +4791,7 @@ pub fn run() {
                 .build()?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                .tooltip("gary4local")
+                .tooltip(APP_NAME)
                 .menu(&tray_menu)
                 .on_menu_event(
                     move |app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
@@ -5052,6 +5054,9 @@ async fn rebuild_env(
 ) -> Result<(), String> {
     let build_info = {
         let mut mgr = manager.lock().await;
+        if mgr.is_running(&service_id) {
+            let _ = mgr.stop(&service_id);
+        }
         let info = mgr.get_build_info(&service_id)?;
         // +2 for "ensure uv" and "create venv" steps
         let total = info.build_steps.len() + 2;
@@ -5103,6 +5108,9 @@ async fn rebuild_all_envs(
 
             {
                 let mut mgr = mgr_clone.lock().await;
+                if mgr.is_running(&sid) {
+                    let _ = mgr.stop(&sid);
+                }
                 let total = info.build_steps.len() + 2;
                 mgr.set_build_started(&sid, total);
             }
@@ -5125,7 +5133,7 @@ async fn rebuild_all_envs(
 }
 
 // ---------------------------------------------------------------------------
-// Build pipeline: uv bootstrap -> Python 3.11 -> venv -> install steps
+// Build pipeline: uv bootstrap -> manifest Python -> venv -> install steps
 // ---------------------------------------------------------------------------
 
 const WINDOWS_APPLICATION_CONTROL_HELP: &str = "Windows got a little overprotective and blocked this environment's Python from starting.\n\nOpen Windows Security -> App & browser control -> Smart App Control settings, temporarily turn Smart App Control off, then rebuild the environment. You can turn it back on afterward.";
@@ -5301,28 +5309,66 @@ async fn run_build(
     let service_id = build_info.service_id.clone();
     let work_dir = &build_info.work_dir;
     let env_dir = &build_info.env_dir;
+    let python_version = build_info.python_version.trim();
+    let python_version = if python_version.is_empty() {
+        "3.11"
+    } else {
+        python_version
+    };
+    let accelerator_profile = build_info.accelerator_profile.trim();
+    let accelerator_profile = if accelerator_profile.is_empty() {
+        "cuda-nvidia"
+    } else {
+        accelerator_profile
+    };
 
     // Step 0: Ensure uv is available
     let runtime_root = &build_info.runtime_root;
     let uv = ensure_uv(&service_id, &manager, &handle, runtime_root).await?;
 
-    // Step 1: Create venv with uv (using Python 3.11)
+    // Step 1: Create venv with uv using the service manifest Python version.
+    {
+        let mut mgr = manager.lock().await;
+        mgr.append_build_log(
+            &service_id,
+            &format!(
+                "\n=== Build profile: {} / Python {} ===",
+                accelerator_profile, python_version
+            ),
+        );
+    }
+
+    if env_dir.exists() {
+        {
+            let mut mgr = manager.lock().await;
+            mgr.append_build_log(
+                &service_id,
+                &format!("Removing existing env at {}", env_dir.display()),
+            );
+        }
+        std::fs::remove_dir_all(env_dir)
+            .map_err(|e| format!("Failed to remove existing env {}: {}", env_dir.display(), e))?;
+    }
+
     if !env_dir.exists() {
         {
             let mut mgr = manager.lock().await;
             mgr.set_build_step(
                 &service_id,
                 1,
-                "Installing Python 3.11 and creating venv...",
+                &format!("Installing Python {} and creating venv...", python_version),
             );
-            mgr.append_build_log(&service_id, &format!("\n$ {} python install 3.11", uv));
+            mgr.append_build_log(
+                &service_id,
+                &format!("\n$ {} python install {}", uv, python_version),
+            );
         }
         emit_status(&manager, &handle).await;
 
-        // First ensure Python 3.11 is available via uv
+        // First ensure the requested Python version is available via uv.
         let py_install = run_command_streamed(
             &uv,
-            &["python", "install", "3.11"],
+            &["python", "install", python_version],
             work_dir,
             &service_id,
             &manager,
@@ -5341,14 +5387,14 @@ async fn run_build(
             let mut mgr = manager.lock().await;
             mgr.append_build_log(
                 &service_id,
-                &format!("\n$ {} venv --python 3.11 --seed env", uv),
+                &format!("\n$ {} venv --python {} --seed env", uv, python_version),
             );
         }
         emit_status(&manager, &handle).await;
 
         let mut venv_cmd = tokio::process::Command::new(&uv);
         venv_cmd
-            .args(["venv", "--python", "3.11", "--seed", "env"])
+            .args(["venv", "--python", python_version, "--seed", "env"])
             .current_dir(work_dir);
         apply_runtime_env(&mut venv_cmd, runtime_root);
         hide_console_window(&mut venv_cmd);

@@ -193,6 +193,13 @@ impl ServiceManager {
             result = result.replace("${APPDATA}", &appdata);
         }
 
+        if result.contains("${GARY_RUNTIME}") {
+            let runtime_root = crate::gary4juce_runtime_root()
+                .to_string_lossy()
+                .to_string();
+            result = result.replace("${GARY_RUNTIME}", &runtime_root);
+        }
+
         // Resolve ${HF_TOKEN} — check stored file first, then system env
         if result.contains("${HF_TOKEN}") {
             let hf_token = crate::read_hf_token().unwrap_or_default();
@@ -528,6 +535,8 @@ impl ServiceManager {
             runtime_root: self.repo_root.clone(),
             work_dir: self.service_dir(svc),
             env_dir: self.env_dir(svc),
+            python_version: svc.python_version.clone(),
+            accelerator_profile: svc.accelerator_profile.clone(),
             build_steps: svc.build_steps.clone(),
         })
     }
@@ -600,6 +609,8 @@ impl ServiceManager {
                     runtime_root: self.repo_root.clone(),
                     work_dir: self.service_dir(svc),
                     env_dir: self.env_dir(svc),
+                    python_version: svc.python_version.clone(),
+                    accelerator_profile: svc.accelerator_profile.clone(),
                     build_steps: svc.build_steps.clone(),
                 })
             })
@@ -692,6 +703,8 @@ pub struct BuildInfo {
     pub runtime_root: PathBuf,
     pub work_dir: PathBuf,
     pub env_dir: PathBuf,
+    pub python_version: String,
+    pub accelerator_profile: String,
     pub build_steps: Vec<String>,
 }
 

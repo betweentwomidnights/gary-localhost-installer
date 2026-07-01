@@ -1076,8 +1076,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "gary4local"
-version = "0.2.0"
+name = "gary4local-rocm"
+version = "0.2.0-rocm.1"
 dependencies = [
  "log",
  "png",

@@ -9,7 +9,7 @@ function formatStartupError(error: unknown) {
 }
 
 function showStartupError(error: unknown) {
-  console.error("gary4local startup error:", error);
+  console.error("gary4local-rocm startup error:", error);
 
   const target = document.getElementById("app");
   if (!target) return;
@@ -27,7 +27,7 @@ function showStartupError(error: unknown) {
   ].join(";");
 
   const title = document.createElement("h1");
-  title.textContent = "gary4local could not finish starting";
+  title.textContent = "gary4local-rocm could not finish starting";
   title.style.cssText = "font-size: 22px; margin: 0 0 12px;";
 
   const body = document.createElement("p");
@@ -52,11 +52,11 @@ function showStartupError(error: unknown) {
 }
 
 window.addEventListener("error", (event) => {
-  console.error("gary4local window error:", event.error || event.message);
+  console.error("gary4local-rocm window error:", event.error || event.message);
 });
 
 window.addEventListener("unhandledrejection", (event) => {
-  console.error("gary4local unhandled rejection:", event.reason);
+  console.error("gary4local-rocm unhandled rejection:", event.reason);
 });
 
 let app: ReturnType<typeof mount>;

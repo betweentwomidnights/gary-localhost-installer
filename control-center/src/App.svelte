@@ -127,7 +127,7 @@
 
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
-  const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
+  const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER === "1";
 
   let services: ServiceInfo[] = $state([]);
   let selectedServiceId: string | null = $state(null);
@@ -680,7 +680,7 @@
 <main>
   <header>
     <div class="header-left">
-      <h1>gary4local</h1>
+      <h1>gary4local-rocm</h1>
     </div>
     <div class="header-right">
       {#if showAppUpdater}

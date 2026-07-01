@@ -26,7 +26,7 @@
       aria-labelledby="close-modal-title"
       tabindex="-1"
     >
-      <div class="title" id="close-modal-title">close gary4local?</div>
+      <div class="title" id="close-modal-title">close gary4local-rocm?</div>
       <div class="body">
         choose whether to quit the application or leave it running in the system tray.
       </div>
