@@ -1,0 +1,13 @@
+{
+  "channel": "preview",
+  "latest_version": "0.1.19-rocm.1",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19-rocm.1/gary4local-rocm_0.1.19-rocm.1_x64-setup.exe",
+  "sha256": "e40f3a71012d4b37c4b9ac8f30516469af1606f3dd60da365d12167385d60a0d",
+  "published_at": "2026-07-01T12:00:22.8544274Z",
+  "notes": [
+    "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.",
+    "SA3 uses Python 3.12 with AMD ROCm Windows PyTorch 2.9.1+rocm7.2.1.",
+    "SA3 fails fast instead of falling back to CPU when HIP cannot see a GPU.",
+    "Native in-app install is not enabled for this prerelease; use download update."
+  ]
+}
