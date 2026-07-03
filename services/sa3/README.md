@@ -94,7 +94,12 @@ advanced "sa3 output shaping" panel:
 - `latent_rescale` / `SA3_LATENT_RESCALE`, default `1.0`
 - `latent_shift` / `SA3_LATENT_SHIFT`, default `0.0`
 - `latent_target_std` / `SA3_LATENT_TARGET_STD`, default off
-- `continuation_tail_pad` / `SA3_CONTINUE_TAIL_PAD`, default `6`
+- `tail_pad_seconds` / `SA3_TAIL_PAD_SECONDS`, default `6`
+- `continuation_tail_pad` / `SA3_CONTINUE_TAIL_PAD`, default `6`, compatibility alias
 
 Use `off` for dB fields to disable that stage. A positive peak-normalize target
 is intended to be paired with the limiter.
+
+`tail_pad_seconds` applies to text generation and continuation. The service
+generates with that extra ending headroom, then trims the returned WAV to the
+requested duration. It is not used for normal audio-to-audio transform.

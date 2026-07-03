@@ -29,7 +29,7 @@
     continuationTailPad: "6",
   };
 
-  let tab: "level" | "latent" | "continue" = $state("level");
+  let tab: "level" | "latent" | "tail" = $state("level");
   let draft: Sa3LoudnessSettings = $state({ ...defaults });
   let saving = $state(false);
   let message: string | null = $state(null);
@@ -82,12 +82,12 @@
   <div class="panel-head">
     <div class="copy">
       <div class="panel-title">sa3 output shaping</div>
-      <div class="panel-subtitle">advanced loudness and continuation defaults</div>
+      <div class="panel-subtitle">advanced loudness and generation defaults</div>
     </div>
     <div class="tabs" aria-label="sa3 output shaping tabs">
       <button class:active={tab === "level"} onclick={() => tab = "level"}>level</button>
       <button class:active={tab === "latent"} onclick={() => tab = "latent"}>latent</button>
-      <button class:active={tab === "continue"} onclick={() => tab = "continue"}>continue</button>
+      <button class:active={tab === "tail"} onclick={() => tab = "tail"}>tail</button>
     </div>
   </div>
 
@@ -125,9 +125,9 @@
   {:else}
     <div class="field-grid">
       <label class="field wide">
-        <span>continuation tail pad seconds</span>
+        <span>tail pad seconds</span>
         <input bind:value={draft.continuationTailPad} placeholder="6" />
-        <small>For continue mode: 0 ends at the cut, 6 keeps a natural tail, 20+ leans seamless.</small>
+        <small>For generate and continue: adds ending headroom, then trims to the requested length.</small>
       </label>
     </div>
   {/if}

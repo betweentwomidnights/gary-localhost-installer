@@ -2683,13 +2683,15 @@ pub(crate) fn carey_use_scrag_vae_enabled() -> bool {
 
 pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
     let settings = read_app_settings().sa3_loudness;
+    let tail_pad = settings.continuation_tail_pad;
     vec![
         ("SA3_PEAK_NORMALIZE_DB", settings.peak_normalize_db),
         ("SA3_LIMITER_CEILING_DB", settings.limiter_ceiling_db),
         ("SA3_LATENT_RESCALE", settings.latent_rescale),
         ("SA3_LATENT_SHIFT", settings.latent_shift),
         ("SA3_LATENT_TARGET_STD", settings.latent_target_std),
-        ("SA3_CONTINUE_TAIL_PAD", settings.continuation_tail_pad),
+        ("SA3_TAIL_PAD_SECONDS", tail_pad.clone()),
+        ("SA3_CONTINUE_TAIL_PAD", tail_pad),
     ]
 }
 

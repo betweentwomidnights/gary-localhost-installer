@@ -151,6 +151,7 @@
         "SA3_LATENT_TARGET_STD": "",
         "SA3_LATENT_ADAPT_MIN": "0.9",
         "SA3_LATENT_ADAPT_MAX": "1.0",
+        "SA3_TAIL_PAD_SECONDS": "6",
         "SA3_CONTINUE_TAIL_MODE": "regen_past",
         "SA3_CONTINUE_TAIL_PAD": "6",
         "SA3_LATENT_DIAG": "0",
