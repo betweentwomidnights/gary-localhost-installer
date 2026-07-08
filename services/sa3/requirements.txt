@@ -28,3 +28,7 @@ soundfile>=0.13.1
 accelerate>=0.30
 dill>=0.3.8
 audio-metadata>=0.11
+
+# BPM/key sidecar analysis (numpy 2 compatible floor). Also installed on demand
+# by analyze_audio.py so existing envs don't require a rebuild to use the helper.
+scipy>=1.14

@@ -11,15 +11,37 @@ import sys
 from pathlib import Path
 
 
-_BPM_TAIL = re.compile(
-    r"[,;]?\s*(?:bpm\s*:\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*bpm)\s*$",
+# bpm and key are re-added by gary4juce from its own dropdowns before a request is
+# submitted, so they must not leak into the dice pool (that would double them at
+# inference). The plugin writes them bare ("145 bpm", "C minor"), while the official
+# SA3 / Underfit guides suggest labeled forms ("BPM: 145", "Key: C minor"); we strip
+# either style. The match is anchored to the tail and peeled repeatedly, so bpm and
+# key are removed in any order.
+_NOTE = r"[A-G][#b♯♭]?"
+_MODE = r"(?:maj(?:or)?|min(?:or)?)"
+_TRAILING_TAG = re.compile(
+    r"[,;]?\s*(?:"
+    r"bpm\s*[:=]?\s*\d+(?:\.\d+)?"  # BPM: 145 / bpm 145
+    r"|\d+(?:\.\d+)?\s*bpm"  # 145 bpm
+    rf"|(?:key|scale)\s*[:=]\s*{_NOTE}\s+{_MODE}"  # Key: C minor / Scale: F# maj
+    rf"|(?<![A-Za-z]){_NOTE}\s+(?:major|minor)"  # bare C minor / F# major
+    r")\s*$",
     re.IGNORECASE,
 )
 
 
 def prompt_from_caption(text: str) -> str:
-    prompt = _BPM_TAIL.sub("", text).strip()
-    return prompt.strip(" ,;\t\r\n")
+    """Strip trailing bpm/key tags the host re-adds from its own controls.
+
+    Peels any trailing bpm/key token (labeled or bare) until the tail is stable, so
+    a caption ending in e.g. "..., 145 bpm, C minor" loses both regardless of order.
+    """
+    prompt = text.strip()
+    while True:
+        stripped = _TRAILING_TAG.sub("", prompt).strip(" ,;\t\r\n")
+        if stripped == prompt:
+            return prompt
+        prompt = stripped
 
 
 def main() -> int:

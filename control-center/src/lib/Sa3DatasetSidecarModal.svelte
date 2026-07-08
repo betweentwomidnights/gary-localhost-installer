@@ -20,6 +20,16 @@
     entries: Sa3DatasetSidecarEntry[];
   }
 
+  interface Sa3MetadataSuggestion {
+    bpm: number | null;
+    keyscale: string;
+    suggestion: string;
+    bpmConfidence: number | null;
+    keyConfidence: number | null;
+  }
+
+  type PromptStyle = "bare" | "labeled";
+
   let {
     open,
     datasetPath,
@@ -32,22 +42,37 @@
     onClose: () => void;
   } = $props();
 
-  const starterPrompt =
-    "TrackType: Music, VocalType: Instrumental, Genre: technical death metal, Mood: absurd, BPM: 145";
+  // BPM and key are stripped from the dice pool and re-added by the plugin from its
+  // own dropdowns, so either style trains fine. Bare is the default because it matches
+  // what gary4juce appends at inference.
+  const barePrompt = "technical death metal, 145 bpm, C minor";
+  const labeledPrompt =
+    "TrackType: Music, VocalType: Instrumental, Genre: technical death metal, Mood: absurd, BPM: 145, Key: C minor";
 
   let entries: DraftEntry[] = $state([]);
   let selectedIndex = $state(0);
-  let templateText = $state(starterPrompt);
+  let templateText = $state(barePrompt);
+  let promptStyle = $state<PromptStyle>("bare");
+  let showStyleInfo = $state(false);
   let includeSharedPrompt = $state(false);
   let loading = $state(false);
   let saving = $state(false);
+  let suggesting = $state(false);
   let error = $state<string | null>(null);
-  let message = $state<string | null>(null);
+  // A single transient note, tagged with where it should render so it sits inline
+  // next to its trigger (fill/save button, suggest row) instead of adding a row.
+  let note = $state<string | null>(null);
+  let noteContext = $state<"fill" | "save" | "suggest" | null>(null);
   let loadedPath = $state("");
   let wasOpen = false;
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
+  }
+
+  function clearNote() {
+    note = null;
+    noteContext = null;
   }
 
   async function openReference(reference: "underfit" | "prompting") {
@@ -59,14 +84,72 @@
     }
   }
 
+  // Mirror of prompt_from_caption in services/sa3/build_lora_prompts.py: peel any
+  // trailing bpm/key tag (labeled "BPM: 145" / "Key: C minor" or bare "145 bpm" /
+  // "C minor") until the tail is stable, so both are removed in any order.
+  const diceTrailingTag =
+    /[,;]?\s*(?:bpm\s*[:=]?\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*bpm|(?:key|scale)\s*[:=]\s*[A-G][#b♯♭]?\s+(?:maj(?:or)?|min(?:or)?)|(?<![A-Za-z])[A-G][#b♯♭]?\s+(?:major|minor))\s*$/i;
+
   function dicePromptFromCaption(text: string): string {
-    return text
-      .replace(
-        /(?:[,;]\s*)?(?:BPM\s*:\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*BPM)\s*$/i,
-        ""
-      )
-      .trim()
-      .replace(/^[,;\s]+|[,;\s]+$/g, "");
+    let prompt = text.trim();
+    for (;;) {
+      const next = prompt.replace(diceTrailingTag, "").replace(/^[,;\s]+|[,;\s]+$/g, "");
+      if (next === prompt) return prompt;
+      prompt = next;
+    }
+  }
+
+  // Switch the fill style. Swap the starter text too, but only when it's still one of
+  // the known examples, so a user's hand-edited prompt is never clobbered.
+  function setPromptStyle(style: PromptStyle) {
+    const current = templateText.trim();
+    if (current === barePrompt || current === labeledPrompt) {
+      templateText = style === "bare" ? barePrompt : labeledPrompt;
+    }
+    promptStyle = style;
+  }
+
+  function formatMetadataTag(bpm: number | null, keyscale: string): string {
+    const parts: string[] = [];
+    if (bpm != null) parts.push(promptStyle === "labeled" ? `BPM: ${bpm}` : `${bpm} bpm`);
+    if (keyscale) parts.push(promptStyle === "labeled" ? `Key: ${keyscale}` : keyscale);
+    return parts.join(", ");
+  }
+
+  // Idempotent: strip any trailing bpm/key first (same peel as the dice preview), then
+  // append the freshly formatted tag, so re-pressing or switching style never stacks.
+  function spliceMetadata(content: string, tag: string): string {
+    const base = dicePromptFromCaption(content);
+    if (!tag) return base;
+    if (!base) return tag;
+    return `${base}, ${tag}`;
+  }
+
+  async function suggestBpmKey() {
+    const entry = entries[selectedIndex];
+    if (!entry) return;
+    suggesting = true;
+    error = null;
+    clearNote();
+    try {
+      const result = await invoke<Sa3MetadataSuggestion>("suggest_sa3_track_metadata", {
+        datasetPath,
+        audioPath: entry.audioPath,
+      });
+      const tag = formatMetadataTag(result.bpm, result.keyscale);
+      if (!tag) {
+        note = "no bpm or key detected";
+        noteContext = "suggest";
+        return;
+      }
+      // No success toast: the updated prompt textarea is its own confirmation, and a
+      // note here would steal height and push the suggest button past the scroll fold.
+      entries[selectedIndex] = { ...entry, content: spliceMetadata(entry.content, tag) };
+    } catch (e) {
+      error = describeError(e);
+    } finally {
+      suggesting = false;
+    }
   }
 
   function toDrafts(items: Sa3DatasetSidecarEntry[]): DraftEntry[] {
@@ -77,7 +160,7 @@
     if (!datasetPath.trim()) return;
     loading = true;
     error = null;
-    message = null;
+    clearNote();
     try {
       const result = await invoke<Sa3DatasetSidecarEntry[]>("get_sa3_dataset_sidecars", {
         datasetPath,
@@ -116,35 +199,41 @@
       filled += 1;
       return { ...entry, content: template };
     });
-    message = filled
-      ? `Filled ${filled} missing sidecar draft${filled === 1 ? "" : "s"}.`
-      : "No empty text sidecars found. Tracks with JSON metadata were skipped.";
+    // No success toast: the none -> txt flips in the track list are the cue. Only the
+    // "nothing to fill" case needs a word, and it renders inline beside the button.
+    if (filled) {
+      clearNote();
+    } else {
+      note = "no empty sidecars to fill";
+      noteContext = "fill";
+    }
   }
 
   function clearCurrent() {
     const entry = entries[selectedIndex];
     if (!entry) return;
     entries[selectedIndex] = { ...entry, content: "" };
-    message = null;
+    clearNote();
   }
 
   function restoreCurrent() {
     const entry = entries[selectedIndex];
     if (!entry) return;
     entries[selectedIndex] = { ...entry, content: entry.originalContent };
-    message = null;
+    clearNote();
   }
 
   async function saveSidecars() {
     const changed = entries.filter((entry) => entry.content !== entry.originalContent);
     if (!changed.length) {
-      message = "No sidecar changes to save.";
+      note = "no changes to save";
+      noteContext = "save";
       return;
     }
 
     saving = true;
     error = null;
-    message = null;
+    clearNote();
     try {
       const result = await invoke<Sa3DatasetSidecarSaveResult>("save_sa3_dataset_sidecars", {
         datasetPath,
@@ -158,7 +247,8 @@
       const details = [];
       if (result.saved) details.push(`${result.saved} saved`);
       if (result.removed) details.push(`${result.removed} removed`);
-      message = details.length ? `Sidecars updated: ${details.join(", ")}.` : "Sidecars are already current.";
+      note = details.length ? `Sidecars updated: ${details.join(", ")}.` : "Sidecars are already current.";
+      noteContext = "save";
     } catch (e) {
       error = describeError(e);
     } finally {
@@ -168,7 +258,7 @@
 
   function selectTrack(index: number) {
     selectedIndex = index;
-    message = null;
+    clearNote();
   }
 
   let selectedEntry = $derived(entries[selectedIndex] ?? null);
@@ -207,20 +297,25 @@
 
       <div class="body">
         Give each audio file an optional same-name `.txt` file, such as `song.wav` and `song.txt`. Everything in the text file is used as that track's prompt.
-        <div class="references">
-          <button type="button" class="reference-link" onclick={() => void openReference("underfit")}>
-            open Underfit metadata guide
-          </button>
-          <button type="button" class="reference-link" onclick={() => void openReference("prompting")}>
-            open official SA3 prompting guide
-          </button>
-        </div>
       </div>
 
       <div class="template-band">
+        <div class="style-row">
+          <span>prompt style</span>
+          <div class="style-toggle">
+            <button type="button" class:active={promptStyle === "bare"} onclick={() => setPromptStyle("bare")}>barebones</button>
+            <button type="button" class:active={promptStyle === "labeled"} onclick={() => setPromptStyle("labeled")}>official SA3</button>
+          </div>
+          <button type="button" class="info-toggle" aria-label="about prompt styles" aria-expanded={showStyleInfo} onclick={() => (showStyleInfo = !showStyleInfo)}>ⓘ</button>
+        </div>
+        {#if showStyleInfo}
+          <small class="style-info">
+            Personally I just use barebones — <code>genre, 145 bpm, C minor</code>. The official SA3 repo recommends a labeled style — <code>BPM: 145, Key: C minor</code> — see the <button type="button" class="reference-link" onclick={() => void openReference("prompting")}>official SA3 prompting guide</button>. Either trains fine: BPM and key are stripped from the dice pool and the plugin re-adds them from its own dropdowns.
+          </small>
+        {/if}
         <label class="template-field">
-          <span>editable starter prompt using SA3 tags and Underfit's example values</span>
-          <textarea rows="3" bind:value={templateText}></textarea>
+          <span>editable starter prompt — {promptStyle === "bare" ? "barebones" : "official SA3"} style</span>
+          <textarea rows="2" bind:value={templateText}></textarea>
         </label>
         <label class:disabled={!sharedPrompt.trim()} class="check-row">
           <input type="checkbox" bind:checked={includeSharedPrompt} disabled={!sharedPrompt.trim()} />
@@ -228,15 +323,14 @@
         </label>
         <div class="template-actions">
           <button type="button" onclick={fillMissing} disabled={loading || !entries.length}>fill missing</button>
-          <span>{captionedCount} of {entries.length} tracks have prompt text</span>
+          <span class:inline-note={noteContext === "fill"}>
+            {noteContext === "fill" && note ? note : `${captionedCount} of ${entries.length} tracks have prompt text`}
+          </span>
         </div>
       </div>
 
       {#if error}
         <div class="error-note">{error}</div>
-      {/if}
-      {#if message}
-        <div class="success-note">{message}</div>
       {/if}
 
       {#if loading}
@@ -263,28 +357,36 @@
 
           {#if selectedEntry}
             <div class="track-editor">
-              <div class="track-heading">
-                <div>
-                  <div class="track-title">{selectedEntry.relativePath}</div>
-                  <div class="sidecar-path">{selectedEntry.sidecarPath}</div>
+              <div class="track-editor-scroll">
+                <div class="track-heading">
+                  <div>
+                    <div class="track-title">{selectedEntry.relativePath}</div>
+                    <div class="sidecar-path">{selectedEntry.sidecarPath}</div>
+                  </div>
+                  <span>{selectedIndex + 1} / {entries.length}</span>
                 </div>
-                <span>{selectedIndex + 1} / {entries.length}</span>
-              </div>
 
-              {#if selectedEntry.jsonSidecarExists}
-                <div class="warning">A JSON sidecar exists for this track and takes precedence over `.txt` during pre-encoding.</div>
-              {/if}
-
-              <label class="prompt-field">
-                <span>literal text-sidecar prompt</span>
-                <textarea rows="4" bind:value={selectedEntry.content} placeholder="Leave blank to train without a per-track prompt."></textarea>
-              </label>
-              <div class="dice-preview">
-                <span>dice button result</span>
-                <div>{selectedDicePrompt || "not added to the LoRA prompt pool"}</div>
-                {#if selectedEntry.content.trim() !== selectedDicePrompt}
-                  <small>A trailing BPM tag is omitted because Gary supplies tempo separately.</small>
+                {#if selectedEntry.jsonSidecarExists}
+                  <div class="warning">A JSON sidecar exists for this track and takes precedence over `.txt` during pre-encoding.</div>
                 {/if}
+
+                <label class="prompt-field">
+                  <span>literal text-sidecar prompt</span>
+                  <textarea rows="3" bind:value={selectedEntry.content} placeholder="Leave blank to train without a per-track prompt."></textarea>
+                </label>
+                <div class="metadata-assist">
+                  <button type="button" class="assist-button" onclick={suggestBpmKey} disabled={suggesting || saving}>
+                    {suggesting ? "analyzing…" : "suggest bpm / key"}
+                  </button>
+                  <small class:inline-note={noteContext === "suggest"}>{noteContext === "suggest" && note ? note : `Estimates tempo and key from the audio and fills them in ${promptStyle === "bare" ? "barebones" : "official SA3"} style. First use may pause briefly to install an analysis dependency.`}</small>
+                </div>
+                <div class="dice-preview">
+                  <span>dice button result</span>
+                  <div>{selectedDicePrompt || "not added to the LoRA prompt pool"}</div>
+                  {#if selectedEntry.content.trim() !== selectedDicePrompt}
+                    <small>Trailing BPM and key tags are omitted — the plugin adds those from its own dropdowns.</small>
+                  {/if}
+                </div>
               </div>
 
               <div class="track-actions">
@@ -307,7 +409,13 @@
       {/if}
 
       <div class="footer">
-        <span>{dirtyCount ? `${dirtyCount} unsaved change${dirtyCount === 1 ? "" : "s"}` : "all changes saved"}</span>
+        <span class:inline-note={noteContext === "save" && !dirtyCount}>
+          {dirtyCount
+            ? `${dirtyCount} unsaved change${dirtyCount === 1 ? "" : "s"}`
+            : noteContext === "save" && note
+              ? note
+              : "all changes saved"}
+        </span>
         <button type="button" class="accent" onclick={saveSidecars} disabled={saving || !dirtyCount}>
           {saving ? "saving..." : "save sidecars"}
         </button>
@@ -346,6 +454,16 @@
     background: var(--bg-secondary);
     box-shadow: 0 22px 64px rgba(0, 0, 0, 0.58);
     overflow: hidden;
+  }
+
+  /* Only the editor flexes/scrolls; the fixed rows keep their height so the
+     footer stays pinned and the panes get a bounded, scrollable region. */
+  .header,
+  .body,
+  .template-band,
+  .error-note,
+  .footer {
+    flex-shrink: 0;
   }
 
   .header,
@@ -391,13 +509,6 @@
     line-height: 1.5;
   }
 
-  .references {
-    display: flex;
-    gap: 12px;
-    margin-top: 8px;
-    flex-wrap: wrap;
-  }
-
   .reference-link {
     border: none;
     background: transparent;
@@ -418,6 +529,87 @@
   .prompt-field {
     display: grid;
     gap: 6px;
+  }
+
+  .style-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .style-row > span {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+  }
+
+  .style-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+  }
+
+  .style-toggle button {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 4px 12px;
+    font-size: 11px;
+  }
+
+  .style-toggle button.active {
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+
+  .info-toggle {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    line-height: 1;
+    border-radius: 50%;
+  }
+
+  .style-info {
+    color: var(--text-secondary);
+    font: 11px/1.5 var(--font-mono);
+  }
+
+  .style-info code {
+    color: var(--text-primary);
+  }
+
+  .metadata-assist {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+
+  .metadata-assist small {
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1.4;
+    flex: 1;
+    min-width: 180px;
+  }
+
+  .assist-button {
+    background: var(--bg-panel);
+    border: 1px solid var(--accent);
+    color: var(--text-primary);
+    padding: 6px 14px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .assist-button:disabled {
+    opacity: 0.6;
   }
 
   textarea {
@@ -454,12 +646,15 @@
   .editor {
     display: grid;
     grid-template-columns: minmax(220px, 0.38fr) minmax(0, 1fr);
-    min-height: 340px;
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: hidden;
   }
 
   .track-list {
     overflow: auto;
+    min-height: 0;
     border-right: 1px solid var(--border);
     background: var(--bg-primary);
   }
@@ -500,7 +695,16 @@
   }
 
   .track-editor {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .track-editor-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: auto;
     padding: 16px;
   }
@@ -544,14 +748,16 @@
   }
 
   .track-actions {
+    flex-shrink: 0;
     justify-content: flex-end;
-    margin-top: 10px;
     flex-wrap: wrap;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-panel);
   }
 
   .warning,
   .error-note,
-  .success-note,
   .empty {
     margin: 10px 18px 0;
     font-size: 11px;
@@ -567,8 +773,8 @@
     color: #ff8f8f;
   }
 
-  .success-note {
-    color: #9bd8aa;
+  .inline-note {
+    color: var(--green);
   }
 
   .empty {
@@ -583,27 +789,4 @@
     background: var(--bg-panel);
   }
 
-  @media (max-width: 700px) {
-    .sidecar-overlay {
-      padding: 8px;
-    }
-
-    .editor {
-      grid-template-columns: 1fr;
-      overflow: auto;
-    }
-
-    .track-list {
-      max-height: 180px;
-      border-right: none;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .header,
-    .footer,
-    .template-actions {
-      align-items: flex-start;
-      flex-wrap: wrap;
-    }
-  }
 </style>

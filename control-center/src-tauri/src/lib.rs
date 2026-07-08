@@ -399,6 +399,34 @@ struct Sa3DatasetSidecarSaveResult {
     entries: Vec<Sa3DatasetSidecarEntry>,
 }
 
+// Mirrors the snake_case JSON that services/sa3/analyze_audio.py prints to stdout.
+#[derive(Debug, Deserialize)]
+struct Sa3AnalyzerOutput {
+    ok: bool,
+    #[serde(default)]
+    bpm: Option<i64>,
+    #[serde(default)]
+    keyscale: String,
+    #[serde(default)]
+    suggestion: String,
+    #[serde(default)]
+    bpm_confidence: Option<f64>,
+    #[serde(default)]
+    key_confidence: Option<f64>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3TrackMetadataSuggestion {
+    bpm: Option<i64>,
+    keyscale: String,
+    suggestion: String,
+    bpm_confidence: Option<f64>,
+    key_confidence: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoraTrainingState {
@@ -3147,6 +3175,7 @@ pub fn run() {
             build_sa3_lora_prompts,
             get_sa3_dataset_sidecars,
             save_sa3_dataset_sidecars,
+            suggest_sa3_track_metadata,
             open_sa3_training_reference,
             get_sa3_lora_training_state,
             start_sa3_lora_training,
@@ -4603,6 +4632,80 @@ fn save_sa3_dataset_sidecars(
     sidecars: Vec<Sa3DatasetSidecarUpdate>,
 ) -> Result<Sa3DatasetSidecarSaveResult, String> {
     save_sa3_dataset_sidecar_updates(&dataset_path, sidecars)
+}
+
+#[tauri::command]
+async fn suggest_sa3_track_metadata(
+    dataset_path: String,
+    audio_path: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3TrackMetadataSuggestion, String> {
+    let root = canonical_sa3_dataset_root(&dataset_path)?;
+    let requested = PathBuf::from(audio_path.trim());
+    let resolved = requested
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))?;
+    if !resolved.starts_with(&root) || !resolved.is_file() || !is_sa3_dataset_audio_file(&resolved) {
+        return Err(format!(
+            "{} is not an audio file inside {}",
+            resolved.display(),
+            root.display()
+        ));
+    }
+
+    let python_exe = repo_root
+        .join("services")
+        .join("sa3")
+        .join("env")
+        .join("Scripts")
+        .join("python.exe");
+    if !python_exe.exists() {
+        return Err("SA3 must be built before BPM/key analysis can run.".to_string());
+    }
+    let script_path = repo_root
+        .join("services")
+        .join("sa3")
+        .join("analyze_audio.py");
+    if !script_path.exists() {
+        return Err(format!("Missing {}", script_path.display()));
+    }
+
+    let mut cmd = tokio::process::Command::new(&python_exe);
+    hide_console_window(&mut cmd);
+    cmd.arg(&script_path)
+        .arg(&resolved)
+        .current_dir(repo_root.join("services").join("sa3"));
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run analyze_audio.py: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    // scipy install logs and estimator diagnostics go to stderr; the JSON result is on
+    // stdout. Only fall back to stderr when stdout is empty (a hard crash).
+    if stdout.is_empty() {
+        return Err(if stderr.is_empty() {
+            "BPM/key analysis produced no output.".to_string()
+        } else {
+            stderr
+        });
+    }
+    let parsed: Sa3AnalyzerOutput = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Could not parse analyzer output: {} ({})", e, stdout))?;
+    if !parsed.ok {
+        return Err(parsed
+            .error
+            .unwrap_or_else(|| "BPM/key analysis failed.".to_string()));
+    }
+    Ok(Sa3TrackMetadataSuggestion {
+        bpm: parsed.bpm,
+        keyscale: parsed.keyscale,
+        suggestion: parsed.suggestion,
+        bpm_confidence: parsed.bpm_confidence,
+        key_confidence: parsed.key_confidence,
+    })
 }
 
 #[tauri::command]
