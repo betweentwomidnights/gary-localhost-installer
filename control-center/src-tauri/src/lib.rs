@@ -427,6 +427,30 @@ struct Sa3TrackMetadataSuggestion {
     key_confidence: Option<f64>,
 }
 
+// Mirrors the status.json that services/carey/sa3_autolabel.py writes via update_status.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3AutolabelState {
+    #[serde(default)]
+    status: String, // "" (idle) | starting | running | completed | cancelled | failed
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    total: u32,
+    #[serde(default)]
+    done: u32,
+    #[serde(default)]
+    current_path: String,
+    #[serde(default)]
+    style: String,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    pid: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoraTrainingState {
@@ -653,6 +677,26 @@ fn sa3_training_logs_dir() -> PathBuf {
 
 fn sa3_training_current_job_path() -> PathBuf {
     sa3_training_dir().join("current_job.json")
+}
+
+fn sa3_autolabel_dir() -> PathBuf {
+    sa3_runtime_dir().join("autolabel")
+}
+
+fn sa3_autolabel_status_path() -> PathBuf {
+    sa3_autolabel_dir().join("status.json")
+}
+
+fn sa3_autolabel_cancel_path() -> PathBuf {
+    sa3_autolabel_dir().join("cancel.requested")
+}
+
+fn sa3_autolabel_log_path() -> PathBuf {
+    sa3_autolabel_dir().join("autolabel.log")
+}
+
+fn sa3_autolabel_current_job_path() -> PathBuf {
+    sa3_autolabel_dir().join("current_job.json")
 }
 
 fn bundled_sa3_default_prompts_path(runtime_root: &Path) -> PathBuf {
@@ -3176,6 +3220,10 @@ pub fn run() {
             get_sa3_dataset_sidecars,
             save_sa3_dataset_sidecars,
             suggest_sa3_track_metadata,
+            sa3_autolabel_available,
+            get_sa3_autolabel_state,
+            start_sa3_autolabel,
+            cancel_sa3_autolabel,
             open_sa3_training_reference,
             get_sa3_lora_training_state,
             start_sa3_lora_training,
@@ -4706,6 +4754,169 @@ async fn suggest_sa3_track_metadata(
         bpm_confidence: parsed.bpm_confidence,
         key_confidence: parsed.key_confidence,
     })
+}
+
+fn read_sa3_autolabel_state() -> Sa3AutolabelState {
+    match std::fs::read_to_string(sa3_autolabel_status_path()) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => Sa3AutolabelState::default(),
+    }
+}
+
+fn write_sa3_autolabel_launch_state(status_path: &Path, style: &str) -> Result<(), String> {
+    if let Some(parent) = status_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+    let state = Sa3AutolabelState {
+        status: "starting".to_string(),
+        phase: "starting".to_string(),
+        message: "Launching auto-label".to_string(),
+        style: style.to_string(),
+        ..Default::default()
+    };
+    let raw = serde_json::to_string_pretty(&state)
+        .map_err(|e| format!("Cannot serialize auto-label state: {}", e))?;
+    std::fs::write(status_path, raw)
+        .map_err(|e| format!("Cannot write {}: {}", status_path.display(), e))
+}
+
+fn mark_sa3_autolabel_cancelled() {
+    // The python process may be killed before it can record the terminal state.
+    let mut state = read_sa3_autolabel_state();
+    state.status = "cancelled".to_string();
+    state.phase = "cancelled".to_string();
+    state.message = "Auto-label cancelled".to_string();
+    state.current_path = String::new();
+    if let Ok(raw) = serde_json::to_string_pretty(&state) {
+        let _ = std::fs::write(sa3_autolabel_status_path(), raw);
+    }
+}
+
+fn carey_autolabel_python(repo_root: &Path) -> PathBuf {
+    repo_root
+        .join("services")
+        .join("carey")
+        .join("env")
+        .join("Scripts")
+        .join("python.exe")
+}
+
+fn carey_autolabel_script(repo_root: &Path) -> PathBuf {
+    repo_root
+        .join("services")
+        .join("carey")
+        .join("sa3_autolabel.py")
+}
+
+#[tauri::command]
+fn sa3_autolabel_available(repo_root: tauri::State<'_, std::path::PathBuf>) -> bool {
+    carey_autolabel_python(repo_root.inner()).exists()
+        && carey_autolabel_script(repo_root.inner()).exists()
+}
+
+#[tauri::command]
+fn get_sa3_autolabel_state() -> Sa3AutolabelState {
+    read_sa3_autolabel_state()
+}
+
+#[tauri::command]
+async fn start_sa3_autolabel(
+    dataset_path: String,
+    style: String,
+    manager: tauri::State<'_, ManagerState>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3AutolabelState, String> {
+    let style = match style.trim() {
+        "bare" => "bare",
+        "labeled" => "labeled",
+        _ => return Err("style must be 'bare' or 'labeled'".to_string()),
+    };
+    let root = canonical_sa3_dataset_root(&dataset_path)?;
+
+    let current = read_sa3_autolabel_state();
+    if matches!(current.status.as_str(), "starting" | "running") {
+        return Err("An auto-label job is already running.".to_string());
+    }
+
+    let python_exe = carey_autolabel_python(repo_root.inner());
+    if !python_exe.exists() {
+        return Err("Carey must be built to auto-label — it runs the caption model.".to_string());
+    }
+    let script_path = carey_autolabel_script(repo_root.inner());
+    if !script_path.exists() {
+        return Err(format!("Missing {}", script_path.display()));
+    }
+
+    let dir = sa3_autolabel_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create {}: {}", dir.display(), e))?;
+    let status_path = sa3_autolabel_status_path();
+    let cancel_path = sa3_autolabel_cancel_path();
+    let log_path = sa3_autolabel_log_path();
+    let _ = std::fs::remove_file(&cancel_path);
+
+    write_sa3_autolabel_launch_state(&status_path, style)?;
+
+    // Auto-stop the managed Carey inference service so it releases CUDA; the job's own
+    // ensure_carey_stopped waits for it to go down before starting the temp LM server.
+    {
+        let mut mgr = manager.lock().await;
+        mgr.stop("carey").ok();
+    }
+
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Cannot create {}: {}", log_path.display(), e))?;
+    let log_file_err = log_file
+        .try_clone()
+        .map_err(|e| format!("Cannot clone log handle: {}", e))?;
+
+    let mut cmd = tokio::process::Command::new(&python_exe);
+    hide_console_window(&mut cmd);
+    cmd.arg("-u")
+        .arg(&script_path)
+        .arg("--dataset-dir")
+        .arg(&root)
+        .arg("--style")
+        .arg(style)
+        .arg("--caption-lm-model")
+        .arg("acestep-5Hz-lm-1.7B")
+        .arg("--run-dir")
+        .arg(&dir)
+        .arg("--log-path")
+        .arg(&log_path)
+        .arg("--status-path")
+        .arg(&status_path)
+        .arg("--cancel-path")
+        .arg(&cancel_path)
+        .arg("--current-job-path")
+        .arg(sa3_autolabel_current_job_path())
+        .current_dir(repo_root.join("services").join("carey"))
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(log_file_err))
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUNBUFFERED", "1");
+    if let Some(token) = read_hf_token() {
+        cmd.env("HF_TOKEN", token);
+    }
+
+    cmd.spawn()
+        .map_err(|e| format!("Failed to launch auto-label: {}", e))?;
+
+    Ok(read_sa3_autolabel_state())
+}
+
+#[tauri::command]
+fn cancel_sa3_autolabel() -> Result<Sa3AutolabelState, String> {
+    let state = read_sa3_autolabel_state();
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(state);
+    }
+    write_cancel_marker(&sa3_autolabel_cancel_path())?;
+    if let Some(pid) = state.pid {
+        let _ = terminate_process_tree(pid);
+    }
+    mark_sa3_autolabel_cancelled();
+    Ok(read_sa3_autolabel_state())
 }
 
 #[tauri::command]

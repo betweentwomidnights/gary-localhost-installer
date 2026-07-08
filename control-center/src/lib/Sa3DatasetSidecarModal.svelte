@@ -28,6 +28,18 @@
     keyConfidence: number | null;
   }
 
+  interface Sa3AutolabelState {
+    status: string; // "" (idle) | starting | running | completed | cancelled | failed
+    phase: string;
+    message: string;
+    total: number;
+    done: number;
+    currentPath: string;
+    style: string;
+    error: string | null;
+    pid: number | null;
+  }
+
   type PromptStyle = "bare" | "labeled";
 
   let {
@@ -58,6 +70,9 @@
   let loading = $state(false);
   let saving = $state(false);
   let suggesting = $state(false);
+  let autolabelAvailable = $state(false);
+  let autolabelState = $state<Sa3AutolabelState | null>(null);
+  let autolabelPollTimer: ReturnType<typeof setInterval> | null = null;
   let error = $state<string | null>(null);
   // A single transient note, tagged with where it should render so it sits inline
   // next to its trigger (fill/save button, suggest row) instead of adding a row.
@@ -156,11 +171,15 @@
     return items.map((item) => ({ ...item, originalContent: item.content }));
   }
 
-  async function loadSidecars() {
+  // silent: refresh entries without the loading state or clearing error/notes — used
+  // to re-sync txt/none labels after an auto-label run without flashing the editor.
+  async function loadSidecars(silent = false) {
     if (!datasetPath.trim()) return;
-    loading = true;
-    error = null;
-    clearNote();
+    if (!silent) {
+      loading = true;
+      error = null;
+      clearNote();
+    }
     try {
       const result = await invoke<Sa3DatasetSidecarEntry[]>("get_sa3_dataset_sidecars", {
         datasetPath,
@@ -171,7 +190,88 @@
     } catch (e) {
       error = describeError(e);
     } finally {
-      loading = false;
+      if (!silent) loading = false;
+    }
+  }
+
+  function stopAutolabelPolling() {
+    if (autolabelPollTimer !== null) {
+      clearInterval(autolabelPollTimer);
+      autolabelPollTimer = null;
+    }
+  }
+
+  function startAutolabelPolling() {
+    stopAutolabelPolling();
+    autolabelPollTimer = setInterval(() => void refreshAutolabelState(), 1500);
+  }
+
+  async function refreshAutolabelState() {
+    try {
+      const state = await invoke<Sa3AutolabelState>("get_sa3_autolabel_state");
+      autolabelState = state;
+      const running = state.status === "starting" || state.status === "running";
+      const terminal = ["completed", "cancelled", "failed"].includes(state.status);
+      if (running || terminal) {
+        // Re-sync from disk each tick: the job writes each sidecar as it finishes, so
+        // completed rows flip none -> txt live rather than all at once at the end.
+        await loadSidecars(true);
+      }
+      // Follow the analysis into the prompt editor, advancing track by track.
+      if (
+        running &&
+        (state.phase === "analyzing" || state.phase === "captioning") &&
+        state.done < entries.length
+      ) {
+        selectedIndex = state.done;
+      }
+      if (terminal || !state.status || state.status === "idle") {
+        stopAutolabelPolling();
+        if (state.status === "failed" && state.error) error = state.error;
+      }
+    } catch (e) {
+      stopAutolabelPolling();
+      error = describeError(e);
+    }
+  }
+
+  // Called when the modal opens: probe availability and resume polling if a job is
+  // already running (e.g. the modal was closed and reopened mid-run).
+  async function initAutolabel() {
+    try {
+      autolabelAvailable = await invoke<boolean>("sa3_autolabel_available");
+    } catch {
+      autolabelAvailable = false;
+    }
+    try {
+      autolabelState = await invoke<Sa3AutolabelState>("get_sa3_autolabel_state");
+      if (autolabelState.status === "starting" || autolabelState.status === "running") {
+        startAutolabelPolling();
+      }
+    } catch {
+      /* no job yet */
+    }
+  }
+
+  async function startAutolabel() {
+    error = null;
+    clearNote();
+    try {
+      autolabelState = await invoke<Sa3AutolabelState>("start_sa3_autolabel", {
+        datasetPath,
+        style: promptStyle,
+      });
+      startAutolabelPolling();
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+
+  async function cancelAutolabel() {
+    try {
+      autolabelState = await invoke<Sa3AutolabelState>("cancel_sa3_autolabel");
+    } catch (e) {
+      error = describeError(e);
     }
   }
 
@@ -209,18 +309,19 @@
     }
   }
 
-  function clearCurrent() {
+  // clear empties the draft and saves immediately, so the sidecar is removed from disk
+  // rather than lingering until "save sidecars" (which had surprised us before).
+  async function clearCurrent() {
     const entry = entries[selectedIndex];
     if (!entry) return;
     entries[selectedIndex] = { ...entry, content: "" };
-    clearNote();
+    await saveSidecars();
   }
 
-  function restoreCurrent() {
-    const entry = entries[selectedIndex];
-    if (!entry) return;
-    entries[selectedIndex] = { ...entry, content: entry.originalContent };
-    clearNote();
+  async function clearAll() {
+    if (!entries.length) return;
+    entries = entries.map((entry) => ({ ...entry, content: "" }));
+    await saveSidecars();
   }
 
   async function saveSidecars() {
@@ -269,15 +370,36 @@
   let selectedDicePrompt = $derived(
     selectedEntry ? dicePromptFromCaption(selectedEntry.content) : ""
   );
+  let autolabelRunning = $derived(
+    !!autolabelState &&
+      (autolabelState.status === "starting" || autolabelState.status === "running")
+  );
+  // Files are processed in the same relative-path order the modal lists them, so the
+  // in-progress row is simply the one at the completed count.
+  // The reused Carey polling re-labels the phase as "captioning" mid-track, so treat
+  // both it and our own "analyzing" as the active analysis state.
+  let analyzingIndex = $derived(
+    autolabelRunning &&
+      (autolabelState?.phase === "analyzing" || autolabelState?.phase === "captioning")
+      ? (autolabelState?.done ?? -1)
+      : -1
+  );
 
   $effect(() => {
     const justOpened = open && !wasOpen;
     wasOpen = open;
-    if (!open || !datasetPath.trim()) return;
+    if (!open) {
+      stopAutolabelPolling();
+      return;
+    }
+    if (!datasetPath.trim()) return;
     if (justOpened || datasetPath !== loadedPath) {
       void loadSidecars();
+      void initAutolabel();
     }
   });
+
+  $effect(() => () => stopAutolabelPolling());
 </script>
 
 {#if open}
@@ -290,7 +412,7 @@
           <div class="title" id="sidecar-title">edit SA3 text sidecars</div>
         </div>
         <div class="header-actions">
-          <button type="button" onclick={loadSidecars} disabled={loading || saving}>refresh</button>
+          <button type="button" onclick={() => loadSidecars()} disabled={loading || saving}>refresh</button>
           <button type="button" onclick={onClose}>close</button>
         </div>
       </div>
@@ -322,9 +444,35 @@
           <span>prepend shared phrase{sharedPrompt.trim() ? `: ${sharedPrompt.trim()}` : ""}</span>
         </label>
         <div class="template-actions">
-          <button type="button" onclick={fillMissing} disabled={loading || !entries.length}>fill missing</button>
+          <div class="action-buttons">
+            <button type="button" onclick={fillMissing} disabled={loading || !entries.length || autolabelRunning}>fill missing</button>
+            {#if autolabelRunning}
+              <button type="button" class="autolabel-cancel" onclick={cancelAutolabel}>
+                cancel auto-label{autolabelState?.total ? ` (${autolabelState.done}/${autolabelState.total})` : ""}
+              </button>
+            {:else}
+              <button
+                type="button"
+                onclick={startAutolabel}
+                disabled={!autolabelAvailable || loading || !entries.length}
+                title={autolabelAvailable
+                  ? "Auto-label every track's genre, BPM and key (overwrites existing sidecars). Runs the Carey caption model."
+                  : "Requires the Carey caption model — build Carey to enable."}
+              >auto-label all</button>
+            {/if}
+            <button
+              type="button"
+              onclick={clearAll}
+              disabled={loading || saving || autolabelRunning || !entries.length}
+              title="Remove every track's sidecar (saves immediately)"
+            >clear all</button>
+          </div>
           <span class:inline-note={noteContext === "fill"}>
-            {noteContext === "fill" && note ? note : `${captionedCount} of ${entries.length} tracks have prompt text`}
+            {#if autolabelRunning}
+              {autolabelState?.message || "Auto-labeling…"}
+            {:else}
+              {noteContext === "fill" && note ? note : `${captionedCount} of ${entries.length} tracks have prompt text`}
+            {/if}
           </span>
         </div>
       </div>
@@ -349,7 +497,11 @@
               >
                 <span class="track-name">{entry.relativePath}</span>
                 <span class:filled={!!entry.content.trim()} class="track-state">
-                  {entry.content.trim() ? "txt" : "none"}
+                  {#if index === analyzingIndex}
+                    <span class="spinner" aria-label="analyzing"></span>
+                  {:else}
+                    {entry.content.trim() ? "txt" : "none"}
+                  {/if}
                 </span>
               </button>
             {/each}
@@ -390,8 +542,7 @@
               </div>
 
               <div class="track-actions">
-                <button type="button" onclick={clearCurrent}>clear</button>
-                <button type="button" onclick={restoreCurrent} disabled={selectedEntry.content === selectedEntry.originalContent}>restore</button>
+                <button type="button" onclick={clearCurrent} disabled={saving || autolabelRunning}>clear</button>
                 <button
                   type="button"
                   onclick={() => selectedIndex = Math.max(0, selectedIndex - 1)}
@@ -692,6 +843,34 @@
 
   .track-state.filled {
     color: var(--green);
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .autolabel-cancel {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: sa3-spin 0.7s linear infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes sa3-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .track-editor {
