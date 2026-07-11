@@ -3,11 +3,11 @@
     "latest_version":  "0.1.19",
     "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19/gary4local_0.1.19_x64-setup.exe",
     "sha256":  "1f78ec6d0702cc7c5b64eca9f3864fb9f6ecc39ba69751837ebffc6b9a165df8",
-    "published_at":  "2026-07-11T19:42:30.2198501Z",
+    "published_at":  "2026-07-11T20:18:57.0495333Z",
     "notes":  [
                   "Adds full SA3 auto-labeling with ACE-Step genre keywords.",
                   "Hardens Carey and SA3 trainer recovery and Windows process cleanup.",
                   "Press Rebuild Env for new SA3 trainer features.",
-                  "Compatible with gary4juce v4.0.4."
+                  "Compatible with gary4juce v4.0.6."
               ]
 }

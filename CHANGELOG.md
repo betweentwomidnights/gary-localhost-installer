@@ -17,7 +17,7 @@ cleanly, and Windows now owns managed inference and training processes as a
 group so an unexpected app exit cannot leave GPU workers running. closing to
 the tray still leaves work running as intended.
 
-compatible with gary4juce v4.0.4.
+compatible with gary4juce v4.0.6.
 
 ## v0.1.18
 

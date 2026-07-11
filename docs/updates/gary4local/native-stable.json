@@ -1,7 +1,7 @@
 {
     "version":  "0.1.19",
-    "notes":  "Adds full SA3 auto-labeling with ACE-Step genre keywords.\nHardens Carey and SA3 trainer recovery and Windows process cleanup.\nPress Rebuild Env for new SA3 trainer features.\nCompatible with gary4juce v4.0.4.",
-    "pub_date":  "2026-07-11T19:42:30.2198501Z",
+    "notes":  "Adds full SA3 auto-labeling with ACE-Step genre keywords.\nHardens Carey and SA3 trainer recovery and Windows process cleanup.\nPress Rebuild Env for new SA3 trainer features.\nCompatible with gary4juce v4.0.6.",
+    "pub_date":  "2026-07-11T20:18:57.0495333Z",
     "platforms":  {
                       "windows-x86_64":  {
                                              "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVOY3FYS3pJU3Zna0wrOGZHS0h3Q3V3Q0lYNDdkS1lPbWVSVU4rdWVjQmpmNWVIYTlrejlMVUFCRlJGSEdZOGhtYmN4elB2VW5EdGhOZjJpN2dlT3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzk4ODYzCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTlfeDY0LXNldHVwLmV4ZQpLRVpVOHZhSFEwWXdCNDRZeFAvNmdvOThKeVg4ZXI2RUJnSE9tT3VhYWFnSXFhN3U0QkJLQjJpdXVZSWZEb3NnRms3S0llbXhOTXV0K3lsT256V09Cdz09Cg==",
