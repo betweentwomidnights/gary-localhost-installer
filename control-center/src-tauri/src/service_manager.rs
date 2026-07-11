@@ -396,16 +396,19 @@ impl ServiceManager {
             }
         }
 
-        // Prevent console window on Windows
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
+        crate::workload_job::configure_std_command(&mut cmd);
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to start {}: {}", service_id, e))?;
+        if let Err(error) = crate::workload_job::enroll_std_child(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "Failed to enroll {} in the managed workload group: {}",
+                service_id, error
+            ));
+        }
 
         log::info!(
             "Started {} (PID {}) from {}",

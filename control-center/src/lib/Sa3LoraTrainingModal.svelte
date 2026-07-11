@@ -51,7 +51,6 @@
     maxSteps: null,
     logTail: "",
   });
-  let loading = $state(false);
   let starting = $state(false);
   let cancelling = $state(false);
   let error = $state<string | null>(null);
@@ -168,13 +167,10 @@
   }
 
   async function loadTrainingState() {
-    loading = true;
     try {
       trainingState = await invoke<Sa3LoraTrainingState>("get_sa3_lora_training_state");
     } catch (e) {
       error = describeError(e);
-    } finally {
-      loading = false;
     }
   }
 
@@ -417,7 +413,6 @@
             {cancelling ? "cancelling..." : "cancel training"}
           </button>
         {/if}
-        <button onclick={() => void loadTrainingState()} disabled={loading}>refresh</button>
         <button onclick={onClose}>close</button>
       </div>
 
@@ -442,8 +437,12 @@
               <div class="live">running</div>
             {/if}
           </div>
-          <div class="job-message">{trainingState.message}</div>
-          {#if trainingState.error}
+          {#if trainingState.error && trainingState.error.trim() === trainingState.message.trim()}
+            <div class="error-note">{trainingState.error}</div>
+          {:else}
+            <div class="job-message">{trainingState.message}</div>
+          {/if}
+          {#if trainingState.error && trainingState.error.trim() !== trainingState.message.trim()}
             <div class="error-note">{trainingState.error}</div>
           {/if}
           {#if trainingState.finalCheckpointPath}

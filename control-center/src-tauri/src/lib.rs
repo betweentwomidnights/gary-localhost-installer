@@ -2,6 +2,7 @@ mod manifest;
 mod model_manager;
 mod service_manager;
 mod update;
+mod workload_job;
 
 use model_manager::ModelManager;
 use serde::{Deserialize, Serialize};
@@ -453,6 +454,8 @@ struct Sa3AutolabelState {
     error: Option<String>,
     #[serde(default)]
     pid: Option<u32>,
+    #[serde(default)]
+    owner_pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -480,6 +483,10 @@ struct Sa3LoraTrainingState {
     error: Option<String>,
     #[serde(default)]
     pid: Option<u32>,
+    #[serde(default)]
+    owner_pid: Option<u32>,
+    #[serde(default)]
+    launcher_pid: Option<u32>,
     #[serde(default)]
     child_pid: Option<u32>,
     #[serde(default)]
@@ -2237,6 +2244,8 @@ fn read_sa3_training_status_file(path: &Path) -> Sa3LoraTrainingState {
             message: "No SA3 LoRA training job has been started.".to_string(),
             error: None,
             pid: None,
+            owner_pid: None,
+            launcher_pid: None,
             child_pid: None,
             run_dir: None,
             log_path: None,
@@ -2270,7 +2279,13 @@ fn read_sa3_training_step(run_dir: &Path) -> Option<u32> {
 
 fn read_sa3_lora_training_state() -> Sa3LoraTrainingState {
     match sa3_current_training_status_path() {
-        Some(path) => read_sa3_training_status_file(&path),
+        Some(path) => {
+            reconcile_sa3_lora_training_parent_exit(&path, carey_ace_training_parent_is_running)
+                .unwrap_or_else(|error| {
+                    log::warn!("Could not reconcile SA3 training status: {error}");
+                });
+            read_sa3_training_status_file(&path)
+        }
         None => read_sa3_training_status_file(Path::new("")),
     }
 }
@@ -2566,6 +2581,62 @@ fn carey_ace_training_parent_is_running(_pid: u32) -> Option<bool> {
     None
 }
 
+fn reconcile_owned_workload_status<F>(
+    status_path: &Path,
+    label: &str,
+    is_process_running: F,
+) -> Result<(), String>
+where
+    F: Fn(u32) -> Option<bool>,
+{
+    let mut payload = match std::fs::read_to_string(status_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value.as_object().cloned())
+    {
+        Some(payload) => payload,
+        None => return Ok(()),
+    };
+    let active = payload
+        .get("status")
+        .and_then(|value| value.as_str())
+        .map(|status| matches!(status, "starting" | "running"))
+        .unwrap_or(false);
+    if !active {
+        return Ok(());
+    }
+    let Some(owner_pid) = payload
+        .get("ownerPid")
+        .and_then(|value| value.as_u64())
+        .and_then(|pid| u32::try_from(pid).ok())
+    else {
+        return Ok(());
+    };
+    if is_process_running(owner_pid) != Some(false) {
+        return Ok(());
+    }
+
+    let message = format!(
+        "{label} was interrupted because its gary4local owner process {owner_pid} exited unexpectedly."
+    );
+    payload.insert("status".to_string(), serde_json::json!("failed"));
+    payload.insert("phase".to_string(), serde_json::json!("failed"));
+    payload.insert("message".to_string(), serde_json::json!(&message));
+    payload.insert("error".to_string(), serde_json::json!(&message));
+    payload.insert("pid".to_string(), serde_json::Value::Null);
+    payload.insert("ownerPid".to_string(), serde_json::Value::Null);
+    payload.insert("launcherPid".to_string(), serde_json::Value::Null);
+    payload.insert("childPid".to_string(), serde_json::Value::Null);
+    payload.insert(
+        "updatedAt".to_string(),
+        serde_json::json!(now_epoch_seconds()),
+    );
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(payload))
+        .map_err(|error| format!("Cannot serialize recovered workload state: {error}"))?;
+    std::fs::write(status_path, json)
+        .map_err(|error| format!("Cannot save {}: {error}", status_path.display()))
+}
+
 fn carey_training_required_checkpoint_files(
     checkpoint_dir: &Path,
     model_folder: &str,
@@ -2609,7 +2680,9 @@ fn carey_training_required_checkpoint_files(
 mod carey_training_checkpoint_tests {
     use super::{
         carey_training_required_checkpoint_files, mark_carey_ace_training_failed,
-        reconcile_carey_ace_training_parent_exit, write_carey_ace_training_cancelled_state,
+        mark_sa3_lora_training_failed, reconcile_carey_ace_training_parent_exit,
+        reconcile_owned_workload_status, reconcile_sa3_lora_training_parent_exit,
+        write_carey_ace_training_cancelled_state,
     };
     use std::path::Path;
 
@@ -2781,6 +2854,74 @@ mod carey_training_checkpoint_tests {
         assert!(failed.contains(r#""launcherPid": null"#));
         let _ = std::fs::remove_file(status_path);
     }
+
+    #[test]
+    fn shared_recovery_marks_an_orphaned_workload_failed() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-shared-owner-recovery-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"preprocessing","ownerPid":41,"pid":42,"childPid":43}"#,
+        )
+        .expect("write active status");
+
+        reconcile_owned_workload_status(&status_path, "Test workload", |pid| Some(pid != 41))
+            .expect("recover orphaned workload");
+        let failed = std::fs::read_to_string(&status_path).expect("read recovered status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains("Test workload was interrupted"));
+        assert!(failed.contains(r#""ownerPid": null"#));
+        assert!(failed.contains(r#""pid": null"#));
+        assert!(failed.contains(r#""childPid": null"#));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn sa3_watcher_matches_the_launcher_after_python_reexec() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-sa3-launcher-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"pre-encoding","pid":43,"launcherPid":42,"childPid":44}"#,
+        )
+        .expect("write active status");
+
+        mark_sa3_lora_training_failed(&status_path, "launcher exited", Some(42))
+            .expect("fail matching launcher");
+        let failed = std::fs::read_to_string(&status_path).expect("read failed status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains(r#""launcherPid": null"#));
+        assert!(failed.contains(r#""pid": null"#));
+        assert!(failed.contains(r#""childPid": null"#));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn sa3_recovery_detects_a_missing_reexecuted_parent() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-sa3-reexec-recovery-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"pre-encoding","launcherPid":42,"pid":43,"childPid":44}"#,
+        )
+        .expect("write active status");
+
+        reconcile_sa3_lora_training_parent_exit(&status_path, |pid| Some(pid != 43))
+            .expect("recover stopped re-executed parent");
+        let failed = std::fs::read_to_string(&status_path).expect("read recovered status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains("43 is no longer running"));
+        let _ = std::fs::remove_file(status_path);
+    }
 }
 
 fn write_carey_ace_training_cancelled_state(
@@ -2832,6 +2973,7 @@ fn write_sa3_training_launch_state(
         "cancelPath": cancel_path.to_string_lossy(),
         "currentStep": 0,
         "maxSteps": max_steps,
+        "ownerPid": std::process::id(),
         "updatedAt": now_epoch_seconds(),
     });
     let json = serde_json::to_string_pretty(&payload)
@@ -2878,7 +3020,86 @@ fn patch_sa3_training_status(
 }
 
 fn write_sa3_training_process_id(status_path: &Path, pid: u32) -> Result<(), String> {
-    patch_sa3_training_status(status_path, &[("pid", serde_json::json!(pid))])
+    patch_sa3_training_status(
+        status_path,
+        &[
+            ("pid", serde_json::json!(pid)),
+            ("launcherPid", serde_json::json!(pid)),
+        ],
+    )
+}
+
+fn mark_sa3_lora_training_failed(
+    status_path: &Path,
+    message: &str,
+    expected_pid: Option<u32>,
+) -> Result<(), String> {
+    let state = read_sa3_training_status_file(status_path);
+    if let Some(expected_pid) = expected_pid {
+        let matches_launcher = state.launcher_pid == Some(expected_pid);
+        let matches_legacy_pid = state.launcher_pid.is_none() && state.pid == Some(expected_pid);
+        if !matches_launcher && !matches_legacy_pid {
+            return Ok(());
+        }
+    }
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(());
+    }
+    patch_sa3_training_status(
+        status_path,
+        &[
+            ("status", serde_json::json!("failed")),
+            ("phase", serde_json::json!("failed")),
+            ("message", serde_json::json!(message)),
+            ("error", serde_json::json!(message)),
+            ("pid", serde_json::Value::Null),
+            ("ownerPid", serde_json::Value::Null),
+            ("launcherPid", serde_json::Value::Null),
+            ("childPid", serde_json::Value::Null),
+        ],
+    )
+}
+
+fn reconcile_sa3_lora_training_parent_exit<F>(
+    status_path: &Path,
+    is_process_running: F,
+) -> Result<(), String>
+where
+    F: Fn(u32) -> Option<bool>,
+{
+    let state = read_sa3_training_status_file(status_path);
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(());
+    }
+    let mut monitored_pids = Vec::new();
+    for pid in [state.owner_pid, state.launcher_pid, state.pid]
+        .into_iter()
+        .flatten()
+    {
+        if !monitored_pids.contains(&pid) {
+            monitored_pids.push(pid);
+        }
+    }
+    let Some(missing_pid) = monitored_pids
+        .into_iter()
+        .find(|pid| is_process_running(*pid) == Some(false))
+    else {
+        return Ok(());
+    };
+
+    let warnings = terminate_discovered_sa3_training_processes(&state);
+    let cleanup_suffix = if warnings.is_empty() {
+        String::new()
+    } else {
+        format!(" Process cleanup warning: {}", warnings.join("; "))
+    };
+    mark_sa3_lora_training_failed(
+        status_path,
+        &format!(
+            "SA3 LoRA training process {missing_pid} is no longer running. The job may have been stopped outside the app; check the training log for details.{cleanup_suffix}"
+        ),
+        state.launcher_pid.or(state.pid),
+    )
 }
 
 fn write_sa3_training_cancelled_state(
@@ -2891,6 +3112,9 @@ fn write_sa3_training_cancelled_state(
         ("phase", serde_json::json!("cancelled")),
         ("message", serde_json::json!(message)),
         ("error", serde_json::Value::Null),
+        ("pid", serde_json::Value::Null),
+        ("ownerPid", serde_json::Value::Null),
+        ("launcherPid", serde_json::Value::Null),
         ("childPid", serde_json::Value::Null),
     ];
     if let Some(cancel_path) = cancel_path {
@@ -3015,6 +3239,13 @@ fn discover_sa3_training_pids(state: &Sa3LoraTrainingState) -> Vec<u32> {
         .collect()
 }
 
+fn terminate_discovered_sa3_training_processes(state: &Sa3LoraTrainingState) -> Vec<String> {
+    discover_sa3_training_pids(state)
+        .into_iter()
+        .filter_map(|pid| terminate_process_tree(pid).err())
+        .collect()
+}
+
 #[cfg(not(target_os = "windows"))]
 fn discover_sa3_training_pids(_state: &Sa3LoraTrainingState) -> Vec<u32> {
     Vec::new()
@@ -3107,6 +3338,12 @@ async fn try_reload_carey_admin() -> bool {
 async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app quit: {error}");
+    }
+    if let Err(error) = cancel_sa3_lora_training() {
+        log::warn!("Could not cancel SA3 LoRA training during app quit: {error}");
+    }
+    if let Err(error) = cancel_sa3_autolabel() {
+        log::warn!("Could not cancel SA3 auto-label during app quit: {error}");
     }
     let mut m = manager.lock().await;
     m.stop_all();
@@ -4858,6 +5095,7 @@ async fn start_carey_ace_lora_training(
         .stderr(std::process::Stdio::from(log_file_err))
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1");
+    workload_job::configure_tokio_command(&mut cmd);
 
     let mut child = match cmd.spawn() {
         Ok(child) => child,
@@ -4867,6 +5105,15 @@ async fn start_carey_ace_lora_training(
             return Err(message);
         }
     };
+    if let Err(error) = workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        let message = format!(
+            "Failed to enroll ACE-Step training in the managed workload group: {}",
+            error
+        );
+        let _ = mark_carey_ace_training_failed(&status_path, &message, None);
+        return Err(message);
+    }
     let Some(pid) = child.id() else {
         let _ = child.kill().await;
         let message = "ACE-Step LoRA training launched without a process ID.".to_string();
@@ -5213,6 +5460,19 @@ fn read_sa3_autolabel_state() -> Sa3AutolabelState {
     }
 }
 
+fn read_reconciled_sa3_autolabel_state() -> Sa3AutolabelState {
+    let status_path = sa3_autolabel_status_path();
+    reconcile_owned_workload_status(
+        &status_path,
+        "SA3 auto-label",
+        carey_ace_training_parent_is_running,
+    )
+    .unwrap_or_else(|error| {
+        log::warn!("Could not reconcile SA3 auto-label status: {error}");
+    });
+    read_sa3_autolabel_state()
+}
+
 fn write_sa3_autolabel_state(status_path: &Path, state: &Sa3AutolabelState) -> Result<(), String> {
     if let Some(parent) = status_path.parent() {
         std::fs::create_dir_all(parent)
@@ -5230,6 +5490,7 @@ fn write_sa3_autolabel_launch_state(status_path: &Path, style: &str) -> Result<(
         phase: "starting".to_string(),
         message: "Launching auto-label".to_string(),
         style: style.to_string(),
+        owner_pid: Some(std::process::id()),
         ..Default::default()
     };
     write_sa3_autolabel_state(status_path, &state)
@@ -5257,6 +5518,7 @@ fn mark_sa3_autolabel_failed(message: &str, expected_pid: Option<u32>) -> Result
     state.error = Some(message.to_string());
     state.current_path = String::new();
     state.pid = None;
+    state.owner_pid = None;
     write_sa3_autolabel_state(&sa3_autolabel_status_path(), &state)
 }
 
@@ -5269,6 +5531,7 @@ fn mark_sa3_autolabel_cancelled() {
     state.current_path = String::new();
     state.error = None;
     state.pid = None;
+    state.owner_pid = None;
     let _ = write_sa3_autolabel_state(&sa3_autolabel_status_path(), &state);
 }
 
@@ -5322,7 +5585,7 @@ fn get_sa3_autolabel_availability(
 
 #[tauri::command]
 fn get_sa3_autolabel_state() -> Sa3AutolabelState {
-    read_sa3_autolabel_state()
+    read_reconciled_sa3_autolabel_state()
 }
 
 #[tauri::command]
@@ -5339,7 +5602,7 @@ async fn start_sa3_autolabel(
     };
     let root = canonical_sa3_dataset_root(&dataset_path)?;
 
-    let current = read_sa3_autolabel_state();
+    let current = read_reconciled_sa3_autolabel_state();
     if matches!(current.status.as_str(), "starting" | "running") {
         return Err("An auto-label job is already running.".to_string());
     }
@@ -5410,6 +5673,7 @@ async fn start_sa3_autolabel(
     if let Some(token) = read_hf_token() {
         cmd.env("HF_TOKEN", token);
     }
+    workload_job::configure_tokio_command(&mut cmd);
 
     let mut child = match cmd.spawn() {
         Ok(child) => child,
@@ -5419,6 +5683,15 @@ async fn start_sa3_autolabel(
             return Err(message);
         }
     };
+    if let Err(error) = workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        let message = format!(
+            "Failed to enroll auto-label in the managed workload group: {}",
+            error
+        );
+        let _ = mark_sa3_autolabel_failed(&message, None);
+        return Err(message);
+    }
 
     if let Some(pid) = child.id() {
         if let Err(error) = write_sa3_autolabel_process_id(&status_path, pid) {
@@ -5449,7 +5722,7 @@ async fn start_sa3_autolabel(
 
 #[tauri::command]
 fn cancel_sa3_autolabel() -> Result<Sa3AutolabelState, String> {
-    let state = read_sa3_autolabel_state();
+    let state = read_reconciled_sa3_autolabel_state();
     if !matches!(state.status.as_str(), "starting" | "running") {
         return Ok(state);
     }
@@ -5717,13 +5990,64 @@ async fn start_sa3_lora_training(
     if let Some(token) = read_hf_token() {
         cmd.env("HF_TOKEN", token);
     }
+    workload_job::configure_tokio_command(&mut cmd);
 
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to launch SA3 LoRA training: {}", e))?;
-    if let Some(pid) = child.id() {
-        write_sa3_training_process_id(&status_path, pid)?;
+    if let Err(error) = workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        let message = format!(
+            "Failed to enroll SA3 LoRA training in the managed workload group: {}",
+            error
+        );
+        let _ = mark_sa3_lora_training_failed(&status_path, &message, None);
+        return Err(message);
     }
+    let Some(pid) = child.id() else {
+        let _ = child.kill().await;
+        let message = "SA3 LoRA training launched without a process ID.".to_string();
+        let _ = mark_sa3_lora_training_failed(&status_path, &message, None);
+        return Err(message);
+    };
+    if let Err(error) = write_sa3_training_process_id(&status_path, pid) {
+        let _ = child.kill().await;
+        let message = format!(
+            "Failed to record SA3 LoRA training process {}: {}",
+            pid, error
+        );
+        let _ = mark_sa3_lora_training_failed(&status_path, &message, None);
+        return Err(message);
+    }
+
+    let watched_status_path = status_path.clone();
+    tauri::async_runtime::spawn(async move {
+        let exit_result = child.wait().await;
+        let state = read_sa3_training_status_file(&watched_status_path);
+        let warnings = if state.launcher_pid == Some(pid)
+            || (state.launcher_pid.is_none() && state.pid == Some(pid))
+        {
+            terminate_discovered_sa3_training_processes(&state)
+        } else {
+            Vec::new()
+        };
+        let cleanup_suffix = if warnings.is_empty() {
+            String::new()
+        } else {
+            format!(" Process cleanup warning: {}", warnings.join("; "))
+        };
+        let message = match exit_result {
+            Ok(status) => format!(
+                "SA3 LoRA training launcher {} exited without recording a terminal state ({}). Check the training log for details.{}",
+                pid, status, cleanup_suffix
+            ),
+            Err(error) => format!(
+                "Could not monitor SA3 LoRA training launcher {}: {}. Check the training log for details.{}",
+                pid, error, cleanup_suffix
+            ),
+        };
+        let _ = mark_sa3_lora_training_failed(&watched_status_path, &message, Some(pid));
+    });
 
     Ok(read_sa3_lora_training_state())
 }
@@ -5750,6 +6074,11 @@ fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
         pids.push(pid);
     }
     if let Some(pid) = state.pid {
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    if let Some(pid) = state.launcher_pid {
         if !pids.contains(&pid) {
             pids.push(pid);
         }

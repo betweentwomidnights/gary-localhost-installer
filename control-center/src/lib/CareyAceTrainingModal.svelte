@@ -78,7 +78,6 @@
     logTail: "",
   });
 
-  let loading = $state(false);
   let starting = $state(false);
   let cancelling = $state(false);
   let error = $state<string | null>(null);
@@ -240,13 +239,10 @@
   }
 
   async function loadTrainingState() {
-    loading = true;
     try {
       trainingState = await invoke<CareyAceTrainingState>("get_carey_ace_lora_training_state");
     } catch (e) {
       error = describeError(e);
-    } finally {
-      loading = false;
     }
   }
 
@@ -603,7 +599,6 @@
             {cancelling ? "cancelling..." : "cancel job"}
           </button>
         {/if}
-        <button type="button" onclick={() => void loadTrainingState()} disabled={loading}>refresh</button>
         <button type="button" onclick={onClose}>close</button>
       </div>
 

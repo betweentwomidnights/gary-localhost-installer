@@ -4,6 +4,21 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.1.19
+
+v0.1.19 adds full auto-labeling to the SA3 trainer. it uses the ACE-Step
+captioner to pull genre keywords for SA3 prompt sidecars, alongside the local
+BPM and key helpers. use **rebuild env** before using the new SA3 trainer
+features.
+
+both integrated trainers are more resilient now: caption/preprocessing and
+checkpoint checks are stricter, interrupted launchers and child workers recover
+cleanly, and Windows now owns managed inference and training processes as a
+group so an unexpected app exit cannot leave GPU workers running. closing to
+the tray still leaves work running as intended.
+
+compatible with gary4juce v4.0.4.
+
 ## v0.1.18
 
 v0.1.18 fixes Carey seed reporting so the seed shown after a random generation
