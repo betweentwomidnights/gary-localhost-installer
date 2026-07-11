@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -19,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 # Supported audio extensions (same as upstream)
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a"}
+
+
+def audio_metadata_key(path: Path) -> str:
+    """Return the canonical key used to associate one audio file with metadata."""
+    return os.path.normcase(str(path.resolve()))
 
 
 def discover_audio_files(
@@ -94,40 +100,49 @@ def load_sample_metadata(
     dataset_json: Optional[str],
     audio_files: List[Path],
 ) -> Dict[str, Dict[str, Any]]:
-    """Build a filename -> metadata mapping.
+    """Build a canonical-audio-path -> metadata mapping.
 
-    If *dataset_json* is provided, load it and index by filename.
-    Falls back to basename of ``audio_path`` when ``filename`` is missing.
-    Otherwise return defaults for every audio file.
+    Exact ``audio_path`` matches take priority. A basename match is used only
+    when it identifies exactly one JSON sample, so recursive datasets may
+    safely contain files such as ``drums/song.wav`` and ``vocals/song.wav``.
     """
     meta: Dict[str, Dict[str, Any]] = {}
+    exact_meta: Dict[str, Dict[str, Any]] = {}
+    basename_meta: Dict[str, List[Dict[str, Any]]] = {}
 
     if dataset_json and Path(dataset_json).is_file():
         try:
             raw = json.loads(Path(dataset_json).read_text(encoding="utf-8"))
             samples = raw if isinstance(raw, list) else raw.get("samples", [])
+            json_dir = Path(dataset_json).parent
             for s in samples:
-                # Primary key: explicit filename field
-                fname = s.get("filename", "")
-                if fname:
-                    meta[fname] = s
-                    # Also index by basename if filename contains a path
-                    basename = Path(fname).name
-                    if basename != fname and basename not in meta:
-                        meta[basename] = s
-                elif s.get("audio_path"):
-                    # Fallback: derive key from audio_path basename
-                    basename = Path(s["audio_path"]).name
-                    if basename and basename not in meta:
-                        meta[basename] = s
-            logger.info("[Side-Step] Loaded metadata for %d samples from %s", len(meta), dataset_json)
+                audio_ref = str(s.get("audio_path") or s.get("filename") or "").strip()
+                if not audio_ref:
+                    continue
+                candidate = Path(audio_ref)
+                if not candidate.is_absolute():
+                    candidate = json_dir / candidate
+                exact_meta[audio_metadata_key(candidate)] = s
+                basename = candidate.name.casefold()
+                if basename:
+                    basename_meta.setdefault(basename, []).append(s)
+            logger.info(
+                "[Side-Step] Loaded metadata for %d samples from %s",
+                len(exact_meta), dataset_json,
+            )
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("[Side-Step] Failed to load dataset JSON: %s", exc)
 
-    # Fill defaults for any audio file without metadata
+    # Associate every discovered path with exactly one metadata record.
     for af in audio_files:
-        if af.name not in meta:
-            meta[af.name] = {
+        key = audio_metadata_key(af)
+        sample = exact_meta.get(key)
+        if sample is None:
+            basename_matches = basename_meta.get(af.name.casefold(), [])
+            if len(basename_matches) == 1:
+                sample = basename_matches[0]
+        if sample is None:
+            sample = {
                 "filename": af.name,
                 "caption": af.stem.replace("_", " ").replace("-", " "),
                 "lyrics": "[Instrumental]",
@@ -138,6 +153,7 @@ def load_sample_metadata(
                 "duration": 0,
                 "is_instrumental": True,
             }
+        meta[key] = sample
 
     return meta
 

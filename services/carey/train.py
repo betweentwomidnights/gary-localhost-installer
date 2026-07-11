@@ -192,11 +192,19 @@ def _run_preprocess(args) -> int:
     finally:
         _cleanup_gpu()
 
-    print(f"\n[OK] Preprocessing complete:")
+    outcome = "[FAIL]" if result["failed"] else "[OK]"
+    print(f"\n{outcome} Preprocessing complete:")
     print(f"     Processed: {result['processed']}/{result['total']}")
     if result["failed"]:
         print(f"     Failed:    {result['failed']}")
     print(f"     Output:    {result['output_dir']}")
+    if result["failed"]:
+        print(
+            "[FAIL] Refusing to train on a partial preprocessing result. "
+            "Fix the failed audio files and retry.",
+            file=sys.stderr,
+        )
+        return 1
     print(f"\n[INFO] You can now train with:")
     print(f"       python train.py fixed --dataset-dir {result['output_dir']} ...")
     return 0

@@ -15,6 +15,7 @@ Input modes:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import json
 from pathlib import Path
@@ -24,6 +25,7 @@ import torch
 
 # Split-out helpers
 from acestep.training_v2.preprocess_discovery import (
+    audio_metadata_key as _audio_metadata_key,
     discover_audio_files as _discover_audio_files,
     load_dataset_metadata as _load_dataset_metadata,
     load_sample_metadata as _load_sample_metadata,
@@ -218,7 +220,9 @@ def _pass1_light(
     genre_variant_count = sum(
         1
         for af in audio_files
-        if "genre" in _prompt_variants_for_sample(sample_meta.get(af.name, {}), genre_ratio)
+        if "genre" in _prompt_variants_for_sample(
+            sample_meta.get(_audio_metadata_key(af), {}), genre_ratio
+        )
     )
     if genre_variant_count:
         logger.info(
@@ -239,7 +243,7 @@ def _pass1_light(
                 progress_callback(i, total, f"[Pass 1] {af.name}")
 
             try:
-                sm = sample_meta.get(af.name, {})
+                sm = sample_meta.get(_audio_metadata_key(af), {})
                 prompt_variants = _prompt_variants_for_sample(sm, genre_ratio)
                 expected_final_paths = [
                     _variant_final_path(out_path, af, variant)
@@ -491,15 +495,25 @@ def _has_distinct_genre(meta: Dict[str, Any]) -> bool:
 
 
 def _variant_tmp_path(out_path: Path, audio_path: Path, variant: str) -> Path:
+    cache_stem = _audio_cache_stem(audio_path)
     if variant == "caption":
-        return out_path / f"{audio_path.stem}.tmp.pt"
-    return out_path / f"{audio_path.stem}.{variant}.tmp.pt"
+        return out_path / f"{cache_stem}.tmp.pt"
+    return out_path / f"{cache_stem}.{variant}.tmp.pt"
 
 
 def _variant_final_path(out_path: Path, audio_path: Path, variant: str) -> Path:
+    cache_stem = _audio_cache_stem(audio_path)
     if variant == "caption":
-        return out_path / f"{audio_path.stem}.pt"
-    return out_path / f"{audio_path.stem}.{variant}.pt"
+        return out_path / f"{cache_stem}.pt"
+    return out_path / f"{cache_stem}.{variant}.pt"
+
+
+def _audio_cache_stem(audio_path: Path) -> str:
+    """Return a readable, collision-safe cache stem for an audio source."""
+    source_key = _audio_metadata_key(audio_path).encode("utf-8", errors="surrogatepass")
+    digest = hashlib.sha256(source_key).hexdigest()[:12]
+    readable_stem = audio_path.stem[:96] or "audio"
+    return f"{readable_stem}--{digest}"
 
 
 def _write_variant_manifest(
@@ -522,7 +536,9 @@ def _write_variant_manifest(
     genre_variant_tracks = 0
 
     for af in audio_files:
-        variants = _prompt_variants_for_sample(sample_meta.get(af.name, {}), genre_ratio)
+        variants = _prompt_variants_for_sample(
+            sample_meta.get(_audio_metadata_key(af), {}), genre_ratio
+        )
         caption_path = _variant_final_path(out_path, af, "caption")
         genre_path = _variant_final_path(out_path, af, "genre")
         has_caption = "caption" in variants and caption_path.exists()

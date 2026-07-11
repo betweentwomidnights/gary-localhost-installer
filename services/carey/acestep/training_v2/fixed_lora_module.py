@@ -323,5 +323,10 @@ class FixedLoRAModule(nn.Module):
 
         # fp32 for stable backward
         diffusion_loss = diffusion_loss.float()
+        if not torch.isfinite(diffusion_loss).all():
+            raise FloatingPointError(
+                "Training produced a non-finite loss; refusing to backpropagate "
+                "or save a potentially corrupted adapter."
+            )
         self.training_losses.append(diffusion_loss.item())
         return diffusion_loss

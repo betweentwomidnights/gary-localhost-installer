@@ -40,6 +40,12 @@
     pid: number | null;
   }
 
+  interface Sa3AutolabelAvailability {
+    available: boolean;
+    careyBuilt: boolean;
+    captionerDownloaded: boolean;
+  }
+
   type PromptStyle = "bare" | "labeled";
 
   let {
@@ -71,8 +77,12 @@
   let saving = $state(false);
   let suggesting = $state(false);
   let autolabelAvailable = $state(false);
+  let autolabelCareyBuilt = $state(false);
+  let autolabelCaptionerDownloaded = $state(false);
   let autolabelState = $state<Sa3AutolabelState | null>(null);
   let autolabelPollTimer: ReturnType<typeof setInterval> | null = null;
+  let lastAutolabelDone = 0; // completed count at the previous poll, to pull focus once per finish
+  let trackListEl = $state<HTMLElement>();
   let error = $state<string | null>(null);
   // A single transient note, tagged with where it should render so it sits inline
   // next to its trigger (fill/save button, suggest row) instead of adding a row.
@@ -217,13 +227,12 @@
         // completed rows flip none -> txt live rather than all at once at the end.
         await loadSidecars(true);
       }
-      // Follow the analysis into the prompt editor, advancing track by track.
-      if (
-        running &&
-        (state.phase === "analyzing" || state.phase === "captioning") &&
-        state.done < entries.length
-      ) {
-        selectedIndex = state.done;
+      // Pull focus once, right after a track finishes — to the just-completed track
+      // (which now has its prompt), and only on the completion transition so that
+      // navigating away between finishes isn't hijacked.
+      if (state.done > lastAutolabelDone) {
+        lastAutolabelDone = state.done;
+        selectedIndex = Math.min(state.done - 1, entries.length - 1);
       }
       if (terminal || !state.status || state.status === "idle") {
         stopAutolabelPolling();
@@ -239,13 +248,21 @@
   // already running (e.g. the modal was closed and reopened mid-run).
   async function initAutolabel() {
     try {
-      autolabelAvailable = await invoke<boolean>("sa3_autolabel_available");
+      const availability = await invoke<Sa3AutolabelAvailability>(
+        "get_sa3_autolabel_availability"
+      );
+      autolabelAvailable = availability.available;
+      autolabelCareyBuilt = availability.careyBuilt;
+      autolabelCaptionerDownloaded = availability.captionerDownloaded;
     } catch {
       autolabelAvailable = false;
+      autolabelCareyBuilt = false;
+      autolabelCaptionerDownloaded = false;
     }
     try {
       autolabelState = await invoke<Sa3AutolabelState>("get_sa3_autolabel_state");
       if (autolabelState.status === "starting" || autolabelState.status === "running") {
+        lastAutolabelDone = autolabelState.done; // resume without yanking focus to an old finish
         startAutolabelPolling();
       }
     } catch {
@@ -256,6 +273,17 @@
   async function startAutolabel() {
     error = null;
     clearNote();
+    if (dirtyCount) {
+      error = "Save or discard your unsaved sidecar changes before auto-labeling.";
+      return;
+    }
+    if (!autolabelAvailable) {
+      error = autolabelCareyBuilt && !autolabelCaptionerDownloaded
+        ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
+        : "Build Carey before auto-labeling.";
+      return;
+    }
+    lastAutolabelDone = 0;
     try {
       autolabelState = await invoke<Sa3AutolabelState>("start_sa3_autolabel", {
         datasetPath,
@@ -384,6 +412,15 @@
       ? (autolabelState?.done ?? -1)
       : -1
   );
+  let autolabelTitle = $derived(
+    !autolabelCareyBuilt
+      ? "Requires Carey — build Carey first."
+      : !autolabelCaptionerDownloaded
+        ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models first."
+        : dirtyCount
+          ? "Save or discard unsaved sidecar changes before auto-labeling."
+          : "Auto-label every track's genre, BPM and key (overwrites existing sidecars). Runs the Carey caption model."
+  );
 
   $effect(() => {
     const justOpened = open && !wasOpen;
@@ -400,6 +437,16 @@
   });
 
   $effect(() => () => stopAutolabelPolling());
+
+  // Keep the selected row visible in the track list so the auto-label focus pull can
+  // scroll to a finished track that's below the fold. No-ops when it's already shown.
+  $effect(() => {
+    const idx = selectedIndex;
+    if (!open || idx < 0) return;
+    trackListEl
+      ?.querySelector<HTMLElement>(".track-row.active")
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
 </script>
 
 {#if open}
@@ -412,7 +459,7 @@
           <div class="title" id="sidecar-title">edit SA3 text sidecars</div>
         </div>
         <div class="header-actions">
-          <button type="button" onclick={() => loadSidecars()} disabled={loading || saving}>refresh</button>
+          <button type="button" onclick={() => loadSidecars()} disabled={loading || saving || autolabelRunning}>refresh</button>
           <button type="button" onclick={onClose}>close</button>
         </div>
       </div>
@@ -425,8 +472,8 @@
         <div class="style-row">
           <span>prompt style</span>
           <div class="style-toggle">
-            <button type="button" class:active={promptStyle === "bare"} onclick={() => setPromptStyle("bare")}>barebones</button>
-            <button type="button" class:active={promptStyle === "labeled"} onclick={() => setPromptStyle("labeled")}>official SA3</button>
+            <button type="button" class:active={promptStyle === "bare"} onclick={() => setPromptStyle("bare")} disabled={autolabelRunning}>barebones</button>
+            <button type="button" class:active={promptStyle === "labeled"} onclick={() => setPromptStyle("labeled")} disabled={autolabelRunning}>official SA3</button>
           </div>
           <button type="button" class="info-toggle" aria-label="about prompt styles" aria-expanded={showStyleInfo} onclick={() => (showStyleInfo = !showStyleInfo)}>ⓘ</button>
         </div>
@@ -454,10 +501,8 @@
               <button
                 type="button"
                 onclick={startAutolabel}
-                disabled={!autolabelAvailable || loading || !entries.length}
-                title={autolabelAvailable
-                  ? "Auto-label every track's genre, BPM and key (overwrites existing sidecars). Runs the Carey caption model."
-                  : "Requires the Carey caption model — build Carey to enable."}
+                disabled={!autolabelAvailable || loading || saving || suggesting || !!dirtyCount || !entries.length}
+                title={autolabelTitle}
               >auto-label all</button>
             {/if}
             <button
@@ -487,7 +532,7 @@
         <div class="empty">No supported audio files found in this folder.</div>
       {:else}
         <div class="editor">
-          <div class="track-list">
+          <div class="track-list" bind:this={trackListEl}>
             {#each entries as entry, index}
               <button
                 type="button"
@@ -524,10 +569,10 @@
 
                 <label class="prompt-field">
                   <span>literal text-sidecar prompt</span>
-                  <textarea rows="3" bind:value={selectedEntry.content} placeholder="Leave blank to train without a per-track prompt."></textarea>
+                  <textarea rows="3" bind:value={selectedEntry.content} placeholder="Leave blank to train without a per-track prompt." disabled={autolabelRunning}></textarea>
                 </label>
                 <div class="metadata-assist">
-                  <button type="button" class="assist-button" onclick={suggestBpmKey} disabled={suggesting || saving}>
+                  <button type="button" class="assist-button" onclick={suggestBpmKey} disabled={suggesting || saving || autolabelRunning}>
                     {suggesting ? "analyzing…" : "suggest bpm / key"}
                   </button>
                   <small class:inline-note={noteContext === "suggest"}>{noteContext === "suggest" && note ? note : `Estimates tempo and key from the audio and fills them in ${promptStyle === "bare" ? "barebones" : "official SA3"} style. First use may pause briefly to install an analysis dependency.`}</small>
@@ -567,7 +612,7 @@
               ? note
               : "all changes saved"}
         </span>
-        <button type="button" class="accent" onclick={saveSidecars} disabled={saving || !dirtyCount}>
+        <button type="button" class="accent" onclick={saveSidecars} disabled={saving || autolabelRunning || !dirtyCount}>
           {saving ? "saving..." : "save sidecars"}
         </button>
       </div>

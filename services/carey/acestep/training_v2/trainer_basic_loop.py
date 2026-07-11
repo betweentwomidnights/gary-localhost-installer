@@ -23,6 +23,7 @@ from acestep.training_v2.checkpoint_selection import SmoothedBestCheckpointTrack
 from acestep.training_v2.tensorboard_utils import TrainingLogger
 from acestep.training_v2.trainer_helpers import (
     configure_memory_features,
+    ensure_finite_gradients,
     offload_non_decoder,
     save_adapter_flat,
     save_checkpoint,
@@ -66,6 +67,7 @@ def _flush_accumulated(
         of ``TrainingUpdate`` objects the caller should yield.
     """
     torch.nn.utils.clip_grad_norm_(trainable_params, cfg.max_grad_norm)
+    ensure_finite_gradients(trainable_params)
     optimizer.step()
     scheduler.step()
     optimizer.zero_grad(set_to_none=True)

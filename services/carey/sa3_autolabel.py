@@ -26,6 +26,7 @@ if str(SERVICE_DIR) not in sys.path:
 
 from train_lora_job import (  # noqa: E402 - path is set up above
     Cancelled,
+    caption_text_quality_error,
     check_cancel,
     decide_sidecar_bpm,
     decide_sidecar_key,
@@ -39,7 +40,7 @@ from train_lora_job import (  # noqa: E402 - path is set up above
 )
 
 # Mirror SA3's dataset audio discovery (is_sa3_dataset_audio_file in the Rust side).
-AUDIO_EXTENSIONS = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a")
+AUDIO_EXTENSIONS = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aiff", ".aif")
 
 
 def discover_sa3_audio(dataset_dir: Path) -> list[Path]:
@@ -71,6 +72,71 @@ def format_sidecar(style: str, genre: str, bpm: int | None, keyscale: str) -> st
 
     # barebones: "genre, 145 bpm, C minor"
     return ", ".join(part for part in (genre, bpm_text, keyscale) if part)
+
+
+def usable_genre(result: dict[str, Any], audio_path: Path) -> str:
+    """Return a normalized, quality-checked genre or raise a retryable error."""
+    value = result.get("genre") or result.get("genres")
+    if isinstance(value, (list, tuple)):
+        genre = ", ".join(str(item).strip() for item in value if str(item).strip())
+    elif isinstance(value, str):
+        genre = value.strip()
+    elif value is None:
+        genre = ""
+    else:
+        raise RuntimeError(
+            f"ACE understand_music returned an invalid genre for {audio_path.name}: "
+            f"expected text, got {type(value).__name__}"
+        )
+
+    if not genre or genre.casefold() in {"n/a", "na", "none", "null", "unknown"}:
+        raise RuntimeError(
+            f"ACE understand_music returned no usable genre for {audio_path.name}"
+        )
+    reason = caption_text_quality_error(genre, field="genre")
+    if reason:
+        raise RuntimeError(
+            f"ACE understand_music returned an unusable genre for {audio_path.name}: {reason}"
+        )
+    return genre
+
+
+def request_valid_genre_analysis(
+    args: SimpleNamespace,
+    client: Any,
+    audio_path: Path,
+) -> tuple[dict[str, Any], str]:
+    """Analyze a track and retry a bad full-track genre with a center excerpt."""
+    primary_window = float(getattr(args, "caption_window_seconds", 0.0) or 0.0)
+    fallback_window = float(
+        getattr(args, "caption_fallback_window_seconds", 120.0) or 0.0
+    )
+    attempts = [primary_window]
+    if primary_window <= 0 and fallback_window > 0:
+        attempts.append(fallback_window)
+
+    last_error: RuntimeError | None = None
+    for index, window in enumerate(attempts):
+        result = request_music_analysis(
+            args,
+            client,
+            audio_path,
+            caption_window_seconds=window,
+        )
+        try:
+            return result, usable_genre(result, audio_path)
+        except RuntimeError as exc:
+            last_error = exc
+            if index + 1 >= len(attempts):
+                raise
+            print(
+                f"[autolabel] Full-track genre failed quality checks for "
+                f"{audio_path.name}; retrying with {fallback_window:.0f}s excerpt. "
+                f"Reason: {exc}",
+                flush=True,
+            )
+
+    raise last_error or RuntimeError(f"Carey genre analysis failed for {audio_path.name}")
 
 
 def build_reuse_args(cli: argparse.Namespace) -> SimpleNamespace:
@@ -162,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
     import httpx
 
     server = None
+    terminal_status = ""
+    terminal_message = ""
+    terminal_error: str | None = None
     try:
         ensure_carey_stopped(args)
         server = start_caption_server(args)
@@ -182,13 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                     done=done,
                     total=total,
                 )
-                result: dict[str, Any] = request_music_analysis(
-                    args,
-                    client,
-                    audio_path,
-                    caption_window_seconds=args.caption_window_seconds,
-                )
-                genre = str(result.get("genre") or result.get("genres") or "")
+                result, genre = request_valid_genre_analysis(args, client, audio_path)
                 bpm_decision = decide_sidecar_bpm(args, audio_path, result)
                 key_decision = decide_sidecar_key(args, audio_path, result)
                 text = format_sidecar(cli.style, genre, bpm_decision.bpm, key_decision.keyscale)
@@ -203,16 +266,47 @@ def main(argv: list[str] | None = None) -> int:
                     flush=True,
                 )
     except Cancelled:
-        update_status(args, status="cancelled", phase="cancelled", message="Auto-label cancelled")
+        terminal_status = "cancelled"
+        terminal_message = "Auto-label cancelled"
         print("[autolabel] cancelled", flush=True)
-        return 1
     except Exception as exc:  # surface a clean status; the log has the traceback
-        update_status(args, status="failed", phase="error", message=str(exc), error=str(exc))
+        terminal_status = "failed"
+        terminal_message = str(exc)
+        terminal_error = str(exc)
         print(f"[autolabel] error: {exc}", flush=True)
-        return 1
     finally:
         if server is not None:
-            stop_caption_server(args, server)
+            try:
+                stop_caption_server(args, server)
+            except Exception as exc:
+                print(f"[autolabel] caption service cleanup failed: {exc}", flush=True)
+                if not terminal_status:
+                    terminal_status = "failed"
+                    terminal_message = f"Could not stop the temporary caption service: {exc}"
+                    terminal_error = terminal_message
+
+    # stop_caption_server reports its own running/stopping phase. Always write the
+    # terminal state after cleanup so a normal error cannot be left looking active.
+    if terminal_status == "cancelled":
+        update_status(
+            args,
+            status="cancelled",
+            phase="cancelled",
+            message=terminal_message,
+            error=None,
+            currentPath="",
+        )
+        return 1
+    if terminal_status == "failed":
+        update_status(
+            args,
+            status="failed",
+            phase="error",
+            message=terminal_message,
+            error=terminal_error,
+            currentPath="",
+        )
+        return 1
 
     update_status(
         args,

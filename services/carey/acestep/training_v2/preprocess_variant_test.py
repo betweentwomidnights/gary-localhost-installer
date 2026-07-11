@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from acestep.training_v2 import preprocess
+from acestep.training_v2 import preprocess, preprocess_discovery
 
 
 class PromptVariantTests(unittest.TestCase):
@@ -53,28 +53,39 @@ class PromptVariantTests(unittest.TestCase):
             out_path = Path(tmp)
             song = out_path / "song.wav"
             plain = out_path / "plain.wav"
-            (out_path / "song.pt").write_bytes(b"")
-            (out_path / "song.genre.pt").write_bytes(b"")
-            (out_path / "plain.pt").write_bytes(b"")
+            song_caption = preprocess._variant_final_path(out_path, song, "caption")
+            song_genre = preprocess._variant_final_path(out_path, song, "genre")
+            plain_caption = preprocess._variant_final_path(out_path, plain, "caption")
+            song_caption.write_bytes(b"")
+            song_genre.write_bytes(b"")
+            plain_caption.write_bytes(b"")
 
             count = preprocess._write_variant_manifest(
                 out_path=out_path,
                 audio_files=[song, plain],
                 sample_meta={
-                    "song.wav": {"caption": "detailed song", "genre": "electro rock"},
-                    "plain.wav": {"caption": "plain song", "genre": ""},
+                    preprocess_discovery.audio_metadata_key(song): {
+                        "caption": "detailed song",
+                        "genre": "electro rock",
+                    },
+                    preprocess_discovery.audio_metadata_key(plain): {
+                        "caption": "plain song",
+                        "genre": "",
+                    },
                 },
                 ds_meta={"genre_ratio": 20, "tag_position": "prepend"},
             )
 
             manifest = json.loads((out_path / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(count, 2)
-            self.assertEqual(manifest["samples"], ["song.pt", "plain.pt"])
+            self.assertEqual(
+                manifest["samples"], [song_caption.name, plain_caption.name]
+            )
             self.assertEqual(
                 manifest["sample_groups"],
                 [
-                    {"path": "song.pt", "genre_path": "song.genre.pt"},
-                    {"path": "plain.pt"},
+                    {"path": song_caption.name, "genre_path": song_genre.name},
+                    {"path": plain_caption.name},
                 ],
             )
             self.assertEqual(
@@ -83,6 +94,44 @@ class PromptVariantTests(unittest.TestCase):
             )
             self.assertEqual(manifest["metadata"]["samples_per_epoch"], 2)
             self.assertEqual(manifest["metadata"]["num_tensor_files"], 3)
+
+    def test_duplicate_basenames_keep_distinct_metadata_and_tensor_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            drums = root / "drums" / "song.wav"
+            vocals = root / "vocals" / "song.wav"
+            drums.parent.mkdir()
+            vocals.parent.mkdir()
+            drums.write_bytes(b"audio")
+            vocals.write_bytes(b"audio")
+            dataset_json = root / "dataset.json"
+            dataset_json.write_text(
+                json.dumps(
+                    {
+                        "samples": [
+                            {"audio_path": str(drums), "caption": "drum metadata"},
+                            {"audio_path": str(vocals), "caption": "vocal metadata"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            metadata = preprocess_discovery.load_sample_metadata(
+                str(dataset_json), [drums, vocals]
+            )
+            self.assertEqual(
+                metadata[preprocess_discovery.audio_metadata_key(drums)]["caption"],
+                "drum metadata",
+            )
+            self.assertEqual(
+                metadata[preprocess_discovery.audio_metadata_key(vocals)]["caption"],
+                "vocal metadata",
+            )
+            self.assertNotEqual(
+                preprocess._variant_final_path(root, drums, "caption"),
+                preprocess._variant_final_path(root, vocals, "caption"),
+            )
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ from acestep.training_v2.fixed_lora_module import (
 )
 from acestep.training_v2.trainer_helpers import (
     configure_memory_features,
+    ensure_finite_gradients,
     offload_non_decoder,
     resume_checkpoint,
     save_adapter_flat,
@@ -421,6 +422,7 @@ class FixedLoRATrainer:
                     self.fabric.clip_gradients(
                         self.module.model.decoder, optimizer, max_norm=cfg.max_grad_norm,
                     )
+                    ensure_finite_gradients(self.module.model.decoder.parameters())
                     optimizer.step()
                     scheduler.step()
                     global_step += 1
@@ -456,6 +458,7 @@ class FixedLoRATrainer:
                 self.fabric.clip_gradients(
                     self.module.model.decoder, optimizer, max_norm=cfg.max_grad_norm,
                 )
+                ensure_finite_gradients(self.module.model.decoder.parameters())
                 optimizer.step()
                 scheduler.step()
                 global_step += 1

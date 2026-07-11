@@ -289,6 +289,10 @@ struct CareyAceTrainingState {
     #[serde(default)]
     pid: Option<u32>,
     #[serde(default)]
+    owner_pid: Option<u32>,
+    #[serde(default)]
+    launcher_pid: Option<u32>,
+    #[serde(default)]
     child_pid: Option<u32>,
     #[serde(default)]
     run_dir: Option<String>,
@@ -449,6 +453,14 @@ struct Sa3AutolabelState {
     error: Option<String>,
     #[serde(default)]
     pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sa3AutolabelAvailability {
+    available: bool,
+    carey_built: bool,
+    captioner_downloaded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -636,7 +648,10 @@ fn carey_training_current_job_path() -> PathBuf {
 }
 
 fn carey_checkpoint_dir(runtime_root: &Path) -> PathBuf {
-    runtime_root.join("services").join("carey").join("checkpoints")
+    runtime_root
+        .join("services")
+        .join("carey")
+        .join("checkpoints")
 }
 
 fn sa3_runtime_dir() -> PathBuf {
@@ -1504,7 +1519,12 @@ fn parse_carey_ace_sidecar_content(raw: &str) -> CareyAceSidecarFields {
         language: values.remove("language").unwrap_or_default(),
         is_instrumental: values
             .remove("is_instrumental")
-            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false),
         custom_tag: values.remove("custom_tag").unwrap_or_default(),
         lyrics: values.remove("lyrics").unwrap_or_default(),
@@ -1551,7 +1571,11 @@ fn render_carey_ace_sidecar(fields: &CareyAceSidecarFields) -> String {
     }
     lines.push(format!(
         "is_instrumental: {}",
-        if fields.is_instrumental { "true" } else { "false" }
+        if fields.is_instrumental {
+            "true"
+        } else {
+            "false"
+        }
     ));
     let tag = clean_carey_ace_scalar(&fields.custom_tag);
     if !tag.is_empty() {
@@ -2272,6 +2296,8 @@ fn default_carey_ace_training_state() -> CareyAceTrainingState {
         message: "No ACE-Step LoRA training job has been started.".to_string(),
         error: None,
         pid: None,
+        owner_pid: None,
+        launcher_pid: None,
         child_pid: None,
         run_dir: None,
         log_path: None,
@@ -2333,7 +2359,8 @@ mod carey_epoch_progress_tests {
 
     #[test]
     fn ignores_unrelated_step_and_epoch_path_text() {
-        let log = "Training checkpoint saved to output/checkpoints/epoch_150 (epoch 150, step 1500)";
+        let log =
+            "Training checkpoint saved to output/checkpoints/epoch_150 (epoch 150, step 1500)";
 
         assert_eq!(parse_carey_epoch_progress(log), None);
     }
@@ -2341,7 +2368,13 @@ mod carey_epoch_progress_tests {
 
 fn read_carey_ace_lora_training_state() -> CareyAceTrainingState {
     match carey_ace_current_training_status_path() {
-        Some(path) => read_carey_ace_training_status_file(&path),
+        Some(path) => {
+            reconcile_carey_ace_training_parent_exit(&path, carey_ace_training_parent_is_running)
+                .unwrap_or_else(|error| {
+                    log::warn!("Could not reconcile ACE-Step training status: {error}");
+                });
+            read_carey_ace_training_status_file(&path)
+        }
         None => read_carey_ace_training_status_file(Path::new("")),
     }
 }
@@ -2372,6 +2405,7 @@ fn write_carey_ace_training_launch_state(
         "cancelPath": cancel_path.to_string_lossy(),
         "currentStep": 0,
         "maxSteps": max_steps,
+        "ownerPid": std::process::id(),
         "updatedAt": now_epoch_seconds(),
     });
     let json = serde_json::to_string_pretty(&payload)
@@ -2418,7 +2452,335 @@ fn patch_carey_ace_training_status(
 }
 
 fn write_carey_ace_training_process_id(status_path: &Path, pid: u32) -> Result<(), String> {
-    patch_carey_ace_training_status(status_path, &[("pid", serde_json::json!(pid))])
+    patch_carey_ace_training_status(
+        status_path,
+        &[
+            ("pid", serde_json::json!(pid)),
+            ("launcherPid", serde_json::json!(pid)),
+        ],
+    )
+}
+
+fn mark_carey_ace_training_failed(
+    status_path: &Path,
+    message: &str,
+    expected_pid: Option<u32>,
+) -> Result<(), String> {
+    let state = read_carey_ace_training_status_file(status_path);
+    if let Some(expected_pid) = expected_pid {
+        let matches_launcher = state.launcher_pid == Some(expected_pid);
+        let matches_legacy_pid = state.launcher_pid.is_none() && state.pid == Some(expected_pid);
+        if !matches_launcher && !matches_legacy_pid {
+            return Ok(());
+        }
+    }
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(());
+    }
+    patch_carey_ace_training_status(
+        status_path,
+        &[
+            ("status", serde_json::json!("failed")),
+            ("phase", serde_json::json!("failed")),
+            ("message", serde_json::json!(message)),
+            ("error", serde_json::json!(message)),
+            ("pid", serde_json::Value::Null),
+            ("ownerPid", serde_json::Value::Null),
+            ("launcherPid", serde_json::Value::Null),
+            ("childPid", serde_json::Value::Null),
+        ],
+    )
+}
+
+fn reconcile_carey_ace_training_parent_exit<F>(
+    status_path: &Path,
+    is_process_running: F,
+) -> Result<(), String>
+where
+    F: Fn(u32) -> Option<bool>,
+{
+    let state = read_carey_ace_training_status_file(status_path);
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(());
+    }
+    let mut monitored_pids = Vec::new();
+    if let Some(pid) = state.owner_pid {
+        monitored_pids.push(pid);
+    }
+    if let Some(pid) = state.launcher_pid {
+        if !monitored_pids.contains(&pid) {
+            monitored_pids.push(pid);
+        }
+    }
+    if let Some(pid) = state.pid {
+        if !monitored_pids.contains(&pid) {
+            monitored_pids.push(pid);
+        }
+    }
+    let Some(missing_pid) = monitored_pids
+        .into_iter()
+        .find(|pid| is_process_running(*pid) == Some(false))
+    else {
+        return Ok(());
+    };
+
+    let warnings = terminate_discovered_carey_ace_training_processes(&state);
+    let cleanup_suffix = if warnings.is_empty() {
+        String::new()
+    } else {
+        format!(" Process cleanup warning: {}", warnings.join("; "))
+    };
+    mark_carey_ace_training_failed(
+        status_path,
+        &format!(
+            "ACE-Step training process {missing_pid} is no longer running. The job may have been stopped outside the app; check the training log for details.{cleanup_suffix}"
+        ),
+        state.launcher_pid.or(state.pid),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn carey_ace_training_parent_is_running(pid: u32) -> Option<bool> {
+    let mut command = std::process::Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        &format!(
+            "$ErrorActionPreference='SilentlyContinue'; if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ '1' }} else {{ '0' }}"
+        ),
+    ]);
+    hide_std_console_window(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn carey_ace_training_parent_is_running(_pid: u32) -> Option<bool> {
+    None
+}
+
+fn carey_training_required_checkpoint_files(
+    checkpoint_dir: &Path,
+    model_folder: &str,
+    caption_lm_model: Option<&str>,
+) -> Vec<PathBuf> {
+    let model_dir = checkpoint_dir.join(model_folder);
+    let mut required = vec![
+        model_dir.join("config.json"),
+        model_dir.join("model.safetensors"),
+        model_dir.join("silence_latent.pt"),
+        checkpoint_dir.join("vae").join("config.json"),
+        checkpoint_dir
+            .join("vae")
+            .join("diffusion_pytorch_model.safetensors"),
+        checkpoint_dir
+            .join("Qwen3-Embedding-0.6B")
+            .join("config.json"),
+        checkpoint_dir
+            .join("Qwen3-Embedding-0.6B")
+            .join("model.safetensors"),
+        checkpoint_dir
+            .join("Qwen3-Embedding-0.6B")
+            .join("tokenizer.json"),
+    ];
+    if let Some(lm_model) = caption_lm_model {
+        let lm_dir = checkpoint_dir.join(lm_model);
+        required.push(lm_dir.join("config.json"));
+        required.push(lm_dir.join("tokenizer.json"));
+        if lm_model == "acestep-5Hz-lm-4B" {
+            required.push(lm_dir.join("model.safetensors.index.json"));
+            required.push(lm_dir.join("model-00001-of-00002.safetensors"));
+            required.push(lm_dir.join("model-00002-of-00002.safetensors"));
+        } else {
+            required.push(lm_dir.join("model.safetensors"));
+        }
+    }
+    required
+}
+
+#[cfg(test)]
+mod carey_training_checkpoint_tests {
+    use super::{
+        carey_training_required_checkpoint_files, mark_carey_ace_training_failed,
+        reconcile_carey_ace_training_parent_exit, write_carey_ace_training_cancelled_state,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn complete_preflight_covers_shared_models_and_sharded_captioner() {
+        let root = Path::new("checkpoints");
+        let required = carey_training_required_checkpoint_files(
+            root,
+            "acestep-v15-xl-base",
+            Some("acestep-5Hz-lm-4B"),
+        );
+
+        assert!(required.contains(&root.join("acestep-v15-xl-base").join("model.safetensors")));
+        assert!(required.contains(&root.join("vae").join("diffusion_pytorch_model.safetensors")));
+        assert!(required.contains(&root.join("Qwen3-Embedding-0.6B").join("model.safetensors")));
+        assert!(required.contains(
+            &root
+                .join("acestep-5Hz-lm-4B")
+                .join("model.safetensors.index.json")
+        ));
+        assert!(required.contains(
+            &root
+                .join("acestep-5Hz-lm-4B")
+                .join("model-00002-of-00002.safetensors")
+        ));
+    }
+
+    #[test]
+    fn process_watcher_only_fails_the_matching_active_job() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-carey-watcher-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"training","pid":42}"#,
+        )
+        .expect("write active status");
+
+        mark_carey_ace_training_failed(&status_path, "wrong process", Some(41))
+            .expect("ignore stale watcher");
+        let unchanged = std::fs::read_to_string(&status_path).expect("read unchanged status");
+        assert!(unchanged.contains(r#""status":"running""#));
+
+        mark_carey_ace_training_failed(&status_path, "trainer exited", Some(42))
+            .expect("fail matching process");
+        let failed = std::fs::read_to_string(&status_path).expect("read failed status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains("trainer exited"));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn process_watcher_keeps_the_launcher_identity_after_python_reexec() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-carey-launcher-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"preprocessing","pid":43,"launcherPid":42,"childPid":44}"#,
+        )
+        .expect("write active status");
+
+        mark_carey_ace_training_failed(&status_path, "launcher exited", Some(42))
+            .expect("fail matching launcher");
+        let failed = std::fs::read_to_string(&status_path).expect("read failed status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains(r#""launcherPid": null"#));
+        assert!(failed.contains(r#""pid": null"#));
+        assert!(failed.contains(r#""childPid": null"#));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn cancellation_clears_both_trainer_process_ids() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-carey-cancel-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        let cancel_path = status_path.with_extension("cancel");
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"training","pid":42,"childPid":43}"#,
+        )
+        .expect("write active status");
+
+        write_carey_ace_training_cancelled_state(
+            &status_path,
+            Some(&cancel_path),
+            "Training cancelled.",
+        )
+        .expect("record cancellation");
+        let cancelled = std::fs::read_to_string(&status_path).expect("read cancelled status");
+        assert!(cancelled.contains(r#""status": "cancelled""#));
+        assert!(cancelled.contains(r#""pid": null"#));
+        assert!(cancelled.contains(r#""launcherPid": null"#));
+        assert!(cancelled.contains(r#""childPid": null"#));
+        assert!(cancelled.contains("cancelPath"));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn missing_active_parent_is_recovered_as_a_failed_job() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-carey-recovery-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"training","pid":42,"childPid":43}"#,
+        )
+        .expect("write active status");
+
+        reconcile_carey_ace_training_parent_exit(&status_path, |_| Some(false))
+            .expect("recover stopped parent");
+        let failed = std::fs::read_to_string(&status_path).expect("read recovered status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains("no longer running"));
+        assert!(failed.contains(r#""pid": null"#));
+        assert!(failed.contains(r#""childPid": null"#));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn missing_reexecuted_parent_is_recovered_even_when_launcher_remains() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-carey-reexec-recovery-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"preprocessing","launcherPid":42,"pid":43,"childPid":44}"#,
+        )
+        .expect("write active status");
+
+        reconcile_carey_ace_training_parent_exit(&status_path, |pid| Some(pid != 43))
+            .expect("recover stopped re-executed parent");
+        let failed = std::fs::read_to_string(&status_path).expect("read recovered status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains("43 is no longer running"));
+        let _ = std::fs::remove_file(status_path);
+    }
+
+    #[test]
+    fn missing_app_owner_recovers_an_orphaned_training_job() {
+        let status_path = std::env::temp_dir().join(format!(
+            "gary-carey-owner-recovery-{}-{}.json",
+            std::process::id(),
+            super::now_epoch_seconds()
+        ));
+        std::fs::write(
+            &status_path,
+            r#"{"status":"running","phase":"preprocessing","ownerPid":41,"launcherPid":42,"pid":43,"childPid":44}"#,
+        )
+        .expect("write active status");
+
+        reconcile_carey_ace_training_parent_exit(&status_path, |pid| Some(pid != 41))
+            .expect("recover orphaned job");
+        let failed = std::fs::read_to_string(&status_path).expect("read recovered status");
+        assert!(failed.contains(r#""status": "failed""#));
+        assert!(failed.contains("41 is no longer running"));
+        assert!(failed.contains(r#""ownerPid": null"#));
+        assert!(failed.contains(r#""launcherPid": null"#));
+        let _ = std::fs::remove_file(status_path);
+    }
 }
 
 fn write_carey_ace_training_cancelled_state(
@@ -2431,6 +2793,9 @@ fn write_carey_ace_training_cancelled_state(
         ("phase", serde_json::json!("cancelled")),
         ("message", serde_json::json!(message)),
         ("error", serde_json::Value::Null),
+        ("pid", serde_json::Value::Null),
+        ("ownerPid", serde_json::Value::Null),
+        ("launcherPid", serde_json::Value::Null),
         ("childPid", serde_json::Value::Null),
     ];
     if let Some(cancel_path) = cancel_path {
@@ -2708,6 +3073,13 @@ fn discover_carey_ace_training_pids(state: &CareyAceTrainingState) -> Vec<u32> {
         .collect()
 }
 
+fn terminate_discovered_carey_ace_training_processes(state: &CareyAceTrainingState) -> Vec<String> {
+    discover_carey_ace_training_pids(state)
+        .into_iter()
+        .filter_map(|pid| terminate_process_tree(pid).err())
+        .collect()
+}
+
 #[cfg(not(target_os = "windows"))]
 fn discover_carey_ace_training_pids(_state: &CareyAceTrainingState) -> Vec<u32> {
     Vec::new()
@@ -2733,6 +3105,9 @@ async fn try_reload_carey_admin() -> bool {
 }
 
 async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
+    if let Err(error) = cancel_carey_ace_lora_training() {
+        log::warn!("Could not cancel ACE-Step training during app quit: {error}");
+    }
     let mut m = manager.lock().await;
     m.stop_all();
     handle.exit(0);
@@ -3221,6 +3596,7 @@ pub fn run() {
             save_sa3_dataset_sidecars,
             suggest_sa3_track_metadata,
             sa3_autolabel_available,
+            get_sa3_autolabel_availability,
             get_sa3_autolabel_state,
             start_sa3_autolabel,
             cancel_sa3_autolabel,
@@ -4260,18 +4636,6 @@ async fn start_carey_ace_lora_training(
         return Err("genre ratio must be between 0 and 100".to_string());
     }
 
-    {
-        let mut mgr = manager.lock().await;
-        if mgr.is_running("carey") {
-            mgr.stop("carey").map_err(|e| {
-                format!(
-                    "Could not stop Carey inference before ACE-Step training: {}",
-                    e
-                )
-            })?;
-        }
-    }
-
     let current_state = read_carey_ace_lora_training_state();
     if matches!(current_state.status.as_str(), "starting" | "running") {
         return Err(format!(
@@ -4316,11 +4680,27 @@ async fn start_carey_ace_lora_training(
     } else {
         "acestep-v15-base"
     };
-    if !checkpoint_dir.join(model_folder).join("config.json").is_file() {
-        return Err(format!(
-            "Download {} from Carey's Models panel before training.",
-            model_folder
-        ));
+    if !prepare_only || auto_caption {
+        let missing = carey_training_required_checkpoint_files(
+            &checkpoint_dir,
+            model_folder,
+            auto_caption.then_some(caption_lm_model.trim()),
+        )
+        .into_iter()
+        .filter(|path| !path.is_file())
+        .map(|path| {
+            path.strip_prefix(&checkpoint_dir)
+                .unwrap_or(&path)
+                .display()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(format!(
+                "Download or repair the selected ACE-Step models from Carey's Models panel before continuing. Missing: {}",
+                missing.join(", ")
+            ));
+        }
     }
 
     let epoch = std::time::SystemTime::now()
@@ -4344,6 +4724,26 @@ async fn start_carey_ace_lora_training(
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
     }
 
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Cannot create {}: {}", log_path.display(), e))?;
+    let log_file_err = log_file
+        .try_clone()
+        .map_err(|e| format!("Cannot clone log handle: {}", e))?;
+
+    // All non-mutating validation and local file preparation must succeed
+    // before stopping the managed inference service.
+    {
+        let mut mgr = manager.lock().await;
+        if mgr.is_running("carey") {
+            mgr.stop("carey").map_err(|e| {
+                format!(
+                    "Could not stop Carey inference before ACE-Step training: {}",
+                    e
+                )
+            })?;
+        }
+    }
+
     write_carey_ace_training_launch_state(
         &status_path,
         &job_id,
@@ -4358,12 +4758,6 @@ async fn start_carey_ace_lora_training(
             "Launching ACE-Step LoRA training."
         },
     )?;
-
-    let log_file = std::fs::File::create(&log_path)
-        .map_err(|e| format!("Cannot create {}: {}", log_path.display(), e))?;
-    let log_file_err = log_file
-        .try_clone()
-        .map_err(|e| format!("Cannot clone log handle: {}", e))?;
 
     let mut cmd = tokio::process::Command::new(&python_exe);
     hide_console_window(&mut cmd);
@@ -4396,7 +4790,11 @@ async fn start_carey_ace_lora_training(
         .arg("--genre-ratio")
         .arg(genre_ratio.to_string())
         .arg("--caption")
-        .arg(if auto_caption { "understand_music" } else { "skip" })
+        .arg(if auto_caption {
+            "understand_music"
+        } else {
+            "skip"
+        })
         .arg("--carey-url")
         .arg("http://127.0.0.1:8013")
         .arg("--inference-carey-url")
@@ -4461,12 +4859,58 @@ async fn start_carey_ace_lora_training(
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1");
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to launch ACE-Step LoRA training: {}", e))?;
-    if let Some(pid) = child.id() {
-        write_carey_ace_training_process_id(&status_path, pid)?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let message = format!("Failed to launch ACE-Step LoRA training: {}", error);
+            let _ = mark_carey_ace_training_failed(&status_path, &message, None);
+            return Err(message);
+        }
+    };
+    let Some(pid) = child.id() else {
+        let _ = child.kill().await;
+        let message = "ACE-Step LoRA training launched without a process ID.".to_string();
+        let _ = mark_carey_ace_training_failed(&status_path, &message, None);
+        return Err(message);
+    };
+    if let Err(error) = write_carey_ace_training_process_id(&status_path, pid) {
+        let _ = child.kill().await;
+        let message = format!(
+            "Failed to record ACE-Step training process {}: {}",
+            pid, error
+        );
+        let _ = mark_carey_ace_training_failed(&status_path, &message, None);
+        return Err(message);
     }
+
+    let watched_status_path = status_path.clone();
+    tauri::async_runtime::spawn(async move {
+        let exit_result = child.wait().await;
+        let state = read_carey_ace_training_status_file(&watched_status_path);
+        let warnings = if state.launcher_pid == Some(pid)
+            || (state.launcher_pid.is_none() && state.pid == Some(pid))
+        {
+            terminate_discovered_carey_ace_training_processes(&state)
+        } else {
+            Vec::new()
+        };
+        let cleanup_suffix = if warnings.is_empty() {
+            String::new()
+        } else {
+            format!(" Process cleanup warning: {}", warnings.join("; "))
+        };
+        let message = match exit_result {
+            Ok(status) => format!(
+                "ACE-Step training launcher {} exited without recording a terminal state ({}). Check the training log for details.{}",
+                pid, status, cleanup_suffix
+            ),
+            Err(error) => format!(
+                "Could not monitor ACE-Step training launcher {}: {}. Check the training log for details.{}",
+                pid, error, cleanup_suffix
+            ),
+        };
+        let _ = mark_carey_ace_training_failed(&watched_status_path, &message, Some(pid));
+    });
 
     Ok(read_carey_ace_lora_training_state())
 }
@@ -4493,6 +4937,11 @@ fn cancel_carey_ace_lora_training() -> Result<CareyAceTrainingState, String> {
         pids.push(pid);
     }
     if let Some(pid) = state.pid {
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    if let Some(pid) = state.launcher_pid {
         if !pids.contains(&pid) {
             pids.push(pid);
         }
@@ -4693,7 +5142,8 @@ async fn suggest_sa3_track_metadata(
     let resolved = requested
         .canonicalize()
         .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))?;
-    if !resolved.starts_with(&root) || !resolved.is_file() || !is_sa3_dataset_audio_file(&resolved) {
+    if !resolved.starts_with(&root) || !resolved.is_file() || !is_sa3_dataset_audio_file(&resolved)
+    {
         return Err(format!(
             "{} is not an audio file inside {}",
             resolved.display(),
@@ -4763,11 +5213,18 @@ fn read_sa3_autolabel_state() -> Sa3AutolabelState {
     }
 }
 
-fn write_sa3_autolabel_launch_state(status_path: &Path, style: &str) -> Result<(), String> {
+fn write_sa3_autolabel_state(status_path: &Path, state: &Sa3AutolabelState) -> Result<(), String> {
     if let Some(parent) = status_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
     }
+    let raw = serde_json::to_string_pretty(state)
+        .map_err(|e| format!("Cannot serialize auto-label state: {}", e))?;
+    std::fs::write(status_path, raw)
+        .map_err(|e| format!("Cannot write {}: {}", status_path.display(), e))
+}
+
+fn write_sa3_autolabel_launch_state(status_path: &Path, style: &str) -> Result<(), String> {
     let state = Sa3AutolabelState {
         status: "starting".to_string(),
         phase: "starting".to_string(),
@@ -4775,10 +5232,32 @@ fn write_sa3_autolabel_launch_state(status_path: &Path, style: &str) -> Result<(
         style: style.to_string(),
         ..Default::default()
     };
-    let raw = serde_json::to_string_pretty(&state)
-        .map_err(|e| format!("Cannot serialize auto-label state: {}", e))?;
-    std::fs::write(status_path, raw)
-        .map_err(|e| format!("Cannot write {}: {}", status_path.display(), e))
+    write_sa3_autolabel_state(status_path, &state)
+}
+
+fn write_sa3_autolabel_process_id(status_path: &Path, pid: u32) -> Result<(), String> {
+    let mut state = read_sa3_autolabel_state();
+    state.pid = Some(pid);
+    write_sa3_autolabel_state(status_path, &state)
+}
+
+fn mark_sa3_autolabel_failed(message: &str, expected_pid: Option<u32>) -> Result<(), String> {
+    let mut state = read_sa3_autolabel_state();
+    if let Some(expected_pid) = expected_pid {
+        if state.pid != Some(expected_pid) {
+            return Ok(());
+        }
+    }
+    if !matches!(state.status.as_str(), "starting" | "running") {
+        return Ok(());
+    }
+    state.status = "failed".to_string();
+    state.phase = "error".to_string();
+    state.message = message.to_string();
+    state.error = Some(message.to_string());
+    state.current_path = String::new();
+    state.pid = None;
+    write_sa3_autolabel_state(&sa3_autolabel_status_path(), &state)
 }
 
 fn mark_sa3_autolabel_cancelled() {
@@ -4788,9 +5267,9 @@ fn mark_sa3_autolabel_cancelled() {
     state.phase = "cancelled".to_string();
     state.message = "Auto-label cancelled".to_string();
     state.current_path = String::new();
-    if let Ok(raw) = serde_json::to_string_pretty(&state) {
-        let _ = std::fs::write(sa3_autolabel_status_path(), raw);
-    }
+    state.error = None;
+    state.pid = None;
+    let _ = write_sa3_autolabel_state(&sa3_autolabel_status_path(), &state);
 }
 
 fn carey_autolabel_python(repo_root: &Path) -> PathBuf {
@@ -4809,10 +5288,36 @@ fn carey_autolabel_script(repo_root: &Path) -> PathBuf {
         .join("sa3_autolabel.py")
 }
 
+fn carey_sa3_captioner_downloaded(repo_root: &Path) -> bool {
+    let model_dir = repo_root
+        .join("services")
+        .join("carey")
+        .join("checkpoints")
+        .join("acestep-5Hz-lm-1.7B");
+    model_dir.join("config.json").is_file() && model_dir.join("model.safetensors").is_file()
+}
+
+fn build_sa3_autolabel_availability(repo_root: &Path) -> Sa3AutolabelAvailability {
+    let carey_built =
+        carey_autolabel_python(repo_root).is_file() && carey_autolabel_script(repo_root).is_file();
+    let captioner_downloaded = carey_sa3_captioner_downloaded(repo_root);
+    Sa3AutolabelAvailability {
+        available: carey_built && captioner_downloaded,
+        carey_built,
+        captioner_downloaded,
+    }
+}
+
 #[tauri::command]
 fn sa3_autolabel_available(repo_root: tauri::State<'_, std::path::PathBuf>) -> bool {
-    carey_autolabel_python(repo_root.inner()).exists()
-        && carey_autolabel_script(repo_root.inner()).exists()
+    build_sa3_autolabel_availability(repo_root.inner()).available
+}
+
+#[tauri::command]
+fn get_sa3_autolabel_availability(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Sa3AutolabelAvailability {
+    build_sa3_autolabel_availability(repo_root.inner())
 }
 
 #[tauri::command]
@@ -4839,9 +5344,16 @@ async fn start_sa3_autolabel(
         return Err("An auto-label job is already running.".to_string());
     }
 
+    let availability = build_sa3_autolabel_availability(repo_root.inner());
     let python_exe = carey_autolabel_python(repo_root.inner());
-    if !python_exe.exists() {
+    if !availability.carey_built {
         return Err("Carey must be built to auto-label — it runs the caption model.".to_string());
+    }
+    if !availability.captioner_downloaded {
+        return Err(
+            "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
+                .to_string(),
+        );
     }
     let script_path = carey_autolabel_script(repo_root.inner());
     if !script_path.exists() {
@@ -4899,8 +5411,38 @@ async fn start_sa3_autolabel(
         cmd.env("HF_TOKEN", token);
     }
 
-    cmd.spawn()
-        .map_err(|e| format!("Failed to launch auto-label: {}", e))?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let message = format!("Failed to launch auto-label: {}", error);
+            let _ = mark_sa3_autolabel_failed(&message, None);
+            return Err(message);
+        }
+    };
+
+    if let Some(pid) = child.id() {
+        if let Err(error) = write_sa3_autolabel_process_id(&status_path, pid) {
+            let _ = child.kill().await;
+            let message = format!("Failed to record auto-label process {}: {}", pid, error);
+            let _ = mark_sa3_autolabel_failed(&message, None);
+            return Err(message);
+        }
+
+        tauri::async_runtime::spawn(async move {
+            let exit_result = child.wait().await;
+            let message = match exit_result {
+                Ok(status) => format!(
+                    "Auto-label process {} exited without recording a terminal state ({}). Check the auto-label log for details.",
+                    pid, status
+                ),
+                Err(error) => format!(
+                    "Could not monitor auto-label process {}: {}. Check the auto-label log for details.",
+                    pid, error
+                ),
+            };
+            let _ = mark_sa3_autolabel_failed(&message, Some(pid));
+        });
+    }
 
     Ok(read_sa3_autolabel_state())
 }
@@ -4917,6 +5459,50 @@ fn cancel_sa3_autolabel() -> Result<Sa3AutolabelState, String> {
     }
     mark_sa3_autolabel_cancelled();
     Ok(read_sa3_autolabel_state())
+}
+
+#[cfg(test)]
+mod sa3_autolabel_availability_tests {
+    use super::build_sa3_autolabel_availability;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn requires_built_carey_and_complete_1_7b_captioner() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary-sa3-autolabel-availability-{}-{}",
+            std::process::id(),
+            stamp
+        ));
+        let carey = root.join("services").join("carey");
+        let python = carey.join("env").join("Scripts").join("python.exe");
+        let script = carey.join("sa3_autolabel.py");
+        std::fs::create_dir_all(python.parent().expect("python should have a parent"))
+            .expect("create Carey env path");
+        std::fs::write(&python, []).expect("create fake Python");
+        std::fs::write(&script, []).expect("create fake helper");
+
+        let missing = build_sa3_autolabel_availability(&root);
+        assert!(missing.carey_built);
+        assert!(!missing.captioner_downloaded);
+        assert!(!missing.available);
+
+        let captioner = carey.join("checkpoints").join("acestep-5Hz-lm-1.7B");
+        std::fs::create_dir_all(&captioner).expect("create captioner path");
+        std::fs::write(captioner.join("config.json"), []).expect("create config");
+        assert!(!build_sa3_autolabel_availability(&root).available);
+
+        std::fs::write(captioner.join("model.safetensors"), []).expect("create weights");
+        let ready = build_sa3_autolabel_availability(&root);
+        assert!(ready.carey_built);
+        assert!(ready.captioner_downloaded);
+        assert!(ready.available);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 #[tauri::command]

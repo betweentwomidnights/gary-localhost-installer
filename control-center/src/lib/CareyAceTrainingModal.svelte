@@ -630,8 +630,12 @@
               <div class="live">running</div>
             {/if}
           </div>
-          <div class="job-message">{trainingState.message}</div>
-          {#if trainingState.error}
+          {#if trainingState.error && trainingState.error.trim() === trainingState.message.trim()}
+            <div class="error-note">{trainingState.error}</div>
+          {:else}
+            <div class="job-message">{trainingState.message}</div>
+          {/if}
+          {#if trainingState.error && trainingState.error.trim() !== trainingState.message.trim()}
             <div class="error-note">{trainingState.error}</div>
           {/if}
           {#if trainingState.phase === "prepared" && trainingState.captionedCount !== null}

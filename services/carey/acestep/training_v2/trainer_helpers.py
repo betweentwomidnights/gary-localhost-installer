@@ -267,27 +267,40 @@ def save_final(trainer: Any, output_dir: str) -> None:
     verify_saved_adapter(output_dir)
 
 
-def verify_saved_adapter(output_dir: str) -> None:
-    """Check saved adapter weights exist and are non-trivial.
+def ensure_finite_gradients(parameters: Any) -> None:
+    """Fail before an optimizer step if any trainable gradient is NaN or Inf."""
+    for parameter in parameters:
+        gradient = parameter.grad
+        if gradient is None:
+            continue
+        values = gradient.coalesce().values() if gradient.is_sparse else gradient
+        if not torch.isfinite(values).all():
+            raise FloatingPointError(
+                "Training produced non-finite gradients; refusing to update "
+                "or save a potentially corrupted adapter."
+            )
 
-    Loads the safetensors file, counts non-zero parameters, and logs
-    a warning if the weights appear to be all zeros (which would mean
-    the LoRA has no effect during inference).
+
+def verify_saved_adapter(output_dir: str) -> None:
+    """Require saved adapter weights to exist and contain finite signal.
+
+    A missing, all-zero, empty, or non-finite adapter is unsafe to register for
+    inference, so verification failures are raised to the training job.
     """
     safetensors_path = os.path.join(output_dir, "adapter_model.safetensors")
     config_path = os.path.join(output_dir, "adapter_config.json")
 
     # LoKR uses a different file name
+    is_lokr = False
     if not os.path.exists(safetensors_path):
         lokr_path = os.path.join(output_dir, "lokr_weights.safetensors")
         if os.path.exists(lokr_path):
-            logger.info("[OK] LoKR weights saved: %s", lokr_path)
-            return
-        logger.warning(
-            "[WARN] No adapter weights found in %s -- check save path",
-            output_dir,
-        )
-        return
+            safetensors_path = lokr_path
+            is_lokr = True
+        else:
+            raise RuntimeError(
+                f"No adapter weights found in {output_dir}; check the save path"
+            )
 
     try:
         from safetensors.torch import load_file
@@ -297,33 +310,39 @@ def verify_saved_adapter(output_dir: str) -> None:
         nonzero_params = 0
         max_abs = 0.0
         with torch.no_grad():
-            for tensor in weights.values():
+            for name, tensor in weights.items():
+                if not torch.isfinite(tensor).all():
+                    raise RuntimeError(
+                        f"Saved adapter tensor '{name}' contains NaN or Inf values"
+                    )
                 total_params += tensor.numel()
                 nonzero_params += int((tensor != 0).sum().item())
-                max_abs = max(max_abs, tensor.abs().max().item())
+                if tensor.numel():
+                    max_abs = max(max_abs, tensor.abs().max().item())
 
+        if total_params == 0:
+            raise RuntimeError("Saved adapter contains no parameters")
         if nonzero_params == 0:
-            logger.warning(
-                "[WARN] All saved LoRA weights are ZERO -- "
-                "the adapter will have no effect during inference. "
-                "Training may not have converged."
-            )
-        else:
-            pct = 100.0 * nonzero_params / max(total_params, 1)
-            logger.info(
-                "[OK] Adapter verified: %s params, %s non-zero (%.1f%%), "
-                "max|w|=%.6f",
-                f"{total_params:,}", f"{nonzero_params:,}", pct, max_abs,
+            raise RuntimeError(
+                "All saved adapter weights are zero; the adapter would have no effect"
             )
 
-        if not os.path.exists(config_path):
-            logger.warning(
-                "[WARN] adapter_config.json missing in %s -- "
-                "inference tools will not be able to load this adapter",
-                output_dir,
+        pct = 100.0 * nonzero_params / total_params
+        logger.info(
+            "[OK] %s verified: %s params, %s non-zero (%.1f%%), max|w|=%.6f",
+            "LoKR adapter" if is_lokr else "Adapter",
+            f"{total_params:,}", f"{nonzero_params:,}", pct, max_abs,
+        )
+
+        if not is_lokr and not os.path.exists(config_path):
+            raise RuntimeError(
+                f"adapter_config.json is missing in {output_dir}; "
+                "inference tools cannot load this adapter"
             )
     except Exception as exc:
-        logger.warning("[WARN] Could not verify adapter: %s", exc)
+        if isinstance(exc, RuntimeError):
+            raise
+        raise RuntimeError(f"Could not verify saved adapter: {exc}") from exc
 
 
 def resume_checkpoint(

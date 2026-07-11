@@ -278,11 +278,54 @@ def require_training_environment(args: argparse.Namespace) -> None:
         raise RuntimeError("ACE-Step LoRA training requires an NVIDIA CUDA GPU.")
 
 
-def require_model_checkpoint(args: argparse.Namespace) -> None:
+def required_model_checkpoint_files(
+    args: argparse.Namespace, *, include_caption_lm: bool = False
+) -> list[Path]:
     model = MODEL_MAP[args.model]
     model_dir = args.checkpoint_dir / model["folder"]
-    if not model_dir.is_dir() or not (model_dir / "config.json").is_file():
-        raise RuntimeError(f"ACE-Step model checkpoint is incomplete: {model_dir}")
+    required = [
+        model_dir / "config.json",
+        model_dir / "model.safetensors",
+        model_dir / "silence_latent.pt",
+        args.checkpoint_dir / "vae" / "config.json",
+        args.checkpoint_dir / "vae" / "diffusion_pytorch_model.safetensors",
+        args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "config.json",
+        args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "model.safetensors",
+        args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "tokenizer.json",
+    ]
+    if include_caption_lm:
+        lm_dir = args.checkpoint_dir / args.caption_lm_model
+        required.extend([lm_dir / "config.json", lm_dir / "tokenizer.json"])
+        if args.caption_lm_model == "acestep-5Hz-lm-4B":
+            required.extend(
+                [
+                    lm_dir / "model.safetensors.index.json",
+                    lm_dir / "model-00001-of-00002.safetensors",
+                    lm_dir / "model-00002-of-00002.safetensors",
+                ]
+            )
+        else:
+            required.append(lm_dir / "model.safetensors")
+    return required
+
+
+def require_model_checkpoint(
+    args: argparse.Namespace, *, include_caption_lm: bool = False
+) -> None:
+    missing = [
+        path
+        for path in required_model_checkpoint_files(
+            args, include_caption_lm=include_caption_lm
+        )
+        if not path.is_file()
+    ]
+    if missing:
+        relative = [str(path.relative_to(args.checkpoint_dir)) for path in missing]
+        raise RuntimeError(
+            "ACE-Step model checkpoints are incomplete. Download or repair them "
+            "from Carey's Models panel before continuing. Missing: "
+            + ", ".join(relative)
+        )
 
 
 def build_preprocess_command(
@@ -1182,10 +1225,10 @@ def _genre_variants(genre: str) -> list[str]:
 def collect_caption_pool(dataset_dir: Path) -> list[str]:
     seen: set[str] = set()
     pool: list[str] = []
-    for sidecar in sorted(dataset_dir.glob("*.txt")):
-        if ".v4bak" in sidecar.name or sidecar.name.endswith(".v4bak"):
-            continue
-        caption, genre = _parse_caption_and_genre(sidecar)
+    for audio_path in discover_audio_files(dataset_dir):
+        metadata = load_sidecar_metadata(audio_path)
+        caption = str(metadata.get("caption") or "").strip() or None
+        genre = str(metadata.get("genre") or "").strip() or None
         entries: list[str] = []
         if caption:
             entries.append(caption)
@@ -1437,6 +1480,7 @@ def main(argv: list[str] | None = None) -> int:
 
         captioned = 0
         if args.caption == "understand_music" and not args.dry_run:
+            require_model_checkpoint(args, include_caption_lm=True)
             captioned = caption_with_understand_music(args)
 
         update_status(

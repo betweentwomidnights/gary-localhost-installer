@@ -13,6 +13,7 @@ CAREY_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CAREY_DIR))
 
 import train_lora_job  # noqa: E402
+import train as carey_train  # noqa: E402
 
 
 def make_args(root: Path) -> argparse.Namespace:
@@ -62,6 +63,49 @@ class TrainLoraJobTests(unittest.TestCase):
             self.assertEqual(registry["test-standard"]["model_family"], "standard")
             self.assertEqual(registry["test-xl"]["model_family"], "xl")
 
+    def test_caption_pool_includes_nested_audio_sidecars_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            nested = root / "nested"
+            nested.mkdir()
+            audio = nested / "song.wav"
+            audio.write_bytes(b"RIFF")
+            audio.with_suffix(".txt").write_text(
+                "caption: nested caption\ngenre: ambient, drone\nlyrics: [Instrumental]\n",
+                encoding="utf-8",
+            )
+            (root / "notes.txt").write_text(
+                "caption: unrelated text file\n", encoding="utf-8"
+            )
+
+            pool = train_lora_job.collect_caption_pool(root)
+
+            self.assertIn("nested caption", pool)
+            self.assertIn("ambient, drone", pool)
+            self.assertNotIn("unrelated text file", pool)
+
+    def test_complete_checkpoint_preflight_includes_selected_lm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            args = make_args(Path(temp))
+            args.caption_lm_model = "acestep-5Hz-lm-4B"
+
+            required = train_lora_job.required_model_checkpoint_files(
+                args, include_caption_lm=True
+            )
+
+            self.assertIn(
+                args.checkpoint_dir
+                / "acestep-v15-base"
+                / "model.safetensors",
+                required,
+            )
+            self.assertIn(
+                args.checkpoint_dir
+                / "acestep-5Hz-lm-4B"
+                / "model-00002-of-00002.safetensors",
+                required,
+            )
+
     def test_run_step_surfaces_trainer_failure_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output_dir = Path(temp)
@@ -86,6 +130,32 @@ class TrainLoraJobTests(unittest.TestCase):
                         "Training ACE-Step LoRA",
                         cwd=output_dir,
                     )
+
+    def test_preprocess_cli_rejects_partial_results(self) -> None:
+        args = argparse.Namespace(
+            audio_dir="audio",
+            dataset_json=None,
+            tensor_output="tensors",
+            checkpoint_dir="checkpoints",
+            model_variant="base",
+            max_duration=240.0,
+            device="cpu",
+            precision="fp32",
+        )
+        result = {
+            "processed": 1,
+            "failed": 1,
+            "total": 2,
+            "output_dir": "tensors",
+        }
+        with (
+            patch(
+                "acestep.training_v2.preprocess.preprocess_audio_files",
+                return_value=result,
+            ),
+            patch.object(carey_train, "_cleanup_gpu"),
+        ):
+            self.assertEqual(carey_train._run_preprocess(args), 1)
 
     def test_command_builders_match_existing_carey_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
