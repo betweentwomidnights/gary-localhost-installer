@@ -1,13 +1,13 @@
 {
-  "channel": "stable",
-  "latest_version": "0.1.18",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.18/gary4local_0.1.18_x64-setup.exe",
-  "sha256": "9539a80378affdce70540a4c04b596a247b1384aaa5fba2aca3f3b55ab972797",
-  "published_at": "2026-06-27T08:59:45.0016625Z",
-  "notes": [
-    "fixes Carey seed reporting so the displayed last seed matches the generated audio.",
-    "omits LM-hallucinated lyrics from ACE-Step LoRA sidecars; lyrics are BYOL for now.",
-    "updates Carey lego/LoRA guidance; v15-base remains recommended when no LoRA is loaded.",
-    "compatible with gary4juce v4.0.4."
-  ]
+    "channel":  "stable",
+    "latest_version":  "0.1.19",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19/gary4local_0.1.19_x64-setup.exe",
+    "sha256":  "1f78ec6d0702cc7c5b64eca9f3864fb9f6ecc39ba69751837ebffc6b9a165df8",
+    "published_at":  "2026-07-11T19:42:30.2198501Z",
+    "notes":  [
+                  "Adds full SA3 auto-labeling with ACE-Step genre keywords.",
+                  "Hardens Carey and SA3 trainer recovery and Windows process cleanup.",
+                  "Press Rebuild Env for new SA3 trainer features.",
+                  "Compatible with gary4juce v4.0.4."
+              ]
 }

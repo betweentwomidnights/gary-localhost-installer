@@ -1,11 +1,11 @@
 {
-  "version": "0.1.18",
-  "notes": "fixes Carey seed reporting so the displayed last seed matches the generated audio.\nomits LM-hallucinated lyrics from ACE-Step LoRA sidecars; lyrics are BYOL for now.\nupdates Carey lego/LoRA guidance; v15-base remains recommended when no LoRA is loaded.\ncompatible with gary4juce v4.0.4.",
-  "pub_date": "2026-06-27T08:59:45.0016625Z",
-  "platforms": {
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVnWlUvek45a3ZFbzFhSS9EZ0o2dHNwMFYrbGFBVkorMTgxcHpIcUJFSGpFWkRBdWxFd3drNkNvRUNkR2taNGRGS0dWY1VCNEVKa3c2Y1FXa0ExY1F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNTQ3ODAxCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMThfeDY0LXNldHVwLmV4ZQpVRm9ISHFrSm9GWjltRGZiV25qaVN3N1ZneWk1cWxta0hzMEEvTjVVTncwcys1SGhneXNqTU92M2EzenNtR3NVYTUxNnd6cDh3T3Y0bG13bVEzeDZCQT09Cg==",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.18/gary4local_0.1.18_x64-setup.exe"
-    }
-  }
+    "version":  "0.1.19",
+    "notes":  "Adds full SA3 auto-labeling with ACE-Step genre keywords.\nHardens Carey and SA3 trainer recovery and Windows process cleanup.\nPress Rebuild Env for new SA3 trainer features.\nCompatible with gary4juce v4.0.4.",
+    "pub_date":  "2026-07-11T19:42:30.2198501Z",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVOY3FYS3pJU3Zna0wrOGZHS0h3Q3V3Q0lYNDdkS1lPbWVSVU4rdWVjQmpmNWVIYTlrejlMVUFCRlJGSEdZOGhtYmN4elB2VW5EdGhOZjJpN2dlT3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzk4ODYzCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTlfeDY0LXNldHVwLmV4ZQpLRVpVOHZhSFEwWXdCNDRZeFAvNmdvOThKeVg4ZXI2RUJnSE9tT3VhYWFnSXFhN3U0QkJLQjJpdXVZSWZEb3NnRms3S0llbXhOTXV0K3lsT256V09Cdz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19/gary4local_0.1.19_x64-setup.exe"
+                                         }
+                  }
 }
