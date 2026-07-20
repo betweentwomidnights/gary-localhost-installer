@@ -12,7 +12,14 @@ from safetensors.torch import save_file
 from functools import partial
 from torch.nn import functional as F
 
-from ..interface.aeiou import audio_spectrogram_image
+try:
+    from ..interface.aeiou import audio_spectrogram_image
+except ImportError:
+    # matplotlib is only needed to render demo spectrogram images (used at
+    # diffusion.py:940/1131, inside demo callbacks). LoRA training runs with
+    # demo_every=0, so we make this optional to keep matplotlib out of the
+    # installer's SA3 env.
+    audio_spectrogram_image = None
 from ..inference.decode_utils import align_latents_for_decode
 from ..inference.sampling import truncated_logistic_normal_rescaled, sample_timesteps_logsnr, sample_timesteps_logsnr_uniform, sample_diffusion
 from ..models.diffusion import ConditionedDiffusionModelWrapper

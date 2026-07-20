@@ -71,10 +71,25 @@
   let rank = $state(16);
   let batchSize = $state(1);
   let checkpointEvery = $state(500);
+  // Full-track training (spark / stable-audio-3 default): train each clip whole,
+  // starting at its downbeat, so the model keeps its native duration/bpm =>
+  // seamless-loop behavior. 380s clamps to the model's native 4096 latent
+  // tokens. Turn off to train shorter random crops on low-VRAM cards.
+  let fullTrack = $state(true);
+  // 285.35s = the model's real native length (3072 latent tokens). The model
+  // config's "380s" is wrong per the Spark notes; 380 would pad every clip out to
+  // 4096 tokens (up to ~52% padding on short clips). 285.35 matches the Spark's
+  // proven duration and its ~12% padding — more correct AND faster.
+  const FULL_TRACK_CROP_SECONDS = 285.35;
   let latentCropSeconds = $state(47);
+  let effectiveCropSeconds = $derived(fullTrack ? FULL_TRACK_CROP_SECONDS : latentCropSeconds);
   let learningRateText = $state("1e-4");
   let loudnessFixEnabled = $state(false);
   let targetLatentRms = $state(0.9);
+  // Off = train all 229 modules (matches the reference Spark LoRAs). On = 228,
+  // skipping the seconds_total conditioner, which is what sa3.cpp does and what
+  // the official SA3 docs suggest for small datasets.
+  let excludeSecondsTotal = $state(false);
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -196,10 +211,11 @@
         rank,
         batchSize,
         checkpointEvery,
-        latentCropSeconds,
+        latentCropSeconds: effectiveCropSeconds,
         learningRate,
         loudnessFixEnabled,
         targetLatentRms,
+        excludeSecondsTotal,
       });
       shouldRevealLog = true;
       await revealLogOutput();
@@ -240,7 +256,7 @@
       rank > 0 &&
       batchSize > 0 &&
       checkpointEvery > 0 &&
-      latentCropSeconds > 0 &&
+      (fullTrack || latentCropSeconds > 0) &&
       Number.isFinite(learningRate) &&
       learningRate > 0 &&
       (!loudnessFixEnabled ||
@@ -373,16 +389,33 @@
           <span>checkpoint every</span>
           <input type="number" min="1" step="100" bind:value={checkpointEvery} />
         </label>
-        <label class="field">
-          <span>crop seconds</span>
-          <input type="number" min="1" step="1" bind:value={latentCropSeconds} />
+        <label class="toggle-field wide">
+          <input type="checkbox" bind:checked={fullTrack} />
+          <span>
+            <strong>train on full tracks</strong>
+            <small>trains each clip whole (up to ~380s) from its downbeat, matching the stable-audio-3 defaults — best for seamless loops and bpm-accurate lengths. Uses more VRAM; turn off to train shorter random crops on smaller cards.</small>
+          </span>
         </label>
+        {#if !fullTrack}
+          <label class="field">
+            <span>crop seconds</span>
+            <input type="number" min="1" step="1" bind:value={latentCropSeconds} />
+            <small>random crop length. Shorter = less VRAM, but loops start mid-beat.</small>
+          </label>
+        {/if}
         <label class="field">
           <span>learning rate</span>
           <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} />
           <small class:invalid={learningRateDecimal === "invalid"}>
             decimal: {learningRateDecimal}
           </small>
+        </label>
+        <label class="toggle-field wide">
+          <input type="checkbox" bind:checked={excludeSecondsTotal} />
+          <span>
+            <strong>exclude seconds_total conditioner</strong>
+            <small>trains 228 modules instead of 229, skipping the duration conditioner. The official stable-audio-3 docs recommend this on small datasets to prevent "conditioner hijacking", and the sa3.cpp trainer does it by default. Off matches the reference LoRAs.</small>
+          </span>
         </label>
         <label class="toggle-field wide">
           <input type="checkbox" bind:checked={loudnessFixEnabled} />
@@ -401,7 +434,7 @@
       </div>
 
       <div class="note">
-        defaults favor 8-16 GB cards: DoRA, fp16 base weights, batch 1, random 47s crops, and no training demos.
+        defaults: DoRA, fp16 base weights, batch 1, full-track training, and no training demos. Full-track needs more VRAM — on 8-12 GB cards, turn off "train on full tracks" to use shorter random crops.
       </div>
 
       <div class="actions">

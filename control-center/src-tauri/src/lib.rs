@@ -337,12 +337,26 @@ struct CareyAceTrainingState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct Sa3TrainingCheckpoint {
+    step: u32,
+    epoch: u32,
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Sa3LoraCatalogEntry {
     path: String,
     #[serde(default)]
     prompts_path: Option<String>,
     #[serde(default = "default_lora_scale")]
     strength: f64,
+    #[serde(default)]
+    training_job_id: Option<String>,
+    #[serde(default)]
+    training_checkpoints: Vec<Sa3TrainingCheckpoint>,
+    #[serde(default)]
+    selected_training_step: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -359,6 +373,9 @@ struct Sa3LoraEntry {
     strength: f64,
     checkpoint_exists: bool,
     registered: bool,
+    training_job_id: Option<String>,
+    training_checkpoints: Vec<Sa3TrainingCheckpoint>,
+    selected_training_step: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1999,6 +2016,20 @@ fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, Stri
         if !entry.strength.is_finite() {
             entry.strength = default_lora_scale();
         }
+        entry.training_job_id = entry
+            .training_job_id
+            .take()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        for checkpoint in &mut entry.training_checkpoints {
+            checkpoint.path = checkpoint.path.trim().to_string();
+        }
+        entry
+            .training_checkpoints
+            .sort_by(|a, b| (a.step, a.epoch, &a.path).cmp(&(b.step, b.epoch, &b.path)));
+        entry
+            .training_checkpoints
+            .dedup_by(|a, b| a.step == b.step && a.epoch == b.epoch && a.path == b.path);
     }
 
     Ok(parsed)
@@ -2084,6 +2115,19 @@ fn build_sa3_lora_entries(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Ve
         .map(|(name, entry)| {
             let checkpoint_path = PathBuf::from(&entry.path);
             let checkpoint_exists = looks_like_sa3_lora_checkpoint(&checkpoint_path);
+            let training_checkpoints = entry
+                .training_checkpoints
+                .iter()
+                .filter(|checkpoint| {
+                    looks_like_sa3_lora_checkpoint(&PathBuf::from(&checkpoint.path))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let selected_training_step = entry.selected_training_step.filter(|step| {
+                training_checkpoints
+                    .iter()
+                    .any(|checkpoint| checkpoint.step == *step)
+            });
             let resolved_prompts_path = resolve_sa3_prompts_source(entry);
             let caption_count = resolved_prompts_path
                 .as_ref()
@@ -2107,6 +2151,9 @@ fn build_sa3_lora_entries(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Ve
                 strength: entry.strength,
                 checkpoint_exists,
                 registered: checkpoint_exists,
+                training_job_id: entry.training_job_id.clone(),
+                training_checkpoints,
+                selected_training_step,
             }
         })
         .collect()
@@ -3192,7 +3239,7 @@ fn discover_sa3_training_pids(state: &Sa3LoraTrainingState) -> Vec<u32> {
     command.args([
         "-NoProfile",
         "-Command",
-        "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'pre_encode\\.py' -or $_.CommandLine -match 'lora_train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+        "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'pre_encode\\.py' -or $_.CommandLine -match 'lora_train\\.py' -or $_.CommandLine -match 'lora_train_lightning\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
     ]);
     hide_std_console_window(&mut command);
     let output = command.output();
@@ -3257,7 +3304,7 @@ fn discover_carey_ace_training_pids(state: &CareyAceTrainingState) -> Vec<u32> {
     command.args([
         "-NoProfile",
         "-Command",
-        "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+        "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'train_lora_job\\.py' -or $_.CommandLine -match 'lora_train_lightning\\.py' -or $_.CommandLine -match 'train\\.py') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
     ]);
     hide_std_console_window(&mut command);
     let output = command.output();
@@ -3827,6 +3874,7 @@ pub fn run() {
             cancel_carey_ace_lora_training,
             get_sa3_lora_state,
             upsert_sa3_lora,
+            activate_sa3_lora_checkpoint,
             remove_sa3_lora,
             build_sa3_lora_prompts,
             get_sa3_dataset_sidecars,
@@ -5228,6 +5276,131 @@ fn get_sa3_lora_state(
     build_sa3_lora_state(repo_root.inner())
 }
 
+fn install_managed_sa3_checkpoint(source: &Path, destination: &Path) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("{} has no parent folder", destination.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+
+    let file_name = destination
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let suffix = format!("{}-{nonce}", std::process::id());
+    let staged = parent.join(format!(".{file_name}.{suffix}.tmp"));
+    let backup = parent.join(format!(".{file_name}.{suffix}.bak"));
+
+    let source_len = std::fs::metadata(source)
+        .map_err(|e| format!("Cannot inspect {}: {}", source.display(), e))?
+        .len();
+    let copied = std::fs::copy(source, &staged).map_err(|e| {
+        format!(
+            "Cannot stage checkpoint {} at {}: {}",
+            source.display(),
+            staged.display(),
+            e
+        )
+    })?;
+    if copied != source_len {
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!(
+            "Checkpoint copy was incomplete: copied {copied} of {source_len} bytes"
+        ));
+    }
+
+    let had_destination = destination.is_file();
+    if had_destination {
+        if let Err(error) = std::fs::rename(destination, &backup) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(format!(
+                "Cannot prepare {} for replacement: {}",
+                destination.display(),
+                error
+            ));
+        }
+    }
+
+    if let Err(error) = std::fs::rename(&staged, destination) {
+        if had_destination {
+            let _ = std::fs::rename(&backup, destination);
+        }
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!(
+            "Cannot activate checkpoint at {}: {}",
+            destination.display(),
+            error
+        ));
+    }
+
+    if had_destination {
+        let _ = std::fs::remove_file(&backup);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod sa3_lora_checkpoint_tests {
+    use super::{install_managed_sa3_checkpoint, Sa3LoraCatalogEntry};
+
+    fn temp_test_dir() -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "gary4local-sa3-checkpoint-test-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn manual_catalog_entries_have_no_training_checkpoint_history() {
+        let entry: Sa3LoraCatalogEntry = serde_json::from_value(serde_json::json!({
+            "path": "C:\\loras\\manual.safetensors",
+            "strength": 1.0
+        }))
+        .expect("manual catalog entry should deserialize");
+
+        assert!(entry.training_job_id.is_none());
+        assert!(entry.training_checkpoints.is_empty());
+        assert!(entry.selected_training_step.is_none());
+    }
+
+    #[test]
+    fn managed_checkpoint_install_replaces_the_active_file() {
+        let root = temp_test_dir();
+        std::fs::create_dir_all(&root).expect("create test folder");
+        let source = root.join("step-500.safetensors");
+        let destination = root.join("active.safetensors");
+        std::fs::write(&source, b"checkpoint-500").expect("write source checkpoint");
+        std::fs::write(&destination, b"checkpoint-1000").expect("write active checkpoint");
+
+        install_managed_sa3_checkpoint(&source, &destination)
+            .expect("checkpoint activation should succeed");
+
+        assert_eq!(
+            std::fs::read(&destination).expect("read active checkpoint"),
+            b"checkpoint-500"
+        );
+        let leftovers = std::fs::read_dir(&root)
+            .expect("read test folder")
+            .flatten()
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                name.ends_with(".tmp") || name.ends_with(".bak")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+
+        std::fs::remove_dir_all(root).expect("remove test folder");
+    }
+}
+
 #[tauri::command]
 async fn upsert_sa3_lora(
     name: String,
@@ -5269,8 +5442,62 @@ async fn upsert_sa3_lora(
             path: checkpoint_file.to_string_lossy().to_string(),
             prompts_path: normalized_prompts_path,
             strength,
+            training_job_id: None,
+            training_checkpoints: Vec::new(),
+            selected_training_step: None,
         },
     );
+    save_sa3_lora_catalog(&catalog)?;
+    build_sa3_lora_state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn activate_sa3_lora_checkpoint(
+    name: String,
+    step: u32,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3LoraState, String> {
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let mut catalog = read_sa3_lora_catalog()?;
+    let checkpoint = {
+        let entry = catalog
+            .get(&normalized_name)
+            .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+        if entry.training_job_id.is_none() || entry.training_checkpoints.is_empty() {
+            return Err(format!(
+                "LoRA '{}' was not registered by Gary's SA3 trainer",
+                normalized_name
+            ));
+        }
+        entry
+            .training_checkpoints
+            .iter()
+            .find(|checkpoint| checkpoint.step == step)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Training checkpoint step {} is not registered for '{}'",
+                    step, normalized_name
+                )
+            })?
+    };
+
+    let source = PathBuf::from(&checkpoint.path);
+    if !looks_like_sa3_lora_checkpoint(&source) {
+        return Err(format!(
+            "Training checkpoint {} is missing or invalid",
+            source.display()
+        ));
+    }
+
+    let managed_path = sa3_lora_dir().join(format!("{}.safetensors", normalized_name));
+    install_managed_sa3_checkpoint(&source, &managed_path)?;
+
+    if let Some(entry) = catalog.get_mut(&normalized_name) {
+        entry.path = managed_path.to_string_lossy().to_string();
+        entry.selected_training_step = Some(checkpoint.step);
+    }
     save_sa3_lora_catalog(&catalog)?;
     build_sa3_lora_state(repo_root.inner())
 }
@@ -5823,6 +6050,7 @@ async fn start_sa3_lora_training(
     learning_rate: f64,
     loudness_fix_enabled: bool,
     target_latent_rms: f64,
+    exclude_seconds_total: bool,
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3LoraTrainingState, String> {
     let normalized_name = sanitize_lora_name(&name)
@@ -5981,6 +6209,12 @@ async fn start_sa3_lora_training(
     if loudness_fix_enabled {
         cmd.arg("--per-track-target-latent-rms")
             .arg(target_latent_rms.to_string());
+    }
+    // Optional: skip the seconds_total conditioner (228 modules instead of 229).
+    // Official SA3 docs recommend this on small datasets to prevent "conditioner
+    // hijacking", and the sa3.cpp trainer excludes it by default.
+    if exclude_seconds_total {
+        cmd.arg("--lora-exclude").arg("seconds_total");
     }
     cmd.current_dir(repo_root.join("services").join("sa3"))
         .stdout(std::process::Stdio::from(log_file))

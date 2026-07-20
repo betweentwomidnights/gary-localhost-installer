@@ -43,8 +43,15 @@ copies the final `.safetensors` adapter to `%APPDATA%/Gary4JUCE/sa3/loras` and
 adds it to the existing SA3 LoRA catalog.
 
 Training uses the saved Gary4local Hugging Face token and needs access to
-`stabilityai/stable-audio-3-medium-base`. The SA3 generation service should be
-stopped before training so the GPU has enough VRAM.
+`stabilityai/stable-audio-3-medium-base`. Adapters are trained against the
+**base** (pre-ARC-distillation) checkpoint and then applied to
+`stabilityai/stable-audio-3-medium` at inference — this is deliberate, and it is
+how every reference LoRA was trained. Training against the distilled `medium`
+weights instead is an objective/weights mismatch that produces a low-frequency
+"drone" in generations. The `medium-base` snapshot bundles both the training
+model and its T5Gemma conditioner, so it is the only download training needs.
+The SA3 generation service should be stopped before training so the GPU has
+enough VRAM.
 
 Plain `.txt` sidecars are literal prompts: the complete trimmed file becomes
 the clip's prompt. Labels such as `Title:` have no special parsing in a text

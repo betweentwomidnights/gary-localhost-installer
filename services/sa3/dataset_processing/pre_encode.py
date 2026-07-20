@@ -571,13 +571,16 @@ def _encode_shard_inner(rank, world_size, cfg):
                     latent_len = latent_np.shape[-1]
                     duration = actual_samples / sample_rate
 
-                    # Padding mask
-                    pad_mask = torch.ones(max_samples, device="cpu")
-                    if actual_samples < max_samples:
-                        pad_mask[actual_samples:] = 0.0
-                    pm = F.interpolate(
-                        pad_mask.view(1, 1, -1), size=latent_len, mode="nearest"
-                    ).squeeze()
+                    # Store variable-length, UNPADDED latents (Spark parity):
+                    # truncate the encoded-silence tail to the valid region so
+                    # every stored latent is real audio with an all-1s mask.
+                    # Runtime padding for short clips is then handled uniformly
+                    # by silence.npy (written below), never by a zero latent
+                    # (which decodes to a ~32 Hz drone, not silence).
+                    valid_len = _valid_latent_length(actual_samples, max_samples, latent_len)
+                    latent_np = latent_np[:, :valid_len]
+                    latent_len = valid_len
+                    pm = torch.ones(latent_len)
 
                     npy_path  = latent_root / out_rel
                     json_path = latent_root / out_rel.with_suffix(".json")
@@ -656,12 +659,11 @@ def _encode_shard_inner(rank, world_size, cfg):
                     latent_len = latent_np.shape[-1]
                     duration = actual_samples / sample_rate
 
-                    pad_mask = torch.ones(max_samples, device="cpu")
-                    if actual_samples < max_samples:
-                        pad_mask[actual_samples:] = 0.0
-                    pm = F.interpolate(
-                        pad_mask.view(1, 1, -1), size=latent_len, mode="nearest"
-                    ).squeeze()
+                    # Variable-length, UNPADDED (Spark parity) — see batched path.
+                    valid_len = _valid_latent_length(actual_samples, max_samples, latent_len)
+                    latent_np = latent_np[:, :valid_len]
+                    latent_len = valid_len
+                    pm = torch.ones(latent_len)
 
                     npy_path  = latent_root / out_rel
                     json_path = latent_root / out_rel.with_suffix(".json")
@@ -701,6 +703,34 @@ def _encode_shard_inner(rank, world_size, cfg):
             torch.cuda.empty_cache()
 
     prefetch_pool.shutdown(wait=False)
+
+    # Write a real encoded-silence latent for PreEncodedDataset's variable-length
+    # pad path. Without it, short clips get zero-latent padded, and a zero latent
+    # decodes to a constant ~32 Hz drone (~-26 dBFS) — NOT silence. That is the
+    # "computer hum" that appears once training crops exceed the clip length. An
+    # encoded silent clip decodes to true digital silence instead. Written once
+    # (rank 0), NOT loudness-normalized (raw encoded silence is the correct pad),
+    # and excluded from the training file list by the dataset loader.
+    if rank == 0:
+        silence_path = latent_root / "silence.npy"
+        if cfg["force"] or not silence_path.exists():
+            try:
+                # Match the Spark: silence_audio = zeros(1, io_channels, sample_size)
+                # so silence.npy comes out (1, C, 3072) like the reference pipeline.
+                sil_samples = max(cfg["ds_ratio"], max_samples)
+                sil_audio = torch.zeros(1, audio_channels, sil_samples, device=device)
+                if cfg["half"]:
+                    sil_audio = sil_audio.half()
+                with torch.no_grad():
+                    sil_latent = pretransform.model.encode_audio(
+                        sil_audio, chunked=(sil_samples > 30 * sample_rate)
+                    )
+                sil_np = sil_latent.cpu().float().numpy()  # [1, D, T]
+                np.save(str(silence_path), sil_np)
+                print(f"{prefix}wrote silence latent {list(sil_np.shape)} -> {silence_path}", flush=True)
+            except Exception as e:
+                print(f"{prefix}WARNING: could not write silence.npy ({e}); "
+                      f"short clips will fall back to zero-latent padding", flush=True)
 
     # Write per-worker stats so main process can aggregate
     if cfg["per_track_target_latent_rms"] > 0:
@@ -889,7 +919,13 @@ def main():
     if args.max_duration is not None:
         max_samples = int(args.max_duration * sample_rate)
     else:
-        max_samples = int(600 * sample_rate)  # 10 minutes max
+        # Match the Spark's pre_encode_dataset.py --sample_size default exactly.
+        # 12,582,912 samples = 3072 latent frames = 285.3s at 44.1kHz/4096. Clips
+        # longer than this are cropped at encode time (the reference pipeline does
+        # the same), which keeps our stored latents identical in extent to the
+        # ones every shipped Spark LoRA was trained on. NOTE: upstream's help text
+        # claims "~380s" — that is wrong, it is 285.3s.
+        max_samples = 12582912
     max_samples = (max_samples // ds_ratio) * ds_ratio
 
     # --- Extract pretransform weights once ------------------------------------
@@ -1058,6 +1094,35 @@ def main():
             all_achieved_rms,
         )
     print(f"Output: {latent_root}")
+
+    # --- Loudness sanity gate -------------------------------------------------
+    #
+    # Mirrors stage 2 of the Spark pipeline: refuse to hand non-loudness-neutral
+    # latents to the trainer. Training on them is what produced the old head->tail
+    # loudness drift, and a silently-off dataset is very hard to diagnose later by
+    # ear. Only applies when the per-track loudness fix is actually enabled.
+    if args.per_track_target_latent_rms > 0 and all_achieved_rms:
+        target = args.per_track_target_latent_rms
+        mean_rms = statistics.fmean(all_achieved_rms)
+        std_rms = statistics.pstdev(all_achieved_rms) if len(all_achieved_rms) > 1 else 0.0
+        rel = abs(mean_rms - target) / target
+        print(f"[gate] achieved RMS mean={mean_rms:.4f} std={std_rms:.4f} "
+              f"(target {target:.2f}, rel. error {rel * 100:.2f}%)")
+        problems = []
+        if rel > 0.05:
+            problems.append(f"mean RMS {mean_rms:.4f} is {rel * 100:.1f}% off target "
+                            f"{target:.2f} (limit 5%)")
+        if std_rms > 0.12:
+            problems.append(f"RMS spread std={std_rms:.4f} exceeds 0.12")
+        if problems:
+            print("\nERROR: latents are not loudness-neutral; refusing to train on them.",
+                  file=sys.stderr)
+            for p in problems:
+                print(f"  - {p}", file=sys.stderr)
+            print("  Re-check the dataset (very quiet/loud or near-silent clips are the "
+                  "usual cause), or disable the loudness fix.", file=sys.stderr)
+            sys.exit(2)
+        print("[gate] latents are loudness-neutral; proceeding to training.")
 
 
 if __name__ == "__main__":

@@ -21,11 +21,34 @@ from pathlib import Path
 
 SERVICE_DIR = Path(__file__).resolve().parent
 MODEL_KEY = "sa3-medium"
-BASE_REPO = "stabilityai/stable-audio-3-medium-base"
+# Train the adapter against the *base* (pre-ARC-distillation) checkpoint and apply
+# it to `stable-audio-3-medium` at inference — this is what the Spark does
+# (`train_lora.py --model medium-base`) and what every shipped LoRA (kev, koan,
+# keygen, succession) was trained on. Training a rectified-flow LoRA against the
+# ARC-distilled `medium` weights is an objective/weights mismatch; the adapter
+# tries to correct for it at the output projection, which shows up as
+# postprocess_conv inflation and the low-frequency "drone".
+# medium-base carries model.safetensors, model_config.json AND the full
+# t5gemma-b-b-ul2/ conditioner, so this single snapshot still covers everything.
+MODEL_REPO = "stabilityai/stable-audio-3-medium-base"
+T5GEMMA_SUBFOLDER = "t5gemma-b-b-ul2"
+MODEL_SNAPSHOT_FILES = (
+    "model_config.json",
+    "model.safetensors",
+    f"{T5GEMMA_SUBFOLDER}/config.json",
+    f"{T5GEMMA_SUBFOLDER}/model.safetensors",
+    f"{T5GEMMA_SUBFOLDER}/tokenizer.json",
+    f"{T5GEMMA_SUBFOLDER}/tokenizer_config.json",
+)
 TRAINING_DEPENDENCIES = {
     "accelerate": "accelerate>=0.30",
     "dill": "dill>=0.3.8",
     "audio_metadata": "audio-metadata>=0.11",
+    # SA3 LoRA training runs on the official Lightning DiffusionCondTrainingWrapper.
+    # Auto-installed at training start (checked via importlib below) so auto-updater
+    # users never have to run "rebuild env" to pick it up. All heavy deps (torch,
+    # numpy) are already present; this only pulls small pure-Python wheels.
+    "pytorch_lightning": "pytorch-lightning>=2.2,<2.6",
 }
 
 
@@ -149,35 +172,68 @@ def terminate_process_tree(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
-def link_or_copy(src: Path, dst: Path) -> None:
+def link_or_copy(src: Path, dst: Path, *, replace: bool = False) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
-        return
+        try:
+            if os.path.samefile(src, dst):
+                return
+        except OSError:
+            pass
+        if not replace:
+            return
+
+    staged = dst.with_name(dst.name + ".staging") if replace else dst
+    if staged.exists():
+        staged.unlink()
     try:
-        os.link(src, dst)
-        return
+        os.link(src, staged)
     except OSError:
-        pass
-    shutil.copy2(src, dst)
+        shutil.copy2(src, staged)
+    if replace:
+        os.replace(staged, dst)
 
 
-def stage_base_model(args) -> tuple[Path, Path]:
-    from huggingface_hub import hf_hub_download
+def resolve_model_snapshot() -> Path:
+    from huggingface_hub import snapshot_download
 
+    kwargs = {
+        "repo_id": MODEL_REPO,
+        "allow_patterns": list(MODEL_SNAPSHOT_FILES),
+    }
+    try:
+        snapshot_dir = Path(snapshot_download(**kwargs, local_files_only=True))
+    except Exception:
+        snapshot_dir = Path(snapshot_download(**kwargs))
+
+    missing = [name for name in MODEL_SNAPSHOT_FILES if not (snapshot_dir / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            f"The cached {MODEL_REPO} snapshot is incomplete; missing: {', '.join(missing)}"
+        )
+    return snapshot_dir
+
+
+def stage_base_model(args) -> tuple[Path, Path, Path]:
     check_cancel(args)
     update_status(args, status="running", phase="staging-model", message="Staging SA3 base model")
-    config_src = Path(hf_hub_download(repo_id=BASE_REPO, filename="model_config.json"))
-    check_cancel(args)
-    ckpt_src = Path(hf_hub_download(repo_id=BASE_REPO, filename="model.safetensors"))
+    snapshot_dir = resolve_model_snapshot()
     check_cancel(args)
 
     base_dir = args.models_dir / MODEL_KEY / "base"
     base_dir.mkdir(parents=True, exist_ok=True)
-    config_dst = base_dir / "model_config.json"
-    ckpt_dst = base_dir / "model.safetensors"
-    shutil.copy2(config_src, config_dst)
-    link_or_copy(ckpt_src, ckpt_dst)
-    return config_dst, ckpt_dst
+    for relative_path in MODEL_SNAPSHOT_FILES:
+        check_cancel(args)
+        link_or_copy(
+            snapshot_dir / relative_path,
+            base_dir / relative_path,
+            replace=True,
+        )
+    return (
+        base_dir / "model_config.json",
+        base_dir / "model.safetensors",
+        base_dir / T5GEMMA_SUBFOLDER,
+    )
 
 
 def require_cuda(args) -> None:
@@ -187,6 +243,33 @@ def require_cuda(args) -> None:
 
     if not torch.cuda.is_available():
         raise RuntimeError("SA3 LoRA training requires an NVIDIA CUDA GPU.")
+
+
+def resolve_precision(args) -> None:
+    """Pick bf16 when the GPU supports it (Ampere+), else fall back to fp16.
+
+    SA3 was trained in bf16 and the official trainer uses bf16 throughout. Its
+    DoRA parametrization normalizes over the full weight (magnitude/direction
+    decomposition = a norm-division), which fp16's narrow 5-bit exponent range
+    corrupts — that's the "metallic"/flattened adapter that degrades as you turn
+    strength up. bf16 keeps fp32's exponent range and fixes it. Turing (RTX 20xx)
+    has no native bf16, so we fall back to fp16 there rather than forcing slow
+    emulation. Stored on args and consumed by build_model_config (base weights)
+    and the lora_train.py --precision arg (autocast)."""
+    import torch
+
+    use_bf16 = bool(torch.cuda.is_available() and torch.cuda.is_bf16_supported())
+    args.base_precision = "bf16" if use_bf16 else "fp16"
+    args.amp_precision = "bf16-mixed" if use_bf16 else "16-mixed"
+    print(
+        f"[precision] {args.base_precision} base / {args.amp_precision} AMP "
+        + (
+            "(GPU supports bf16)"
+            if use_bf16
+            else "(bf16 unsupported on this GPU; falling back to fp16)"
+        ),
+        flush=True,
+    )
 
 
 def run_step(args, command: list[str], phase: str, message: str, cwd: Path | None = None) -> None:
@@ -245,15 +328,27 @@ def latent_crop_length(seconds: float) -> int:
 
 
 def build_dataset_config(args, latent_dir: Path) -> Path:
+    # We deliberately diverge from underfit's dashboard here in favor of a
+    # trainer that's trivial to reason about:
+    #   * NO path/filename prompts. Feeding relpath (e.g.
+    #     "01 - Montanita [XrXqKoCPvE0].npy") as text conditioning teaches the
+    #     encoder garbage. Unconditional generation is covered by
+    #     cfg_dropout_prob (see build_model_config), not by path prompts.
+    #   * tag_keys is just ["prompt"] — the caption our auto-labeller writes.
+    #     No title/artist/genre/bpm re-labeling, so it's obvious from the
+    #     sidecar exactly what a clip trains on.
+    # When a fixed prompt is supplied we still blend it with the caption so the
+    # fixed token doesn't fully crowd out real captions.
+    has_fixed = bool(args.fixed_prompt.strip())
     prompt_config = {
         "use_tags": True,
-        "use_paths": not bool(args.fixed_prompt.strip()),
-        "use_fixed": bool(args.fixed_prompt.strip()),
+        "use_paths": False,
+        "use_fixed": has_fixed,
         "fixed_text": args.fixed_prompt.strip(),
-        "balance": {"tags": 40, "paths": 30, "fixed": 60},
-        "tag_keys": ["prompt", "title", "artist", "genre", "bpm"],
-        "hide_tag_names": False,
-        "shuffle": True,
+        "balance": {"tags": 40, "fixed": 60},
+        "tag_keys": ["prompt"],
+        "hide_tag_names": True,
+        "shuffle": False,
     }
     payload = {
         "dataset_type": "pre_encoded",
@@ -273,14 +368,14 @@ def build_dataset_config(args, latent_dir: Path) -> Path:
     return path
 
 
-def build_model_config(args) -> Path:
+def build_model_config(args, t5gemma_dir: Path) -> Path:
     template_path = SERVICE_DIR / "dashboard" / "models" / MODEL_KEY / "training_template.json"
     payload = read_json(template_path, None)
     if not isinstance(payload, dict):
         raise RuntimeError(f"Could not read training template: {template_path}")
 
     training = payload.setdefault("training", {})
-    training["base_precision"] = "fp16"
+    training["base_precision"] = getattr(args, "base_precision", "fp16")
     training["cfg_dropout_prob"] = 0.1
     training.setdefault("demo", {})["demo_every"] = 0
     lora = training.setdefault("lora_config", {})
@@ -289,12 +384,39 @@ def build_model_config(args) -> Path:
     lora["adapter_type"] = args.adapter_type
     if args.lora_include.strip():
         lora["include"] = [item.strip() for item in args.lora_include.split(",") if item.strip()]
-    if args.lora_exclude.strip():
-        lora["exclude"] = [item.strip() for item in args.lora_exclude.split(",") if item.strip()]
+    # Always exclude the seconds_total conditioner from the adapter (228 modules,
+    # not 229). SA3's own docs recommend this on small datasets ("conditioner
+    # hijacking"), and our pre-encoded pipeline makes it worse: seconds_total is
+    # stored as the full clip duration and is NOT updated when a shorter window is
+    # cropped at train time (see stable_audio_3/data/dataset.py). So every crop
+    # feeds a duration that doesn't match the latent length; letting the adapter
+    # learn that conditioner bakes in a length-dependent artifact (reverb that
+    # gets worse the longer you generate). kev, our best DGX LoRA, barely adapted
+    # this layer anyway (bottom ~10% of adaptation energy).
+    # Match the Spark recipe: --include/--exclude default to None, i.e. train all
+    # 229 modules (seconds_total conditioner INCLUDED). The shipped Spark LoRAs
+    # (kev etc.) are all 229 and clean; excluding seconds_total was a divergence
+    # we're reverting. Only honor an explicit user-supplied exclude.
+    exclude = [item.strip() for item in args.lora_exclude.split(",") if item.strip()]
+    if exclude:
+        lora["exclude"] = list(dict.fromkeys(exclude))  # dedupe, keep order
     if args.learning_rate > 0:
         opt = training.setdefault("optimizer_configs", {}).setdefault("diffusion", {}).setdefault("optimizer", {})
         opt.setdefault("type", "AdamW")
         opt.setdefault("config", {})["lr"] = args.learning_rate
+
+    t5gemma_found = False
+    conditioning = payload.get("model", {}).get("conditioning", {})
+    for conditioner in conditioning.get("configs", []):
+        if conditioner.get("type") != "t5gemma":
+            continue
+        config = conditioner.setdefault("config", {})
+        config["model_path"] = str(t5gemma_dir)
+        config.pop("repo_id", None)
+        config.pop("subfolder", None)
+        t5gemma_found = True
+    if not t5gemma_found:
+        raise RuntimeError("Training template does not define a T5Gemma conditioner")
     payload["base_model"] = MODEL_KEY
 
     path = args.run_dir / f"{args.job_id}_model.json"
@@ -302,12 +424,27 @@ def build_model_config(args) -> Path:
     return path
 
 
-def newest_checkpoint(run_dir: Path) -> Path | None:
-    checkpoints = sorted(run_dir.rglob("*.safetensors"), key=lambda path: path.stat().st_mtime)
-    return checkpoints[-1] if checkpoints else None
+CHECKPOINT_FILENAME_RE = re.compile(r"-step=(\d+)-epoch=(\d+)\.safetensors$", re.IGNORECASE)
 
 
-def register_lora(args, checkpoint: Path) -> Path:
+def training_checkpoints(run_dir: Path) -> list[dict]:
+    checkpoints = []
+    for path in run_dir.rglob("*.safetensors"):
+        match = CHECKPOINT_FILENAME_RE.search(path.name)
+        if not match:
+            continue
+        checkpoints.append(
+            {
+                "step": int(match.group(1)),
+                "epoch": int(match.group(2)),
+                "path": str(path.resolve()),
+            }
+        )
+    checkpoints.sort(key=lambda item: (item["step"], item["epoch"], item["path"]))
+    return checkpoints
+
+
+def register_lora(args, checkpoint: Path, checkpoints: list[dict]) -> Path:
     check_cancel(args)
     final_dir = args.lora_dir
     final_dir.mkdir(parents=True, exist_ok=True)
@@ -321,6 +458,9 @@ def register_lora(args, checkpoint: Path) -> Path:
         "path": str(final_path),
         "promptsPath": str(args.dataset_dir),
         "strength": 1.0,
+        "trainingJobId": args.job_id,
+        "trainingCheckpoints": checkpoints,
+        "selectedTrainingStep": checkpoints[-1]["step"],
     }
     write_json(args.catalog_path, catalog)
     return final_path
@@ -388,7 +528,8 @@ def main() -> int:
 
         ensure_training_dependencies(args)
         require_cuda(args)
-        _, base_ckpt = stage_base_model(args)
+        resolve_precision(args)
+        _, base_ckpt, t5gemma_dir = stage_base_model(args)
 
         encoded_root = args.run_dir / "encoded"
         pre_encode_command = [
@@ -424,7 +565,7 @@ def main() -> int:
         latent_dir = encoded_root / "latents" / MODEL_KEY
         check_cancel(args)
         dataset_config = build_dataset_config(args, latent_dir)
-        model_config = build_model_config(args)
+        model_config = build_model_config(args, t5gemma_dir)
         demos_dir = args.run_dir / "demos"
         demos_dir.mkdir(parents=True, exist_ok=True)
         runs_root = args.training_root / "runs"
@@ -435,7 +576,7 @@ def main() -> int:
             [
                 sys.executable,
                 "-u",
-                str(SERVICE_DIR / "lora_train.py"),
+                str(SERVICE_DIR / "lora_train_lightning.py"),
                 "--name",
                 args.job_id,
                 "--config-file",
@@ -449,27 +590,31 @@ def main() -> int:
                 "--pretrained-ckpt-path",
                 str(base_ckpt),
                 "--num-workers",
-                "1",
+                "0",
                 "--precision",
-                "16-mixed",
+                getattr(args, "amp_precision", "16-mixed"),
                 "--batch-size",
                 str(args.batch_size),
                 "--checkpoint-every",
                 str(args.checkpoint_every),
                 "--max-steps",
                 str(args.max_steps),
+                # The Spark trains with NO gradient clipping: scripts/train_lora.py
+                # never defines --gradient_clip_val, so its `hasattr` guard sets it
+                # to None. 0 here is converted to None by the entry point.
                 "--gradient-clip-val",
-                "1.0",
+                "0",
             ],
             "training",
             "Training LoRA",
             cwd=demos_dir,
         )
 
-        checkpoint = newest_checkpoint(runs_root / args.job_id)
-        if checkpoint is None:
+        checkpoints = training_checkpoints(runs_root / args.job_id)
+        if not checkpoints:
             raise RuntimeError("Training finished but no .safetensors checkpoint was found")
-        final_path = register_lora(args, checkpoint)
+        checkpoint = Path(checkpoints[-1]["path"])
+        final_path = register_lora(args, checkpoint, checkpoints)
         maybe_build_prompts(args)
         update_status(
             args,

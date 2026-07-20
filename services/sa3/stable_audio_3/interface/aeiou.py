@@ -1,12 +1,19 @@
 # Modified from https://github.com/drscotthawley/aeiou/blob/main/aeiou/viz.py under Apache 2.0 License
 # License can be found in LICENSES/LICENSE_AEIOU.txt
 
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-import matplotlib.cm as cm
-from matplotlib.colors import Normalize
-from matplotlib.figure import Figure
+# matplotlib + PIL are only used by the visualization helpers below
+# (point clouds, spectrogram images) — demo/logging paths that LoRA training
+# never exercises (demo_every=0). Import them optionally so the SA3 training env
+# doesn't have to ship matplotlib/Pillow just to load this module.
+try:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    import matplotlib.cm as cm
+    from matplotlib.colors import Normalize
+    from matplotlib.figure import Figure
+    from PIL import Image
+except ImportError:
+    FigureCanvasAgg = cm = Normalize = Figure = Image = None
 import numpy as np
-from PIL import Image
 
 import torch
 
@@ -257,7 +264,10 @@ def audio_spectrogram_image(waveform, power=2.0, sample_rate=48000, print=print,
     melspec = melspec[0] # TODO: only left channel for now
     return spectrogram_image(melspec, title="MelSpectrogram", ylabel='mel bins (log freq)', db_range=db_range, justimage=justimage, figsize=figsize, context_mask=context_mask)
 
-from matplotlib.ticker import AutoLocator 
+try:
+    from matplotlib.ticker import AutoLocator
+except ImportError:
+    AutoLocator = None
 def tokens_spectrogram_image(
         tokens,                # the embeddings themselves (in some diffusion codes these are called 'tokens')
         aspect='auto',         # aspect ratio of plot
