@@ -14,6 +14,15 @@
     strength: number;
     checkpointExists: boolean;
     registered: boolean;
+    trainingJobId: string | null;
+    trainingCheckpoints: Sa3TrainingCheckpoint[];
+    selectedTrainingStep: number | null;
+  }
+
+  interface Sa3TrainingCheckpoint {
+    step: number;
+    epoch: number;
+    path: string;
   }
 
   interface Sa3LoraState {
@@ -45,6 +54,8 @@
   let loading = $state(false);
   let saving = $state(false);
   let building = $state(false);
+  let switchingName = $state<string | null>(null);
+  let checkpointSelections = $state<Record<string, number>>({});
   let message: string | null = $state(null);
   let error: string | null = $state(null);
   let buildOutput: string | null = $state(null);
@@ -138,6 +149,43 @@
       error = describeError(e);
     } finally {
       saving = false;
+    }
+  }
+
+  function selectedCheckpointStep(entry: Sa3LoraEntry): number {
+    const selected = checkpointSelections[entry.name];
+    if (selected !== undefined) return selected;
+    if (entry.selectedTrainingStep !== null) return entry.selectedTrainingStep;
+    return entry.trainingCheckpoints[entry.trainingCheckpoints.length - 1]?.step ?? 0;
+  }
+
+  function chooseCheckpoint(name: string, event: Event) {
+    const target = event.currentTarget as HTMLSelectElement;
+    checkpointSelections = {
+      ...checkpointSelections,
+      [name]: Number(target.value),
+    };
+  }
+
+  async function activateCheckpoint(entry: Sa3LoraEntry) {
+    const step = selectedCheckpointStep(entry);
+    switchingName = entry.name;
+    error = null;
+    message = null;
+    buildOutput = null;
+    try {
+      loraState = await invoke<Sa3LoraState>("activate_sa3_lora_checkpoint", {
+        name: entry.name,
+        step,
+      });
+      checkpointSelections = { ...checkpointSelections, [entry.name]: step };
+      message = `${entry.name} now uses training step ${step}.${
+        serviceStatus === "running" ? " restart SA3 to load it." : ""
+      }`;
+    } catch (e) {
+      error = describeError(e);
+    } finally {
+      switchingName = null;
     }
   }
 
@@ -278,8 +326,46 @@
                   <div class="entry-name">{entry.name}</div>
                   <div class="entry-meta">strength {entry.strength}</div>
                 </div>
-                <button class="danger" onclick={() => removeLora(entry.name)}>remove</button>
+                <button class="danger" onclick={() => removeLora(entry.name)} disabled={switchingName === entry.name}>remove</button>
               </div>
+
+              {#if entry.trainingCheckpoints.length > 0}
+                <div class="checkpoint-switcher">
+                  <div class="entry-meta trained-meta">
+                    Gary-trained{entry.trainingJobId ? ` / ${entry.trainingJobId}` : ""}
+                    {#if entry.selectedTrainingStep !== null}
+                      / active step {entry.selectedTrainingStep}
+                    {/if}
+                  </div>
+                  {#if entry.trainingCheckpoints.length > 1}
+                    <div class="checkpoint-row">
+                      <label class="checkpoint-field">
+                        <span>training checkpoint</span>
+                        <select
+                          value={selectedCheckpointStep(entry)}
+                          onchange={(event) => chooseCheckpoint(entry.name, event)}
+                          disabled={switchingName === entry.name}
+                        >
+                          {#each entry.trainingCheckpoints as checkpoint}
+                            <option value={checkpoint.step} title={checkpoint.path}>
+                              step {checkpoint.step} / epoch {checkpoint.epoch}
+                            </option>
+                          {/each}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        class="checkpoint-action"
+                        onclick={() => activateCheckpoint(entry)}
+                        disabled={switchingName === entry.name || selectedCheckpointStep(entry) === entry.selectedTrainingStep}
+                      >
+                        {switchingName === entry.name ? "switching..." : "use checkpoint"}
+                      </button>
+                    </div>
+                    <div class="note">switching keeps this LoRA name and prompt pool unchanged.</div>
+                  {/if}
+                </div>
+              {/if}
 
               <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.path)} title="Show checkpoint in folder">
                 checkpoint: {entry.path}
@@ -523,6 +609,45 @@
     color: var(--text-primary);
   }
 
+  .checkpoint-switcher {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(0, 0, 0, 0.16);
+  }
+
+  .trained-meta {
+    margin-top: 0;
+    color: #9bd8aa;
+  }
+
+  .checkpoint-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) auto;
+    justify-content: start;
+    gap: 8px;
+    align-items: end;
+    margin-top: 8px;
+  }
+
+  .checkpoint-field {
+    display: grid;
+    gap: 5px;
+  }
+
+  .checkpoint-field span {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .checkpoint-field select {
+    width: 100%;
+  }
+
+  .checkpoint-action {
+    white-space: nowrap;
+  }
+
   .danger {
     border-color: #b24a4a;
     color: #ffb1b1;
@@ -567,7 +692,8 @@
       max-height: 94vh;
     }
 
-    .path-row {
+    .path-row,
+    .checkpoint-row {
       grid-template-columns: 1fr;
     }
   }

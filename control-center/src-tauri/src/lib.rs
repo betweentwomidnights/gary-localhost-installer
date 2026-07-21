@@ -2208,6 +2208,20 @@ fn ensure_default_sa3_prompts(runtime_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Regenerate the on-disk LoRA registry from the catalog.
+///
+/// The trainer only writes the *catalog*; the registry is what gary4juce reads.
+/// Until this was called on training completion, a freshly trained LoRA stayed
+/// invisible to gary4juce until the user happened to open the "add LoRAs" modal
+/// (which calls build_sa3_lora_state, and that is what actually rewrote the
+/// registry). Deliberately lighter than build_sa3_lora_state: no runtime_root and
+/// no prompt-defaults work, so it is safe to call from a background task.
+fn refresh_sa3_lora_registry() -> Result<(), String> {
+    let catalog = read_sa3_lora_catalog()?;
+    let entries = build_sa3_lora_entries(&catalog);
+    write_sa3_lora_registry(&entries)
+}
+
 fn build_sa3_lora_state(runtime_root: &Path) -> Result<Sa3LoraState, String> {
     ensure_default_sa3_prompts(runtime_root)?;
     let catalog = read_sa3_lora_catalog()?;
@@ -3378,6 +3392,39 @@ async fn try_reload_carey_admin() -> bool {
         .await
     {
         Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+/// Ask a running SA3 service to re-apply its LoRA adapters.
+///
+/// SA3 bakes adapters into the pipeline at load time (api.py `load_pipeline` ->
+/// `loaded.load_lora(paths)`), so rewriting the catalog/registry on disk does not
+/// affect a service that is already running — switching a checkpoint would
+/// silently keep serving the previously loaded adapter until a manual restart.
+/// `/reload` does `load_pipeline(force=True)`, so this is a full model reload and
+/// takes a while; it returns 409 when a generation is in flight. A false return
+/// just means "not reloaded" (service down, busy, or timed out) and is not fatal.
+async fn try_reload_sa3_admin() -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+
+    match client.post("http://localhost:8006/reload").send().await {
+        Ok(response) => {
+            let status = response.status();
+            if status.as_u16() == 409 {
+                log::warn!(
+                    "SA3 service was busy generating; LoRA adapters were not reloaded. \
+                     Restart the SA3 service to apply the change."
+                );
+            }
+            status.is_success()
+        }
         Err(_) => false,
     }
 }
@@ -5448,7 +5495,11 @@ async fn upsert_sa3_lora(
         },
     );
     save_sa3_lora_catalog(&catalog)?;
-    build_sa3_lora_state(repo_root.inner())
+    let state = build_sa3_lora_state(repo_root.inner())?;
+    // Adapters are baked into the pipeline at load time, so a running SA3 service
+    // would keep serving the old adapter until restarted. Ask it to re-apply.
+    let _ = try_reload_sa3_admin().await;
+    Ok(state)
 }
 
 #[tauri::command]
@@ -5499,7 +5550,11 @@ async fn activate_sa3_lora_checkpoint(
         entry.selected_training_step = Some(checkpoint.step);
     }
     save_sa3_lora_catalog(&catalog)?;
-    build_sa3_lora_state(repo_root.inner())
+    let state = build_sa3_lora_state(repo_root.inner())?;
+    // Adapters are baked into the pipeline at load time, so a running SA3 service
+    // would keep serving the old adapter until restarted. Ask it to re-apply.
+    let _ = try_reload_sa3_admin().await;
+    Ok(state)
 }
 
 #[tauri::command]
@@ -5512,7 +5567,11 @@ async fn remove_sa3_lora(
     let mut catalog = read_sa3_lora_catalog()?;
     catalog.remove(&normalized_name);
     save_sa3_lora_catalog(&catalog)?;
-    build_sa3_lora_state(repo_root.inner())
+    let state = build_sa3_lora_state(repo_root.inner())?;
+    // Adapters are baked into the pipeline at load time, so a running SA3 service
+    // would keep serving the old adapter until restarted. Ask it to re-apply.
+    let _ = try_reload_sa3_admin().await;
+    Ok(state)
 }
 
 #[tauri::command]
@@ -6258,6 +6317,14 @@ async fn start_sa3_lora_training(
     tauri::async_runtime::spawn(async move {
         let exit_result = child.wait().await;
         let state = read_sa3_training_status_file(&watched_status_path);
+        // The trainer registered the finished LoRA in the catalog; rebuild the
+        // registry now so gary4juce picks it up immediately instead of only after
+        // someone opens the "add LoRAs" modal.
+        if state.status == "completed" {
+            if let Err(error) = refresh_sa3_lora_registry() {
+                log::warn!("Could not refresh the SA3 LoRA registry after training: {error}");
+            }
+        }
         let warnings = if state.launcher_pid == Some(pid)
             || (state.launcher_pid.is_none() && state.pid == Some(pid))
         {
