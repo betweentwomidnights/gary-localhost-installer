@@ -4,6 +4,40 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.2.0
+
+v0.2.0 swaps the SA3 LoRA trainer over to stable-audio-3's own Lightning
+trainer instead of the hand-written training loop we were carrying. it's the
+same code the inference service already uses, so the training step matches the
+reference exactly instead of slowly drifting from it. `pytorch-lightning`
+installs itself the first time you train, so you shouldn't need **rebuild env**
+for it.
+
+the shared trigger word finally does what you'd expect. it gets prepended to
+every caption, so you end up training on `my-trigger, some caption` and the word
+comes to mean the style. before this it was *replacing* the caption around 60%
+of the time, which meant a lot of steps trained on a bare trigger with nothing
+describing the audio. if you trained a LoRA with a trigger word on an older
+version, it's worth retraining it. the "prepend shared phrase" toggle in the
+prompt editor is gone too — sidecars are just captions now, and the trigger is
+handled for you.
+
+two LoRA annoyances are fixed:
+
+- a freshly trained LoRA didn't show up in gary4juce until you opened the
+  **add loras** popup. the trainer wrote the catalog, but nothing rebuilt the
+  registry until that window happened to open.
+- switching a LoRA's training checkpoint while the SA3 service was running
+  silently did nothing, because adapters get baked in when the model loads. it
+  now reloads the service so the switch actually takes effect.
+
+training should also sit better on 8 GB cards. the VAE and the T5Gemma text
+encoder get freed or pushed to CPU once they aren't needed, which is roughly
+2 GB back, and the logs now show the caption for each clip plus the trigger word
+being applied so you can see what you're actually training on.
+
+compatible with gary4juce v4.0.7.
+
 ## v0.1.19
 
 v0.1.19 adds full auto-labeling to the SA3 trainer. it uses the ACE-Step

@@ -15,14 +15,19 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.1.18
+## v0.2.0
 
-v0.1.18 fixes Carey seed reporting so the seed shown after a random generation
-is the seed that actually produced the audio.
+v0.2.0 swaps the SA3 LoRA trainer over to stable-audio-3's own Lightning
+trainer, so the training step matches the reference instead of drifting from it.
+`pytorch-lightning` installs itself the first time you train.
 
-it also treats ACE-Step training lyrics as BYOL. the captioner still helps with
-captions, genres, BPM, and key metadata, but vocal sidecars now leave lyrics
-blank for human edits and show a grey lyrics template in the sidecar editor.
+the shared trigger word now gets prepended to every caption instead of
+replacing it, so it actually comes to mean the style. if you trained a LoRA with
+a trigger word on an older version, it's worth retraining. training also fits
+better on 8 GB cards now that the VAE and T5Gemma encoder get freed once they
+aren't needed.
+
+compatible with [gary4juce v4.0.7](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.7).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
@@ -142,7 +147,7 @@ the installers are currently unsigned. the intended verification flow is:
 example:
 
 ```powershell
-certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.1_x64-setup.exe SHA256
+certutil -hashfile .\control-center\src-tauri\target\release\bundle\nsis\gary4local_<version>_x64-setup.exe SHA256
 ```
 
 ## related repos

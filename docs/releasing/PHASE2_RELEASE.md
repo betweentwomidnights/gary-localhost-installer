@@ -20,13 +20,28 @@ Normal users should not need any updater env vars. Production builds use the bak
 
 ## Per Release
 
-1. Bump the app version in:
+1. Bump the app version in all five spots. they must match or the build fails:
    - `control-center/package.json`
-   - `control-center/package-lock.json`
+   - `control-center/package-lock.json` (two `gary4local` entries; leave dependency versions alone)
    - `control-center/src-tauri/Cargo.toml`
-   - `control-center/src-tauri/Cargo.lock`
+   - `control-center/src-tauri/Cargo.lock` (the `gary4local` package block only)
    - `control-center/src-tauri/tauri.conf.json`
-2. Build the signed NSIS updater artifact:
+
+   `cargo check` from `control-center/src-tauri` is the quickest way to confirm
+   `Cargo.lock` still agrees with `Cargo.toml`.
+
+2. Write the release notes in the repo, in two places:
+   - add a `## vX.Y.Z` section at the top of `CHANGELOG.md`, ending with a
+     `compatible with gary4juce vA.B.C.` line.
+   - replace the headline `## vX.Y.Z` section near the top of `README.md` with
+     the new one. the README carries only the current release; everything older
+     lives in the changelog. this step is easy to forget — v0.1.19 shipped with
+     the README still showing v0.1.18.
+
+   both should follow `kevs_docs_style.md` (lowercase headings, contractions,
+   no marketing voice).
+
+3. Build the signed NSIS updater artifact:
 
 ```powershell
 cd C:\path\to\backend-installer\control-center
@@ -35,18 +50,24 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your real passphrase"
 npm.cmd run tauri build -- --config src-tauri/tauri.updater.conf.json
 ```
 
-3. Create the GitHub release tag, for example `v0.1.3`.
-4. Upload both files from `control-center\src-tauri\target\release\bundle\nsis\`:
+   On the release machine there's a gitignored `LOCAL_SIGNING_NOTES.md` at the
+   repo root with PowerShell helpers that wrap this step, so the key paths and
+   passphrase never have to be typed by hand. It's intentionally not in the
+   repo — if it's missing, this command is still the source of truth and the
+   notes can be rebuilt around it.
+
+4. Create the GitHub release tag, for example `v0.1.3`.
+5. Upload both files from `control-center\src-tauri\target\release\bundle\nsis\`:
    - `gary4local_<version>_x64-setup.exe`
    - `gary4local_<version>_x64-setup.exe.sig`
-5. Keep the gary4juce compatibility line appropriate for where it appears:
+6. Keep the gary4juce compatibility line appropriate for where it appears:
    - In the GitHub release notes, link to the current recommended gary4juce
      release tag.
    - In the updater feed notes, use a short plain-text line such as
      `Compatible with gary4juce v4.0.2.` Do not include a URL. The current
      update prompt does not provide clickable links, and the raw URL wastes
      limited UI space.
-6. Generate both updater feeds from the exact built installer and signature:
+7. Generate both updater feeds from the exact built installer and signature:
 
 ```powershell
 cd C:\path\to\backend-installer
@@ -59,15 +80,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
   -NotesText "Release note one.||Release note two."
 ```
 
-7. Review the generated files:
+8. Review the generated files:
    - `docs/updates/gary4local/stable.json`
    - `docs/updates/gary4local/native-stable.json`
-8. Commit those feed changes to `main` and push.
-9. Wait for GitHub Pages to publish the updated JSON.
-10. Sanity-check the live URLs:
+9. Commit those feed changes to `main` and push.
+10. Wait for GitHub Pages to publish the updated JSON.
+11. Sanity-check the live URLs:
    - `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json`
    - `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json`
-11. Launch the currently installed app and verify it offers `install update`.
+12. Launch the currently installed app and verify it offers `install update`.
 
 ## Preview Testing
 
