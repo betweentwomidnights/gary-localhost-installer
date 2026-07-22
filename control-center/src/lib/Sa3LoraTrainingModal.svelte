@@ -366,8 +366,9 @@
         </label>
 
         <label class="field wide">
-          <span>style prompt / trigger text</span>
-          <input type="text" bind:value={fixedPrompt} placeholder="optional shared style phrase" />
+          <span>shared trigger word</span>
+          <input type="text" bind:value={fixedPrompt} placeholder="optional — e.g. ratatat" />
+          <small>prepended to every caption during training ("trigger, caption"), so the word comes to mean this style. Leave blank to train on captions alone.</small>
         </label>
       </div>
 
@@ -527,7 +528,6 @@
   <Sa3DatasetSidecarModal
     open={sidecarModalOpen}
     {datasetPath}
-    sharedPrompt={fixedPrompt}
     onClose={() => sidecarModalOpen = false}
   />
 {/if}

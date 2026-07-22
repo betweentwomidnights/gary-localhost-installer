@@ -51,12 +51,10 @@
   let {
     open,
     datasetPath,
-    sharedPrompt,
     onClose,
   }: {
     open: boolean;
     datasetPath: string;
-    sharedPrompt: string;
     onClose: () => void;
   } = $props();
 
@@ -72,7 +70,6 @@
   let templateText = $state(barePrompt);
   let promptStyle = $state<PromptStyle>("bare");
   let showStyleInfo = $state(false);
-  let includeSharedPrompt = $state(false);
   let loading = $state(false);
   let saving = $state(false);
   let suggesting = $state(false);
@@ -304,20 +301,16 @@
   }
 
   function renderedTemplate(): string {
-    const pieces = [];
-    if (includeSharedPrompt && sharedPrompt.trim()) {
-      pieces.push(sharedPrompt.trim());
-    }
-    if (templateText.trim()) {
-      pieces.push(templateText.trim());
-    }
-    return pieces.join(", ");
+    // Sidecars hold captions only. The shared trigger word is a separate layer the
+    // trainer prepends to every caption (see build_dataset_config), so it is
+    // deliberately not part of prompt editing or the dice pool.
+    return templateText.trim();
   }
 
   function fillMissing() {
     const template = renderedTemplate();
     if (!template) {
-      error = "Enter a template or enable the shared phrase first.";
+      error = "Enter a template first.";
       return;
     }
     error = null;
@@ -485,10 +478,6 @@
         <label class="template-field">
           <span>editable starter prompt — {promptStyle === "bare" ? "barebones" : "official SA3"} style</span>
           <textarea rows="2" bind:value={templateText}></textarea>
-        </label>
-        <label class:disabled={!sharedPrompt.trim()} class="check-row">
-          <input type="checkbox" bind:checked={includeSharedPrompt} disabled={!sharedPrompt.trim()} />
-          <span>prepend shared phrase{sharedPrompt.trim() ? `: ${sharedPrompt.trim()}` : ""}</span>
         </label>
         <div class="template-actions">
           <div class="action-buttons">
@@ -818,18 +807,6 @@
     padding: 9px;
     user-select: text;
     -webkit-user-select: text;
-  }
-
-  .check-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    color: var(--text-primary);
-  }
-
-  .check-row.disabled {
-    color: var(--text-muted);
   }
 
   .template-actions span,

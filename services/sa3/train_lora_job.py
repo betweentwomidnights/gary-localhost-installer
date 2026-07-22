@@ -62,11 +62,41 @@ def slugify(raw: str) -> str:
     return value[:64] or "sa3-lora"
 
 
-def write_json(path: Path, payload: dict) -> None:
+def write_json(path: Path, payload: dict, *, attempts: int = 8) -> None:
+    """Atomically write JSON, tolerating Windows' transient replace failures.
+
+    os.replace raises PermissionError (WinError 5) when the destination is
+    momentarily held open — the control center polling the status file, Defender
+    scanning the freshly written .tmp, or a search indexer. Retrying briefly
+    clears it. The staging name is unique per process+call so two writers can
+    never collide on one .tmp (same reason install_managed_sa3_checkpoint stages
+    with a pid+nonce on the Rust side).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}-{time.time_ns()}.tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+
+    delay = 0.05
+    last_error: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:  # transient on Windows; back off and retry
+            last_error = exc
+            if attempt < attempts - 1:
+                time.sleep(delay)
+                delay = min(delay * 2, 0.5)
+        except OSError as exc:  # not a lock (bad path, full disk); don't spin
+            last_error = exc
+            break
+
+    try:
+        tmp.unlink()  # don't leave staging litter behind
+    except OSError:
+        pass
+    if last_error is not None:
+        raise last_error
 
 
 def read_json(path: Path, default):
@@ -74,6 +104,19 @@ def read_json(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def write_json_if_changed(path: Path, payload: dict) -> None:
+    """write_json, but skip the replace entirely when the file already matches.
+
+    Every replace is a chance to collide with a reader that has the file open
+    without FILE_SHARE_DELETE (gary4juce polling from a DAW does exactly this,
+    which is what surfaces as WinError 5). Pointer files whose contents are
+    constant for a whole run should therefore be written once, not on every
+    status tick."""
+    if read_json(path, None) == payload:
+        return
+    write_json(path, payload)
 
 
 def update_status(args, **updates) -> None:
@@ -90,8 +133,19 @@ def update_status(args, **updates) -> None:
         }
     )
     payload.update(updates)
-    write_json(args.status_path, payload)
-    write_json(args.current_job_path, {"jobId": args.job_id, "statusPath": str(args.status_path)})
+    # These two files are UI plumbing. update_status runs at every phase (and on
+    # every run_step), so a single unlucky write must not abort a training run
+    # that is otherwise healthy — warn and carry on instead.
+    try:
+        write_json(args.status_path, payload)
+        # This pointer is identical for the whole run, so write it once instead of
+        # on every tick — one replace per job rather than one per status update.
+        write_json_if_changed(
+            args.current_job_path,
+            {"jobId": args.job_id, "statusPath": str(args.status_path)},
+        )
+    except OSError as exc:
+        print(f"[status] could not update status files ({exc}); continuing", flush=True)
 
 
 def cancel_requested(args) -> bool:
@@ -337,18 +391,24 @@ def build_dataset_config(args, latent_dir: Path) -> Path:
     #   * tag_keys is just ["prompt"] — the caption our auto-labeller writes.
     #     No title/artist/genre/bpm re-labeling, so it's obvious from the
     #     sidecar exactly what a clip trains on.
-    # When a fixed prompt is supplied we still blend it with the caption so the
-    # fixed token doesn't fully crowd out real captions.
-    has_fixed = bool(args.fixed_prompt.strip())
+    #   * A shared trigger word, when set, is PREPENDED to every caption
+    #     ("<trigger>, <caption>"), so the token gets tied to the style while the
+    #     model still learns the caption. Blank leaves captions untouched.
+    #     This replaces the old use_fixed behaviour, which *substituted* the
+    #     phrase for the caption on 60% of steps — training those steps on a
+    #     bare trigger with no descriptive content.
+    trigger = args.fixed_prompt.strip()
     prompt_config = {
         "use_tags": True,
         "use_paths": False,
-        "use_fixed": has_fixed,
-        "fixed_text": args.fixed_prompt.strip(),
-        "balance": {"tags": 40, "fixed": 60},
+        "use_fixed": False,
+        "fixed_text": "",
+        "balance": {"tags": 40},
         "tag_keys": ["prompt"],
         "hide_tag_names": True,
         "shuffle": False,
+        "trigger": trigger,
+        "trigger_pct": 100 if trigger else 0,
     }
     payload = {
         "dataset_type": "pre_encoded",
