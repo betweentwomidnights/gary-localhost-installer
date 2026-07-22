@@ -38,8 +38,8 @@ Normal users should not need any updater env vars. Production builds use the bak
      lives in the changelog. this step is easy to forget — v0.1.19 shipped with
      the README still showing v0.1.18.
 
-   both should follow `kevs_docs_style.md` (lowercase headings, contractions,
-   no marketing voice).
+   both should match the voice already in `CHANGELOG.md` — lowercase headings,
+   contractions, no marketing language.
 
 3. Build the signed NSIS updater artifact:
 

@@ -75,9 +75,13 @@ outputs/carey-train-job-*/
 # Reference folder (local-only context, not shipped)
 reference/
 LOCAL_SIGNING_NOTES.md
+kevs_docs_style.md
 
 # Stable-audio training/dev files (not used in inference)
 services/stable-audio/run_gradio.py
 services/stable-audio/train.py
 services/stable-audio/unwrap_model.py
 services/stable-audio/scripts/
+
+# Ableton analysis sidecars (generated next to audio, not ours to ship)
+*.asd
