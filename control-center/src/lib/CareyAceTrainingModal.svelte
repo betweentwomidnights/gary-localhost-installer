@@ -432,7 +432,7 @@
         </label>
         <label class="field">
           <span>trigger tag</span>
-          <input type="text" bind:value={trigger} placeholder="patch" />
+          <input type="text" bind:value={trigger} placeholder="my-trigger" />
         </label>
 
         <label class="field wide">

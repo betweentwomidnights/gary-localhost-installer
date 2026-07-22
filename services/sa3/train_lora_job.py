@@ -423,6 +423,25 @@ def build_dataset_config(args, latent_dir: Path) -> Path:
         "random_crop": True,
         "prompt_config": prompt_config,
     }
+    # Make the prompt policy explicit in the log — the trigger is applied per-step
+    # at training time (prompt_templates), not baked into the sidecars, so without
+    # this there is nothing on screen showing it is in effect.
+    sample = ""
+    for meta_path in sorted(latent_dir.rglob("*.json")):
+        if meta_path.name.startswith(".") or meta_path.name == "details.json":
+            continue
+        sample = " ".join(str(read_json(meta_path, {}).get("prompt") or "").split())
+        if sample:
+            break
+    if trigger:
+        print(f'[prompts] trigger word "{trigger}" is prepended to every caption', flush=True)
+        if sample:
+            print(f'[prompts]   e.g. "{trigger}, {sample}"', flush=True)
+    else:
+        print("[prompts] no trigger word set; captions are used as-is", flush=True)
+        if sample:
+            print(f'[prompts]   e.g. "{sample}"', flush=True)
+
     path = args.run_dir / f"{args.job_id}_dataset.json"
     write_json(path, payload)
     return path

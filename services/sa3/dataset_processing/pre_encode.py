@@ -610,7 +610,11 @@ def _encode_shard_inner(rank, world_size, cfg):
 
                     encoded += 1
                     shape_str = "x".join(str(s) for s in latent_np.shape)
-                    print(f"  {tag} {out_rel}  {duration:.1f}s -> [{shape_str}]")
+                    caption = " ".join(str(meta.get("prompt") or "").split())
+                    if len(caption) > 90:
+                        caption = caption[:87] + "..."
+                    caption_str = f'  "{caption}"' if caption else "  (no caption sidecar)"
+                    print(f"  {tag} {out_rel}  {duration:.1f}s -> [{shape_str}]{caption_str}")
 
                 except Exception as e:
                     errors += 1
@@ -693,7 +697,11 @@ def _encode_shard_inner(rank, world_size, cfg):
 
                     encoded += 1
                     shape_str = "x".join(str(s) for s in latent_np.shape)
-                    print(f"  {tag} {out_rel}  {duration:.1f}s -> [{shape_str}]")
+                    caption = " ".join(str(meta.get("prompt") or "").split())
+                    if len(caption) > 90:
+                        caption = caption[:87] + "..."
+                    caption_str = f'  "{caption}"' if caption else "  (no caption sidecar)"
+                    print(f"  {tag} {out_rel}  {duration:.1f}s -> [{shape_str}]{caption_str}")
                     del audio, latent
                 except Exception as e2:
                     errors += 1

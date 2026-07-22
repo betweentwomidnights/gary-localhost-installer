@@ -367,7 +367,7 @@
 
         <label class="field wide">
           <span>shared trigger word</span>
-          <input type="text" bind:value={fixedPrompt} placeholder="optional — e.g. ratatat" />
+          <input type="text" bind:value={fixedPrompt} placeholder="optional — e.g. my-trigger" />
           <small>prepended to every caption during training ("trigger, caption"), so the word comes to mean this style. Leave blank to train on captions alone.</small>
         </label>
       </div>
