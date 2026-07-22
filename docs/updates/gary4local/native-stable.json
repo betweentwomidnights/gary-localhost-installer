@@ -1,11 +1,11 @@
 {
-    "version":  "0.1.19",
-    "notes":  "Adds full SA3 auto-labeling with ACE-Step genre keywords.\nHardens Carey and SA3 trainer recovery and Windows process cleanup.\nPress Rebuild Env for new SA3 trainer features.\nCompatible with gary4juce v4.0.6.",
-    "pub_date":  "2026-07-11T20:18:57.0495333Z",
+    "version":  "0.2.0",
+    "notes":  "SA3 LoRA training now runs the official stable-audio-3 trainer.\nNew option to train on full tracks instead of random crops.\nThe shared trigger word is prepended to captions instead of replacing them - retrain trigger LoRAs made on older versions.\nNew LoRAs and checkpoint switches apply without reopening the add loras popup.\nLower VRAM use while training. Compatible with gary4juce v4.0.7.",
+    "pub_date":  "2026-07-22T15:33:27.8369026Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVOY3FYS3pJU3Zna0wrOGZHS0h3Q3V3Q0lYNDdkS1lPbWVSVU4rdWVjQmpmNWVIYTlrejlMVUFCRlJGSEdZOGhtYmN4elB2VW5EdGhOZjJpN2dlT3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzk4ODYzCWZpbGU6Z2FyeTRsb2NhbF8wLjEuMTlfeDY0LXNldHVwLmV4ZQpLRVpVOHZhSFEwWXdCNDRZeFAvNmdvOThKeVg4ZXI2RUJnSE9tT3VhYWFnSXFhN3U0QkJLQjJpdXVZSWZEb3NnRms3S0llbXhOTXV0K3lsT256V09Cdz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19/gary4local_0.1.19_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEFuRlhBWXc3SkFyWTZNUHNvaEY5ZWZDVVNqMmQ1Nkd4R0oweE9MaFhIZ1AwNmdqVXJLMHJyWkQxSEl3c25xbEdBcEFUN1E4bGdsVENyRDRScFp4TndrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NzMyNDkzCWZpbGU6Z2FyeTRsb2NhbF8wLjIuMF94NjQtc2V0dXAuZXhlCitUd2RZektrOGdSVkU0ZlNkOXRlYzJKSjAzTVRXZStETWhENWJHdnBNWFBMNnAxWmhCSEM3c2NxdVl5bnI4Q0doaSsybFFZUGE2WnFZUGpoRnJ5a0RRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.0/gary4local_0.2.0_x64-setup.exe"
                                          }
                   }
 }

@@ -1,13 +1,14 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.1.19",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19/gary4local_0.1.19_x64-setup.exe",
-    "sha256":  "1f78ec6d0702cc7c5b64eca9f3864fb9f6ecc39ba69751837ebffc6b9a165df8",
-    "published_at":  "2026-07-11T20:18:57.0495333Z",
+    "latest_version":  "0.2.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.0/gary4local_0.2.0_x64-setup.exe",
+    "sha256":  "338d41ece4859d261cc91ae04c24f7d70a5a082e5e5864023dbace5726afaf47",
+    "published_at":  "2026-07-22T15:33:27.8369026Z",
     "notes":  [
-                  "Adds full SA3 auto-labeling with ACE-Step genre keywords.",
-                  "Hardens Carey and SA3 trainer recovery and Windows process cleanup.",
-                  "Press Rebuild Env for new SA3 trainer features.",
-                  "Compatible with gary4juce v4.0.6."
+                  "SA3 LoRA training now runs the official stable-audio-3 trainer.",
+                  "New option to train on full tracks instead of random crops.",
+                  "The shared trigger word is prepended to captions instead of replacing them - retrain trigger LoRAs made on older versions.",
+                  "New LoRAs and checkpoint switches apply without reopening the add loras popup.",
+                  "Lower VRAM use while training. Compatible with gary4juce v4.0.7."
               ]
 }
