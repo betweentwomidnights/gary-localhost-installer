@@ -21,7 +21,10 @@ packaging>=26.0
 safetensors>=0.7.0
 tqdm>=4.67.3
 huggingface-hub>=1.7.1
-transformers>=5.8.0
+# 5.11+ currently imports torch.distributed DTensor sharding during the
+# T5Gemma import path. AMD's Windows ROCm 7.2.1 torch wheel does not expose
+# torch._C._distributed_c10d, so keep the known-good T5Gemma runtime pinned.
+transformers==5.10.2
 soundfile>=0.13.1
 
 # LoRA training
