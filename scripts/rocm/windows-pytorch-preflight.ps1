@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $RocmVersion = "7.2.1"
 $PythonVersion = "3.12"
+$TransformersVersion = "5.10.2"
 $ExpectedAmdDriverPackage = "26.2.2"
 $RocmBaseUrl = "https://repo.radeon.com/rocm/windows/rocm-rel-$RocmVersion"
 
@@ -116,6 +117,15 @@ Write-Section "install pytorch rocm wheels"
 $TorchInstallArgs = @("pip", "install") + $TorchUrls + @("--python", $Python)
 Invoke-Logged "uv" $TorchInstallArgs
 
+Write-Section "install t5gemma import deps"
+Invoke-Logged "uv" @(
+    "pip", "install",
+    "transformers==$TransformersVersion",
+    "safetensors>=0.7.0",
+    "huggingface-hub>=1.7.1",
+    "--python", $Python
+)
+
 Write-Section "torch hip diagnostic"
 $Diagnostic = @'
 import json
@@ -178,3 +188,22 @@ if not torch_info.get("cuda_available"):
 '@
 
 & $Python -c $Diagnostic
+
+Write-Section "transformers t5gemma import"
+$T5GemmaDiagnostic = @'
+import json
+import transformers
+
+result = {"transformers": transformers.__version__}
+try:
+    from transformers import AutoConfig, AutoTokenizer, T5GemmaEncoderModel
+    result["t5gemma_import"] = "ok"
+except Exception as exc:
+    result["t5gemma_import_error"] = repr(exc)
+    print(json.dumps(result, indent=2))
+    raise
+
+print(json.dumps(result, indent=2))
+'@
+
+& $Python -c $T5GemmaDiagnostic

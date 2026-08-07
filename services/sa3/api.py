@@ -357,6 +357,15 @@ def friendly_load_error(error: Exception) -> str:
         details.append(str(current))
         current = current.__cause__ or current.__context__
     lower = "\n".join(details).lower()
+    if any(marker in lower for marker in ("_distributed_c10d", "torch.distributed.tensor", "dtensor")):
+        return (
+            "T5Gemma import failed because the installed Transformers build tried "
+            "to import PyTorch distributed DTensor support, but this Windows ROCm "
+            "Torch wheel does not include torch._C._distributed_c10d. Rebuild the "
+            "SA3 service environment so gary4local-rocm installs its pinned "
+            "Transformers runtime, then retry. If it still fails, run "
+            "scripts/rocm/windows-pytorch-preflight.ps1 -Fresh and share the output."
+        )
     if not hf_token_configured():
         return (
             "HF_TOKEN is not configured. Save a Hugging Face read token in "
