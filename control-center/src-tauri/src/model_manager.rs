@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -11,6 +11,12 @@ fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn apply_runtime_env(cmd: &mut tokio::process::Command, runtime_root: &Path) {
+    for (key, value) in crate::storage::runtime_env_vars(runtime_root) {
+        cmd.env(key, value);
     }
 }
 
@@ -59,7 +65,7 @@ pub struct ModelManager {
     model_cache: HashMap<String, ModelStatus>,
     /// Dynamically fetched finetune checkpoints (repo → list of checkpoint entries)
     finetune_checkpoints: HashMap<String, Vec<CheckpointEntry>>,
-    /// Root of the backend-installer repo (for finding service checkpoint dirs)
+    /// Root of gary4local's writable runtime storage.
     repo_root: PathBuf,
 }
 
@@ -73,22 +79,14 @@ impl ModelManager {
         }
     }
 
-    /// Get the HuggingFace cache directory — uses the standard default location.
-    /// This matches what huggingface_hub uses when no HF_HOME is set:
-    /// Windows: C:\Users\<user>\.cache\huggingface
-    /// Linux/Mac: ~/.cache/huggingface
-    pub fn hf_cache_dir() -> PathBuf {
-        if let Ok(hf_home) = std::env::var("HF_HOME") {
-            PathBuf::from(hf_home)
-        } else {
-            PathBuf::from(
-                std::env::var("USERPROFILE")
-                    .or_else(|_| std::env::var("HOME"))
-                    .unwrap_or_default(),
-            )
-            .join(".cache")
-            .join("huggingface")
-        }
+    /// Get the selected writable runtime root.
+    pub fn runtime_root(&self) -> PathBuf {
+        self.repo_root.clone()
+    }
+
+    /// Get the Hugging Face cache directory inside the selected runtime root.
+    pub fn hf_cache_dir(&self) -> PathBuf {
+        crate::storage::hf_home_dir(&self.repo_root)
     }
 
     /// Get the full list of Gary models with their download status
@@ -390,10 +388,9 @@ impl ModelManager {
         }
     }
 
-    /// Get Foundation-1 model — single model with 2 files.
-    /// Foundation stores models in %APPDATA%/Gary4JUCE/models/foundation-1/
+    /// Get Foundation-1 model status from the selected runtime root.
     pub fn get_foundation_models(&self) -> Vec<ModelEntry> {
-        let models_dir = Self::foundation_models_dir();
+        let models_dir = self.foundation_models_dir();
         let model_dir = models_dir.join("foundation-1");
 
         let id = "foundation::foundation-1";
@@ -410,15 +407,9 @@ impl ModelManager {
         }]
     }
 
-    /// Get the Foundation models directory (%APPDATA%/Gary4JUCE/models)
-    fn foundation_models_dir() -> std::path::PathBuf {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-            format!("{}\\AppData\\Roaming", home)
-        });
-        std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE")
-            .join("models")
+    /// Get the Foundation models directory under the selected runtime root.
+    pub fn foundation_models_dir(&self) -> std::path::PathBuf {
+        crate::storage::models_dir(&self.repo_root)
     }
 
     /// Check if Foundation-1 model files are present
@@ -444,7 +435,7 @@ impl ModelManager {
         let entries: Vec<CheckpointEntry> = filenames
             .into_iter()
             .map(|f| {
-                let cached = Self::is_finetune_file_cached(repo, &f);
+                let cached = self.is_finetune_file_cached(repo, &f);
                 CheckpointEntry {
                     repo: repo.to_string(),
                     filename: f,
@@ -456,8 +447,8 @@ impl ModelManager {
     }
 
     /// Check if a specific file from a finetune repo is cached
-    fn is_finetune_file_cached(repo: &str, filename: &str) -> bool {
-        let cache_dir = Self::hf_cache_dir();
+    fn is_finetune_file_cached(&self, repo: &str, filename: &str) -> bool {
+        let cache_dir = self.hf_cache_dir();
         let hub_dir = cache_dir.join("hub");
         let folder_name = format!("models--{}", repo.replace('/', "--"));
         let snapshots_dir = hub_dir.join(&folder_name).join("snapshots");
@@ -494,10 +485,10 @@ impl ModelManager {
         if model_id.contains("::") {
             // Composite ID: "repo::filename"
             let parts: Vec<&str> = model_id.splitn(2, "::").collect();
-            if parts.len() == 2 && Self::is_finetune_file_cached(parts[0], parts[1]) {
+            if parts.len() == 2 && self.is_finetune_file_cached(parts[0], parts[1]) {
                 return ModelStatus::Downloaded;
             }
-        } else if Self::is_model_cached(model_id) {
+        } else if self.is_model_cached(model_id) {
             return ModelStatus::Downloaded;
         }
 
@@ -517,16 +508,17 @@ impl ModelManager {
             return status.clone();
         }
 
-        if Self::is_model_snapshot_complete(model_id, required_files) {
+        if self.is_model_snapshot_complete(model_id, required_files) {
             ModelStatus::Downloaded
         } else {
             ModelStatus::Available
         }
     }
 
-    fn is_model_snapshot_complete(model_id: &str, required_files: &[&str]) -> bool {
+    fn is_model_snapshot_complete(&self, model_id: &str, required_files: &[&str]) -> bool {
         let folder_name = format!("models--{}", model_id.replace('/', "--"));
-        let snapshots_dir = Self::hf_cache_dir()
+        let snapshots_dir = self
+            .hf_cache_dir()
             .join("hub")
             .join(folder_name)
             .join("snapshots");
@@ -545,8 +537,8 @@ impl ModelManager {
     }
 
     /// Check if a model exists in the HuggingFace cache
-    fn is_model_cached(model_id: &str) -> bool {
-        let cache_dir = Self::hf_cache_dir();
+    fn is_model_cached(&self, model_id: &str) -> bool {
+        let cache_dir = self.hf_cache_dir();
         let hub_dir = cache_dir.join("hub");
 
         // HF cache uses format: models--org--name
@@ -661,7 +653,10 @@ pub async fn download_model(
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let cache_dir = ModelManager::hf_cache_dir();
+    let (cache_dir, runtime_root) = {
+        let mgr = manager.lock().await;
+        (mgr.hf_cache_dir(), mgr.runtime_root())
+    };
 
     if let Err(error) = std::fs::create_dir_all(&cache_dir) {
         let msg = format!("Cannot create cache dir: {}", error);
@@ -913,6 +908,7 @@ except Exception as e:
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    apply_runtime_env(&mut cmd, &runtime_root);
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
@@ -1065,6 +1061,7 @@ pub async fn fetch_checkpoints(repo: String, service_port: u16) -> Result<Vec<St
 pub async fn download_carey_model(
     model_id: String,
     python_exe: PathBuf,
+    runtime_root: PathBuf,
     checkpoint_dir: PathBuf,
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
@@ -1231,6 +1228,7 @@ except Exception as e:
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    apply_runtime_env(&mut cmd, &runtime_root);
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
@@ -1307,13 +1305,14 @@ except Exception as e:
     }
 }
 
-/// Download Foundation-1 model files to %APPDATA%/Gary4JUCE/models/foundation-1/
+/// Download Foundation-1 model files to the selected runtime models directory.
 ///
 /// Uses streaming requests with byte-level progress (same approach as Gary/Carey).
 /// Downloads Foundation_1.safetensors and model_config.json from RoyalCities/Foundation-1.
 pub async fn download_foundation_model(
     model_id: String,
     python_exe: PathBuf,
+    runtime_root: PathBuf,
     model_dir: PathBuf,
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
@@ -1425,6 +1424,7 @@ except Exception as e:
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    apply_runtime_env(&mut cmd, &runtime_root);
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }

@@ -16,6 +16,7 @@
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
+  import StorageSettingsModal from "./lib/StorageSettingsModal.svelte";
 
   interface BuildStatus {
     building: boolean;
@@ -73,6 +74,16 @@
     notes: string[];
   }
 
+  interface RuntimeStorageInfo {
+    activeRoot: string;
+    configuredRoot: string | null;
+    defaultRoot: string;
+    legacyRoot: string;
+    configPath: string;
+    pendingRestart: boolean;
+    usingLegacyDefault: boolean;
+  }
+
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
   const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
@@ -108,6 +119,10 @@
   let updateResult: AppUpdateCheck | null = $state(null);
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
+  let storageModalOpen = $state(false);
+  let storageInfo: RuntimeStorageInfo | null = $state(null);
+  let storageBusy = $state(false);
+  let storageError: string | null = $state(null);
   let careyLoraModalOpen = $state(false);
   let careyAceTrainingModalOpen = $state(false);
   let sa3LoraModalOpen = $state(false);
@@ -219,6 +234,16 @@
       console.error("Failed to load app settings:", e);
     }
     return appSettings;
+  }
+
+  async function loadRuntimeStorageInfo() {
+    try {
+      storageInfo = await invoke<RuntimeStorageInfo>("get_runtime_storage_info");
+      storageError = null;
+    } catch (e) {
+      storageError = formatError(e);
+    }
+    return storageInfo;
   }
 
   function formatError(error: unknown): string {
@@ -345,6 +370,48 @@
     }
   }
 
+  async function openStorageSettings() {
+    storageModalOpen = true;
+    await loadRuntimeStorageInfo();
+  }
+
+  function closeStorageSettings() {
+    storageModalOpen = false;
+    storageError = null;
+  }
+
+  async function saveRuntimeStorageRoot(path: string) {
+    storageBusy = true;
+    storageError = null;
+    try {
+      storageInfo = await invoke<RuntimeStorageInfo>("save_runtime_storage_root", { path });
+    } catch (e) {
+      storageError = formatError(e);
+    } finally {
+      storageBusy = false;
+    }
+  }
+
+  async function resetRuntimeStorageRoot() {
+    storageBusy = true;
+    storageError = null;
+    try {
+      storageInfo = await invoke<RuntimeStorageInfo>("reset_runtime_storage_root");
+    } catch (e) {
+      storageError = formatError(e);
+    } finally {
+      storageBusy = false;
+    }
+  }
+
+  async function revealStoragePath(path: string) {
+    try {
+      await invoke("reveal_path", { path });
+    } catch (e) {
+      storageError = formatError(e);
+    }
+  }
+
   function onTokenChange(configured: boolean) {
     hfTokenConfigured = configured;
   }
@@ -401,6 +468,7 @@
     void (async () => {
       loadServices();
       checkToken();
+      loadRuntimeStorageInfo();
       const settings = await loadAppSettings();
 
       if (!disposed && showAppUpdater && settings.autoCheckUpdates) {
@@ -466,6 +534,14 @@
           {/if}
         </button>
       {/if}
+      <button
+        class:accent={storageInfo?.pendingRestart}
+        onclick={openStorageSettings}
+        disabled={storageBusy}
+        title={storageInfo?.activeRoot ?? "runtime storage"}
+      >
+        storage
+      </button>
       <span class="status-summary">
         {#if totalCount > 0}
           {runningCount}/{totalCount} running
@@ -550,6 +626,16 @@
     onSkipVersion={skipCurrentUpdate}
     onResumeReminders={resumeUpdateReminders}
     onAutoCheckChange={setAutoCheckUpdates}
+  />
+  <StorageSettingsModal
+    open={storageModalOpen}
+    info={storageInfo}
+    busy={storageBusy}
+    error={storageError}
+    onChoose={saveRuntimeStorageRoot}
+    onReset={resetRuntimeStorageRoot}
+    onReveal={revealStoragePath}
+    onClose={closeStorageSettings}
   />
   <CareyLoraModal
     open={careyLoraModalOpen}

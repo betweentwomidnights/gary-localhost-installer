@@ -15,11 +15,11 @@ Var InstallerMusicCheckbox
 !define MUI_CUSTOMFUNCTION_GUIINIT InstallerGuiInit
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomeMusicShow
 
-!define MUI_WELCOMEPAGE_TEXT "this installer uses current-user mode, so it does not require administrator access.$\r$\n$\r$\napplication files are installed under your windows user profile, usually:$\r$\n$\r$\n    $LOCALAPPDATA\gary4local$\r$\n$\r$\nruntime data, service environments, logs, and local models are stored in:$\r$\n$\r$\n    $APPDATA\Gary4JUCE$\r$\n$\r$\nthis means gary4local will not install to C:\Program Files in this mode."
+!define MUI_WELCOMEPAGE_TEXT "this installer uses current-user mode, so it does not require administrator access.$\r$\n$\r$\napplication files are installed under your windows user profile by default, usually:$\r$\n$\r$\n    $LOCALAPPDATA\gary4local$\r$\n$\r$\nfor new installs, runtime data, service environments, logs, caches, and local models live inside the install folder under:$\r$\n$\r$\n    gary4local-data$\r$\n$\r$\nchoose a folder on another drive if you want those larger files off C:\."
 
-!define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to place the installed application files.$\r$\n$\r$\ninstalled app files live in the folder you choose here.$\r$\n$\r$\nruntime data, service environments, logs, and local models stay in:$\r$\n$\r$\n    $APPDATA\Gary4JUCE"
+!define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to place gary4local.$\r$\n$\r$\ninstalled app files live in the folder you choose here.$\r$\n$\r$\nfor new installs, runtime data, service environments, logs, caches, and local models will live in:$\r$\n$\r$\n    $INSTDIR\gary4local-data"
 
-!define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local.$\r$\n$\r$\ninstalled app files:$\r$\n$INSTDIR$\r$\n$\r$\nruntime data:$\r$\n$APPDATA\Gary4JUCE$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
+!define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local.$\r$\n$\r$\ninstalled app files:$\r$\n$INSTDIR$\r$\n$\r$\nnew runtime data:$\r$\n$INSTDIR\gary4local-data$\r$\n$\r$\nexisting appdata storage is preserved automatically unless you choose a new storage folder in gary4local.$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
 
 Function InstallerGuiInit
   InitPluginsDir

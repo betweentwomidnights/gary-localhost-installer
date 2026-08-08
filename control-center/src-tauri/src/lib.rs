@@ -1,6 +1,7 @@
 mod manifest;
 mod model_manager;
 mod service_manager;
+mod storage;
 mod update;
 mod workload_job;
 
@@ -536,33 +537,27 @@ fn default_lora_model_family() -> String {
 
 /// Get the path to the stored HF token file.
 fn hf_token_path() -> std::path::PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Roaming", home)
-    });
-    std::path::PathBuf::from(appdata)
-        .join("Gary4JUCE")
-        .join("hf_token.txt")
+    gary4juce_runtime_root().join("hf_token.txt")
+}
+
+fn legacy_hf_token_path() -> std::path::PathBuf {
+    storage::legacy_runtime_root().join("hf_token.txt")
 }
 
 fn app_settings_path() -> std::path::PathBuf {
     gary4juce_runtime_root().join("app_settings.json")
 }
 
+fn legacy_app_settings_path() -> std::path::PathBuf {
+    storage::legacy_runtime_root().join("app_settings.json")
+}
+
 fn gary4juce_runtime_root() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Roaming", home)
-    });
-    PathBuf::from(appdata).join("Gary4JUCE")
+    storage::active_runtime_root()
 }
 
 fn gary4local_local_data_root() -> PathBuf {
-    let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Local", home)
-    });
-    PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+    storage::local_data_root()
 }
 
 fn startup_diagnostic_log_path() -> PathBuf {
@@ -775,6 +770,12 @@ fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn apply_runtime_env(cmd: &mut tokio::process::Command, runtime_root: &Path) {
+    for (key, value) in storage::runtime_env_vars(runtime_root) {
+        cmd.env(key, value);
     }
 }
 
@@ -1031,12 +1032,14 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
 
 /// Read the HF token from our stored file, falling back to system env.
 fn read_hf_token() -> Option<String> {
-    // Try our stored file first
-    let path = hf_token_path();
-    if let Ok(token) = std::fs::read_to_string(&path) {
-        let trimmed = token.trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(trimmed);
+    // Try the active runtime root first, then the legacy AppData root so
+    // upgrades and storage moves do not strand an already-saved token.
+    for path in [hf_token_path(), legacy_hf_token_path()] {
+        if let Ok(token) = std::fs::read_to_string(&path) {
+            let trimmed = token.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
         }
     }
     // Fall back to system environment variables
@@ -1051,13 +1054,13 @@ fn read_hf_token() -> Option<String> {
 }
 
 fn read_app_settings() -> AppSettings {
-    let path = app_settings_path();
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(_) => return AppSettings::default(),
-    };
+    for path in [app_settings_path(), legacy_app_settings_path()] {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            return serde_json::from_str::<AppSettings>(&raw).unwrap_or_default();
+        }
+    }
 
-    serde_json::from_str::<AppSettings>(&raw).unwrap_or_default()
+    AppSettings::default()
 }
 
 fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
@@ -3635,8 +3638,9 @@ pub fn run() {
 
             // --- Resolve runtime root ---
             // In dev, run directly from the repo.
-            // In production, sync bundled services into %APPDATA%\Gary4JUCE
-            // and run from there so logs/envs/source live in a writable location.
+            // In production, sync bundled services into the selected runtime
+            // storage root and run from there so logs/envs/source live in a
+            // writable location that can be moved off the system drive.
             let bundle_root = if cfg!(debug_assertions) {
                 let exe_dir = std::env::current_exe()
                     .ok()
@@ -3655,7 +3659,7 @@ pub fn run() {
             let runtime_root = if cfg!(debug_assertions) {
                 bundle_root.clone()
             } else {
-                let runtime_root = gary4juce_runtime_root();
+                let runtime_root = storage::resolve_startup_runtime_root();
                 if let Err(error) = sync_bundled_services_to_runtime(&bundle_root, &runtime_root) {
                     let message = format!("Runtime service sync failed: {}", error);
                     log::error!("{}", message);
@@ -3671,6 +3675,7 @@ pub fn run() {
                 }
                 runtime_root
             };
+            storage::set_active_runtime_root(&runtime_root);
 
             let manifest_path = runtime_root
                 .join("services")
@@ -3939,6 +3944,9 @@ pub fn run() {
             get_hf_token,
             save_hf_token,
             delete_hf_token,
+            get_runtime_storage_info,
+            save_runtime_storage_root,
+            reset_runtime_storage_root,
             get_app_settings,
             save_app_settings,
             check_for_app_update,
@@ -4120,6 +4128,7 @@ async fn ensure_uv(
     service_id: &str,
     manager: &Arc<Mutex<ServiceManager>>,
     handle: &tauri::AppHandle,
+    runtime_root: &Path,
 ) -> Result<String, String> {
     {
         let mut mgr = manager.lock().await;
@@ -4131,6 +4140,7 @@ async fn ensure_uv(
     // Check if uv is already on PATH
     let mut check_cmd = tokio::process::Command::new("uv");
     check_cmd.arg("--version");
+    apply_runtime_env(&mut check_cmd, runtime_root);
     hide_console_window(&mut check_cmd);
     let check = check_cmd.output().await;
 
@@ -4154,6 +4164,7 @@ async fn ensure_uv(
         if std::path::Path::new(path).exists() {
             let mut check_cmd = tokio::process::Command::new(path);
             check_cmd.arg("--version");
+            apply_runtime_env(&mut check_cmd, runtime_root);
             hide_console_window(&mut check_cmd);
             let check = check_cmd.output().await;
             if let Ok(output) = check {
@@ -4191,6 +4202,7 @@ async fn ensure_uv(
         "-Command",
         "irm https://astral.sh/uv/install.ps1 | iex",
     ]);
+    apply_runtime_env(&mut install_cmd, runtime_root);
     hide_console_window(&mut install_cmd);
     let install = install_cmd
         .output()
@@ -4229,6 +4241,7 @@ async fn ensure_uv(
     // Try PATH again (installer may have updated it)
     let mut recheck_cmd = tokio::process::Command::new("uv");
     recheck_cmd.arg("--version");
+    apply_runtime_env(&mut recheck_cmd, runtime_root);
     hide_console_window(&mut recheck_cmd);
     let recheck = recheck_cmd.output().await;
     if let Ok(output) = recheck {
@@ -4251,7 +4264,8 @@ async fn run_build(
     let env_dir = &build_info.env_dir;
 
     // Step 0: Ensure uv is available
-    let uv = ensure_uv(&service_id, &manager, &handle).await?;
+    let runtime_root = &build_info.runtime_root;
+    let uv = ensure_uv(&service_id, &manager, &handle, runtime_root).await?;
 
     // Step 1: Create venv with uv (using Python 3.11)
     if !env_dir.exists() {
@@ -4273,6 +4287,7 @@ async fn run_build(
             work_dir,
             &service_id,
             &manager,
+            runtime_root,
         )
         .await;
 
@@ -4296,6 +4311,7 @@ async fn run_build(
         venv_cmd
             .args(["venv", "--python", "3.11", "--seed", "env"])
             .current_dir(work_dir);
+        apply_runtime_env(&mut venv_cmd, runtime_root);
         hide_console_window(&mut venv_cmd);
         let venv_output = venv_cmd
             .output()
@@ -4416,6 +4432,7 @@ async fn run_build(
             .env("PYTHONIOENCODING", "utf-8")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        apply_runtime_env(&mut child_cmd, runtime_root);
         hide_console_window(&mut child_cmd);
         let mut child = child_cmd
             .spawn()
@@ -4523,9 +4540,11 @@ async fn run_command_streamed(
     work_dir: &std::path::Path,
     service_id: &str,
     manager: &Arc<Mutex<ServiceManager>>,
+    runtime_root: &Path,
 ) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).current_dir(work_dir);
+    apply_runtime_env(&mut cmd, runtime_root);
     hide_console_window(&mut cmd);
     let output = cmd
         .output()
@@ -4639,10 +4658,12 @@ async fn download_model(
     // Carey models download to checkpoints/ dir, not HF cache
     if model_id.starts_with("carey::") {
         let checkpoint_dir = root.join("services").join("carey").join("checkpoints");
+        let runtime_root = root.clone();
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_carey_model(
                 model_id,
                 python_exe,
+                runtime_root,
                 checkpoint_dir,
                 mgr_clone,
                 handle,
@@ -4650,18 +4671,16 @@ async fn download_model(
             .await;
         });
     } else if model_id.starts_with("foundation::") {
-        // Foundation models go to %APPDATA%/Gary4JUCE/models/foundation-1/
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-            format!("{}\\AppData\\Roaming", home)
-        });
-        let model_dir = std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE")
-            .join("models")
-            .join("foundation-1");
+        let runtime_root = root.clone();
+        let model_dir = storage::models_dir(&root).join("foundation-1");
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_foundation_model(
-                model_id, python_exe, model_dir, mgr_clone, handle,
+                model_id,
+                python_exe,
+                runtime_root,
+                model_dir,
+                mgr_clone,
+                handle,
             )
             .await;
         });
@@ -6450,6 +6469,28 @@ fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> 
     let merged = merge_app_settings(settings);
     save_app_settings_file(&merged)?;
     Ok(merged)
+}
+
+#[tauri::command]
+fn get_runtime_storage_info(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    Ok(storage::storage_info(repo_root.inner()))
+}
+
+#[tauri::command]
+fn save_runtime_storage_root(
+    path: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    storage::save_runtime_root_config(&path, repo_root.inner())
+}
+
+#[tauri::command]
+fn reset_runtime_storage_root(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    storage::reset_runtime_root_config(repo_root.inner())
 }
 
 #[tauri::command]

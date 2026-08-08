@@ -127,6 +127,26 @@ impl ServiceManager {
         self.service_dir(svc).join("env")
     }
 
+    fn services_dir(&self) -> PathBuf {
+        self.repo_root.join("services")
+    }
+
+    fn models_dir(&self) -> PathBuf {
+        crate::storage::models_dir(&self.repo_root)
+    }
+
+    fn cache_dir(&self) -> PathBuf {
+        crate::storage::cache_dir(&self.repo_root)
+    }
+
+    fn hf_home_dir(&self) -> PathBuf {
+        crate::storage::hf_home_dir(&self.repo_root)
+    }
+
+    fn hf_hub_cache_dir(&self) -> PathBuf {
+        crate::storage::hf_hub_cache_dir(&self.repo_root)
+    }
+
     fn python_exe(&self, svc: &ServiceDef) -> PathBuf {
         self.env_dir(svc).join("Scripts").join("python.exe")
     }
@@ -135,9 +155,38 @@ impl ServiceManager {
         self.services.iter().find(|s| s.id == id)
     }
 
-    /// Resolve template variables like ${APPDATA}, ${HF_TOKEN}, ${MODELS_DIR}
+    /// Resolve template variables like ${GARY_RUNTIME}, ${HF_TOKEN}, ${MODELS_DIR}
     fn resolve_env_var(&self, value: &str) -> String {
         let mut result = value.to_string();
+
+        result = result.replace(
+            "${GARY_RUNTIME}",
+            &self.repo_root.to_string_lossy().to_string(),
+        );
+        result = result.replace(
+            "${GARY4LOCAL_RUNTIME}",
+            &self.repo_root.to_string_lossy().to_string(),
+        );
+        result = result.replace(
+            "${SERVICES_DIR}",
+            &self.services_dir().to_string_lossy().to_string(),
+        );
+        result = result.replace(
+            "${MODELS_DIR}",
+            &self.models_dir().to_string_lossy().to_string(),
+        );
+        result = result.replace(
+            "${CACHE_DIR}",
+            &self.cache_dir().to_string_lossy().to_string(),
+        );
+        result = result.replace(
+            "${HF_HOME}",
+            &self.hf_home_dir().to_string_lossy().to_string(),
+        );
+        result = result.replace(
+            "${HF_HUB_CACHE}",
+            &self.hf_hub_cache_dir().to_string_lossy().to_string(),
+        );
 
         // Resolve ${APPDATA}
         if let Ok(appdata) = std::env::var("APPDATA") {
@@ -150,17 +199,13 @@ impl ServiceManager {
             result = result.replace("${HF_TOKEN}", &hf_token);
         }
 
-        // Resolve ${MODELS_DIR} — defaults to %APPDATA%/Gary4JUCE/models
-        if result.contains("${MODELS_DIR}") {
-            let models_dir = std::env::var("MODELS_DIR").unwrap_or_else(|_| {
-                std::env::var("APPDATA")
-                    .map(|a| format!("{}\\Gary4JUCE\\models", a))
-                    .unwrap_or_default()
-            });
-            result = result.replace("${MODELS_DIR}", &models_dir);
-        }
-
         result
+    }
+
+    fn apply_runtime_env(&self, cmd: &mut Command) {
+        for (key, value) in crate::storage::runtime_env_vars(&self.repo_root) {
+            cmd.env(key, value);
+        }
     }
 
     /// Check if a running process has exited (crash detection)
@@ -337,6 +382,7 @@ impl ServiceManager {
             // on Python's import path so packaged builds can resolve helpers
             // like local_session_store.py alongside per-service packages.
             .env("PYTHONPATH", python_path);
+        self.apply_runtime_env(&mut cmd);
 
         // Set service-specific env vars (with template resolution)
         for (k, v) in &svc.env {
@@ -479,6 +525,7 @@ impl ServiceManager {
 
         Ok(BuildInfo {
             service_id: svc.id.clone(),
+            runtime_root: self.repo_root.clone(),
             work_dir: self.service_dir(svc),
             env_dir: self.env_dir(svc),
             build_steps: svc.build_steps.clone(),
@@ -550,6 +597,7 @@ impl ServiceManager {
                 }
                 Some(BuildInfo {
                     service_id: svc.id.clone(),
+                    runtime_root: self.repo_root.clone(),
                     work_dir: self.service_dir(svc),
                     env_dir: self.env_dir(svc),
                     build_steps: svc.build_steps.clone(),
@@ -632,8 +680,8 @@ impl ServiceManager {
             };
             Ok(filter_successful_health_access_logs(&trimmed))
         } else {
-            let raw = std::fs::read_to_string(log_path)
-                .map_err(|e| format!("Cannot read log: {}", e))?;
+            let raw =
+                std::fs::read_to_string(log_path).map_err(|e| format!("Cannot read log: {}", e))?;
             Ok(filter_successful_health_access_logs(&raw))
         }
     }
@@ -641,6 +689,7 @@ impl ServiceManager {
 
 pub struct BuildInfo {
     pub service_id: String,
+    pub runtime_root: PathBuf,
     pub work_dir: PathBuf,
     pub env_dir: PathBuf,
     pub build_steps: Vec<String>,

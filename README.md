@@ -40,7 +40,7 @@ install and startup flow:
 ## what lives here
 
 - `control-center/`
-  the Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into `%APPDATA%\Gary4JUCE`.
+  the Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into the selected runtime storage folder.
 - `services/`
   the Python backends and model-specific code for gary, terry, jerry, carey,
   foundation, and sa3.
@@ -65,8 +65,9 @@ optimizations in this project, see the
 ## repo layout notes
 
 - development runs directly from the repo.
-- production syncs the bundled service source into `%APPDATA%\Gary4JUCE\services`.
-- mutable runtime data such as logs, virtual environments, caches, and models live under `%APPDATA%\Gary4JUCE`, not inside the installed app folder.
+- production syncs the bundled service source into the selected runtime storage folder under `services`.
+- new installs default runtime storage to `gary4local-data` inside the install folder, so choosing an external install drive also moves service envs, caches, logs, and local models there.
+- existing installs keep using `%APPDATA%\Gary4JUCE` when data is already present. the storage button in the app can choose a new folder for the next restart.
 
 ## auto-updater
 

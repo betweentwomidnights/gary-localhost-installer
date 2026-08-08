@@ -140,9 +140,9 @@
         "PYTHONIOENCODING": "utf-8",
         "HF_TOKEN": "${HF_TOKEN}",
         "SA3_MODEL": "medium",
-        "SA3_PROMPTS_DIR": "${APPDATA}/Gary4JUCE/sa3/prompts",
-        "SA3_LORA_REGISTRY": "${APPDATA}/Gary4JUCE/sa3/lora_registry.json",
-        "SA3_LORA_DIR": "${APPDATA}/Gary4JUCE/sa3/loras",
+        "SA3_PROMPTS_DIR": "${GARY_RUNTIME}/sa3/prompts",
+        "SA3_LORA_REGISTRY": "${GARY_RUNTIME}/sa3/lora_registry.json",
+        "SA3_LORA_DIR": "${GARY_RUNTIME}/sa3/loras",
         "SA3_PEAK_NORMALIZE_DB": "2.0",
         "SA3_LIMITER_CEILING_DB": "-0.3",
         "SA3_LIMITER_KNEE": "0.8",
@@ -155,7 +155,7 @@
         "SA3_CONTINUE_TAIL_MODE": "regen_past",
         "SA3_CONTINUE_TAIL_PAD": "6",
         "SA3_LATENT_DIAG": "0",
-        "OUTPUT_DIR": "${APPDATA}/Gary4JUCE/sa3/outputs"
+        "OUTPUT_DIR": "${GARY_RUNTIME}/sa3/outputs"
       },
       "dependsOn": []
     },
@@ -193,8 +193,8 @@
         "ACESTEP_INIT_LLM": "false",
         "ACESTEP_CONFIG_PATH": "acestep-v15-base",
         "ACESTEP_NO_INIT": "true",
-        "CAREY_LORA_REGISTRY": "${APPDATA}/Gary4JUCE/carey/lora_registry.json",
-        "CAREY_CAPTIONS": "${APPDATA}/Gary4JUCE/carey/captions.json"
+        "CAREY_LORA_REGISTRY": "${GARY_RUNTIME}/carey/lora_registry.json",
+        "CAREY_CAPTIONS": "${GARY_RUNTIME}/carey/captions.json"
       },
       "dependsOn": []
     },
@@ -241,8 +241,8 @@
   "infrastructure": {},
   "defaults": {
     "pythonVersion": "3.11",
-    "modelsDir": "${APPDATA}/Gary4JUCE/models",
-    "logsDir": "${APPDATA}/Gary4JUCE/logs",
-    "servicesDir": "${APPDATA}/Gary4JUCE/services"
+    "modelsDir": "${MODELS_DIR}",
+    "logsDir": "${GARY_RUNTIME}/logs",
+    "servicesDir": "${SERVICES_DIR}"
   }
 }
