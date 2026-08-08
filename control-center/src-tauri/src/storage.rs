@@ -293,7 +293,7 @@ fn display_path(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-fn paths_equivalent(left: &Path, right: &Path) -> bool {
+pub fn paths_equivalent(left: &Path, right: &Path) -> bool {
     let left_key = path_key(left);
     let right_key = path_key(right);
     left_key == right_key

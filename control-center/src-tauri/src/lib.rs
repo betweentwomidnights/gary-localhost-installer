@@ -398,6 +398,48 @@ struct Sa3PromptsBuildResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct LegacyStorageCleanupItem {
+    id: String,
+    label: String,
+    path: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyLoraMigrationCandidate {
+    service: String,
+    name: String,
+    source_path: String,
+    target_path: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyStorageMaintenanceInfo {
+    active_root: String,
+    legacy_root: String,
+    default_hf_cache_root: String,
+    cleanup_items: Vec<LegacyStorageCleanupItem>,
+    lora_candidates: Vec<LegacyLoraMigrationCandidate>,
+    total_cleanup_bytes: u64,
+    total_lora_bytes: u64,
+    can_cleanup: bool,
+    can_migrate_loras: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyStorageMaintenanceResult {
+    info: LegacyStorageMaintenanceInfo,
+    migrated_loras: usize,
+    cleaned_items: usize,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Sa3DatasetSidecarEntry {
     audio_path: String,
     relative_path: String,
@@ -1717,13 +1759,14 @@ fn save_carey_ace_dataset_sidecar_updates(
     })
 }
 
-fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
-    let path = carey_lora_catalog_path();
+fn read_carey_lora_catalog_from(
+    path: &Path,
+) -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
 
-    let raw = std::fs::read_to_string(&path)
+    let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
     let mut parsed: BTreeMap<String, CareyLoraCatalogEntry> =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid LoRA catalog JSON: {}", e))?;
@@ -1742,18 +1785,28 @@ fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, 
     Ok(parsed)
 }
 
-fn save_carey_lora_catalog(
+fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
+    read_carey_lora_catalog_from(&carey_lora_catalog_path())
+}
+
+fn save_carey_lora_catalog_to(
+    path: &Path,
     catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
 ) -> Result<(), String> {
-    let path = carey_lora_catalog_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
     }
     let json = serde_json::to_string_pretty(catalog)
         .map_err(|e| format!("Cannot serialize LoRA catalog: {}", e))?;
-    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    std::fs::write(path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
     Ok(())
+}
+
+fn save_carey_lora_catalog(
+    catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
+) -> Result<(), String> {
+    save_carey_lora_catalog_to(&carey_lora_catalog_path(), catalog)
 }
 
 fn resolve_carey_captions_source(entry: &CareyLoraCatalogEntry) -> Option<PathBuf> {
@@ -1998,13 +2051,14 @@ fn sa3_prompt_file_path(name: &str) -> PathBuf {
     sa3_prompts_dir().join(format!("{}.json", name))
 }
 
-fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
-    let path = sa3_lora_catalog_path();
+fn read_sa3_lora_catalog_from(
+    path: &Path,
+) -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
 
-    let raw = std::fs::read_to_string(&path)
+    let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
     let mut parsed: BTreeMap<String, Sa3LoraCatalogEntry> =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid SA3 LoRA catalog JSON: {}", e))?;
@@ -2038,8 +2092,14 @@ fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, Stri
     Ok(parsed)
 }
 
-fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Result<(), String> {
-    let path = sa3_lora_catalog_path();
+fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
+    read_sa3_lora_catalog_from(&sa3_lora_catalog_path())
+}
+
+fn save_sa3_lora_catalog_to(
+    path: &Path,
+    catalog: &BTreeMap<String, Sa3LoraCatalogEntry>,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
@@ -2048,6 +2108,10 @@ fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Res
         .map_err(|e| format!("Cannot serialize SA3 LoRA catalog: {}", e))?;
     std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
     Ok(())
+}
+
+fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Result<(), String> {
+    save_sa3_lora_catalog_to(&sa3_lora_catalog_path(), catalog)
 }
 
 fn resolve_sa3_prompts_source(entry: &Sa3LoraCatalogEntry) -> Option<PathBuf> {
@@ -2237,6 +2301,796 @@ fn build_sa3_lora_state(runtime_root: &Path) -> Result<Sa3LoraState, String> {
         registry_path: sa3_lora_registry_path().to_string_lossy().to_string(),
         prompts_dir: sa3_prompts_dir().to_string_lossy().to_string(),
     })
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn default_hf_cache_root() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".cache").join("huggingface")
+}
+
+fn known_legacy_hf_repos() -> &'static [&'static str] {
+    &[
+        "thepatch/vanya_ai_dnb_0.1",
+        "thepatch/gary_orchestra_2",
+        "thepatch/keygen-gary-v2-small-8",
+        "thepatch/keygen-gary-v2-small-12",
+        "thepatch/bleeps-medium",
+        "thepatch/keygen-gary-medium-12",
+        "thepatch/hoenn_lofi",
+        "thepatch/bleeps-large-6",
+        "thepatch/bleeps-large-8",
+        "thepatch/bleeps-large-10",
+        "thepatch/bleeps-large-14",
+        "thepatch/bleeps-large-20",
+        "thepatch/keygen-gary-v2-large-12",
+        "thepatch/keygen-gary-v2-large-16",
+        "stabilityai/stable-audio-open-small",
+        "stabilityai/stable-audio-3-medium",
+        "stabilityai/stable-audio-3-medium-base",
+    ]
+}
+
+fn legacy_hf_cache_folder(hf_root: &Path, repo: &str) -> PathBuf {
+    hf_root
+        .join("hub")
+        .join(format!("models--{}", repo.replace('/', "--")))
+}
+
+fn path_size(path: &Path) -> u64 {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+
+    if metadata.is_file() {
+        return metadata.len();
+    }
+    if !metadata.is_dir() {
+        return 0;
+    }
+
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| path_size(&entry.path()))
+        .sum()
+}
+
+fn add_cleanup_item(
+    items: &mut Vec<LegacyStorageCleanupItem>,
+    active_root: &Path,
+    id: String,
+    label: String,
+    path: PathBuf,
+) {
+    if !path.exists() {
+        return;
+    }
+    if path_is_inside(&path, active_root) || path_is_inside(active_root, &path) {
+        return;
+    }
+
+    items.push(LegacyStorageCleanupItem {
+        id,
+        label,
+        bytes: path_size(&path),
+        path: display_path(&path),
+    });
+}
+
+fn build_legacy_cleanup_items(
+    active_root: &Path,
+    legacy_root: &Path,
+    default_hf_root: &Path,
+) -> Vec<LegacyStorageCleanupItem> {
+    let mut items = Vec::new();
+    if storage::paths_equivalent(active_root, legacy_root) {
+        return items;
+    }
+
+    for service_id in [
+        "gary",
+        "melodyflow",
+        "stable-audio",
+        "sa3",
+        "carey",
+        "foundation",
+    ] {
+        let service_dir = legacy_root.join("services").join(service_id);
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("{service_id}-env"),
+            format!("{service_id} Python environment"),
+            service_dir.join("env"),
+        );
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("{service_id}-venv"),
+            format!("{service_id} virtual environment"),
+            service_dir.join(".venv"),
+        );
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("{service_id}-cache"),
+            format!("{service_id} service cache"),
+            service_dir.join(".cache"),
+        );
+    }
+
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "legacy-cache".to_string(),
+        "legacy runtime cache".to_string(),
+        legacy_root.join("cache"),
+    );
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "legacy-python".to_string(),
+        "legacy managed Python installs".to_string(),
+        legacy_root.join("python"),
+    );
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "legacy-models".to_string(),
+        "legacy runtime models".to_string(),
+        legacy_root.join("models"),
+    );
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "carey-checkpoints".to_string(),
+        "legacy Carey model checkpoints".to_string(),
+        legacy_root
+            .join("services")
+            .join("carey")
+            .join("checkpoints"),
+    );
+
+    for repo in known_legacy_hf_repos() {
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("hf-{}", repo.replace('/', "-").replace('.', "-")),
+            format!("Hugging Face cache: {repo}"),
+            legacy_hf_cache_folder(default_hf_root, repo),
+        );
+    }
+
+    items
+}
+
+fn path_prefix_key(path: &Path) -> String {
+    let normalized = if cfg!(windows) {
+        path.to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    };
+    normalized
+        .trim_end_matches(|ch| ch == '\\' || ch == '/')
+        .to_string()
+}
+
+fn path_is_inside(path: &Path, root: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let path_key = path_prefix_key(&path);
+    let root_key = path_prefix_key(&root);
+    let separator = if cfg!(windows) { "\\" } else { "/" };
+
+    path_key == root_key || path_key.starts_with(&format!("{root_key}{separator}"))
+}
+
+fn safe_lora_storage_name(name: &str) -> String {
+    if let Some(sanitized) = sanitize_lora_name(name) {
+        return sanitized;
+    }
+
+    let mut cleaned = String::new();
+    for ch in name.trim().to_lowercase().chars() {
+        if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-' {
+            cleaned.push(ch);
+        } else if !cleaned.ends_with('-') {
+            cleaned.push('-');
+        }
+    }
+
+    let cleaned = cleaned.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        "lora".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn unique_destination_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let extension = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string())
+        .filter(|ext| !ext.is_empty());
+
+    for index in 2.. {
+        let file_name = match &extension {
+            Some(extension) => format!("{stem}-{index}.{extension}"),
+            None => format!("{stem}-{index}"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    path.to_path_buf()
+}
+
+fn copy_file_checked(source: &Path, target: &Path) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("{} has no parent folder", target.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+
+    let source_len = std::fs::metadata(source)
+        .map_err(|e| format!("Cannot inspect {}: {}", source.display(), e))?
+        .len();
+    let copied = std::fs::copy(source, target).map_err(|e| {
+        format!(
+            "Cannot copy {} to {}: {}",
+            source.display(),
+            target.display(),
+            e
+        )
+    })?;
+    if copied != source_len {
+        let _ = std::fs::remove_file(target);
+        return Err(format!(
+            "Copy from {} to {} was incomplete: copied {copied} of {source_len} bytes",
+            source.display(),
+            target.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn copy_legacy_file_if_missing(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.is_file() || target.exists() {
+        return Ok(());
+    }
+    copy_file_checked(source, target)
+}
+
+fn migrate_optional_source_dir(
+    raw_path: &Option<String>,
+    legacy_root: &Path,
+    target_base: &Path,
+) -> Result<Option<String>, String> {
+    let Some(raw_path) = raw_path else {
+        return Ok(None);
+    };
+
+    let source = PathBuf::from(raw_path);
+    if !source.is_dir() || !path_is_inside(&source, legacy_root) {
+        return Ok(Some(raw_path.clone()));
+    }
+
+    let target = unique_destination_path(target_base);
+    copy_dir_recursive(&source, &target)?;
+    Ok(Some(display_path(&target)))
+}
+
+fn merge_json_object_file_preserve_target(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.is_file() {
+        return Ok(());
+    }
+    if !target.is_file() {
+        return copy_file_checked(source, target);
+    }
+
+    let source_raw = std::fs::read_to_string(source)
+        .map_err(|e| format!("Cannot read {}: {}", source.display(), e))?;
+    let target_raw = std::fs::read_to_string(target)
+        .map_err(|e| format!("Cannot read {}: {}", target.display(), e))?;
+    let source_json = serde_json::from_str::<serde_json::Value>(&source_raw)
+        .map_err(|e| format!("Invalid JSON in {}: {}", source.display(), e))?;
+    let mut target_json = serde_json::from_str::<serde_json::Value>(&target_raw)
+        .map_err(|e| format!("Invalid JSON in {}: {}", target.display(), e))?;
+
+    let (Some(source_object), Some(target_object)) =
+        (source_json.as_object(), target_json.as_object_mut())
+    else {
+        return Ok(());
+    };
+
+    let mut changed = false;
+    for (key, value) in source_object {
+        if !target_object.contains_key(key) {
+            target_object.insert(key.clone(), value.clone());
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(());
+    }
+
+    let json = serde_json::to_string_pretty(&target_json)
+        .map_err(|e| format!("Cannot serialize {}: {}", target.display(), e))?;
+    std::fs::write(target, json).map_err(|e| format!("Cannot save {}: {}", target.display(), e))
+}
+
+fn carey_lora_catalog_path_for(root: &Path) -> PathBuf {
+    root.join("carey").join("lora_catalog.json")
+}
+
+fn sa3_lora_catalog_path_for(root: &Path) -> PathBuf {
+    root.join("sa3").join("lora_catalog.json")
+}
+
+fn legacy_sa3_lora_target(active_root: &Path, name: &str, source: &Path) -> PathBuf {
+    let safe_name = safe_lora_storage_name(name);
+    let extension = source
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or_else(|| "safetensors".to_string());
+    unique_destination_path(
+        &active_root
+            .join("sa3")
+            .join("loras")
+            .join(format!("{safe_name}.{extension}")),
+    )
+}
+
+fn legacy_carey_lora_target(active_root: &Path, name: &str) -> PathBuf {
+    unique_destination_path(
+        &active_root
+            .join("carey")
+            .join("loras")
+            .join(safe_lora_storage_name(name)),
+    )
+}
+
+fn active_sa3_catalog_entry_is_valid(entry: &Sa3LoraCatalogEntry) -> bool {
+    looks_like_sa3_lora_checkpoint(&PathBuf::from(&entry.path))
+}
+
+fn active_carey_catalog_entry_is_valid(entry: &CareyLoraCatalogEntry) -> bool {
+    looks_like_lora_checkpoint_dir(&PathBuf::from(&entry.path))
+}
+
+fn collect_legacy_lora_candidates(
+    active_root: &Path,
+    legacy_root: &Path,
+) -> Result<Vec<LegacyLoraMigrationCandidate>, String> {
+    let mut candidates = Vec::new();
+    if storage::paths_equivalent(active_root, legacy_root) {
+        return Ok(candidates);
+    }
+
+    let active_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(active_root))?;
+    let legacy_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(legacy_root))?;
+    for (name, entry) in legacy_sa3 {
+        if active_sa3
+            .get(&name)
+            .map(active_sa3_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, legacy_root) || !looks_like_sa3_lora_checkpoint(&source) {
+            continue;
+        }
+        let target = legacy_sa3_lora_target(active_root, &name, &source);
+        candidates.push(LegacyLoraMigrationCandidate {
+            service: "sa3".to_string(),
+            name,
+            source_path: display_path(&source),
+            target_path: display_path(&target),
+            bytes: path_size(&source),
+        });
+    }
+
+    let active_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(active_root))?;
+    let legacy_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(legacy_root))?;
+    for (name, entry) in legacy_carey {
+        if active_carey
+            .get(&name)
+            .map(active_carey_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, legacy_root) || !looks_like_lora_checkpoint_dir(&source) {
+            continue;
+        }
+        let target = legacy_carey_lora_target(active_root, &name);
+        candidates.push(LegacyLoraMigrationCandidate {
+            service: "carey".to_string(),
+            name,
+            source_path: display_path(&source),
+            target_path: display_path(&target),
+            bytes: path_size(&source),
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn build_legacy_storage_maintenance_info(
+    active_root: &Path,
+) -> Result<LegacyStorageMaintenanceInfo, String> {
+    let legacy_root = storage::legacy_runtime_root();
+    let default_hf_root = default_hf_cache_root();
+    let cleanup_items = build_legacy_cleanup_items(active_root, &legacy_root, &default_hf_root);
+    let lora_candidates = collect_legacy_lora_candidates(active_root, &legacy_root)?;
+    let total_cleanup_bytes = cleanup_items.iter().map(|item| item.bytes).sum();
+    let total_lora_bytes = lora_candidates.iter().map(|item| item.bytes).sum();
+    let legacy_is_active = storage::paths_equivalent(active_root, &legacy_root);
+
+    Ok(LegacyStorageMaintenanceInfo {
+        active_root: display_path(active_root),
+        legacy_root: display_path(&legacy_root),
+        default_hf_cache_root: display_path(&default_hf_root),
+        can_cleanup: !legacy_is_active && !cleanup_items.is_empty(),
+        can_migrate_loras: !legacy_is_active && !lora_candidates.is_empty(),
+        cleanup_items,
+        lora_candidates,
+        total_cleanup_bytes,
+        total_lora_bytes,
+    })
+}
+
+fn migrate_sa3_catalog_entry(
+    name: &str,
+    entry: &Sa3LoraCatalogEntry,
+    active_root: &Path,
+    legacy_root: &Path,
+) -> Result<Sa3LoraCatalogEntry, String> {
+    let source = PathBuf::from(&entry.path);
+    if !path_is_inside(&source, legacy_root) || !looks_like_sa3_lora_checkpoint(&source) {
+        return Err(format!(
+            "{} is not a legacy SA3 LoRA file",
+            source.display()
+        ));
+    }
+
+    let target = legacy_sa3_lora_target(active_root, name, &source);
+    copy_file_checked(&source, &target)?;
+
+    let safe_name = safe_lora_storage_name(name);
+    let mut migrated = entry.clone();
+    migrated.path = display_path(&target);
+    migrated.prompts_path = migrate_optional_source_dir(
+        &entry.prompts_path,
+        legacy_root,
+        &active_root
+            .join("sa3")
+            .join("lora-sources")
+            .join(&safe_name)
+            .join("prompts"),
+    )?;
+
+    let mut migrated_checkpoints = Vec::new();
+    for checkpoint in &entry.training_checkpoints {
+        let source = PathBuf::from(&checkpoint.path);
+        if source.is_file() && path_is_inside(&source, legacy_root) {
+            let file_name = source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let target = unique_destination_path(
+                &active_root
+                    .join("sa3")
+                    .join("training")
+                    .join("migrated")
+                    .join(&safe_name)
+                    .join(file_name),
+            );
+            copy_file_checked(&source, &target)?;
+            let mut migrated_checkpoint = checkpoint.clone();
+            migrated_checkpoint.path = display_path(&target);
+            migrated_checkpoints.push(migrated_checkpoint);
+        } else if !path_is_inside(&source, legacy_root) {
+            migrated_checkpoints.push(checkpoint.clone());
+        }
+    }
+    migrated.training_checkpoints = migrated_checkpoints;
+    if let Some(step) = migrated.selected_training_step {
+        if !migrated
+            .training_checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.step == step)
+        {
+            migrated.selected_training_step = None;
+        }
+    }
+
+    copy_legacy_file_if_missing(
+        &legacy_root
+            .join("sa3")
+            .join("prompts")
+            .join(format!("{name}.json")),
+        &active_root
+            .join("sa3")
+            .join("prompts")
+            .join(format!("{name}.json")),
+    )?;
+
+    Ok(migrated)
+}
+
+fn migrate_carey_catalog_entry(
+    name: &str,
+    entry: &CareyLoraCatalogEntry,
+    active_root: &Path,
+    legacy_root: &Path,
+) -> Result<CareyLoraCatalogEntry, String> {
+    let source = PathBuf::from(&entry.path);
+    if !path_is_inside(&source, legacy_root) || !looks_like_lora_checkpoint_dir(&source) {
+        return Err(format!(
+            "{} is not a legacy Carey LoRA folder",
+            source.display()
+        ));
+    }
+
+    let safe_name = safe_lora_storage_name(name);
+    let target = legacy_carey_lora_target(active_root, name);
+    copy_dir_recursive(&source, &target)?;
+
+    let mut migrated = entry.clone();
+    migrated.path = display_path(&target);
+    migrated.captions_path = migrate_optional_source_dir(
+        &entry.captions_path,
+        legacy_root,
+        &active_root
+            .join("carey")
+            .join("lora-sources")
+            .join(&safe_name)
+            .join("captions"),
+    )?;
+
+    Ok(migrated)
+}
+
+fn migrate_legacy_sa3_loras(
+    active_root: &Path,
+    legacy_root: &Path,
+    errors: &mut Vec<String>,
+) -> usize {
+    let legacy_catalog = match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(legacy_root)) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            errors.push(error);
+            return 0;
+        }
+    };
+    let mut active_catalog =
+        match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(active_root)) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                errors.push(error);
+                return 0;
+            }
+        };
+
+    let mut prepared = 0;
+    for (name, entry) in legacy_catalog {
+        if active_catalog
+            .get(&name)
+            .map(active_sa3_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        match migrate_sa3_catalog_entry(&name, &entry, active_root, legacy_root) {
+            Ok(migrated) => {
+                active_catalog.insert(name, migrated);
+                prepared += 1;
+            }
+            Err(error) => errors.push(format!("SA3 LoRA '{}': {}", name, error)),
+        }
+    }
+
+    if prepared == 0 {
+        return 0;
+    }
+
+    if let Err(error) =
+        save_sa3_lora_catalog_to(&sa3_lora_catalog_path_for(active_root), &active_catalog)
+    {
+        errors.push(error);
+        return 0;
+    }
+    if let Err(error) = build_sa3_lora_state(active_root) {
+        errors.push(error);
+    }
+
+    prepared
+}
+
+fn migrate_legacy_carey_loras(
+    active_root: &Path,
+    legacy_root: &Path,
+    errors: &mut Vec<String>,
+) -> usize {
+    let legacy_catalog =
+        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(legacy_root)) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                errors.push(error);
+                return 0;
+            }
+        };
+    let mut active_catalog =
+        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(active_root)) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                errors.push(error);
+                return 0;
+            }
+        };
+
+    let mut prepared = 0;
+    for (name, entry) in legacy_catalog {
+        if active_catalog
+            .get(&name)
+            .map(active_carey_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        match migrate_carey_catalog_entry(&name, &entry, active_root, legacy_root) {
+            Ok(migrated) => {
+                active_catalog.insert(name, migrated);
+                prepared += 1;
+            }
+            Err(error) => errors.push(format!("Carey LoRA '{}': {}", name, error)),
+        }
+    }
+
+    if prepared == 0 {
+        return 0;
+    }
+
+    if let Err(error) = merge_json_object_file_preserve_target(
+        &legacy_root.join("carey").join("captions.json"),
+        &active_root.join("carey").join("captions.json"),
+    ) {
+        errors.push(error);
+    }
+    if let Err(error) =
+        save_carey_lora_catalog_to(&carey_lora_catalog_path_for(active_root), &active_catalog)
+    {
+        errors.push(error);
+        return 0;
+    }
+    if let Err(error) = build_carey_lora_state(active_root) {
+        errors.push(error);
+    }
+
+    prepared
+}
+
+fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
+    let legacy_root = storage::legacy_runtime_root();
+    let mut errors = Vec::new();
+    let mut migrated_loras = 0;
+
+    if storage::paths_equivalent(active_root, &legacy_root) {
+        errors.push("Active storage is still the legacy AppData folder.".to_string());
+    } else {
+        migrated_loras += migrate_legacy_sa3_loras(active_root, &legacy_root, &mut errors);
+        migrated_loras += migrate_legacy_carey_loras(active_root, &legacy_root, &mut errors);
+    }
+
+    let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
+        errors.push(error);
+        LegacyStorageMaintenanceInfo {
+            active_root: display_path(active_root),
+            legacy_root: display_path(&legacy_root),
+            default_hf_cache_root: display_path(&default_hf_cache_root()),
+            cleanup_items: Vec::new(),
+            lora_candidates: Vec::new(),
+            total_cleanup_bytes: 0,
+            total_lora_bytes: 0,
+            can_cleanup: false,
+            can_migrate_loras: false,
+        }
+    });
+
+    LegacyStorageMaintenanceResult {
+        info,
+        migrated_loras,
+        cleaned_items: 0,
+        errors,
+    }
+}
+
+fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
+    let legacy_root = storage::legacy_runtime_root();
+    let mut errors = Vec::new();
+    let mut cleaned_items = 0;
+
+    let before = match build_legacy_storage_maintenance_info(active_root) {
+        Ok(info) => info,
+        Err(error) => {
+            errors.push(error);
+            LegacyStorageMaintenanceInfo {
+                active_root: display_path(active_root),
+                legacy_root: display_path(&legacy_root),
+                default_hf_cache_root: display_path(&default_hf_cache_root()),
+                cleanup_items: Vec::new(),
+                lora_candidates: Vec::new(),
+                total_cleanup_bytes: 0,
+                total_lora_bytes: 0,
+                can_cleanup: false,
+                can_migrate_loras: false,
+            }
+        }
+    };
+
+    if storage::paths_equivalent(active_root, &legacy_root) {
+        errors.push("Active storage is still the legacy AppData folder.".to_string());
+    } else {
+        for item in before.cleanup_items {
+            let path = PathBuf::from(&item.path);
+            if path.exists() {
+                match remove_path(&path) {
+                    Ok(()) => cleaned_items += 1,
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+    }
+
+    let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
+        errors.push(error);
+        LegacyStorageMaintenanceInfo {
+            active_root: display_path(active_root),
+            legacy_root: display_path(&legacy_root),
+            default_hf_cache_root: display_path(&default_hf_cache_root()),
+            cleanup_items: Vec::new(),
+            lora_candidates: Vec::new(),
+            total_cleanup_bytes: 0,
+            total_lora_bytes: 0,
+            can_cleanup: false,
+            can_migrate_loras: false,
+        }
+    });
+
+    LegacyStorageMaintenanceResult {
+        info,
+        migrated_loras: 0,
+        cleaned_items,
+        errors,
+    }
 }
 
 fn read_text_tail(path: &Path, max_bytes: usize) -> String {
@@ -3947,6 +4801,9 @@ pub fn run() {
             get_runtime_storage_info,
             save_runtime_storage_root,
             reset_runtime_storage_root,
+            get_legacy_storage_maintenance_info,
+            migrate_legacy_loras,
+            cleanup_legacy_storage,
             get_app_settings,
             save_app_settings,
             check_for_app_update,
@@ -6491,6 +7348,27 @@ fn reset_runtime_storage_root(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<storage::RuntimeStorageInfo, String> {
     storage::reset_runtime_root_config(repo_root.inner())
+}
+
+#[tauri::command]
+fn get_legacy_storage_maintenance_info(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceInfo, String> {
+    build_legacy_storage_maintenance_info(repo_root.inner())
+}
+
+#[tauri::command]
+fn migrate_legacy_loras(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceResult, String> {
+    Ok(migrate_legacy_loras_impl(repo_root.inner()))
+}
+
+#[tauri::command]
+fn cleanup_legacy_storage(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceResult, String> {
+    Ok(cleanup_legacy_storage_impl(repo_root.inner()))
 }
 
 #[tauri::command]

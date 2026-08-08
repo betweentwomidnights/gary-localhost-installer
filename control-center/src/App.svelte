@@ -84,6 +84,40 @@
     usingLegacyDefault: boolean;
   }
 
+  interface LegacyStorageCleanupItem {
+    id: string;
+    label: string;
+    path: string;
+    bytes: number;
+  }
+
+  interface LegacyLoraMigrationCandidate {
+    service: string;
+    name: string;
+    sourcePath: string;
+    targetPath: string;
+    bytes: number;
+  }
+
+  interface LegacyStorageMaintenanceInfo {
+    activeRoot: string;
+    legacyRoot: string;
+    defaultHfCacheRoot: string;
+    cleanupItems: LegacyStorageCleanupItem[];
+    loraCandidates: LegacyLoraMigrationCandidate[];
+    totalCleanupBytes: number;
+    totalLoraBytes: number;
+    canCleanup: boolean;
+    canMigrateLoras: boolean;
+  }
+
+  interface LegacyStorageMaintenanceResult {
+    info: LegacyStorageMaintenanceInfo;
+    migratedLoras: number;
+    cleanedItems: number;
+    errors: string[];
+  }
+
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
   const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
@@ -123,6 +157,10 @@
   let storageInfo: RuntimeStorageInfo | null = $state(null);
   let storageBusy = $state(false);
   let storageError: string | null = $state(null);
+  let storageMaintenanceInfo: LegacyStorageMaintenanceInfo | null = $state(null);
+  let storageMaintenanceBusy = $state(false);
+  let storageMaintenanceError: string | null = $state(null);
+  let storageMaintenanceMessage: string | null = $state(null);
   let careyLoraModalOpen = $state(false);
   let careyAceTrainingModalOpen = $state(false);
   let sa3LoraModalOpen = $state(false);
@@ -244,6 +282,18 @@
       storageError = formatError(e);
     }
     return storageInfo;
+  }
+
+  async function loadStorageMaintenanceInfo() {
+    try {
+      storageMaintenanceInfo = await invoke<LegacyStorageMaintenanceInfo>(
+        "get_legacy_storage_maintenance_info",
+      );
+      storageMaintenanceError = null;
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    }
+    return storageMaintenanceInfo;
   }
 
   function formatError(error: unknown): string {
@@ -372,12 +422,14 @@
 
   async function openStorageSettings() {
     storageModalOpen = true;
-    await loadRuntimeStorageInfo();
+    await Promise.all([loadRuntimeStorageInfo(), loadStorageMaintenanceInfo()]);
   }
 
   function closeStorageSettings() {
     storageModalOpen = false;
     storageError = null;
+    storageMaintenanceError = null;
+    storageMaintenanceMessage = null;
   }
 
   async function saveRuntimeStorageRoot(path: string) {
@@ -385,6 +437,7 @@
     storageError = null;
     try {
       storageInfo = await invoke<RuntimeStorageInfo>("save_runtime_storage_root", { path });
+      await loadStorageMaintenanceInfo();
     } catch (e) {
       storageError = formatError(e);
     } finally {
@@ -397,10 +450,64 @@
     storageError = null;
     try {
       storageInfo = await invoke<RuntimeStorageInfo>("reset_runtime_storage_root");
+      await loadStorageMaintenanceInfo();
     } catch (e) {
       storageError = formatError(e);
     } finally {
       storageBusy = false;
+    }
+  }
+
+  async function refreshStorageMaintenance() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceMessage = null;
+    try {
+      await loadStorageMaintenanceInfo();
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
+  async function migrateLegacyLoras() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceMessage = null;
+    try {
+      const result = await invoke<LegacyStorageMaintenanceResult>("migrate_legacy_loras");
+      storageMaintenanceInfo = result.info;
+      storageMaintenanceMessage =
+        result.migratedLoras > 0
+          ? `migrated ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"}`
+          : "no LoRAs needed migration";
+      if (result.errors.length > 0) {
+        storageMaintenanceError = result.errors.join("\n");
+      }
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
+  async function cleanupLegacyStorage() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceMessage = null;
+    try {
+      const result = await invoke<LegacyStorageMaintenanceResult>("cleanup_legacy_storage");
+      storageMaintenanceInfo = result.info;
+      storageMaintenanceMessage =
+        result.cleanedItems > 0
+          ? `cleaned ${result.cleanedItems} old item${result.cleanedItems === 1 ? "" : "s"}`
+          : "nothing old needed cleanup";
+      if (result.errors.length > 0) {
+        storageMaintenanceError = result.errors.join("\n");
+      }
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    } finally {
+      storageMaintenanceBusy = false;
     }
   }
 
@@ -632,9 +739,16 @@
     info={storageInfo}
     busy={storageBusy}
     error={storageError}
+    maintenanceInfo={storageMaintenanceInfo}
+    maintenanceBusy={storageMaintenanceBusy}
+    maintenanceError={storageMaintenanceError}
+    maintenanceMessage={storageMaintenanceMessage}
     onChoose={saveRuntimeStorageRoot}
     onReset={resetRuntimeStorageRoot}
     onReveal={revealStoragePath}
+    onRefreshMaintenance={refreshStorageMaintenance}
+    onMigrateLoras={migrateLegacyLoras}
+    onCleanupLegacy={cleanupLegacyStorage}
     onClose={closeStorageSettings}
   />
   <CareyLoraModal
