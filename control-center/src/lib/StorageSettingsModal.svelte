@@ -263,10 +263,10 @@
               <div class="row-title">LoRAs in current storage</div>
               <div class="row-copy">
                 {maintenanceInfo.storageMoveLoraCandidates.length} LoRA{maintenanceInfo.storageMoveLoraCandidates.length === 1 ? "" : "s"}
-                need to move before restart - {formatBytes(maintenanceInfo.totalStorageMoveLoraBytes)}
+                can be copied before restart - {formatBytes(maintenanceInfo.totalStorageMoveLoraBytes)}
               </div>
             </div>
-            <button type="button" onclick={onMigrateStorageLoras} disabled={busy || maintenanceBusy}>migrate to next storage</button>
+            <button type="button" onclick={onMigrateStorageLoras} disabled={busy || maintenanceBusy}>copy to next storage</button>
           </div>
           <div class="item-list">
             {#each visibleStorageMoveLoras as lora}
@@ -286,9 +286,9 @@
               </button>
             {/if}
           </div>
-          <div class="note">These are copied from the active storage profile into the folder that will be used after restart.</div>
+          <div class="note">This copies LoRAs into the folder used after restart. It does not delete them from the current storage.</div>
         {:else if storageMovePending && maintenanceInfo}
-          <div class="note">no Gary-managed LoRAs need moving to next storage. LoRAs already registered there stay available after restart.</div>
+          <div class="note">no Gary-managed LoRAs need copying to next storage. LoRAs already registered there stay available after restart.</div>
         {/if}
 
         {#if maintenanceInfo?.canMigrateLoras}
@@ -300,7 +300,7 @@
                 - {formatBytes(maintenanceInfo.totalLoraBytes)}
               </div>
             </div>
-            <button type="button" onclick={onMigrateLoras} disabled={busy || maintenanceBusy}>migrate LoRAs</button>
+            <button type="button" onclick={onMigrateLoras} disabled={busy || maintenanceBusy}>copy LoRAs</button>
           </div>
           <div class="item-list">
             {#each visibleLoraCandidates as lora}

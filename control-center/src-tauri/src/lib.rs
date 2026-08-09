@@ -2992,7 +2992,7 @@ fn migrate_sa3_loras_between_roots(
         let source = PathBuf::from(&entry.path);
         if !path_is_inside(&source, source_root) {
             warnings.push(format!(
-                "SA3 LoRA '{}' is a manual/external LoRA, so Gary cannot migrate it automatically. Add it again from Jerry > sa3 > add LoRAs if you still want it in this storage profile.",
+                "SA3 LoRA '{}' is a manual/external LoRA, so Gary cannot copy it automatically. Add it again from Jerry > sa3 > add LoRAs if you still want it in this storage profile.",
                 name
             ));
             continue;
@@ -3058,7 +3058,7 @@ fn migrate_carey_loras_between_roots(
         let source = PathBuf::from(&entry.path);
         if !path_is_inside(&source, source_root) {
             warnings.push(format!(
-                "Carey LoRA '{}' is a manual/external LoRA, so Gary cannot migrate it automatically. Add it again from Carey > add LoRAs if you still want it in this storage profile.",
+                "Carey LoRA '{}' is a manual/external LoRA, so Gary cannot copy it automatically. Add it again from Carey > add LoRAs if you still want it in this storage profile.",
                 name
             ));
             continue;
@@ -3106,7 +3106,7 @@ fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResu
         errors.push("Active storage is still the legacy AppData folder.".to_string());
     } else if !storage::paths_equivalent(active_root, &pending_root) {
         errors.push(
-            "Restart the app before migrating legacy LoRAs; storage is currently changing."
+            "Restart the app before copying legacy LoRAs; storage is currently changing."
                 .to_string(),
         );
     } else {

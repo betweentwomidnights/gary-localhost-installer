@@ -489,8 +489,8 @@
       storageMaintenanceInfo = result.info;
       storageMaintenanceMessage =
         result.migratedLoras > 0
-          ? `migrated ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"}`
-          : "no LoRAs needed migration";
+          ? `copied ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"}`
+          : "no LoRAs needed copying";
       if (result.errors.length > 0) {
         storageMaintenanceError = result.errors.join("\n");
       }
@@ -516,8 +516,8 @@
       storageMaintenanceInfo = result.info;
       storageMaintenanceMessage =
         result.migratedLoras > 0
-          ? `migrated ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"} to next storage`
-          : "no LoRAs needed migration";
+          ? `copied ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"} to next storage`
+          : "no LoRAs needed copying";
       if (result.errors.length > 0) {
         storageMaintenanceError = result.errors.join("\n");
       }
