@@ -1,16 +1,15 @@
 {
-  "channel": "preview",
-  "latest_version": "0.1.19-rocm.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.19-rocm.1/gary4local-rocm_0.1.19-rocm.1_x64-setup.exe",
-  "sha256": "e40f3a71012d4b37c4b9ac8f30516469af1606f3dd60da365d12167385d60a0d",
-  "published_at": "2026-07-01T12:00:22.8544274Z",
-  "notes": [
-    "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.",
-    "Save a Hugging Face read token in gary4local-rocm before testing SA3.",
-    "Trigger the real ROCm test from Gary4JUCE: Jerry > sa3 > generate, then make a short loop.",
-    "SA3 loads lazily on first generation; backend startup alone is not a full ROCm test.",
-    "SA3 uses Python 3.12 with AMD ROCm Windows PyTorch 2.9.1+rocm7.2.1.",
-    "SA3 should fail fast at model load instead of falling back to CPU when HIP cannot see a GPU.",
-    "Native in-app install is not enabled for this prerelease; use download update."
-  ]
+    "channel":  "preview",
+    "latest_version":  "0.2.1-rocm.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.1/gary4local-rocm_0.2.1-rocm.1_x64-setup.exe",
+    "sha256":  "cf082fd8b3f4c56cdddb352cf02f2582a06f631a0a3573ca57261e2c496604d0",
+    "published_at":  "2026-08-09T07:48:57.9017235Z",
+    "notes":  [
+                  "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.",
+                  "Fresh installs keep service environments, caches, and models under gary4local-data beside the selected app install folder, so both can live off C:.",
+                  "SA3 uses Python 3.12 with AMD ROCm Windows PyTorch 2.9.1+rocm7.2.1 and includes the T5Gemma Transformers compatibility pin.",
+                  "Save a Hugging Face read token, then test from Gary4JUCE: Jerry \u003e sa3 \u003e generate and make a short loop.",
+                  "SA3 loads lazily on first generation and fails instead of silently falling back to CPU when HIP cannot see the GPU.",
+                  "This preview uses the separate gary4local-rocm updater feed."
+              ]
 }
