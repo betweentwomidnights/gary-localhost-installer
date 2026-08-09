@@ -128,6 +128,21 @@
         )
       : 0,
   );
+  let storageMovePending = $derived(
+    !!info && info.pendingRestart && info.startupRoot !== info.activeRoot,
+  );
+  let resetButtonLabel = $derived(
+    info?.configuredRoot
+      ? "use default"
+      : info?.pendingRestart
+        ? "default pending"
+        : "using default",
+  );
+  let resetButtonTitle = $derived(
+    info?.configuredRoot
+      ? "Remove the custom storage setting. After restart, Gary uses legacy AppData if it exists, otherwise the installed default."
+      : "Gary is already using its default storage choice.",
+  );
 
   function formatBytes(bytes: number) {
     if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -272,6 +287,8 @@
             {/if}
           </div>
           <div class="note">These are copied from the active storage profile into the folder that will be used after restart.</div>
+        {:else if storageMovePending && maintenanceInfo}
+          <div class="note">no Gary-managed LoRAs need moving to next storage. LoRAs already registered there stay available after restart.</div>
         {/if}
 
         {#if maintenanceInfo?.canMigrateLoras}
@@ -353,7 +370,14 @@
 
       <div class="actions">
         <button type="button" onclick={chooseFolder} disabled={busy}>choose folder</button>
-        <button type="button" onclick={onReset} disabled={busy}>clear custom</button>
+        <button
+          type="button"
+          onclick={onReset}
+          disabled={busy || !info?.configuredRoot}
+          title={resetButtonTitle}
+        >
+          {resetButtonLabel}
+        </button>
         {#if info}
           <button type="button" onclick={() => onReveal(info.activeRoot)} disabled={busy}>open active</button>
         {/if}

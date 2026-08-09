@@ -2826,14 +2826,15 @@ fn build_legacy_storage_maintenance_info(
         .sum();
     let legacy_is_active = storage::paths_equivalent(active_root, &legacy_root);
     let pending_is_active = storage::paths_equivalent(active_root, &pending_root);
+    let pending_is_legacy = storage::paths_equivalent(&pending_root, &legacy_root);
 
     Ok(LegacyStorageMaintenanceInfo {
         active_root: display_path(active_root),
         pending_root: display_path(&pending_root),
         legacy_root: display_path(&legacy_root),
         default_hf_cache_root: display_path(&default_hf_root),
-        can_cleanup: !legacy_is_active && !cleanup_items.is_empty(),
-        can_migrate_loras: !legacy_is_active && !lora_candidates.is_empty(),
+        can_cleanup: !legacy_is_active && !pending_is_legacy && !cleanup_items.is_empty(),
+        can_migrate_loras: pending_is_active && !legacy_is_active && !lora_candidates.is_empty(),
         can_migrate_storage_loras: !pending_is_active && !storage_move_lora_candidates.is_empty(),
         cleanup_items,
         lora_candidates,
@@ -3096,12 +3097,18 @@ fn migrate_carey_loras_between_roots(
 
 fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
     let legacy_root = storage::legacy_runtime_root();
+    let pending_root = storage::resolve_startup_runtime_root();
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     let mut migrated_loras = 0;
 
     if storage::paths_equivalent(active_root, &legacy_root) {
         errors.push("Active storage is still the legacy AppData folder.".to_string());
+    } else if !storage::paths_equivalent(active_root, &pending_root) {
+        errors.push(
+            "Restart the app before migrating legacy LoRAs; storage is currently changing."
+                .to_string(),
+        );
     } else {
         migrated_loras +=
             migrate_sa3_loras_between_roots(&legacy_root, active_root, &mut errors, &mut warnings);
@@ -3117,7 +3124,7 @@ fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResu
         errors.push(error);
         LegacyStorageMaintenanceInfo {
             active_root: display_path(active_root),
-            pending_root: display_path(&storage::resolve_startup_runtime_root()),
+            pending_root: display_path(&pending_root),
             legacy_root: display_path(&legacy_root),
             default_hf_cache_root: display_path(&default_hf_cache_root()),
             cleanup_items: Vec::new(),
@@ -3193,6 +3200,7 @@ fn migrate_storage_loras_to_pending_root_impl(
 
 fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
     let legacy_root = storage::legacy_runtime_root();
+    let pending_root = storage::resolve_startup_runtime_root();
     let mut errors = Vec::new();
     let mut cleaned_items = 0;
 
@@ -3202,7 +3210,7 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
             errors.push(error);
             LegacyStorageMaintenanceInfo {
                 active_root: display_path(active_root),
-                pending_root: display_path(&storage::resolve_startup_runtime_root()),
+                pending_root: display_path(&pending_root),
                 legacy_root: display_path(&legacy_root),
                 default_hf_cache_root: display_path(&default_hf_cache_root()),
                 cleanup_items: Vec::new(),
@@ -3220,6 +3228,11 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
 
     if storage::paths_equivalent(active_root, &legacy_root) {
         errors.push("Active storage is still the legacy AppData folder.".to_string());
+    } else if storage::paths_equivalent(&pending_root, &legacy_root) {
+        errors.push(
+            "Next restart storage is the legacy AppData folder. Choose a non-legacy storage folder and restart before cleaning old storage."
+                .to_string(),
+        );
     } else {
         for item in before.cleanup_items {
             let path = PathBuf::from(&item.path);
@@ -3236,7 +3249,7 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
         errors.push(error);
         LegacyStorageMaintenanceInfo {
             active_root: display_path(active_root),
-            pending_root: display_path(&storage::resolve_startup_runtime_root()),
+            pending_root: display_path(&pending_root),
             legacy_root: display_path(&legacy_root),
             default_hf_cache_root: display_path(&default_hf_cache_root()),
             cleanup_items: Vec::new(),
