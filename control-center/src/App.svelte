@@ -161,6 +161,7 @@
   let storageMaintenanceBusy = $state(false);
   let storageMaintenanceError: string | null = $state(null);
   let storageMaintenanceMessage: string | null = $state(null);
+  let storageRestarting = $state(false);
   let careyLoraModalOpen = $state(false);
   let careyAceTrainingModalOpen = $state(false);
   let sa3LoraModalOpen = $state(false);
@@ -511,6 +512,17 @@
     }
   }
 
+  async function restartApplication() {
+    storageRestarting = true;
+    storageError = null;
+    try {
+      await invoke("restart_application");
+    } catch (e) {
+      storageRestarting = false;
+      storageError = formatError(e);
+    }
+  }
+
   async function revealStoragePath(path: string) {
     try {
       await invoke("reveal_path", { path });
@@ -743,12 +755,14 @@
     maintenanceBusy={storageMaintenanceBusy}
     maintenanceError={storageMaintenanceError}
     maintenanceMessage={storageMaintenanceMessage}
+    restarting={storageRestarting}
     onChoose={saveRuntimeStorageRoot}
     onReset={resetRuntimeStorageRoot}
     onReveal={revealStoragePath}
     onRefreshMaintenance={refreshStorageMaintenance}
     onMigrateLoras={migrateLegacyLoras}
     onCleanupLegacy={cleanupLegacyStorage}
+    onRestart={restartApplication}
     onClose={closeStorageSettings}
   />
   <CareyLoraModal

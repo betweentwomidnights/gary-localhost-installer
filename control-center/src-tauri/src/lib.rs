@@ -4804,6 +4804,7 @@ pub fn run() {
             get_legacy_storage_maintenance_info,
             migrate_legacy_loras,
             cleanup_legacy_storage,
+            restart_application,
             get_app_settings,
             save_app_settings,
             check_for_app_update,
@@ -7369,6 +7370,29 @@ fn cleanup_legacy_storage(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceResult, String> {
     Ok(cleanup_legacy_storage_impl(repo_root.inner()))
+}
+
+#[tauri::command]
+async fn restart_application(
+    app_handle: tauri::AppHandle,
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<(), String> {
+    if let Err(error) = cancel_carey_ace_lora_training() {
+        log::warn!("Could not cancel ACE-Step training during app restart: {error}");
+    }
+    if let Err(error) = cancel_sa3_lora_training() {
+        log::warn!("Could not cancel SA3 LoRA training during app restart: {error}");
+    }
+    if let Err(error) = cancel_sa3_autolabel() {
+        log::warn!("Could not cancel SA3 auto-label during app restart: {error}");
+    }
+
+    let mut mgr = manager.lock().await;
+    mgr.stop_all();
+    drop(mgr);
+
+    app_handle.request_restart();
+    Ok(())
 }
 
 #[tauri::command]

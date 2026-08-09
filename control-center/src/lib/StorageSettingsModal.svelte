@@ -47,12 +47,14 @@
     maintenanceBusy = false,
     maintenanceError,
     maintenanceMessage,
+    restarting = false,
     onChoose,
     onReset,
     onReveal,
     onRefreshMaintenance,
     onMigrateLoras,
     onCleanupLegacy,
+    onRestart,
     onClose,
   }: {
     open: boolean;
@@ -63,12 +65,14 @@
     maintenanceBusy?: boolean;
     maintenanceError: string | null;
     maintenanceMessage: string | null;
+    restarting?: boolean;
     onChoose: (path: string) => void;
     onReset: () => void;
     onReveal: (path: string) => void;
     onRefreshMaintenance: () => void;
     onMigrateLoras: () => void;
     onCleanupLegacy: () => void;
+    onRestart: () => void;
     onClose: () => void;
   } = $props();
 
@@ -113,6 +117,14 @@
         <div class="title" id="storage-modal-title">runtime storage</div>
         {#if info?.pendingRestart}
           <span class="pill">restart required</span>
+          <button
+            type="button"
+            class="restart-action"
+            onclick={onRestart}
+            disabled={busy || maintenanceBusy || restarting}
+          >
+            {restarting ? "restarting..." : "restart app"}
+          </button>
         {/if}
       </div>
 
@@ -315,6 +327,18 @@
     padding: 5px 7px;
     text-transform: uppercase;
     letter-spacing: 0.7px;
+  }
+
+  .restart-action {
+    border-color: rgba(245, 185, 85, 0.6);
+    color: #f5d08b;
+    background: rgba(245, 185, 85, 0.12);
+    min-width: 104px;
+  }
+
+  .restart-action:hover:not(:disabled) {
+    border-color: #f5c46f;
+    background: rgba(245, 185, 85, 0.18);
   }
 
   .path-group {
