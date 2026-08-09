@@ -76,6 +76,34 @@
     onClose: () => void;
   } = $props();
 
+  let loraListExpanded = $state(false);
+  let cleanupListExpanded = $state(false);
+
+  let visibleLoraCandidates = $derived(
+    maintenanceInfo
+      ? loraListExpanded
+        ? maintenanceInfo.loraCandidates
+        : maintenanceInfo.loraCandidates.slice(0, 4)
+      : [],
+  );
+  let visibleCleanupItems = $derived(
+    maintenanceInfo
+      ? cleanupListExpanded
+        ? maintenanceInfo.cleanupItems
+        : maintenanceInfo.cleanupItems.slice(0, 5)
+      : [],
+  );
+  let hiddenLoraCount = $derived(
+    maintenanceInfo
+      ? Math.max(maintenanceInfo.loraCandidates.length - visibleLoraCandidates.length, 0)
+      : 0,
+  );
+  let hiddenCleanupCount = $derived(
+    maintenanceInfo
+      ? Math.max(maintenanceInfo.cleanupItems.length - visibleCleanupItems.length, 0)
+      : 0,
+  );
+
   function formatBytes(bytes: number) {
     if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
     const units = ["B", "KB", "MB", "GB", "TB"];
@@ -201,17 +229,21 @@
             <button type="button" onclick={onMigrateLoras} disabled={busy || maintenanceBusy}>migrate LoRAs</button>
           </div>
           <div class="item-list">
-            {#each maintenanceInfo.loraCandidates.slice(0, 4) as lora}
+            {#each visibleLoraCandidates as lora}
               <div class="item-row">
                 <span>{lora.service} - {lora.name}</span>
                 <span>{formatBytes(lora.bytes)}</span>
               </div>
             {/each}
             {#if maintenanceInfo.loraCandidates.length > 4}
-              <div class="item-row muted">
-                <span>{maintenanceInfo.loraCandidates.length - 4} more</span>
-                <span></span>
-              </div>
+              <button
+                type="button"
+                class="item-row expand-row"
+                onclick={() => (loraListExpanded = !loraListExpanded)}
+              >
+                <span>{loraListExpanded ? "show fewer" : `${hiddenLoraCount} more`}</span>
+                <span>{loraListExpanded ? "-" : "+"}</span>
+              </button>
             {/if}
           </div>
         {/if}
@@ -228,17 +260,21 @@
             <button type="button" onclick={onCleanupLegacy} disabled={busy || maintenanceBusy}>clean up old storage</button>
           </div>
           <div class="item-list">
-            {#each maintenanceInfo.cleanupItems.slice(0, 5) as item}
+            {#each visibleCleanupItems as item}
               <button type="button" class="item-row path-row" onclick={() => onReveal(item.path)} title="Open item location">
                 <span>{item.label}</span>
                 <span>{formatBytes(item.bytes)}</span>
               </button>
             {/each}
             {#if maintenanceInfo.cleanupItems.length > 5}
-              <div class="item-row muted">
-                <span>{maintenanceInfo.cleanupItems.length - 5} more</span>
-                <span></span>
-              </div>
+              <button
+                type="button"
+                class="item-row expand-row"
+                onclick={() => (cleanupListExpanded = !cleanupListExpanded)}
+              >
+                <span>{cleanupListExpanded ? "show fewer" : `${hiddenCleanupCount} more`}</span>
+                <span>{cleanupListExpanded ? "-" : "+"}</span>
+              </button>
             {/if}
           </div>
         {:else if maintenanceInfo && maintenanceInfo.activeRoot !== maintenanceInfo.legacyRoot && !maintenanceInfo.canMigrateLoras}
@@ -489,16 +525,18 @@
     font-family: var(--font-mono);
   }
 
-  .item-row.muted {
-    color: var(--text-secondary);
-  }
-
-  .path-row {
+  .path-row,
+  .expand-row {
     cursor: pointer;
   }
 
-  .path-row:hover {
+  .path-row:hover,
+  .expand-row:hover {
     color: var(--text-primary);
+  }
+
+  .expand-row {
+    color: var(--accent);
   }
 
   .actions {
