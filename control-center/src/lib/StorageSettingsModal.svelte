@@ -10,6 +10,7 @@
     configPath: string;
     pendingRestart: boolean;
     usingLegacyDefault: boolean;
+    defaultRootIsLegacy: boolean;
   }
 
   interface LegacyStorageCleanupItem {
@@ -131,6 +132,28 @@
   let storageMovePending = $derived(
     !!info && info.pendingRestart && info.startupRoot !== info.activeRoot,
   );
+  function normalizePath(path: string | null | undefined) {
+    return (path ?? "").replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+  }
+  let defaultPathVisibleElsewhere = $derived(
+    !!info &&
+      (normalizePath(info.defaultRoot) === normalizePath(info.activeRoot) ||
+        (info.pendingRestart &&
+          normalizePath(info.defaultRoot) === normalizePath(info.startupRoot))),
+  );
+  let showDefaultPath = $derived(!!info && !defaultPathVisibleElsewhere);
+  let defaultPathLabel = $derived(
+    info?.configuredRoot ? "default if custom is removed" : "default",
+  );
+  let defaultStorageNote = $derived(
+    info?.defaultRootIsLegacy
+      ? info?.configuredRoot || info?.pendingRestart
+        ? "Gary's default on this machine is legacy AppData because existing data was found there."
+        : "using default storage: legacy AppData because existing data was found there."
+      : info?.configuredRoot || info?.pendingRestart
+        ? "Gary's default on this machine is the gary4local-data folder beside the app."
+        : "using default storage beside the app.",
+  );
   let resetButtonLabel = $derived(
     info?.configuredRoot
       ? "use default"
@@ -140,7 +163,7 @@
   );
   let resetButtonTitle = $derived(
     info?.configuredRoot
-      ? "Remove the custom storage setting. After restart, Gary uses legacy AppData if it exists, otherwise the installed default."
+      ? `Remove the custom storage setting. After restart, Gary uses ${info.defaultRoot}.`
       : "Gary is already using its default storage choice.",
   );
 
@@ -213,20 +236,16 @@
           </div>
         {/if}
 
-        <div class="path-grid">
-          <div>
-            <div class="path-label">new install default</div>
-            <div class="small-path">{info.defaultRoot}</div>
+        {#if showDefaultPath}
+          <div class="path-group">
+            <div class="path-label">{defaultPathLabel}</div>
+            <button type="button" class="path-value" onclick={() => onReveal(info.defaultRoot)} title="Open default storage folder">
+              {info.defaultRoot}
+            </button>
           </div>
-          <div>
-            <div class="path-label">legacy appdata</div>
-            <div class="small-path">{info.legacyRoot}</div>
-          </div>
-        </div>
-
-        {#if info.usingLegacyDefault}
-          <div class="note">using legacy storage because existing data was found there.</div>
         {/if}
+
+        <div class="note">{defaultStorageNote}</div>
       {:else}
         <div class="body">loading storage paths...</div>
       {/if}
@@ -254,7 +273,7 @@
         </div>
 
         {#if maintenanceInfo && maintenanceInfo.activeRoot === maintenanceInfo.legacyRoot}
-          <div class="note">cleanup unlocks after storage is moved off legacy AppData and the app restarts.</div>
+          <div class="note">cleanup unlocks after you choose another storage folder and restart the app.</div>
         {/if}
 
         {#if maintenanceInfo?.canMigrateStorageLoras}
@@ -479,8 +498,7 @@
     letter-spacing: 0.7px;
   }
 
-  .path-value,
-  .small-path {
+  .path-value {
     width: 100%;
     min-width: 0;
     border: 1px solid var(--border);
@@ -500,13 +518,6 @@
 
   .path-value:hover {
     border-color: var(--accent);
-  }
-
-  .path-grid {
-    margin-top: 14px;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
   }
 
   .note,
@@ -640,9 +651,4 @@
     gap: 8px;
   }
 
-  @media (max-width: 640px) {
-    .path-grid {
-      grid-template-columns: 1fr;
-    }
-  }
 </style>

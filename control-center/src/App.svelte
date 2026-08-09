@@ -83,6 +83,7 @@
     configPath: string;
     pendingRestart: boolean;
     usingLegacyDefault: boolean;
+    defaultRootIsLegacy: boolean;
   }
 
   interface LegacyStorageCleanupItem {

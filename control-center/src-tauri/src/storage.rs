@@ -15,6 +15,7 @@ pub struct RuntimeStorageInfo {
     pub config_path: String,
     pub pending_restart: bool,
     pub using_legacy_default: bool,
+    pub default_root_is_legacy: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -142,12 +143,16 @@ pub fn resolve_startup_runtime_root() -> PathBuf {
         return path;
     }
 
+    automatic_default_runtime_root()
+}
+
+fn automatic_default_runtime_root() -> PathBuf {
     let legacy = legacy_runtime_root();
     if legacy_runtime_root_is_populated(&legacy) {
-        return legacy;
+        legacy
+    } else {
+        installed_default_runtime_root()
     }
-
-    installed_default_runtime_root()
 }
 
 pub fn storage_info(active_root: &Path) -> RuntimeStorageInfo {
@@ -155,18 +160,20 @@ pub fn storage_info(active_root: &Path) -> RuntimeStorageInfo {
     let configured_root = config.runtime_root.and_then(clean_config_path);
     let startup_root = resolve_startup_runtime_root();
     let legacy_root = legacy_runtime_root();
+    let default_root = automatic_default_runtime_root();
 
     RuntimeStorageInfo {
         active_root: display_path(active_root),
         configured_root: configured_root.as_ref().map(|path| display_path(path)),
         startup_root: display_path(&startup_root),
-        default_root: display_path(&installed_default_runtime_root()),
+        default_root: display_path(&default_root),
         legacy_root: display_path(&legacy_root),
         config_path: display_path(&storage_config_path()),
         pending_restart: !paths_equivalent(active_root, &startup_root),
         using_legacy_default: configured_root.is_none()
             && env_path(RUNTIME_ROOT_OVERRIDE_ENV).is_none()
             && paths_equivalent(active_root, &legacy_root),
+        default_root_is_legacy: paths_equivalent(&default_root, &legacy_root),
     }
 }
 
