@@ -3230,7 +3230,7 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
         errors.push("Active storage is still the legacy AppData folder.".to_string());
     } else if storage::paths_equivalent(&pending_root, &legacy_root) {
         errors.push(
-            "Next restart storage is the legacy AppData folder. Choose a non-legacy storage folder and restart before cleaning old storage."
+            "Next restart storage is the legacy AppData folder. Choose a non-legacy storage folder and restart before cleaning old envs, models, and caches."
                 .to_string(),
         );
     } else {

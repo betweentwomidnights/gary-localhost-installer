@@ -257,7 +257,7 @@
       <div class="maintenance">
         <div class="section-row">
           <div>
-            <div class="section-title">old storage</div>
+            <div class="section-title">old envs, models, and caches</div>
             <div class="section-copy">
               {#if maintenanceInfo}
                 {maintenanceInfo.cleanupItems.length} cleanup item{maintenanceInfo.cleanupItems.length === 1 ? "" : "s"}
@@ -344,13 +344,13 @@
         {#if maintenanceInfo?.canCleanup}
           <div class="maintenance-row">
             <div>
-              <div class="row-title">old envs and models</div>
+              <div class="row-title">old envs, models, and caches</div>
               <div class="row-copy">
                 {maintenanceInfo.cleanupItems.length} item{maintenanceInfo.cleanupItems.length === 1 ? "" : "s"}
                 - {formatBytes(maintenanceInfo.totalCleanupBytes)}
               </div>
             </div>
-            <button type="button" onclick={onCleanupLegacy} disabled={busy || maintenanceBusy}>clean up old storage</button>
+            <button type="button" onclick={onCleanupLegacy} disabled={busy || maintenanceBusy}>clean up listed items</button>
           </div>
           <div class="item-list">
             {#each visibleCleanupItems as item}
@@ -370,6 +370,7 @@
               </button>
             {/if}
           </div>
+          <div class="note">Only the listed items are deleted. Copied LoRAs, settings, and tokens stay in old storage.</div>
         {:else if maintenanceInfo && maintenanceInfo.activeRoot !== maintenanceInfo.legacyRoot && !maintenanceInfo.canMigrateLoras}
           <div class="note">no old model or environment cleanup found.</div>
         {/if}
