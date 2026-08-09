@@ -77,6 +77,7 @@
   interface RuntimeStorageInfo {
     activeRoot: string;
     configuredRoot: string | null;
+    startupRoot: string;
     defaultRoot: string;
     legacyRoot: string;
     configPath: string;
@@ -101,14 +102,18 @@
 
   interface LegacyStorageMaintenanceInfo {
     activeRoot: string;
+    pendingRoot: string;
     legacyRoot: string;
     defaultHfCacheRoot: string;
     cleanupItems: LegacyStorageCleanupItem[];
     loraCandidates: LegacyLoraMigrationCandidate[];
+    storageMoveLoraCandidates: LegacyLoraMigrationCandidate[];
     totalCleanupBytes: number;
     totalLoraBytes: number;
+    totalStorageMoveLoraBytes: number;
     canCleanup: boolean;
     canMigrateLoras: boolean;
+    canMigrateStorageLoras: boolean;
   }
 
   interface LegacyStorageMaintenanceResult {
@@ -499,6 +504,33 @@
     }
   }
 
+  async function migrateStorageLorasToPendingRoot() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
+    storageMaintenanceMessage = null;
+    try {
+      const result = await invoke<LegacyStorageMaintenanceResult>(
+        "migrate_storage_loras_to_pending_root",
+      );
+      storageMaintenanceInfo = result.info;
+      storageMaintenanceMessage =
+        result.migratedLoras > 0
+          ? `migrated ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"} to next storage`
+          : "no LoRAs needed migration";
+      if (result.errors.length > 0) {
+        storageMaintenanceError = result.errors.join("\n");
+      }
+      if (result.warnings.length > 0) {
+        storageMaintenanceWarning = result.warnings.join("\n");
+      }
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
   async function cleanupLegacyStorage() {
     storageMaintenanceBusy = true;
     storageMaintenanceError = null;
@@ -774,6 +806,7 @@
     onReveal={revealStoragePath}
     onRefreshMaintenance={refreshStorageMaintenance}
     onMigrateLoras={migrateLegacyLoras}
+    onMigrateStorageLoras={migrateStorageLorasToPendingRoot}
     onCleanupLegacy={cleanupLegacyStorage}
     onRestart={restartApplication}
     onClose={closeStorageSettings}

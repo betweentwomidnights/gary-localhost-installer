@@ -4,6 +4,7 @@
   interface RuntimeStorageInfo {
     activeRoot: string;
     configuredRoot: string | null;
+    startupRoot: string;
     defaultRoot: string;
     legacyRoot: string;
     configPath: string;
@@ -28,14 +29,18 @@
 
   interface LegacyStorageMaintenanceInfo {
     activeRoot: string;
+    pendingRoot: string;
     legacyRoot: string;
     defaultHfCacheRoot: string;
     cleanupItems: LegacyStorageCleanupItem[];
     loraCandidates: LegacyLoraMigrationCandidate[];
+    storageMoveLoraCandidates: LegacyLoraMigrationCandidate[];
     totalCleanupBytes: number;
     totalLoraBytes: number;
+    totalStorageMoveLoraBytes: number;
     canCleanup: boolean;
     canMigrateLoras: boolean;
+    canMigrateStorageLoras: boolean;
   }
 
   let {
@@ -54,6 +59,7 @@
     onReveal,
     onRefreshMaintenance,
     onMigrateLoras,
+    onMigrateStorageLoras,
     onCleanupLegacy,
     onRestart,
     onClose,
@@ -73,12 +79,14 @@
     onReveal: (path: string) => void;
     onRefreshMaintenance: () => void;
     onMigrateLoras: () => void;
+    onMigrateStorageLoras: () => void;
     onCleanupLegacy: () => void;
     onRestart: () => void;
     onClose: () => void;
   } = $props();
 
   let loraListExpanded = $state(false);
+  let storageMoveListExpanded = $state(false);
   let cleanupListExpanded = $state(false);
 
   let visibleLoraCandidates = $derived(
@@ -95,6 +103,13 @@
         : maintenanceInfo.cleanupItems.slice(0, 5)
       : [],
   );
+  let visibleStorageMoveLoras = $derived(
+    maintenanceInfo
+      ? storageMoveListExpanded
+        ? maintenanceInfo.storageMoveLoraCandidates
+        : maintenanceInfo.storageMoveLoraCandidates.slice(0, 4)
+      : [],
+  );
   let hiddenLoraCount = $derived(
     maintenanceInfo
       ? Math.max(maintenanceInfo.loraCandidates.length - visibleLoraCandidates.length, 0)
@@ -103,6 +118,14 @@
   let hiddenCleanupCount = $derived(
     maintenanceInfo
       ? Math.max(maintenanceInfo.cleanupItems.length - visibleCleanupItems.length, 0)
+      : 0,
+  );
+  let hiddenStorageMoveLoraCount = $derived(
+    maintenanceInfo
+      ? Math.max(
+          maintenanceInfo.storageMoveLoraCandidates.length - visibleStorageMoveLoras.length,
+          0,
+        )
       : 0,
   );
 
@@ -166,11 +189,11 @@
           </button>
         </div>
 
-        {#if info.configuredRoot && info.configuredRoot !== info.activeRoot}
+        {#if info.pendingRestart && info.startupRoot !== info.activeRoot}
           <div class="path-group pending">
             <div class="path-label">next restart</div>
-            <button type="button" class="path-value" onclick={() => onReveal(info.configuredRoot!)} title="Open configured storage folder">
-              {info.configuredRoot}
+            <button type="button" class="path-value" onclick={() => onReveal(info.startupRoot)} title="Open next restart storage folder">
+              {info.startupRoot}
             </button>
           </div>
         {/if}
@@ -217,6 +240,38 @@
 
         {#if maintenanceInfo && maintenanceInfo.activeRoot === maintenanceInfo.legacyRoot}
           <div class="note">cleanup unlocks after storage is moved off legacy AppData and the app restarts.</div>
+        {/if}
+
+        {#if maintenanceInfo?.canMigrateStorageLoras}
+          <div class="maintenance-row warning">
+            <div>
+              <div class="row-title">LoRAs in current storage</div>
+              <div class="row-copy">
+                {maintenanceInfo.storageMoveLoraCandidates.length} LoRA{maintenanceInfo.storageMoveLoraCandidates.length === 1 ? "" : "s"}
+                need to move before restart - {formatBytes(maintenanceInfo.totalStorageMoveLoraBytes)}
+              </div>
+            </div>
+            <button type="button" onclick={onMigrateStorageLoras} disabled={busy || maintenanceBusy}>migrate to next storage</button>
+          </div>
+          <div class="item-list">
+            {#each visibleStorageMoveLoras as lora}
+              <div class="item-row">
+                <span>{lora.service} - {lora.name}</span>
+                <span>{formatBytes(lora.bytes)}</span>
+              </div>
+            {/each}
+            {#if maintenanceInfo.storageMoveLoraCandidates.length > 4}
+              <button
+                type="button"
+                class="item-row expand-row"
+                onclick={() => (storageMoveListExpanded = !storageMoveListExpanded)}
+              >
+                <span>{storageMoveListExpanded ? "show fewer" : `${hiddenStorageMoveLoraCount} more`}</span>
+                <span>{storageMoveListExpanded ? "-" : "+"}</span>
+              </button>
+            {/if}
+          </div>
+          <div class="note">These are copied from the active storage profile into the folder that will be used after restart.</div>
         {/if}
 
         {#if maintenanceInfo?.canMigrateLoras}

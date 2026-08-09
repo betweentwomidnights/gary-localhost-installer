@@ -419,14 +419,18 @@ struct LegacyLoraMigrationCandidate {
 #[serde(rename_all = "camelCase")]
 struct LegacyStorageMaintenanceInfo {
     active_root: String,
+    pending_root: String,
     legacy_root: String,
     default_hf_cache_root: String,
     cleanup_items: Vec<LegacyStorageCleanupItem>,
     lora_candidates: Vec<LegacyLoraMigrationCandidate>,
+    storage_move_lora_candidates: Vec<LegacyLoraMigrationCandidate>,
     total_cleanup_bytes: u64,
     total_lora_bytes: u64,
+    total_storage_move_lora_bytes: u64,
     can_cleanup: bool,
     can_migrate_loras: bool,
+    can_migrate_storage_loras: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2651,7 +2655,7 @@ fn sa3_lora_catalog_path_for(root: &Path) -> PathBuf {
     root.join("sa3").join("lora_catalog.json")
 }
 
-fn legacy_sa3_lora_target(active_root: &Path, name: &str, source: &Path) -> PathBuf {
+fn sa3_lora_target_for_root(target_root: &Path, name: &str, source: &Path) -> PathBuf {
     let safe_name = safe_lora_storage_name(name);
     let extension = source
         .extension()
@@ -2659,16 +2663,16 @@ fn legacy_sa3_lora_target(active_root: &Path, name: &str, source: &Path) -> Path
         .filter(|ext| !ext.is_empty())
         .unwrap_or_else(|| "safetensors".to_string());
     unique_destination_path(
-        &active_root
+        &target_root
             .join("sa3")
             .join("loras")
             .join(format!("{safe_name}.{extension}")),
     )
 }
 
-fn legacy_carey_lora_target(active_root: &Path, name: &str) -> PathBuf {
+fn carey_lora_target_for_root(target_root: &Path, name: &str) -> PathBuf {
     unique_destination_path(
-        &active_root
+        &target_root
             .join("carey")
             .join("loras")
             .join(safe_lora_storage_name(name)),
@@ -2683,19 +2687,77 @@ fn active_carey_catalog_entry_is_valid(entry: &CareyLoraCatalogEntry) -> bool {
     looks_like_lora_checkpoint_dir(&PathBuf::from(&entry.path))
 }
 
-fn collect_legacy_lora_candidates(
-    active_root: &Path,
-    legacy_root: &Path,
+fn write_sa3_lora_registry_for_root(
+    root: &Path,
+    catalog: &BTreeMap<String, Sa3LoraCatalogEntry>,
+) -> Result<(), String> {
+    let path = root.join("sa3").join("lora_registry.json");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = BTreeMap::<String, serde_json::Value>::new();
+    for (name, entry) in catalog {
+        if looks_like_sa3_lora_checkpoint(&PathBuf::from(&entry.path)) {
+            payload.insert(
+                name.clone(),
+                serde_json::json!({
+                    "path": entry.path,
+                    "strength": entry.strength,
+                }),
+            );
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize SA3 LoRA registry: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))
+}
+
+fn write_carey_lora_registry_for_root(
+    root: &Path,
+    catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
+) -> Result<(), String> {
+    let path = root.join("carey").join("lora_registry.json");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = BTreeMap::<String, serde_json::Value>::new();
+    for (name, entry) in catalog {
+        if looks_like_lora_checkpoint_dir(&PathBuf::from(&entry.path)) {
+            payload.insert(
+                name.clone(),
+                serde_json::json!({
+                    "path": entry.path,
+                    "scale": entry.scale,
+                    "backends": sanitize_backend_list(entry.backends.clone()),
+                    "model_family": normalize_lora_model_family(&entry.model_family),
+                }),
+            );
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize LoRA registry: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))
+}
+
+fn collect_lora_migration_candidates(
+    source_root: &Path,
+    target_root: &Path,
 ) -> Result<Vec<LegacyLoraMigrationCandidate>, String> {
     let mut candidates = Vec::new();
-    if storage::paths_equivalent(active_root, legacy_root) {
+    if storage::paths_equivalent(source_root, target_root) {
         return Ok(candidates);
     }
 
-    let active_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(active_root))?;
-    let legacy_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(legacy_root))?;
-    for (name, entry) in legacy_sa3 {
-        if active_sa3
+    let target_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(target_root))?;
+    let source_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(source_root))?;
+    for (name, entry) in source_sa3 {
+        if target_sa3
             .get(&name)
             .map(active_sa3_catalog_entry_is_valid)
             .unwrap_or(false)
@@ -2703,10 +2765,10 @@ fn collect_legacy_lora_candidates(
             continue;
         }
         let source = PathBuf::from(&entry.path);
-        if !path_is_inside(&source, legacy_root) || !looks_like_sa3_lora_checkpoint(&source) {
+        if !path_is_inside(&source, source_root) || !looks_like_sa3_lora_checkpoint(&source) {
             continue;
         }
-        let target = legacy_sa3_lora_target(active_root, &name, &source);
+        let target = sa3_lora_target_for_root(target_root, &name, &source);
         candidates.push(LegacyLoraMigrationCandidate {
             service: "sa3".to_string(),
             name,
@@ -2716,10 +2778,10 @@ fn collect_legacy_lora_candidates(
         });
     }
 
-    let active_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(active_root))?;
-    let legacy_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(legacy_root))?;
-    for (name, entry) in legacy_carey {
-        if active_carey
+    let target_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(target_root))?;
+    let source_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(source_root))?;
+    for (name, entry) in source_carey {
+        if target_carey
             .get(&name)
             .map(active_carey_catalog_entry_is_valid)
             .unwrap_or(false)
@@ -2727,10 +2789,10 @@ fn collect_legacy_lora_candidates(
             continue;
         }
         let source = PathBuf::from(&entry.path);
-        if !path_is_inside(&source, legacy_root) || !looks_like_lora_checkpoint_dir(&source) {
+        if !path_is_inside(&source, source_root) || !looks_like_lora_checkpoint_dir(&source) {
             continue;
         }
-        let target = legacy_carey_lora_target(active_root, &name);
+        let target = carey_lora_target_for_root(target_root, &name);
         candidates.push(LegacyLoraMigrationCandidate {
             service: "carey".to_string(),
             name,
@@ -2747,41 +2809,56 @@ fn build_legacy_storage_maintenance_info(
     active_root: &Path,
 ) -> Result<LegacyStorageMaintenanceInfo, String> {
     let legacy_root = storage::legacy_runtime_root();
+    let pending_root = storage::resolve_startup_runtime_root();
     let default_hf_root = default_hf_cache_root();
     let cleanup_items = build_legacy_cleanup_items(active_root, &legacy_root, &default_hf_root);
-    let lora_candidates = collect_legacy_lora_candidates(active_root, &legacy_root)?;
+    let lora_candidates = collect_lora_migration_candidates(&legacy_root, active_root)?;
+    let storage_move_lora_candidates = if storage::paths_equivalent(active_root, &pending_root) {
+        Vec::new()
+    } else {
+        collect_lora_migration_candidates(active_root, &pending_root)?
+    };
     let total_cleanup_bytes = cleanup_items.iter().map(|item| item.bytes).sum();
     let total_lora_bytes = lora_candidates.iter().map(|item| item.bytes).sum();
+    let total_storage_move_lora_bytes = storage_move_lora_candidates
+        .iter()
+        .map(|item| item.bytes)
+        .sum();
     let legacy_is_active = storage::paths_equivalent(active_root, &legacy_root);
+    let pending_is_active = storage::paths_equivalent(active_root, &pending_root);
 
     Ok(LegacyStorageMaintenanceInfo {
         active_root: display_path(active_root),
+        pending_root: display_path(&pending_root),
         legacy_root: display_path(&legacy_root),
         default_hf_cache_root: display_path(&default_hf_root),
         can_cleanup: !legacy_is_active && !cleanup_items.is_empty(),
         can_migrate_loras: !legacy_is_active && !lora_candidates.is_empty(),
+        can_migrate_storage_loras: !pending_is_active && !storage_move_lora_candidates.is_empty(),
         cleanup_items,
         lora_candidates,
+        storage_move_lora_candidates,
         total_cleanup_bytes,
         total_lora_bytes,
+        total_storage_move_lora_bytes,
     })
 }
 
 fn migrate_sa3_catalog_entry(
     name: &str,
     entry: &Sa3LoraCatalogEntry,
-    active_root: &Path,
-    legacy_root: &Path,
+    target_root: &Path,
+    source_root: &Path,
 ) -> Result<Sa3LoraCatalogEntry, String> {
     let source = PathBuf::from(&entry.path);
-    if !path_is_inside(&source, legacy_root) || !looks_like_sa3_lora_checkpoint(&source) {
+    if !path_is_inside(&source, source_root) || !looks_like_sa3_lora_checkpoint(&source) {
         return Err(format!(
-            "{} is not a legacy SA3 LoRA file",
+            "{} is not a managed SA3 LoRA file in the source storage",
             source.display()
         ));
     }
 
-    let target = legacy_sa3_lora_target(active_root, name, &source);
+    let target = sa3_lora_target_for_root(target_root, name, &source);
     copy_file_checked(&source, &target)?;
 
     let safe_name = safe_lora_storage_name(name);
@@ -2789,8 +2866,8 @@ fn migrate_sa3_catalog_entry(
     migrated.path = display_path(&target);
     migrated.prompts_path = migrate_optional_source_dir(
         &entry.prompts_path,
-        legacy_root,
-        &active_root
+        source_root,
+        &target_root
             .join("sa3")
             .join("lora-sources")
             .join(&safe_name)
@@ -2800,14 +2877,14 @@ fn migrate_sa3_catalog_entry(
     let mut migrated_checkpoints = Vec::new();
     for checkpoint in &entry.training_checkpoints {
         let source = PathBuf::from(&checkpoint.path);
-        if source.is_file() && path_is_inside(&source, legacy_root) {
+        if source.is_file() && path_is_inside(&source, source_root) {
             let file_name = source
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
             let target = unique_destination_path(
-                &active_root
+                &target_root
                     .join("sa3")
                     .join("training")
                     .join("migrated")
@@ -2818,7 +2895,7 @@ fn migrate_sa3_catalog_entry(
             let mut migrated_checkpoint = checkpoint.clone();
             migrated_checkpoint.path = display_path(&target);
             migrated_checkpoints.push(migrated_checkpoint);
-        } else if !path_is_inside(&source, legacy_root) {
+        } else if !path_is_inside(&source, source_root) {
             migrated_checkpoints.push(checkpoint.clone());
         }
     }
@@ -2834,11 +2911,11 @@ fn migrate_sa3_catalog_entry(
     }
 
     copy_legacy_file_if_missing(
-        &legacy_root
+        &source_root
             .join("sa3")
             .join("prompts")
             .join(format!("{name}.json")),
-        &active_root
+        &target_root
             .join("sa3")
             .join("prompts")
             .join(format!("{name}.json")),
@@ -2850,27 +2927,27 @@ fn migrate_sa3_catalog_entry(
 fn migrate_carey_catalog_entry(
     name: &str,
     entry: &CareyLoraCatalogEntry,
-    active_root: &Path,
-    legacy_root: &Path,
+    target_root: &Path,
+    source_root: &Path,
 ) -> Result<CareyLoraCatalogEntry, String> {
     let source = PathBuf::from(&entry.path);
-    if !path_is_inside(&source, legacy_root) || !looks_like_lora_checkpoint_dir(&source) {
+    if !path_is_inside(&source, source_root) || !looks_like_lora_checkpoint_dir(&source) {
         return Err(format!(
-            "{} is not a legacy Carey LoRA folder",
+            "{} is not a managed Carey LoRA folder in the source storage",
             source.display()
         ));
     }
 
     let safe_name = safe_lora_storage_name(name);
-    let target = legacy_carey_lora_target(active_root, name);
+    let target = carey_lora_target_for_root(target_root, name);
     copy_dir_recursive(&source, &target)?;
 
     let mut migrated = entry.clone();
     migrated.path = display_path(&target);
     migrated.captions_path = migrate_optional_source_dir(
         &entry.captions_path,
-        legacy_root,
-        &active_root
+        source_root,
+        &target_root
             .join("carey")
             .join("lora-sources")
             .join(&safe_name)
@@ -2880,21 +2957,21 @@ fn migrate_carey_catalog_entry(
     Ok(migrated)
 }
 
-fn migrate_legacy_sa3_loras(
-    active_root: &Path,
-    legacy_root: &Path,
+fn migrate_sa3_loras_between_roots(
+    source_root: &Path,
+    target_root: &Path,
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> usize {
-    let legacy_catalog = match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(legacy_root)) {
+    let source_catalog = match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(source_root)) {
         Ok(catalog) => catalog,
         Err(error) => {
             errors.push(error);
             return 0;
         }
     };
-    let mut active_catalog =
-        match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(active_root)) {
+    let mut target_catalog =
+        match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(target_root)) {
             Ok(catalog) => catalog,
             Err(error) => {
                 errors.push(error);
@@ -2903,8 +2980,8 @@ fn migrate_legacy_sa3_loras(
         };
 
     let mut prepared = 0;
-    for (name, entry) in legacy_catalog {
-        if active_catalog
+    for (name, entry) in source_catalog {
+        if target_catalog
             .get(&name)
             .map(active_sa3_catalog_entry_is_valid)
             .unwrap_or(false)
@@ -2912,16 +2989,16 @@ fn migrate_legacy_sa3_loras(
             continue;
         }
         let source = PathBuf::from(&entry.path);
-        if !path_is_inside(&source, legacy_root) {
+        if !path_is_inside(&source, source_root) {
             warnings.push(format!(
                 "SA3 LoRA '{}' is a manual/external LoRA, so Gary cannot migrate it automatically. Add it again from Jerry > sa3 > add LoRAs if you still want it in this storage profile.",
                 name
             ));
             continue;
         }
-        match migrate_sa3_catalog_entry(&name, &entry, active_root, legacy_root) {
+        match migrate_sa3_catalog_entry(&name, &entry, target_root, source_root) {
             Ok(migrated) => {
-                active_catalog.insert(name, migrated);
+                target_catalog.insert(name, migrated);
                 prepared += 1;
             }
             Err(error) => errors.push(format!("SA3 LoRA '{}': {}", name, error)),
@@ -2933,26 +3010,26 @@ fn migrate_legacy_sa3_loras(
     }
 
     if let Err(error) =
-        save_sa3_lora_catalog_to(&sa3_lora_catalog_path_for(active_root), &active_catalog)
+        save_sa3_lora_catalog_to(&sa3_lora_catalog_path_for(target_root), &target_catalog)
     {
         errors.push(error);
         return 0;
     }
-    if let Err(error) = build_sa3_lora_state(active_root) {
+    if let Err(error) = write_sa3_lora_registry_for_root(target_root, &target_catalog) {
         errors.push(error);
     }
 
     prepared
 }
 
-fn migrate_legacy_carey_loras(
-    active_root: &Path,
-    legacy_root: &Path,
+fn migrate_carey_loras_between_roots(
+    source_root: &Path,
+    target_root: &Path,
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> usize {
     let legacy_catalog =
-        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(legacy_root)) {
+        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(source_root)) {
             Ok(catalog) => catalog,
             Err(error) => {
                 errors.push(error);
@@ -2960,7 +3037,7 @@ fn migrate_legacy_carey_loras(
             }
         };
     let mut active_catalog =
-        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(active_root)) {
+        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(target_root)) {
             Ok(catalog) => catalog,
             Err(error) => {
                 errors.push(error);
@@ -2978,14 +3055,14 @@ fn migrate_legacy_carey_loras(
             continue;
         }
         let source = PathBuf::from(&entry.path);
-        if !path_is_inside(&source, legacy_root) {
+        if !path_is_inside(&source, source_root) {
             warnings.push(format!(
                 "Carey LoRA '{}' is a manual/external LoRA, so Gary cannot migrate it automatically. Add it again from Carey > add LoRAs if you still want it in this storage profile.",
                 name
             ));
             continue;
         }
-        match migrate_carey_catalog_entry(&name, &entry, active_root, legacy_root) {
+        match migrate_carey_catalog_entry(&name, &entry, target_root, source_root) {
             Ok(migrated) => {
                 active_catalog.insert(name, migrated);
                 prepared += 1;
@@ -2999,18 +3076,18 @@ fn migrate_legacy_carey_loras(
     }
 
     if let Err(error) = merge_json_object_file_preserve_target(
-        &legacy_root.join("carey").join("captions.json"),
-        &active_root.join("carey").join("captions.json"),
+        &source_root.join("carey").join("captions.json"),
+        &target_root.join("carey").join("captions.json"),
     ) {
         errors.push(error);
     }
     if let Err(error) =
-        save_carey_lora_catalog_to(&carey_lora_catalog_path_for(active_root), &active_catalog)
+        save_carey_lora_catalog_to(&carey_lora_catalog_path_for(target_root), &active_catalog)
     {
         errors.push(error);
         return 0;
     }
-    if let Err(error) = build_carey_lora_state(active_root) {
+    if let Err(error) = write_carey_lora_registry_for_root(target_root, &active_catalog) {
         errors.push(error);
     }
 
@@ -3027,23 +3104,81 @@ fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResu
         errors.push("Active storage is still the legacy AppData folder.".to_string());
     } else {
         migrated_loras +=
-            migrate_legacy_sa3_loras(active_root, &legacy_root, &mut errors, &mut warnings);
-        migrated_loras +=
-            migrate_legacy_carey_loras(active_root, &legacy_root, &mut errors, &mut warnings);
+            migrate_sa3_loras_between_roots(&legacy_root, active_root, &mut errors, &mut warnings);
+        migrated_loras += migrate_carey_loras_between_roots(
+            &legacy_root,
+            active_root,
+            &mut errors,
+            &mut warnings,
+        );
     }
 
     let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
         errors.push(error);
         LegacyStorageMaintenanceInfo {
             active_root: display_path(active_root),
+            pending_root: display_path(&storage::resolve_startup_runtime_root()),
             legacy_root: display_path(&legacy_root),
             default_hf_cache_root: display_path(&default_hf_cache_root()),
             cleanup_items: Vec::new(),
             lora_candidates: Vec::new(),
+            storage_move_lora_candidates: Vec::new(),
             total_cleanup_bytes: 0,
             total_lora_bytes: 0,
+            total_storage_move_lora_bytes: 0,
             can_cleanup: false,
             can_migrate_loras: false,
+            can_migrate_storage_loras: false,
+        }
+    });
+
+    LegacyStorageMaintenanceResult {
+        info,
+        migrated_loras,
+        cleaned_items: 0,
+        warnings,
+        errors,
+    }
+}
+
+fn migrate_storage_loras_to_pending_root_impl(
+    active_root: &Path,
+) -> LegacyStorageMaintenanceResult {
+    let pending_root = storage::resolve_startup_runtime_root();
+    let legacy_root = storage::legacy_runtime_root();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let mut migrated_loras = 0;
+
+    if storage::paths_equivalent(active_root, &pending_root) {
+        warnings.push("Active storage and next restart storage are already the same.".to_string());
+    } else {
+        migrated_loras +=
+            migrate_sa3_loras_between_roots(active_root, &pending_root, &mut errors, &mut warnings);
+        migrated_loras += migrate_carey_loras_between_roots(
+            active_root,
+            &pending_root,
+            &mut errors,
+            &mut warnings,
+        );
+    }
+
+    let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
+        errors.push(error);
+        LegacyStorageMaintenanceInfo {
+            active_root: display_path(active_root),
+            pending_root: display_path(&pending_root),
+            legacy_root: display_path(&legacy_root),
+            default_hf_cache_root: display_path(&default_hf_cache_root()),
+            cleanup_items: Vec::new(),
+            lora_candidates: Vec::new(),
+            storage_move_lora_candidates: Vec::new(),
+            total_cleanup_bytes: 0,
+            total_lora_bytes: 0,
+            total_storage_move_lora_bytes: 0,
+            can_cleanup: false,
+            can_migrate_loras: false,
+            can_migrate_storage_loras: false,
         }
     });
 
@@ -3067,14 +3202,18 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
             errors.push(error);
             LegacyStorageMaintenanceInfo {
                 active_root: display_path(active_root),
+                pending_root: display_path(&storage::resolve_startup_runtime_root()),
                 legacy_root: display_path(&legacy_root),
                 default_hf_cache_root: display_path(&default_hf_cache_root()),
                 cleanup_items: Vec::new(),
                 lora_candidates: Vec::new(),
+                storage_move_lora_candidates: Vec::new(),
                 total_cleanup_bytes: 0,
                 total_lora_bytes: 0,
+                total_storage_move_lora_bytes: 0,
                 can_cleanup: false,
                 can_migrate_loras: false,
+                can_migrate_storage_loras: false,
             }
         }
     };
@@ -3097,14 +3236,18 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
         errors.push(error);
         LegacyStorageMaintenanceInfo {
             active_root: display_path(active_root),
+            pending_root: display_path(&storage::resolve_startup_runtime_root()),
             legacy_root: display_path(&legacy_root),
             default_hf_cache_root: display_path(&default_hf_cache_root()),
             cleanup_items: Vec::new(),
             lora_candidates: Vec::new(),
+            storage_move_lora_candidates: Vec::new(),
             total_cleanup_bytes: 0,
             total_lora_bytes: 0,
+            total_storage_move_lora_bytes: 0,
             can_cleanup: false,
             can_migrate_loras: false,
+            can_migrate_storage_loras: false,
         }
     });
 
@@ -4827,6 +4970,7 @@ pub fn run() {
             reset_runtime_storage_root,
             get_legacy_storage_maintenance_info,
             migrate_legacy_loras,
+            migrate_storage_loras_to_pending_root,
             cleanup_legacy_storage,
             restart_application,
             get_app_settings,
@@ -7387,6 +7531,15 @@ fn migrate_legacy_loras(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceResult, String> {
     Ok(migrate_legacy_loras_impl(repo_root.inner()))
+}
+
+#[tauri::command]
+fn migrate_storage_loras_to_pending_root(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceResult, String> {
+    Ok(migrate_storage_loras_to_pending_root_impl(
+        repo_root.inner(),
+    ))
 }
 
 #[tauri::command]

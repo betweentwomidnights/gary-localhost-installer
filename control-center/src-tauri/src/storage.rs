@@ -9,6 +9,7 @@ pub const RUNTIME_ROOT_OVERRIDE_ENV: &str = "GARY4LOCAL_RUNTIME_ROOT";
 pub struct RuntimeStorageInfo {
     pub active_root: String,
     pub configured_root: Option<String>,
+    pub startup_root: String,
     pub default_root: String,
     pub legacy_root: String,
     pub config_path: String,
@@ -158,6 +159,7 @@ pub fn storage_info(active_root: &Path) -> RuntimeStorageInfo {
     RuntimeStorageInfo {
         active_root: display_path(active_root),
         configured_root: configured_root.as_ref().map(|path| display_path(path)),
+        startup_root: display_path(&startup_root),
         default_root: display_path(&installed_default_runtime_root()),
         legacy_root: display_path(&legacy_root),
         config_path: display_path(&storage_config_path()),
@@ -186,6 +188,8 @@ pub fn reset_runtime_root_config(active_root: &Path) -> Result<RuntimeStorageInf
         std::fs::remove_file(&path)
             .map_err(|e| format!("Cannot remove storage config {}: {}", path.display(), e))?;
     }
+    let startup_root = resolve_startup_runtime_root();
+    seed_runtime_root_config_files(active_root, &startup_root)?;
     Ok(storage_info(active_root))
 }
 
