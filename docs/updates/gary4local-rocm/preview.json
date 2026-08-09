@@ -2,8 +2,8 @@
     "channel":  "preview",
     "latest_version":  "0.2.1-rocm.1",
     "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.1/gary4local-rocm_0.2.1-rocm.1_x64-setup.exe",
-    "sha256":  "ba5311c096dfc72cd572674cc6d8567ce1bb248dd074b2217cbd982baddb1576",
-    "published_at":  "2026-08-09T07:43:58.3102139Z",
+    "sha256":  "cf082fd8b3f4c56cdddb352cf02f2582a06f631a0a3573ca57261e2c496604d0",
+    "published_at":  "2026-08-09T07:48:57.9017235Z",
     "notes":  [
                   "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.",
                   "Fresh installs keep service environments, caches, and models under gary4local-data beside the selected app install folder, so both can live off C:.",
