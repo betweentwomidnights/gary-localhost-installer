@@ -115,6 +115,7 @@
     info: LegacyStorageMaintenanceInfo;
     migratedLoras: number;
     cleanedItems: number;
+    warnings: string[];
     errors: string[];
   }
 
@@ -160,6 +161,7 @@
   let storageMaintenanceInfo: LegacyStorageMaintenanceInfo | null = $state(null);
   let storageMaintenanceBusy = $state(false);
   let storageMaintenanceError: string | null = $state(null);
+  let storageMaintenanceWarning: string | null = $state(null);
   let storageMaintenanceMessage: string | null = $state(null);
   let storageRestarting = $state(false);
   let careyLoraModalOpen = $state(false);
@@ -430,6 +432,7 @@
     storageModalOpen = false;
     storageError = null;
     storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
     storageMaintenanceMessage = null;
   }
 
@@ -462,6 +465,7 @@
   async function refreshStorageMaintenance() {
     storageMaintenanceBusy = true;
     storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
     storageMaintenanceMessage = null;
     try {
       await loadStorageMaintenanceInfo();
@@ -473,6 +477,7 @@
   async function migrateLegacyLoras() {
     storageMaintenanceBusy = true;
     storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
     storageMaintenanceMessage = null;
     try {
       const result = await invoke<LegacyStorageMaintenanceResult>("migrate_legacy_loras");
@@ -484,6 +489,9 @@
       if (result.errors.length > 0) {
         storageMaintenanceError = result.errors.join("\n");
       }
+      if (result.warnings.length > 0) {
+        storageMaintenanceWarning = result.warnings.join("\n");
+      }
     } catch (e) {
       storageMaintenanceError = formatError(e);
     } finally {
@@ -494,6 +502,7 @@
   async function cleanupLegacyStorage() {
     storageMaintenanceBusy = true;
     storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
     storageMaintenanceMessage = null;
     try {
       const result = await invoke<LegacyStorageMaintenanceResult>("cleanup_legacy_storage");
@@ -504,6 +513,9 @@
           : "nothing old needed cleanup";
       if (result.errors.length > 0) {
         storageMaintenanceError = result.errors.join("\n");
+      }
+      if (result.warnings.length > 0) {
+        storageMaintenanceWarning = result.warnings.join("\n");
       }
     } catch (e) {
       storageMaintenanceError = formatError(e);
@@ -754,6 +766,7 @@
     maintenanceInfo={storageMaintenanceInfo}
     maintenanceBusy={storageMaintenanceBusy}
     maintenanceError={storageMaintenanceError}
+    maintenanceWarning={storageMaintenanceWarning}
     maintenanceMessage={storageMaintenanceMessage}
     restarting={storageRestarting}
     onChoose={saveRuntimeStorageRoot}

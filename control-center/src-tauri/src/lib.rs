@@ -435,6 +435,7 @@ struct LegacyStorageMaintenanceResult {
     info: LegacyStorageMaintenanceInfo,
     migrated_loras: usize,
     cleaned_items: usize,
+    warnings: Vec<String>,
     errors: Vec<String>,
 }
 
@@ -2883,6 +2884,7 @@ fn migrate_legacy_sa3_loras(
     active_root: &Path,
     legacy_root: &Path,
     errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
 ) -> usize {
     let legacy_catalog = match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(legacy_root)) {
         Ok(catalog) => catalog,
@@ -2907,6 +2909,14 @@ fn migrate_legacy_sa3_loras(
             .map(active_sa3_catalog_entry_is_valid)
             .unwrap_or(false)
         {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, legacy_root) {
+            warnings.push(format!(
+                "SA3 LoRA '{}' is a manual/external LoRA, so Gary cannot migrate it automatically. Add it again from Jerry > sa3 > add LoRAs if you still want it in this storage profile.",
+                name
+            ));
             continue;
         }
         match migrate_sa3_catalog_entry(&name, &entry, active_root, legacy_root) {
@@ -2939,6 +2949,7 @@ fn migrate_legacy_carey_loras(
     active_root: &Path,
     legacy_root: &Path,
     errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
 ) -> usize {
     let legacy_catalog =
         match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(legacy_root)) {
@@ -2964,6 +2975,14 @@ fn migrate_legacy_carey_loras(
             .map(active_carey_catalog_entry_is_valid)
             .unwrap_or(false)
         {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, legacy_root) {
+            warnings.push(format!(
+                "Carey LoRA '{}' is a manual/external LoRA, so Gary cannot migrate it automatically. Add it again from Carey > add LoRAs if you still want it in this storage profile.",
+                name
+            ));
             continue;
         }
         match migrate_carey_catalog_entry(&name, &entry, active_root, legacy_root) {
@@ -3001,13 +3020,16 @@ fn migrate_legacy_carey_loras(
 fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
     let legacy_root = storage::legacy_runtime_root();
     let mut errors = Vec::new();
+    let mut warnings = Vec::new();
     let mut migrated_loras = 0;
 
     if storage::paths_equivalent(active_root, &legacy_root) {
         errors.push("Active storage is still the legacy AppData folder.".to_string());
     } else {
-        migrated_loras += migrate_legacy_sa3_loras(active_root, &legacy_root, &mut errors);
-        migrated_loras += migrate_legacy_carey_loras(active_root, &legacy_root, &mut errors);
+        migrated_loras +=
+            migrate_legacy_sa3_loras(active_root, &legacy_root, &mut errors, &mut warnings);
+        migrated_loras +=
+            migrate_legacy_carey_loras(active_root, &legacy_root, &mut errors, &mut warnings);
     }
 
     let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
@@ -3029,6 +3051,7 @@ fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResu
         info,
         migrated_loras,
         cleaned_items: 0,
+        warnings,
         errors,
     }
 }
@@ -3089,6 +3112,7 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
         info,
         migrated_loras: 0,
         cleaned_items,
+        warnings: Vec::new(),
         errors,
     }
 }

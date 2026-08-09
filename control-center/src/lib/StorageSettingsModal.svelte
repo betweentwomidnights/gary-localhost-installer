@@ -46,6 +46,7 @@
     maintenanceInfo,
     maintenanceBusy = false,
     maintenanceError,
+    maintenanceWarning,
     maintenanceMessage,
     restarting = false,
     onChoose,
@@ -64,6 +65,7 @@
     maintenanceInfo: LegacyStorageMaintenanceInfo | null;
     maintenanceBusy?: boolean;
     maintenanceError: string | null;
+    maintenanceWarning: string | null;
     maintenanceMessage: string | null;
     restarting?: boolean;
     onChoose: (path: string) => void;
@@ -286,6 +288,10 @@
         <div class="note">{maintenanceMessage}</div>
       {/if}
 
+      {#if maintenanceWarning}
+        <div class="warning-note multiline">{maintenanceWarning}</div>
+      {/if}
+
       {#if maintenanceError}
         <div class="error-note multiline">{maintenanceError}</div>
       {/if}
@@ -441,7 +447,15 @@
     color: #ff8b8b;
   }
 
-  .error-note.multiline {
+  .warning-note {
+    margin-top: 12px;
+    color: #f5c46f;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .error-note.multiline,
+  .warning-note.multiline {
     white-space: pre-wrap;
   }
 
