@@ -11,7 +11,7 @@ pub const DEFAULT_NATIVE_UPDATER_PUBKEY: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwQzIzMzA0NTlCQTQ1RkYKUldUL1JicFpCRFBDMEdLaDlQdkJYMmpLZ09FMHNwMjVVZlYrYVNCL0Z5Rmg5Y2JqOXp4am5xWlMK";
 
 pub fn app_updater_enabled() -> bool {
-    option_env!("VITE_ENABLE_APP_UPDATER").unwrap_or("0") == "1"
+    option_env!("VITE_ENABLE_APP_UPDATER").unwrap_or("1") != "0"
 }
 
 #[derive(Default)]

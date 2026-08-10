@@ -127,7 +127,7 @@
 
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
-  const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER === "1";
+  const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
 
   let services: ServiceInfo[] = $state([]);
   let selectedServiceId: string | null = $state(null);
