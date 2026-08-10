@@ -73,6 +73,7 @@ OUTPUT_SAMPLE_RATE = int(os.environ.get("SA3_SAMPLE_RATE", "44100"))
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR") or os.path.join(os.getcwd(), "outputs")
 PROMPTS_DIR = os.environ.get("SA3_PROMPTS_DIR") or os.path.join(os.getcwd(), "prompts")
+BUNDLED_DEFAULT_PROMPTS_PATH = Path(__file__).resolve().parent / "prompts" / "defaults.json"
 LORA_DIR = os.environ.get("SA3_LORA_DIR") or os.path.join(os.getcwd(), "loras")
 LORA_REGISTRY_PATH = os.environ.get("SA3_LORA_REGISTRY") or os.path.join(
     Path(PROMPTS_DIR).resolve().parent, "lora_registry.json"
@@ -1037,13 +1038,26 @@ def read_json_file(path: str) -> dict[str, Any] | None:
         return None
 
 
+def read_default_prompts() -> tuple[dict[str, Any], str]:
+    runtime_path = Path(PROMPTS_DIR) / "defaults.json"
+    data = read_json_file(str(runtime_path))
+    if data is not None:
+        return data, "defaults.json"
+
+    data = read_json_file(str(BUNDLED_DEFAULT_PROMPTS_PATH))
+    if data is not None:
+        return data, "bundled defaults.json"
+
+    return {
+        "version": 1,
+        "dice": {"generic": [], "instrumental": [], "drums": []},
+    }, "empty"
+
+
 @app.route("/prompts", methods=["GET"])
 def prompts():
     defaults_path = os.path.join(PROMPTS_DIR, "defaults.json")
-    data = read_json_file(defaults_path) or {
-        "version": 1,
-        "dice": {"generic": [], "instrumental": [], "drums": []},
-    }
+    data, defaults_source = read_default_prompts()
     dice = {
         key: list(value)
         for key, value in (data.get("dice") or {}).items()
@@ -1065,9 +1079,7 @@ def prompts():
                 selected_loras.append(name)
                 seen_loras.add(name)
 
-    source: dict[str, Any] = {
-        "generic": "defaults.json" if os.path.exists(defaults_path) else "empty"
-    }
+    source: dict[str, Any] = {"generic": defaults_source}
     bucket_seen: dict[str, set[Any]] = {}
     bucket_replaced = set()
     missing_loras = []
