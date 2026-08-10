@@ -797,14 +797,14 @@ fn bundled_default_captions_path(runtime_root: &Path) -> PathBuf {
 }
 
 fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf, String> {
-    let direct_root = resource_dir.to_path_buf();
-    if direct_root.join("services").is_dir() {
-        return Ok(direct_root);
-    }
-
     let nested_root = resource_dir.join("resources");
     if nested_root.join("services").is_dir() {
         return Ok(nested_root);
+    }
+
+    let direct_root = resource_dir.to_path_buf();
+    if direct_root.join("services").is_dir() {
+        return Ok(direct_root);
     }
 
     Err(format!(
@@ -812,6 +812,47 @@ fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf,
         direct_root.join("services").display(),
         nested_root.join("services").display()
     ))
+}
+
+#[cfg(test)]
+mod bundle_root_tests {
+    use super::resolve_bundle_root_from_resource_dir;
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gary4local-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn bundled_resources_win_when_runtime_services_share_the_install_dir() {
+        let root = temp_root("nested-bundle-root-test");
+        let runtime_services = root.join("services");
+        let bundled_services = root.join("resources").join("services");
+        std::fs::create_dir_all(&runtime_services).unwrap();
+        std::fs::create_dir_all(&bundled_services).unwrap();
+
+        let resolved = resolve_bundle_root_from_resource_dir(&root).unwrap();
+
+        assert_eq!(resolved, root.join("resources"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_resource_root_remains_supported() {
+        let root = temp_root("direct-bundle-root-test");
+        std::fs::create_dir_all(root.join("services")).unwrap();
+
+        let resolved = resolve_bundle_root_from_resource_dir(&root).unwrap();
+
+        assert_eq!(resolved, root);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 fn hide_console_window(cmd: &mut tokio::process::Command) {
