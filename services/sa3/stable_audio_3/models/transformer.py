@@ -71,7 +71,7 @@ def precompute_varlen_metadata(padding_mask: torch.Tensor):
         "seq_len": seq_len,
     }
 
-from .utils import compile
+from .utils import compile, enable_torch_compile
 
 
 def _left_pad_to_match(emb, target_len):
@@ -87,13 +87,16 @@ def _left_pad_to_match(emb, target_len):
         return emb[:, -target_len:, :]
     return emb
 
-if flex_attention_available:
+# Windows ROCm exposes FlexAttention, but its Inductor path still requires
+# Triton. Respect the shared compile capability flag so ROCm reaches the
+# bounded-memory SDPA fallback while CUDA builds can keep the compiled path.
+if flex_attention_available and enable_torch_compile:
     try:
         torch._dynamo.config.cache_size_limit = 5000
         flex_attention_compiled = torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")
     except Exception as e:
-        logging.debug(f"Could not compile flex_attention, using uncompiled version: {e}")
-        flex_attention_compiled = flex_attention
+        logging.debug(f"Could not compile flex_attention, using SDPA fallbacks: {e}")
+        flex_attention_compiled = None
 else:
     flex_attention_compiled = None
 
@@ -609,7 +612,9 @@ class Attention(nn.Module):
             flex_attention_block_mask = None
             flex_attention_score_mod = None
 
-        if flex_attention_block_mask is not None or flex_attention_score_mod is not None:
+        if (
+            flex_attention_block_mask is not None or flex_attention_score_mod is not None
+        ) and flex_attention_compiled is not None:
             # Flex attention path - use V-zeroing for padding mask
             if padding_mask is not None:
                 mask_expanded = padding_mask.unsqueeze(1).unsqueeze(-1).to(v.dtype)
@@ -617,6 +622,11 @@ class Attention(nn.Module):
             out = flex_attention_compiled(q,k,v,
                 block_mask = flex_attention_block_mask,
                 score_mod = flex_attention_score_mod)
+        elif flex_attention_block_mask is not None or flex_attention_score_mod is not None:
+            raise RuntimeError(
+                "FlexAttention block masks and score modifiers require ENABLE_TORCH_COMPILE=1 "
+                "and a working torch.compile backend"
+            )
         elif flash_attn_available and varlen_metadata is not None and flash_attn_varlen_available:
             # Flash attention with varlen using precomputed metadata (fast path)
             batch_size = varlen_metadata["batch_size"]

@@ -9,7 +9,6 @@ use model_manager::ModelManager;
 use serde::{Deserialize, Serialize};
 use service_manager::ServiceManager;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::image::Image;
@@ -855,31 +854,7 @@ fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(entries)
 }
 
-fn hash_dir_recursive(dir: &Path, base: &Path, hasher: &mut impl Hasher) -> Result<(), String> {
-    for entry in read_dir_sorted(dir)? {
-        let relative = entry
-            .strip_prefix(base)
-            .map_err(|e| format!("Cannot relativize {}: {}", entry.display(), e))?;
-        relative.to_string_lossy().hash(hasher);
-
-        if entry.is_dir() {
-            "dir".hash(hasher);
-            hash_dir_recursive(&entry, base, hasher)?;
-        } else if entry.is_file() {
-            "file".hash(hasher);
-            let bytes = std::fs::read(&entry)
-                .map_err(|e| format!("Cannot read {}: {}", entry.display(), e))?;
-            bytes.hash(hasher);
-        }
-    }
-
-    Ok(())
-}
-
 fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut hasher);
-
     let services_dir = bundle_root.join("services");
     if !services_dir.is_dir() {
         return Err(format!(
@@ -888,30 +863,9 @@ fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
         ));
     }
 
-    hash_dir_recursive(&services_dir, &services_dir, &mut hasher)?;
-
-    let icon_path = bundle_root.join("icon.png");
-    if icon_path.is_file() {
-        "icon.png".hash(&mut hasher);
-        match std::fs::read(&icon_path) {
-            Ok(icon_bytes) => icon_bytes.hash(&mut hasher),
-            Err(error) => {
-                let message = format!(
-                    "Skipping bundled icon hash because {} could not be read: {}",
-                    icon_path.display(),
-                    error
-                );
-                log::warn!("{}", message);
-                append_startup_diagnostic(&message);
-            }
-        }
-    }
-
-    Ok(format!(
-        "{}-{:016x}",
-        env!("CARGO_PKG_VERSION"),
-        hasher.finish()
-    ))
+    // Bundled resources are immutable within a released app version. Avoid
+    // synchronously reading hundreds of files before the window can respond.
+    Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
 fn remove_path(path: &Path) -> Result<(), String> {
@@ -1055,21 +1009,6 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             std::fs::copy(&src, &dst).map_err(|e| {
                 format!("Cannot copy {} to {}: {}", src.display(), dst.display(), e)
             })?;
-        }
-    }
-
-    let bundle_icon = bundle_root.join("icon.png");
-    let runtime_icon = runtime_root.join("icon.png");
-    if bundle_icon.is_file() {
-        if let Err(error) = std::fs::copy(&bundle_icon, &runtime_icon) {
-            let message = format!(
-                "Cannot copy {} to {}: {}",
-                bundle_icon.display(),
-                runtime_icon.display(),
-                error
-            );
-            log::warn!("Non-fatal runtime icon sync warning: {}", message);
-            append_startup_diagnostic(&format!("Non-fatal runtime icon sync warning: {}", message));
         }
     }
 
@@ -4512,31 +4451,6 @@ pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Load a PNG file and decode it to RGBA for Tauri Image
-fn load_png_as_image(path: &std::path::Path) -> Option<Image<'static>> {
-    let file = std::fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    buf.truncate(info.buffer_size());
-
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => {
-            let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
-            for chunk in buf.chunks(3) {
-                rgba.extend_from_slice(chunk);
-                rgba.push(255);
-            }
-            rgba
-        }
-        _ => return None,
-    };
-
-    Some(Image::new_owned(rgba, info.width, info.height))
-}
-
 /// Generate a small colored circle image (16x16 RGBA) for tray menu icons.
 fn make_dot_icon(r: u8, g: u8, b: u8) -> Image<'static> {
     const SIZE: u32 = 16;
@@ -4743,21 +4657,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let tray_manager = manager.clone();
 
-            let icon_path = runtime_root.join("icon.png");
-            let tray_icon = if icon_path.exists() {
-                let icon = load_png_as_image(&icon_path);
-                if icon.is_none() {
-                    let message = format!(
-                        "Runtime tray icon could not be loaded from {}; continuing without a tray icon",
-                        icon_path.display()
-                    );
-                    log::warn!("{}", message);
-                    append_startup_diagnostic(&message);
-                }
-                icon
-            } else {
-                None
-            };
+            // Reuse Tauri's compile-time validated icon. Decoding a mutable
+            // runtime PNG here previously made Windows tray startup fragile.
+            let tray_icon = app.default_window_icon().cloned();
 
             // Build tray menu with per-service items
             let show_item = MenuItemBuilder::with_id("show", "show control center").build(app)?;

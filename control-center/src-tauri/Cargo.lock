@@ -1077,10 +1077,9 @@ dependencies = [
 
 [[package]]
 name = "gary4local-rocm"
-version = "0.2.1-rocm.1"
+version = "0.2.1-rocm.2"
 dependencies = [
  "log",
- "png",
  "reqwest 0.12.28",
  "semver",
  "serde",
