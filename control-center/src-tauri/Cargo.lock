@@ -1080,7 +1080,6 @@ name = "gary4local"
 version = "0.2.0"
 dependencies = [
  "log",
- "png",
  "reqwest 0.12.28",
  "semver",
  "serde",
