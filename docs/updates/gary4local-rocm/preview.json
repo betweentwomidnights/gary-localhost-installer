@@ -3,10 +3,11 @@
     "latest_version":  "0.2.1-rocm.4",
     "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.4/gary4local-rocm_0.2.1-rocm.4_x64-setup.exe",
     "sha256":  "96b42d809ebcfa6c5ede7e152113ac7ecff9607be0a968b1b58a9b32a9f51d1c",
-    "published_at":  "2026-08-10T21:15:20.7978583Z",
+    "published_at":  "2026-08-10T21:16:26.6867773Z",
     "notes":  [
-                  "we found the silent 400: PyTorch 2.9 moved torchaudio WAV loading behind TorchCodec, which is not part of this ROCm environment.",
-                  "this build reads Gary4JUCE\u0027s WAV directly with the audio library SA3 already uses. transform and continue now get past that request-decoding step in our local endpoint test.",
-                  "if another request is rejected, gary4local will print the actual reason in the SA3 log instead of only saying HTTP 400."
+                  "okay, we found the silent 400. PyTorch changed how it reads WAV files and the ROCm environment was missing the new decoder it expected.",
+                  "this version reads the WAV the simpler way with stuff we already have installed. transform and continue both get past that step here now.",
+                  "click update, restart sa3, and give it another shot.",
+                  "i swear this time we should see more than a 400 if something\u0027s wrong"
               ]
 }

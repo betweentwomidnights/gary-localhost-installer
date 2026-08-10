@@ -1,7 +1,7 @@
 {
     "version":  "0.2.1-rocm.4",
-    "notes":  "we found the silent 400: PyTorch 2.9 moved torchaudio WAV loading behind TorchCodec, which is not part of this ROCm environment.\nthis build reads Gary4JUCE\u0027s WAV directly with the audio library SA3 already uses. transform and continue now get past that request-decoding step in our local endpoint test.\nif another request is rejected, gary4local will print the actual reason in the SA3 log instead of only saying HTTP 400.",
-    "pub_date":  "2026-08-10T21:15:20.7978583Z",
+    "notes":  "okay, we found the silent 400. PyTorch changed how it reads WAV files and the ROCm environment was missing the new decoder it expected.\nthis version reads the WAV the simpler way with stuff we already have installed. transform and continue both get past that step here now.\nclick update, restart sa3, and give it another shot.\ni swear this time we should see more than a 400 if something\u0027s wrong",
+    "pub_date":  "2026-08-10T21:16:26.6867773Z",
     "platforms":  {
                       "windows-x86_64":  {
                                              "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEg3VFhqSkhCZlFhU2orYy8ybnU4cS9zdDN3MnZPQ3hSZmlYUk93RTdEd3Q0RnVjNE1KTGJHZCtCTnJrTTJvN05KSWhhdE1FT3FNMGRJZE5MNHRkSEFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Mzk2NDg0CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uNF94NjQtc2V0dXAuZXhlCm9TU2VadndwY2VjOFVyM0c4aGF0cXdvdkdKUTZibHk2MHIrb1FQQ0ZKRSs2Wk9uTTdnVmo3SW9jWFFSTGpjZW1tNDluVVdwNXBTaVVFVi9RaVdxbEF3PT0K",
