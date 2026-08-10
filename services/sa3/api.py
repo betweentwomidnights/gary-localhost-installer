@@ -26,7 +26,6 @@ from typing import Any
 
 import soundfile as sf
 import torch
-import torchaudio
 from einops import rearrange
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -660,6 +659,17 @@ def validate_common(data: dict[str, Any], require_duration: bool = True) -> list
     return errors
 
 
+def reject_bad_request(*, error: str | None = None, errors: list[str] | None = None):
+    messages = errors or ([error] if error else ["invalid request"])
+    print(f"[sa3] rejected {request.path}: {'; '.join(messages)}", flush=True)
+    payload: dict[str, Any] = {"success": False}
+    if errors:
+        payload["errors"] = errors
+    else:
+        payload["error"] = messages[0]
+    return jsonify(payload), 400
+
+
 def resolve_loras(data: dict[str, Any]) -> list[dict[str, Any]]:
     entries = data.get("loras")
     if entries is None:
@@ -725,8 +735,9 @@ def decode_audio_data(data: dict[str, Any]) -> tuple[int, torch.Tensor]:
     if isinstance(encoded, str) and encoded.startswith("data:") and "," in encoded:
         encoded = encoded.split(",", 1)[1]
     raw = base64.b64decode(encoded)
-    waveform, sample_rate = torchaudio.load(io.BytesIO(raw))
-    return sample_rate, waveform
+    samples, sample_rate = sf.read(io.BytesIO(raw), dtype="float32", always_2d=True)
+    waveform = torch.from_numpy(samples.T.copy())
+    return int(sample_rate), waveform
 
 
 def encode_wav_base64(audio: torch.Tensor, sample_rate: int) -> str:
@@ -1339,18 +1350,18 @@ def transform():
     cleanup_old_sessions()
     data = get_json_body()
     if not data:
-        return jsonify({"success": False, "error": "JSON body required"}), 400
+        return reject_bad_request(error="JSON body required")
     errors = validate_common(data, require_duration=False)
     if errors:
-        return jsonify({"success": False, "errors": errors}), 400
+        return reject_bad_request(errors=errors)
     try:
         input_sr, waveform = decode_audio_data(data)
     except Exception as exc:
-        return jsonify({"success": False, "error": f"could not decode audio_data: {exc}"}), 400
+        return reject_bad_request(error=f"could not decode audio_data: {exc}")
 
     input_duration = waveform.shape[-1] / float(input_sr)
     if input_duration <= 0 or input_duration > MAX_DURATION:
-        return jsonify({"success": False, "error": f"input duration must be in (0, {MAX_DURATION}] seconds"}), 400
+        return reject_bad_request(error=f"input duration must be in (0, {MAX_DURATION}] seconds")
 
     strength = max(0.01, min(1.0, parse_float(data, "strength", 0.9)))
     target_samples = round(input_duration * OUTPUT_SAMPLE_RATE)
@@ -1377,31 +1388,30 @@ def continue_audio():
     cleanup_old_sessions()
     data = get_json_body()
     if not data:
-        return jsonify({"success": False, "error": "JSON body required"}), 400
+        return reject_bad_request(error="JSON body required")
     errors = validate_common(data, require_duration=False)
     if errors:
-        return jsonify({"success": False, "errors": errors}), 400
+        return reject_bad_request(errors=errors)
 
     mode = (data.get("continuation_mode") or "inpaint").lower()
     if mode not in VALID_CONTINUATION_MODES:
-        return jsonify(
-            {
-                "success": False,
-                "error": f"continuation_mode must be one of {sorted(VALID_CONTINUATION_MODES)}",
-            }
-        ), 400
+        return reject_bad_request(
+            error=f"continuation_mode must be one of {sorted(VALID_CONTINUATION_MODES)}"
+        )
 
     try:
         input_sr, waveform = decode_audio_data(data)
     except Exception as exc:
-        return jsonify({"success": False, "error": f"could not decode audio_data: {exc}"}), 400
+        return reject_bad_request(error=f"could not decode audio_data: {exc}")
 
     source_duration = waveform.shape[-1] / float(input_sr)
     continuation_seconds = parse_float(data, "continuation_seconds", DEFAULT_CONTINUATION_SECONDS)
     tail_pad = min(CONTINUE_TAIL_PAD_MAX, parse_tail_pad(data, CONTINUE_TAIL_PAD))
     total_duration = source_duration + continuation_seconds
     if source_duration <= 0 or continuation_seconds <= 0 or total_duration > MAX_DURATION:
-        return jsonify({"success": False, "error": f"source + continuation must be in (0, {MAX_DURATION}] seconds"}), 400
+        return reject_bad_request(
+            error=f"source + continuation must be in (0, {MAX_DURATION}] seconds"
+        )
 
     if CONTINUE_TAIL_MODE == "exact":
         gen_duration = total_duration
