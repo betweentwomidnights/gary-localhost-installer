@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.2",
-    "notes":  "in this version hopefully transform and continue work for sa3\nif not, the error should be less gibberish about it\nand from here on out, after installing this version, you can just click \u0027check updates\u0027 when i do a new build. gary4local-rocm has its own auto-updater feed now.\nup next: sa3 LoRA training for AMD!\np.s. the dice button issue has now made its way onto the main branch thanks to your tests. you\u0027re a champ",
-    "pub_date":  "2026-08-10T05:08:04.4297283Z",
+    "version":  "0.2.1-rocm.3",
+    "notes":  "this one enables the experimental AMD attention backend PyTorch asked for in your SA3 log.\nrestart sa3 after the update, then try transform and continue again. you do not need to rebuild the environment.\nand yes: this is the first build you should be able to install by clicking \u0027check updates\u0027 in gary4local-rocm.",
+    "pub_date":  "2026-08-10T19:12:54.0616229Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEhuMG9ySFZPMmpDYm5OYVFzYkcvRHpyNlZrNE9RZFUyaWZqTTZYS0ZOcmRVemxMOEZIZFc0Y0tDT0o2Y0pOTkl5a0JaYlhGb2pGMjdjRTZqQi9vNXdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzMzNDE5CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMl94NjQtc2V0dXAuZXhlCm9QclU4UDVPQVFhb1cxMHhiVWJKeWNtMkdISFMvbnVjakJXZ0FBNVVqSXh4R3V0THk1MnhNQ1FVb1RJblRYWXMxWUlweTZQV3NiTitERnp5dE9rMkNnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.2/gary4local-rocm_0.2.1-rocm.2_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtNWXVycnZzZHlpWkduU3UvaHlsRks4bEJ1aU9EUGxkSFNZOFBoZVFnRDZwU1d6TzcwOExrZ1hzRURIOXNPZGFScHp5WHNDMVNqbzFVNU1ieGJwNXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Mzg5MTI4CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uM194NjQtc2V0dXAuZXhlCkw5aWdndWJ3MGpsbGt3cWRjUFp0aUdOM3hZOGY5bExrOVF4STdKOS9aS004ZjRCb0lkWnFQNjVwK3B5bldiRloyNnNObU9TY0ZiUWFnRllCQnRhbkNRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.3/gary4local-rocm_0.2.1-rocm.3_x64-setup.exe"
                                          }
                   }
 }

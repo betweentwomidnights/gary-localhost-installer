@@ -1,14 +1,12 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.2",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.2/gary4local-rocm_0.2.1-rocm.2_x64-setup.exe",
-    "sha256":  "e02b8e947f86376c16315535d5fd7914ed5a166e7764ded4fdf1163b646f7cd5",
-    "published_at":  "2026-08-10T05:08:04.4297283Z",
+    "latest_version":  "0.2.1-rocm.3",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.3/gary4local-rocm_0.2.1-rocm.3_x64-setup.exe",
+    "sha256":  "44d832de7d71585d65421da0fd9a6134487e1b89abf1f5261a7a4fce8f01bd6f",
+    "published_at":  "2026-08-10T19:12:54.0616229Z",
     "notes":  [
-                  "in this version hopefully transform and continue work for sa3",
-                  "if not, the error should be less gibberish about it",
-                  "and from here on out, after installing this version, you can just click \u0027check updates\u0027 when i do a new build. gary4local-rocm has its own auto-updater feed now.",
-                  "up next: sa3 LoRA training for AMD!",
-                  "p.s. the dice button issue has now made its way onto the main branch thanks to your tests. you\u0027re a champ"
+                  "this one enables the experimental AMD attention backend PyTorch asked for in your SA3 log.",
+                  "restart sa3 after the update, then try transform and continue again. you do not need to rebuild the environment.",
+                  "and yes: this is the first build you should be able to install by clicking \u0027check updates\u0027 in gary4local-rocm."
               ]
 }
