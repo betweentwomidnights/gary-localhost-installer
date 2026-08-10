@@ -141,6 +141,7 @@
         "PYTHONIOENCODING": "utf-8",
         "HF_TOKEN": "${HF_TOKEN}",
         "ENABLE_TORCH_COMPILE": "0",
+        "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1",
         "SA3_ACCELERATOR_PROFILE": "amd-rocm-windows-7.2.1",
         "SA3_EXPECT_HIP": "1",
         "SA3_REQUIRE_ACCELERATOR": "1",
