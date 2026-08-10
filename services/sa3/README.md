@@ -38,7 +38,8 @@ The control center includes a first Gary-native SA3 LoRA training flow powered
 by vendored pieces of [dada-bots' underfit project](https://github.com/dada-bots/underfit).
 It does not embed the underfit dashboard. Instead, Tauri launches
 `train_lora_job.py`, which stages the SA3 medium base checkpoint from Hugging
-Face, pre-encodes an audio folder, runs underfit's raw PyTorch trainer, then
+Face, pre-encodes an audio folder, runs the official Stable Audio 3 Lightning
+training wrapper, then
 copies the final `.safetensors` adapter to `%APPDATA%/Gary4JUCE/sa3/loras` and
 adds it to the existing SA3 LoRA catalog.
 
@@ -52,6 +53,14 @@ weights instead is an objective/weights mismatch that produces a low-frequency
 model and its T5Gemma conditioner, so it is the only download training needs.
 The SA3 generation service should be stopped before training so the GPU has
 enough VRAM.
+
+The default efficient layer scope adapts 168 transformer-core projections:
+self-attention QKV/output, cross-attention Q/KV/output, and both feed-forward
+projections in each of the 24 blocks. It is equivalent to
+`--lora-include transformer.layers --lora-exclude to_local_embed`. The training
+UI can instead select all 229 reference targets or all 228 DiT targets without
+the `seconds_total` conditioner. Include/exclude filters are saved in checkpoint
+metadata and reapplied when the LoRA is loaded.
 
 Plain `.txt` sidecars are literal prompts: the complete trimmed file becomes
 the clip's prompt. Labels such as `Title:` have no special parsing in a text

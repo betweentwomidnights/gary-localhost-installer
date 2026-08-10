@@ -6095,6 +6095,42 @@ fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
     Ok(read_sa3_lora_training_state())
 }
 
+fn resolve_sa3_lora_layer_scope(
+    layer_scope: &str,
+) -> Result<(Option<&'static str>, Option<&'static str>), String> {
+    match layer_scope.trim() {
+        // Seven adapters per block: self-attention (2), cross-attention (3),
+        // and feed-forward (2). 24 medium-DiT blocks * 7 = 168.
+        "transformer-core" => Ok((Some("transformer.layers"), Some("to_local_embed"))),
+        "full" => Ok((None, None)),
+        "full-no-seconds" => Ok((None, Some("seconds_total"))),
+        _ => Err(format!("Unknown SA3 LoRA layer scope: {layer_scope}")),
+    }
+}
+
+#[cfg(test)]
+mod sa3_lora_layer_scope_tests {
+    use super::resolve_sa3_lora_layer_scope;
+
+    #[test]
+    fn efficient_scope_selects_the_168_layer_filter_pair() {
+        assert_eq!(
+            resolve_sa3_lora_layer_scope("transformer-core").unwrap(),
+            (Some("transformer.layers"), Some("to_local_embed"))
+        );
+    }
+
+    #[test]
+    fn reference_scopes_resolve_without_ambiguity() {
+        assert_eq!(resolve_sa3_lora_layer_scope("full").unwrap(), (None, None));
+        assert_eq!(
+            resolve_sa3_lora_layer_scope("full-no-seconds").unwrap(),
+            (None, Some("seconds_total"))
+        );
+        assert!(resolve_sa3_lora_layer_scope("mystery").is_err());
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn start_sa3_lora_training(
@@ -6109,7 +6145,7 @@ async fn start_sa3_lora_training(
     learning_rate: f64,
     loudness_fix_enabled: bool,
     target_latent_rms: f64,
-    exclude_seconds_total: bool,
+    layer_scope: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3LoraTrainingState, String> {
     let normalized_name = sanitize_lora_name(&name)
@@ -6137,6 +6173,7 @@ async fn start_sa3_lora_training(
     {
         return Err("target latent RMS must be between 0.5 and 1.3".to_string());
     }
+    let (lora_include, lora_exclude) = resolve_sa3_lora_layer_scope(&layer_scope)?;
     if read_hf_token().is_none() {
         return Err("Save a Hugging Face token before training SA3 LoRAs.".to_string());
     }
@@ -6269,11 +6306,11 @@ async fn start_sa3_lora_training(
         cmd.arg("--per-track-target-latent-rms")
             .arg(target_latent_rms.to_string());
     }
-    // Optional: skip the seconds_total conditioner (228 modules instead of 229).
-    // Official SA3 docs recommend this on small datasets to prevent "conditioner
-    // hijacking", and the sa3.cpp trainer excludes it by default.
-    if exclude_seconds_total {
-        cmd.arg("--lora-exclude").arg("seconds_total");
+    if let Some(include) = lora_include {
+        cmd.arg("--lora-include").arg(include);
+    }
+    if let Some(exclude) = lora_exclude {
+        cmd.arg("--lora-exclude").arg(exclude);
     }
     cmd.current_dir(repo_root.join("services").join("sa3"))
         .stdout(std::process::Stdio::from(log_file))

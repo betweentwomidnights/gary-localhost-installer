@@ -86,10 +86,9 @@
   let learningRateText = $state("1e-4");
   let loudnessFixEnabled = $state(false);
   let targetLatentRms = $state(0.9);
-  // Off = train all 229 modules (matches the reference Spark LoRAs). On = 228,
-  // skipping the seconds_total conditioner, which is what sa3.cpp does and what
-  // the official SA3 docs suggest for small datasets.
-  let excludeSecondsTotal = $state(false);
+  // The efficient MLX-compatible scope keeps the seven attention/feed-forward
+  // projections in each of the 24 transformer blocks: 7 * 24 = 168 adapters.
+  let layerScope = $state("transformer-core");
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -215,7 +214,7 @@
         learningRate,
         loudnessFixEnabled,
         targetLatentRms,
-        excludeSecondsTotal,
+        layerScope,
       });
       shouldRevealLog = true;
       await revealLogOutput();
@@ -411,12 +410,16 @@
             decimal: {learningRateDecimal}
           </small>
         </label>
-        <label class="toggle-field wide">
-          <input type="checkbox" bind:checked={excludeSecondsTotal} />
-          <span>
-            <strong>exclude seconds_total conditioner</strong>
-            <small>trains 228 modules instead of 229, skipping the duration conditioner. The official stable-audio-3 docs recommend this on small datasets to prevent "conditioner hijacking", and the sa3.cpp trainer does it by default. Off matches the reference LoRAs.</small>
-          </span>
+        <label class="field wide">
+          <span>LoRA layer scope</span>
+          <select bind:value={layerScope}>
+            <option value="transformer-core">efficient transformer core (168 layers)</option>
+            <option value="full">full reference scope (229 layers)</option>
+            <option value="full-no-seconds">full DiT, no duration conditioner (228 layers)</option>
+          </select>
+          <small>
+            168 trains every block's self-attention, cross-attention, and feed-forward projections while skipping local-conditioning and outer projection adapters. It matches the efficient MLX scope and produces a normal SA3 LoRA checkpoint. Use 229 only for exact reference-recipe parity.
+          </small>
         </label>
         <label class="toggle-field wide">
           <input type="checkbox" bind:checked={loudnessFixEnabled} />
@@ -435,7 +438,7 @@
       </div>
 
       <div class="note">
-        defaults: DoRA, fp16 base weights, batch 1, full-track training, and no training demos. Full-track needs more VRAM — on 8-12 GB cards, turn off "train on full tracks" to use shorter random crops.
+        defaults: DoRA, efficient 168-layer scope, bf16/fp16 frozen base weights, batch 1, full-track training, and no training demos. Full-track needs more VRAM — on 8-12 GB cards, turn off "train on full tracks" to use shorter random crops.
       </div>
 
       <div class="actions">
