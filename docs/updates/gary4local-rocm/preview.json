@@ -1,13 +1,13 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.4",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.4/gary4local-rocm_0.2.1-rocm.4_x64-setup.exe",
-    "sha256":  "96b42d809ebcfa6c5ede7e152113ac7ecff9607be0a968b1b58a9b32a9f51d1c",
-    "published_at":  "2026-08-10T21:16:26.6867773Z",
+    "latest_version":  "0.2.1-rocm.5",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.5/gary4local-rocm_0.2.1-rocm.5_x64-setup.exe",
+    "sha256":  "966b50f7d476394afe0962577691bdd54ec74353009f750e7f0c321c12ea6a5f",
+    "published_at":  "2026-08-11T02:21:50.5878192Z",
     "notes":  [
-                  "okay, we found the silent 400. PyTorch changed how it reads WAV files and the ROCm environment was missing the new decoder it expected.",
-                  "this version reads the WAV the simpler way with stuff we already have installed. transform and continue both get past that step here now.",
-                  "click update, restart sa3, and give it another shot.",
-                  "i swear this time we should see more than a 400 if something\u0027s wrong"
+                  "this one is specifically testing SA3 LoRA training on AMD.",
+                  "skip the auto-labeller for now - that uses ace-step\u0027s captioner model and isn\u0027t in the ROCm environment yet.",
+                  "pick a folder with one audio file, set steps to 5, and use amd-test as the shared trigger word. leave everything else alone.",
+                  "you don\u0027t need a .txt sidecar for this smoke test. if it completes, gary should register the LoRA automatically."
               ]
 }

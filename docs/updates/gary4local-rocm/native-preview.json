@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.4",
-    "notes":  "okay, we found the silent 400. PyTorch changed how it reads WAV files and the ROCm environment was missing the new decoder it expected.\nthis version reads the WAV the simpler way with stuff we already have installed. transform and continue both get past that step here now.\nclick update, restart sa3, and give it another shot.\ni swear this time we should see more than a 400 if something\u0027s wrong",
-    "pub_date":  "2026-08-10T21:16:26.6867773Z",
+    "version":  "0.2.1-rocm.5",
+    "notes":  "this one is specifically testing SA3 LoRA training on AMD.\nskip the auto-labeller for now - that uses ace-step\u0027s captioner model and isn\u0027t in the ROCm environment yet.\npick a folder with one audio file, set steps to 5, and use amd-test as the shared trigger word. leave everything else alone.\nyou don\u0027t need a .txt sidecar for this smoke test. if it completes, gary should register the LoRA automatically.",
+    "pub_date":  "2026-08-11T02:21:50.5878192Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEg3VFhqSkhCZlFhU2orYy8ybnU4cS9zdDN3MnZPQ3hSZmlYUk93RTdEd3Q0RnVjNE1KTGJHZCtCTnJrTTJvN05KSWhhdE1FT3FNMGRJZE5MNHRkSEFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Mzk2NDg0CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uNF94NjQtc2V0dXAuZXhlCm9TU2VadndwY2VjOFVyM0c4aGF0cXdvdkdKUTZibHk2MHIrb1FQQ0ZKRSs2Wk9uTTdnVmo3SW9jWFFSTGpjZW1tNDluVVdwNXBTaVVFVi9RaVdxbEF3PT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.4/gary4local-rocm_0.2.1-rocm.4_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElIcWpBRXpGWG1BbFNTQ1QzQ3lXZTlGVDloamJmQjVSc1dWOGtUSDRGWXdYYk1zbklCQ2p3OE5FY2x0MDVIUE5zdHVNTmdtOUx1c2Jmby9BYjdNWXdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NDE0ODI1CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uNV94NjQtc2V0dXAuZXhlCktYTGNrUzc2cXVrZVh1QjRuZXpNY1VxNDNueHVRMXN1Y0Y3ODlkWjlhSkk0eHM5ZDVKekwxa3lpdDhYL2ZSK2JtVVZFUDBPNnNHNENxUDRVTytONUJnPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.5/gary4local-rocm_0.2.1-rocm.5_x64-setup.exe"
                                          }
                   }
 }
