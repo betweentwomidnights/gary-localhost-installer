@@ -22,6 +22,12 @@
     logTail: string;
   }
 
+  interface LoraNameAvailability {
+    normalizedName: string;
+    availableName: string;
+    available: boolean;
+  }
+
   let {
     open,
     serviceStatus,
@@ -65,6 +71,7 @@
   let shouldRevealLog = false;
 
   let formName = $state("");
+  let nameNotice = $state<string | null>(null);
   let datasetPath = $state("");
   let fixedPrompt = $state("");
   let maxSteps = $state(2000);
@@ -131,6 +138,31 @@
       .slice(0, 64);
   }
 
+  async function checkNameAvailability(forLaunch = false): Promise<boolean> {
+    const requested = formName.trim();
+    if (!requested || !/^[a-zA-Z0-9_-]+$/.test(requested)) return !forLaunch;
+
+    try {
+      const result = await invoke<LoraNameAvailability>("get_sa3_lora_name_availability", {
+        name: requested,
+      });
+      formName = result.availableName;
+      if (result.available) {
+        nameNotice = null;
+        return true;
+      }
+
+      nameNotice = `'${result.normalizedName}' is already registered. Suggested '${result.availableName}'.`;
+      if (forLaunch) {
+        error = `That LoRA name is already in use. Review the suggested name, then start training again.`;
+      }
+      return false;
+    } catch (e) {
+      if (forLaunch) error = describeError(e);
+      return false;
+    }
+  }
+
   function handleLogMouseDown() {
     isSelectingLog = true;
   }
@@ -194,6 +226,7 @@
     datasetPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);
+      void checkNameAvailability();
     }
   }
 
@@ -202,6 +235,7 @@
     error = null;
     autoScrollLog = true;
     try {
+      if (!(await checkNameAvailability(true))) return;
       trainingState = await invoke<Sa3LoraTrainingState>("start_sa3_lora_training", {
         name: formName,
         datasetPath,
@@ -350,7 +384,14 @@
       <div class="form-grid">
         <label class="field">
           <span>LoRA name</span>
-          <input type="text" bind:value={formName} placeholder="my-style" />
+          <input
+            type="text"
+            bind:value={formName}
+            placeholder="my-style"
+            oninput={() => nameNotice = null}
+            onblur={() => void checkNameAvailability()}
+          />
+          {#if nameNotice}<small class="name-notice">{nameNotice}</small>{/if}
         </label>
 
         <label class="field wide">
