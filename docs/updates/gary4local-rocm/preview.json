@@ -1,13 +1,12 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.5",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.5/gary4local-rocm_0.2.1-rocm.5_x64-setup.exe",
-    "sha256":  "966b50f7d476394afe0962577691bdd54ec74353009f750e7f0c321c12ea6a5f",
-    "published_at":  "2026-08-11T02:21:50.5878192Z",
+    "latest_version":  "0.2.1-rocm.6",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.6/gary4local-rocm_0.2.1-rocm.6_x64-setup.exe",
+    "sha256":  "042660af211b39ac68709a2225811742509d1a0cc4de8da185cb3f8a1db042aa",
+    "published_at":  "2026-08-11T03:02:31.8886056Z",
     "notes":  [
-                  "this one is specifically testing SA3 LoRA training on AMD.",
-                  "skip the auto-labeller for now - that uses ace-step\u0027s captioner model and isn\u0027t in the ROCm environment yet.",
-                  "pick a folder with one audio file, set steps to 5, and use amd-test as the shared trigger word. leave everything else alone.",
-                  "you don\u0027t need a .txt sidecar for this smoke test. if it completes, gary should register the LoRA automatically."
+                  "this was very silly: medium-base downloaded correctly, but Hugging Face represented its files as shortcuts into the model cache. we moved the shortcut and broke where it pointed.",
+                  "this version follows the shortcut to the real model file before staging it, verifies every staged file, and gives pre-encoding the exact paths.",
+                  "click update and retry the same one-audio-file, 5-step test. you should not need to download medium-base or rebuild the environment again."
               ]
 }
