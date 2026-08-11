@@ -392,6 +392,14 @@ struct Sa3LoraState {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct LoraNameAvailability {
+    normalized_name: String,
+    available_name: String,
+    available: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Sa3PromptsBuildResult {
     state: Sa3LoraState,
     output: String,
@@ -1177,6 +1185,75 @@ fn sanitize_lora_name(raw: &str) -> Option<String> {
         Some(normalized)
     } else {
         None
+    }
+}
+
+fn lora_name_availability<I>(raw: &str, occupied_names: I) -> Result<LoraNameAvailability, String>
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    let normalized_name = sanitize_lora_name(raw)
+        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    let occupied = occupied_names
+        .into_iter()
+        .map(|name| name.as_ref().to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+
+    if !occupied.contains(&normalized_name) {
+        return Ok(LoraNameAvailability {
+            available_name: normalized_name.clone(),
+            normalized_name,
+            available: true,
+        });
+    }
+
+    for suffix in 1_u32.. {
+        let candidate = format!("{}-{}", normalized_name, suffix);
+        if !occupied.contains(&candidate) {
+            return Ok(LoraNameAvailability {
+                normalized_name,
+                available_name: candidate,
+                available: false,
+            });
+        }
+    }
+
+    unreachable!("u32 suffix space exhausted")
+}
+
+fn require_available_lora_name(availability: &LoraNameAvailability) -> Result<(), String> {
+    if availability.available {
+        Ok(())
+    } else {
+        Err(format!(
+            "LoRA name '{}' is already registered. Try '{}'.",
+            availability.normalized_name, availability.available_name
+        ))
+    }
+}
+
+#[cfg(test)]
+mod lora_name_availability_tests {
+    use super::{lora_name_availability, require_available_lora_name};
+
+    #[test]
+    fn normalizes_an_available_name() {
+        let result = lora_name_availability("  New-Style  ", ["existing"]).unwrap();
+        assert!(result.available);
+        assert_eq!(result.normalized_name, "new-style");
+        assert_eq!(result.available_name, "new-style");
+    }
+
+    #[test]
+    fn advances_past_existing_suffixes() {
+        let result = lora_name_availability("test", ["test", "test-1", "test-2"]).unwrap();
+        assert!(!result.available);
+        assert_eq!(result.available_name, "test-3");
+        assert_eq!(
+            require_available_lora_name(&result).unwrap_err(),
+            "LoRA name 'test' is already registered. Try 'test-3'."
+        );
     }
 }
 
@@ -4901,6 +4978,7 @@ pub fn run() {
             get_carey_ace_dataset_sidecars,
             save_carey_ace_dataset_sidecars,
             get_carey_ace_lora_training_state,
+            get_carey_ace_lora_name_availability,
             start_carey_ace_lora_training,
             cancel_carey_ace_lora_training,
             get_sa3_lora_state,
@@ -4918,6 +4996,7 @@ pub fn run() {
             cancel_sa3_autolabel,
             open_sa3_training_reference,
             get_sa3_lora_training_state,
+            get_sa3_lora_name_availability,
             start_sa3_lora_training,
             cancel_sa3_lora_training,
             get_hf_token,
@@ -5923,6 +6002,18 @@ fn get_carey_ace_lora_training_state() -> Result<CareyAceTrainingState, String> 
     Ok(read_carey_ace_lora_training_state())
 }
 
+fn carey_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String> {
+    let catalog = read_carey_lora_catalog()?;
+    lora_name_availability(name, catalog.keys())
+}
+
+#[tauri::command]
+fn get_carey_ace_lora_name_availability(
+    name: String,
+) -> Result<LoraNameAvailability, String> {
+    carey_lora_name_availability(&name)
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn start_carey_ace_lora_training(
@@ -5957,6 +6048,7 @@ async fn start_carey_ace_lora_training(
 ) -> Result<CareyAceTrainingState, String> {
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
     let model = match model.trim() {
         "base" => "base",
         "xl-base" => "xl-base",
@@ -7142,6 +7234,16 @@ fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
     Ok(read_sa3_lora_training_state())
 }
 
+fn sa3_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String> {
+    let catalog = read_sa3_lora_catalog()?;
+    lora_name_availability(name, catalog.keys())
+}
+
+#[tauri::command]
+fn get_sa3_lora_name_availability(name: String) -> Result<LoraNameAvailability, String> {
+    sa3_lora_name_availability(&name)
+}
+
 fn resolve_sa3_lora_layer_scope(
     layer_scope: &str,
 ) -> Result<(Option<&'static str>, Option<&'static str>), String> {
@@ -7198,6 +7300,7 @@ async fn start_sa3_lora_training(
 ) -> Result<Sa3LoraTrainingState, String> {
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
+    require_available_lora_name(&sa3_lora_name_availability(&normalized_name)?)?;
     if max_steps == 0 {
         return Err("training steps must be greater than 0".to_string());
     }
