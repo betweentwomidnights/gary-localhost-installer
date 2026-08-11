@@ -172,21 +172,19 @@
       "port": 8003,
       "entryPoint": "carey_wrapper.py",
       "workingDir": "services/carey",
-      "pythonVersion": "3.11",
-      "torchVersion": "2.7.1",
-      "torchIndex": "https://download.pytorch.org/whl/cu128",
-      "torchPackages": ["torch==2.7.1", "torchvision==0.22.1", "torchaudio==2.7.1"],
-      "requirementsFile": "requirements.txt",
-      "extraInstalls": [
-        {"command": "pip install -e acestep/third_parts/nano-vllm", "description": "Bundled nano-vllm with triton-windows + flash-attn"}
-      ],
+      "pythonVersion": "3.12",
+      "acceleratorProfile": "amd-rocm-windows-7.2.1",
+      "torchVersion": "2.9.1+rocm7.2.1",
+      "torchIndex": "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1",
+      "torchPackages": ["torch==2.9.1+rocm7.2.1", "torchaudio==2.9.1+rocm7.2.1"],
+      "requirementsFile": "requirements-rocm.txt",
       "forceTorchReinstall": true,
       "buildSteps": [
-        "pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
+        "pip install https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz",
+        "pip install https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
         "pip install -e . --no-deps",
-        "pip install -r requirements.txt",
-        "pip install -e acestep/third_parts/nano-vllm",
-        "pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128"
+        "pip install -r requirements-rocm.txt",
+        "pip install --force-reinstall --no-deps https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
       ],
       "healthCheck": {
         "endpoint": "/health",
@@ -196,7 +194,15 @@
       },
       "env": {
         "PYTHONIOENCODING": "utf-8",
+        "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1",
+        "ACESTEP_ACCELERATOR_PROFILE": "amd-rocm-windows-7.2.1",
+        "ACESTEP_EXPECT_HIP": "1",
+        "ACESTEP_REQUIRE_ACCELERATOR": "1",
+        "ACESTEP_DEVICE": "cuda",
+        "ACESTEP_USE_FLASH_ATTENTION": "false",
+        "ACESTEP_COMPILE_MODEL": "false",
         "ACESTEP_INIT_LLM": "false",
+        "ACESTEP_LM_BACKEND": "pt",
         "ACESTEP_CONFIG_PATH": "acestep-v15-base",
         "ACESTEP_NO_INIT": "true",
         "CAREY_LORA_REGISTRY": "${GARY_RUNTIME}/carey/lora_registry.json",

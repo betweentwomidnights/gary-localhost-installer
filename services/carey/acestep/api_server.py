@@ -1049,6 +1049,44 @@ def _env_bool(name: str, default: bool) -> bool:
     return v.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _accelerator_error() -> Optional[str]:
+    """Return a clear profile mismatch before a model silently loads on CPU."""
+    profile = os.getenv("ACESTEP_ACCELERATOR_PROFILE", "").strip()
+    expect_hip = _env_bool("ACESTEP_EXPECT_HIP", False) or "rocm" in profile.lower()
+    require_accelerator = _env_bool("ACESTEP_REQUIRE_ACCELERATOR", False)
+    hip_version = getattr(torch.version, "hip", None)
+
+    if expect_hip and not hip_version:
+        return (
+            "Carey ROCm profile expected a ROCm/HIP PyTorch build, but "
+            f"torch.version.hip is {hip_version!r} (torch {torch.__version__}). "
+            "Rebuild the Carey environment from gary4local-rocm."
+        )
+    if require_accelerator and not torch.cuda.is_available():
+        return (
+            "Carey found its ROCm PyTorch build, but no compatible AMD GPU is available. "
+            f"torch={torch.__version__}; hip={hip_version!r}. Check the AMD driver, then "
+            "rebuild the Carey environment and try again."
+        )
+    return None
+
+
+def _log_accelerator_summary() -> None:
+    available = torch.cuda.is_available()
+    device_name = "unavailable"
+    if available:
+        try:
+            device_name = torch.cuda.get_device_name(0)
+        except Exception as exc:
+            device_name = f"unavailable ({exc})"
+    print(
+        "[API Server] Accelerator: "
+        f"torch={torch.__version__}; hip={getattr(torch.version, 'hip', None)!r}; "
+        f"available={available}; device={device_name}",
+        flush=True,
+    )
+
+
 
 
 def _get_model_name(config_path: str) -> str:
@@ -2314,6 +2352,7 @@ def create_app() -> FastAPI:
         no_init = _env_bool("ACESTEP_NO_INIT", False)
 
         # Detect GPU memory and get configuration (always needed)
+        _log_accelerator_summary()
         gpu_config = get_gpu_config()
         set_global_gpu_config(gpu_config)
         app.state.gpu_config = gpu_config
@@ -2341,6 +2380,10 @@ def create_app() -> FastAPI:
             print("[API Server] Server is ready to accept requests (models not loaded yet)")
         else:
             print("[API Server] Initializing models at startup...")
+
+            accelerator_error = _accelerator_error()
+            if accelerator_error:
+                raise RuntimeError(accelerator_error)
 
             if auto_offload:
                 print("[API Server] Auto-enabling CPU offload (GPU < 16GB)")
@@ -3390,6 +3433,9 @@ def create_app() -> FastAPI:
         """Load the DiT model onto the GPU. No-op if already loaded.
         Used by the T4 wrapper to load on demand before generation."""
         handler: AceStepHandler = app.state.handler
+        accelerator_error = _accelerator_error()
+        if accelerator_error:
+            raise HTTPException(status_code=503, detail=accelerator_error)
         requested_config_path = (config_path or "").strip() or None
         if getattr(app.state, "_initialized", False):
             current_config_path = getattr(app.state, "_config_path", None)
