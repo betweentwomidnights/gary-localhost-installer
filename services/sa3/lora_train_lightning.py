@@ -65,15 +65,21 @@ import pytorch_lightning as pl
 
 
 def _print_env_diagnostics():
-    """Log torch/CUDA/device details. Tells us at a glance whether a user's venv
-    has the right CUDA wheels for their card (e.g. sm_120 needs cu128)."""
+    """Log enough accelerator detail to diagnose CUDA and ROCm environments."""
     try:
         print(f"[env] python  {sys.version.split()[0]}  ({sys.executable})", flush=True)
-        print(f"[env] torch   {torch.__version__}  (CUDA {torch.version.cuda})", flush=True)
-        print(f"[env] archs   {torch.cuda.get_arch_list()}", flush=True)
+        if torch.version.hip:
+            print(f"[env] torch   {torch.__version__}  (ROCm {torch.version.hip})", flush=True)
+        else:
+            print(f"[env] torch   {torch.__version__}  (CUDA {torch.version.cuda})", flush=True)
         if torch.cuda.is_available():
-            cap = "".join(map(str, torch.cuda.get_device_capability(0)))
-            print(f"[env] device  {torch.cuda.get_device_name(0)} (sm{cap})", flush=True)
+            device = torch.cuda.get_device_name(0)
+            if torch.version.hip:
+                print(f"[env] device  {device} (HIP)", flush=True)
+            else:
+                cap = "".join(map(str, torch.cuda.get_device_capability(0)))
+                print(f"[env] device  {device} (sm{cap})", flush=True)
+                print(f"[env] archs   {torch.cuda.get_arch_list()}", flush=True)
         print(f"[env] lightning {pl.__version__} | started {time.strftime('%H:%M:%S')}", flush=True)
     except Exception as exc:
         print(f"[env] diagnostics unavailable: {type(exc).__name__}: {exc}", flush=True)
@@ -290,8 +296,8 @@ def main() -> int:
     logger = pl.loggers.CSVLogger(str(args.save_dir / args.name))
 
     trainer = pl.Trainer(
-        devices="auto",
-        accelerator="auto",
+        devices=1,
+        accelerator="gpu",
         strategy="auto",
         precision=args.precision,
         accumulate_grad_batches=1,

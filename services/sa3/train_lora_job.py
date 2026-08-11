@@ -48,7 +48,7 @@ TRAINING_DEPENDENCIES = {
     # Auto-installed at training start (checked via importlib below) so auto-updater
     # users never have to run "rebuild env" to pick it up. All heavy deps (torch,
     # numpy) are already present; this only pulls small pure-Python wheels.
-    "pytorch_lightning": "pytorch-lightning>=2.2,<2.6",
+    "pytorch_lightning": "pytorch-lightning==2.5.6",
 }
 
 

@@ -7194,6 +7194,7 @@ async fn start_sa3_lora_training(
     target_latent_rms: f64,
     layer_scope: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, Arc<Mutex<ServiceManager>>>,
 ) -> Result<Sa3LoraTrainingState, String> {
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
@@ -7302,6 +7303,10 @@ async fn start_sa3_lora_training(
         .map_err(|e| format!("Cannot clone log handle: {}", e))?;
 
     let mut cmd = tokio::process::Command::new(&python_exe);
+    let service_env = {
+        let manager = manager.lock().await;
+        manager.resolved_service_env("sa3")?
+    };
     hide_console_window(&mut cmd);
     cmd.arg("-u")
         .arg(&script_path)
@@ -7364,6 +7369,10 @@ async fn start_sa3_lora_training(
         .stderr(std::process::Stdio::from(log_file_err))
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1");
+    apply_runtime_env(&mut cmd, &repo_root);
+    for (key, value) in service_env {
+        cmd.env(key, value);
+    }
     if let Some(token) = read_hf_token() {
         cmd.env("HF_TOKEN", token);
     }

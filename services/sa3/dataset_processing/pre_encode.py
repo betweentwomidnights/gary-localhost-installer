@@ -40,6 +40,7 @@ warnings.filterwarnings("ignore", message=".*weight_norm.*")
 warnings.filterwarnings("ignore", message=".*torch.nn.utils.weight_norm.*")
 warnings.filterwarnings("ignore", module="audio_metadata")
 import numpy as np
+import soundfile as sf
 import torch
 import torch.multiprocessing as mp
 import torchaudio
@@ -152,7 +153,8 @@ def find_audio_files(root):
 
 def load_audio(path, target_sr, target_channels, device):
     """Load audio file -> [channels, samples] on device, resampled and channel-matched."""
-    audio, sr = torchaudio.load(str(path))
+    samples, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    audio = torch.from_numpy(samples.T.copy())
 
     if sr != target_sr:
         audio = torchaudio.transforms.Resample(sr, target_sr)(audio)

@@ -155,6 +155,18 @@ impl ServiceManager {
         self.services.iter().find(|s| s.id == id)
     }
 
+    pub fn resolved_service_env(&self, id: &str) -> Result<Vec<(String, String)>, String> {
+        let service = self
+            .find_service(id)
+            .ok_or_else(|| format!("Unknown service: {}", id))?;
+        Ok(service
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), self.resolve_env_var(value)))
+            .filter(|(_, value)| !value.is_empty() && !value.contains("${"))
+            .collect())
+    }
+
     /// Resolve template variables like ${GARY_RUNTIME}, ${HF_TOKEN}, ${MODELS_DIR}
     fn resolve_env_var(&self, value: &str) -> String {
         let mut result = value.to_string();
@@ -753,6 +765,21 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 mod tests {
     use super::*;
 
+    fn service_with_env(env: HashMap<String, String>) -> ServiceDef {
+        ServiceDef {
+            id: "sa3".to_string(),
+            display_name: "sa3".to_string(),
+            port: 8006,
+            entry_point: "api.py".to_string(),
+            working_dir: "services/sa3".to_string(),
+            python_version: "3.12".to_string(),
+            accelerator_profile: "test".to_string(),
+            build_steps: Vec::new(),
+            env,
+            health_check: None,
+        }
+    }
+
     fn health(interval_seconds: u64, startup_grace_seconds: u64) -> HealthCheck {
         HealthCheck {
             endpoint: "/health".to_string(),
@@ -769,6 +796,36 @@ mod tests {
         assert_eq!(
             health_check_interval(&health, false, Duration::from_secs(20)),
             Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn resolved_service_env_uses_the_selected_runtime_root() {
+        let runtime_root = PathBuf::from(r"D:\gary-runtime");
+        let service = service_with_env(HashMap::from([
+            (
+                "SA3_PROMPTS_DIR".to_string(),
+                "${GARY_RUNTIME}/sa3/prompts".to_string(),
+            ),
+            (
+                "SA3_HF_HOME".to_string(),
+                "${HF_HOME}/sa3".to_string(),
+            ),
+        ]));
+        let manager = ServiceManager::new(vec![service], runtime_root.clone());
+        let resolved: HashMap<_, _> = manager
+            .resolved_service_env("sa3")
+            .unwrap()
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            PathBuf::from(resolved.get("SA3_PROMPTS_DIR").unwrap()),
+            runtime_root.join("sa3/prompts")
+        );
+        assert_eq!(
+            PathBuf::from(resolved.get("SA3_HF_HOME").unwrap()),
+            crate::storage::hf_home_dir(&runtime_root).join("sa3")
         );
     }
 
