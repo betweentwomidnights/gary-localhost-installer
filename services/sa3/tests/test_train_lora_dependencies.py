@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,22 @@ import train_lora_job
 
 
 class TrainingDependencyTests(unittest.TestCase):
+    def test_link_or_copy_resolves_hugging_face_style_symlinks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            blob = root / "blobs" / "abc123"
+            blob.parent.mkdir()
+            blob.write_text("model config", encoding="utf-8")
+            snapshot_file = root / "snapshots" / "revision" / "model_config.json"
+            destination = root / "training" / "base" / "model_config.json"
+            with patch.object(Path, "resolve", return_value=blob) as resolve:
+                train_lora_job.link_or_copy(snapshot_file, destination, replace=True)
+
+            resolve.assert_called_once_with(strict=True)
+            self.assertTrue(destination.is_file())
+            self.assertFalse(destination.is_symlink())
+            self.assertEqual(destination.read_text(encoding="utf-8"), "model config")
+
     def test_no_repair_when_training_dependencies_are_present(self):
         args = SimpleNamespace()
 

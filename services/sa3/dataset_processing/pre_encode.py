@@ -785,6 +785,10 @@ def main():
                         help="Directory of audio files (searched recursively)")
     parser.add_argument("--model", "-m", type=str, choices=MODEL_NAMES,
                         help="Which model's VAE to encode with")
+    parser.add_argument("--config-path", type=str, default=None,
+                        help="Explicit model_config.json path (overrides the model registry)")
+    parser.add_argument("--checkpoint-path", type=str, default=None,
+                        help="Explicit model checkpoint path (overrides the model registry)")
     parser.add_argument("--output-dir", "-o", type=str, default=".",
                         help="Output root (default: cwd). Latents go to <output>/latents/<model>/...")
     parser.add_argument("--max-duration", type=float, default=None,
@@ -912,8 +916,13 @@ def main():
     # calling .resolve() on either now walks all the way to the HF cache's
     # content-addressed blob (no extension!) which breaks load_ckpt_state_dict's
     # if-endswith-.safetensors branch.
-    config_path = model_dir / "base" / "model_config.json"
-    ckpt_path   = model_dir / "base" / "model.safetensors"
+    config_path = Path(args.config_path) if args.config_path else model_dir / "base" / "model_config.json"
+    ckpt_path = Path(args.checkpoint_path) if args.checkpoint_path else model_dir / "base" / "model.safetensors"
+
+    if not config_path.is_file():
+        raise FileNotFoundError(f"SA3 model config not found: {config_path}")
+    if not ckpt_path.is_file():
+        raise FileNotFoundError(f"SA3 model checkpoint not found: {ckpt_path}")
 
     with open(config_path) as f:
         config = json.load(f)

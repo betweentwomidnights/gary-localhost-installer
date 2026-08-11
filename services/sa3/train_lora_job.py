@@ -227,10 +227,15 @@ def terminate_process_tree(proc: subprocess.Popen) -> None:
 
 
 def link_or_copy(src: Path, dst: Path, *, replace: bool = False) -> None:
+    # Hugging Face snapshots may expose files as relative symlinks into blobs/.
+    # Hard-linking the symlink itself and moving it elsewhere leaves a dangling
+    # relative target, so always stage the resolved blob while preserving dst's
+    # useful extension (notably .safetensors).
+    resolved_src = src.resolve(strict=True)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         try:
-            if os.path.samefile(src, dst):
+            if os.path.samefile(resolved_src, dst):
                 return
         except OSError:
             pass
@@ -241,9 +246,9 @@ def link_or_copy(src: Path, dst: Path, *, replace: bool = False) -> None:
     if staged.exists():
         staged.unlink()
     try:
-        os.link(src, staged)
+        os.link(resolved_src, staged)
     except OSError:
-        shutil.copy2(src, staged)
+        shutil.copy2(resolved_src, staged)
     if replace:
         os.replace(staged, dst)
 
@@ -282,6 +287,12 @@ def stage_base_model(args) -> tuple[Path, Path, Path]:
             snapshot_dir / relative_path,
             base_dir / relative_path,
             replace=True,
+        )
+    missing = [name for name in MODEL_SNAPSHOT_FILES if not (base_dir / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            "Could not stage the SA3 training model; missing after staging: "
+            + ", ".join(missing)
         )
     return (
         base_dir / "model_config.json",
@@ -637,7 +648,7 @@ def main() -> int:
         ensure_training_dependencies(args)
         require_accelerator(args)
         resolve_precision(args)
-        _, base_ckpt, t5gemma_dir = stage_base_model(args)
+        base_config, base_ckpt, t5gemma_dir = stage_base_model(args)
 
         encoded_root = args.run_dir / "encoded"
         pre_encode_command = [
@@ -647,6 +658,10 @@ def main() -> int:
             str(args.dataset_dir),
             "--model",
             MODEL_KEY,
+            "--config-path",
+            str(base_config),
+            "--checkpoint-path",
+            str(base_ckpt),
             "--output-dir",
             str(encoded_root),
             "--num-gpus",
