@@ -40,6 +40,28 @@ def make_args(root: Path) -> argparse.Namespace:
 
 
 class TrainLoraJobTests(unittest.TestCase):
+    def test_collect_training_checkpoints_records_complete_adapters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "output"
+            for relative in ("checkpoints/epoch_25", "checkpoints/epoch_5", "best", "final"):
+                checkpoint = output / relative
+                checkpoint.mkdir(parents=True)
+                (checkpoint / "adapter_model.safetensors").write_bytes(b"adapter")
+                (checkpoint / "adapter_config.json").write_text("{}", encoding="utf-8")
+            incomplete = output / "checkpoints" / "epoch_10"
+            incomplete.mkdir()
+            (incomplete / "adapter_config.json").write_text("{}", encoding="utf-8")
+
+            checkpoints, selected = train_lora_job.collect_training_checkpoints(
+                output, output / "best"
+            )
+
+            self.assertEqual(
+                [checkpoint["id"] for checkpoint in checkpoints],
+                ["epoch-5", "epoch-25", "best", "final"],
+            )
+            self.assertEqual(selected, "best")
+
     def test_registration_records_base_and_xl_model_families(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -62,6 +84,37 @@ class TrainLoraJobTests(unittest.TestCase):
             registry = json.loads(registry_path.read_text(encoding="utf-8"))
             self.assertEqual(registry["test-standard"]["model_family"], "standard")
             self.assertEqual(registry["test-xl"]["model_family"], "xl")
+
+    def test_registration_records_training_provenance_in_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / "run" / "output"
+            final = output / "final"
+            epoch = output / "checkpoints" / "epoch_10"
+            for checkpoint in (epoch, final):
+                checkpoint.mkdir(parents=True)
+                (checkpoint / "adapter_model.safetensors").write_bytes(b"adapter")
+                (checkpoint / "adapter_config.json").write_text("{}", encoding="utf-8")
+
+            args = make_args(root)
+            args.name = "trained-test"
+            args.job_id = "trained-test-123"
+            args.run_dir = root / "run"
+            args.dataset_dir = root
+            args.adapter_type = "dora"
+            args.lora_catalog_path = root / "lora_catalog.json"
+            args.lora_registry_path = None
+            args.captions_json_path = None
+
+            train_lora_job.register_trained_lora(args, final)
+
+            entry = json.loads(args.lora_catalog_path.read_text(encoding="utf-8"))[args.name]
+            self.assertEqual(entry["trainingJobId"], args.job_id)
+            self.assertEqual(entry["selectedTrainingCheckpoint"], "final")
+            self.assertEqual(
+                [checkpoint["id"] for checkpoint in entry["trainingCheckpoints"]],
+                ["epoch-10", "final"],
+            )
 
     def test_caption_pool_includes_nested_audio_sidecars_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
