@@ -13,6 +13,16 @@
     modelFamily: "standard" | "xl";
     checkpointExists: boolean;
     registered: boolean;
+    trainingJobId: string | null;
+    trainingCheckpoints: CareyTrainingCheckpoint[];
+    selectedTrainingCheckpoint: string | null;
+  }
+
+  interface CareyTrainingCheckpoint {
+    id: string;
+    label: string;
+    epoch: number | null;
+    path: string;
   }
 
   interface CareyLoraState {
@@ -46,6 +56,9 @@
   let loading = $state(false);
   let saving = $state(false);
   let building = $state(false);
+  let switchingName = $state<string | null>(null);
+  let deletingName = $state<string | null>(null);
+  let checkpointSelections = $state<Record<string, string>>({});
   let message: string | null = $state(null);
   let error: string | null = $state(null);
   let buildOutput: string | null = $state(null);
@@ -152,6 +165,63 @@
       message = `removed ${name}`;
     } catch (e) {
       error = describeError(e);
+    }
+  }
+
+  function selectedCheckpointId(entry: CareyLoraEntry): string {
+    return checkpointSelections[entry.name]
+      ?? entry.selectedTrainingCheckpoint
+      ?? entry.trainingCheckpoints[entry.trainingCheckpoints.length - 1]?.id
+      ?? "";
+  }
+
+  function chooseCheckpoint(name: string, event: Event) {
+    const target = event.currentTarget as HTMLSelectElement;
+    checkpointSelections = { ...checkpointSelections, [name]: target.value };
+  }
+
+  async function activateCheckpoint(entry: CareyLoraEntry) {
+    const checkpointId = selectedCheckpointId(entry);
+    switchingName = entry.name;
+    error = null;
+    message = null;
+    buildOutput = null;
+    try {
+      loraState = await invoke<CareyLoraState>("activate_carey_lora_checkpoint", {
+        name: entry.name,
+        checkpointId,
+      });
+      checkpointSelections = { ...checkpointSelections, [entry.name]: checkpointId };
+      const checkpoint = entry.trainingCheckpoints.find((item) => item.id === checkpointId);
+      message = `${entry.name} now uses ${checkpoint?.label ?? checkpointId}.`;
+    } catch (e) {
+      error = describeError(e);
+    } finally {
+      switchingName = null;
+    }
+  }
+
+  async function deleteTrainedLora(entry: CareyLoraEntry) {
+    const confirmed = window.confirm(
+      `Permanently delete '${entry.name}' and all files from its Gary training run?\n\n` +
+      `This deletes the adapter checkpoints, training cache/logs, and generated caption pool. ` +
+      `Your original audio dataset and sidecars will not be changed.`
+    );
+    if (!confirmed) return;
+
+    deletingName = entry.name;
+    error = null;
+    message = null;
+    buildOutput = null;
+    try {
+      loraState = await invoke<CareyLoraState>("delete_carey_trained_lora", {
+        name: entry.name,
+      });
+      message = `deleted ${entry.name} and its Gary training files`;
+    } catch (e) {
+      error = describeError(e);
+    } finally {
+      deletingName = null;
     }
   }
 
@@ -307,8 +377,55 @@
                   <div class="entry-name">{entry.name}</div>
                   <div class="entry-meta">{entry.modelFamily} · backends: {entry.backends.join(", ")} · scale {entry.scale}</div>
                 </div>
-                <button class="danger" onclick={() => removeLora(entry.name)}>remove</button>
+                <div class="entry-actions">
+                  <button
+                    class="danger"
+                    onclick={() => removeLora(entry.name)}
+                    disabled={switchingName === entry.name || deletingName === entry.name}
+                  >remove</button>
+                  {#if entry.trainingJobId}
+                    <button
+                      class="danger delete-files"
+                      onclick={() => deleteTrainedLora(entry)}
+                      disabled={switchingName === entry.name || deletingName === entry.name}
+                    >{deletingName === entry.name ? "deleting..." : "delete files"}</button>
+                  {/if}
+                </div>
               </div>
+
+              {#if entry.trainingCheckpoints.length > 0}
+                <div class="checkpoint-switcher">
+                  <div class="entry-meta trained-meta">
+                    Gary-trained{entry.trainingJobId ? ` / ${entry.trainingJobId}` : ""}
+                    {#if entry.selectedTrainingCheckpoint}
+                      / active {entry.trainingCheckpoints.find((checkpoint) => checkpoint.id === entry.selectedTrainingCheckpoint)?.label ?? entry.selectedTrainingCheckpoint}
+                    {/if}
+                  </div>
+                  {#if entry.trainingCheckpoints.length > 1}
+                    <div class="checkpoint-row">
+                      <label class="checkpoint-field">
+                        <span>training checkpoint</span>
+                        <select
+                          value={selectedCheckpointId(entry)}
+                          onchange={(event) => chooseCheckpoint(entry.name, event)}
+                          disabled={switchingName === entry.name}
+                        >
+                          {#each entry.trainingCheckpoints as checkpoint}
+                            <option value={checkpoint.id} title={checkpoint.path}>{checkpoint.label}</option>
+                          {/each}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        class="checkpoint-action"
+                        onclick={() => activateCheckpoint(entry)}
+                        disabled={switchingName === entry.name || selectedCheckpointId(entry) === entry.selectedTrainingCheckpoint}
+                      >{switchingName === entry.name ? "switching..." : "use checkpoint"}</button>
+                    </div>
+                    <div class="note">switching keeps this LoRA name and caption pool unchanged.</div>
+                  {/if}
+                </div>
+              {/if}
 
               <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.path)} title="Show checkpoint in folder">
                 checkpoint: {entry.path}
@@ -559,6 +676,56 @@
     color: var(--text-primary);
   }
 
+  .entry-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .delete-files {
+    background: #6f2020;
+  }
+
+  .checkpoint-switcher {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(0, 0, 0, 0.16);
+  }
+
+  .trained-meta {
+    margin-top: 0;
+    color: #9bd8aa;
+  }
+
+  .checkpoint-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) auto;
+    justify-content: start;
+    gap: 8px;
+    align-items: end;
+    margin-top: 8px;
+  }
+
+  .checkpoint-field {
+    display: grid;
+    gap: 5px;
+  }
+
+  .checkpoint-field span {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .checkpoint-field select {
+    width: 100%;
+  }
+
+  .checkpoint-action {
+    white-space: nowrap;
+  }
+
   .danger {
     border-color: #b24a4a;
     color: #ffb1b1;
@@ -604,6 +771,10 @@
     }
 
     .path-row {
+      grid-template-columns: 1fr;
+    }
+
+    .checkpoint-row {
       grid-template-columns: 1fr;
     }
   }

@@ -165,6 +165,16 @@ struct AppSettingsPatch {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CareyTrainingCheckpoint {
+    id: String,
+    label: String,
+    #[serde(default)]
+    epoch: Option<u32>,
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CareyLoraCatalogEntry {
     path: String,
     #[serde(default)]
@@ -175,6 +185,12 @@ struct CareyLoraCatalogEntry {
     backends: Vec<String>,
     #[serde(default = "default_lora_model_family")]
     model_family: String,
+    #[serde(default)]
+    training_job_id: Option<String>,
+    #[serde(default)]
+    training_checkpoints: Vec<CareyTrainingCheckpoint>,
+    #[serde(default)]
+    selected_training_checkpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -190,6 +206,9 @@ struct CareyLoraEntry {
     model_family: String,
     checkpoint_exists: bool,
     registered: bool,
+    training_job_id: Option<String>,
+    training_checkpoints: Vec<CareyTrainingCheckpoint>,
+    selected_training_checkpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1821,6 +1840,91 @@ fn save_carey_ace_dataset_sidecar_updates(
     })
 }
 
+fn carey_training_checkpoints_in(output_dir: &Path) -> Vec<CareyTrainingCheckpoint> {
+    let mut epoch_checkpoints = Vec::new();
+    let checkpoint_root = output_dir.join("checkpoints");
+    if let Ok(paths) = std::fs::read_dir(&checkpoint_root) {
+        for path in paths.flatten().map(|entry| entry.path()) {
+            let Some(epoch) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("epoch_"))
+                .and_then(|epoch| epoch.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if looks_like_lora_checkpoint_dir(&path) {
+                epoch_checkpoints.push((epoch, path));
+            }
+        }
+    }
+    epoch_checkpoints.sort_by_key(|(epoch, _)| *epoch);
+
+    let mut checkpoints = epoch_checkpoints
+        .into_iter()
+        .map(|(epoch, path)| CareyTrainingCheckpoint {
+            id: format!("epoch-{}", epoch),
+            label: format!("epoch {}", epoch),
+            epoch: Some(epoch),
+            path: path.to_string_lossy().to_string(),
+        })
+        .collect::<Vec<_>>();
+    for (id, label) in [("best", "best moving average"), ("final", "final epoch")] {
+        let path = output_dir.join(id);
+        if looks_like_lora_checkpoint_dir(&path) {
+            checkpoints.push(CareyTrainingCheckpoint {
+                id: id.to_string(),
+                label: label.to_string(),
+                epoch: None,
+                path: path.to_string_lossy().to_string(),
+            });
+        }
+    }
+    checkpoints
+}
+
+fn infer_carey_training_metadata(
+    entry: &mut CareyLoraCatalogEntry,
+    training_jobs_root: &Path,
+) {
+    if entry.training_job_id.is_some() || entry.path.is_empty() {
+        return;
+    }
+    let Ok(jobs_root) = training_jobs_root.canonicalize() else {
+        return;
+    };
+    let checkpoint_path = PathBuf::from(&entry.path);
+    let Ok(checkpoint) = checkpoint_path.canonicalize() else {
+        return;
+    };
+    let Ok(relative) = checkpoint.strip_prefix(&jobs_root) else {
+        return;
+    };
+    let mut components = relative.components();
+    let Some(job_id) = components.next().and_then(|part| part.as_os_str().to_str()) else {
+        return;
+    };
+    if components.next().and_then(|part| part.as_os_str().to_str()) != Some("output") {
+        return;
+    }
+    let output_dir = jobs_root.join(job_id).join("output");
+    let checkpoints = carey_training_checkpoints_in(&output_dir);
+    let selected = checkpoints.iter().find_map(|candidate| {
+        PathBuf::from(&candidate.path)
+            .canonicalize()
+            .ok()
+            .filter(|path| path == &checkpoint)
+            .map(|_| candidate.id.clone())
+    });
+    if checkpoints.is_empty() || selected.is_none() {
+        return;
+    }
+
+    entry.training_job_id = Some(job_id.to_string());
+    entry.training_checkpoints = checkpoints;
+    entry.selected_training_checkpoint = selected;
+}
+
 fn read_carey_lora_catalog_from(
     path: &Path,
 ) -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
@@ -1842,6 +1946,25 @@ fn read_carey_lora_catalog_from(
             .filter(|value| !value.is_empty());
         entry.backends = sanitize_backend_list(std::mem::take(&mut entry.backends));
         entry.model_family = normalize_lora_model_family(&entry.model_family);
+        entry.training_job_id = entry
+            .training_job_id
+            .take()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        entry.training_checkpoints.retain_mut(|checkpoint| {
+            checkpoint.id = checkpoint.id.trim().to_string();
+            checkpoint.label = checkpoint.label.trim().to_string();
+            checkpoint.path = checkpoint.path.trim().to_string();
+            !checkpoint.id.is_empty() && !checkpoint.path.is_empty()
+        });
+        entry.selected_training_checkpoint = entry
+            .selected_training_checkpoint
+            .take()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if let Some(carey_root) = path.parent() {
+            infer_carey_training_metadata(entry, &carey_root.join("training").join("jobs"));
+        }
     }
 
     Ok(parsed)
@@ -1980,6 +2103,9 @@ fn build_carey_lora_entries(
                 model_family: normalize_lora_model_family(&entry.model_family),
                 checkpoint_exists,
                 registered: checkpoint_exists,
+                training_job_id: entry.training_job_id.clone(),
+                training_checkpoints: entry.training_checkpoints.clone(),
+                selected_training_checkpoint: entry.selected_training_checkpoint.clone(),
             }
         })
         .collect()
@@ -2029,6 +2155,26 @@ fn read_carey_caption_pools() -> HashMap<String, usize> {
         pools.insert(name.clone(), count);
     }
     pools
+}
+
+fn remove_carey_caption_pool(name: &str) -> Result<(), String> {
+    let path = carey_captions_path();
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid Carey captions JSON: {}", e))?;
+    let Some(pools) = payload.as_object_mut() else {
+        return Err("Invalid Carey captions JSON: expected an object".to_string());
+    };
+    if pools.remove(name).is_none() {
+        return Ok(());
+    }
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize Carey captions: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))
 }
 
 fn read_bundled_default_caption_pool(runtime_root: &Path) -> Vec<String> {
@@ -3011,6 +3157,36 @@ fn migrate_carey_catalog_entry(
             .join(&safe_name)
             .join("captions"),
     )?;
+
+    let mut migrated_checkpoints = Vec::new();
+    for checkpoint in &entry.training_checkpoints {
+        let source = PathBuf::from(&checkpoint.path);
+        if source.is_dir() && path_is_inside(&source, source_root) {
+            let target = target_root
+                .join("carey")
+                .join("training")
+                .join("migrated")
+                .join(&safe_name)
+                .join(safe_lora_storage_name(&checkpoint.id));
+            copy_dir_recursive(&source, &target)?;
+            let mut migrated_checkpoint = checkpoint.clone();
+            migrated_checkpoint.path = display_path(&target);
+            migrated_checkpoints.push(migrated_checkpoint);
+        }
+    }
+    migrated.training_checkpoints = migrated_checkpoints;
+    if migrated
+        .selected_training_checkpoint
+        .as_ref()
+        .is_some_and(|selected| {
+            !migrated
+                .training_checkpoints
+                .iter()
+                .any(|checkpoint| &checkpoint.id == selected)
+        })
+    {
+        migrated.selected_training_checkpoint = None;
+    }
 
     Ok(migrated)
 }
@@ -4971,7 +5147,9 @@ pub fn run() {
             fetch_jerry_checkpoints,
             get_carey_lora_state,
             upsert_carey_lora,
+            activate_carey_lora_checkpoint,
             remove_carey_lora,
+            delete_carey_trained_lora,
             build_carey_lora_captions,
             get_carey_ace_dataset_sidecars,
             save_carey_ace_dataset_sidecars,
@@ -5840,10 +6018,65 @@ async fn upsert_carey_lora(
             scale,
             backends,
             model_family: resolved_model_family,
+            training_job_id: None,
+            training_checkpoints: Vec::new(),
+            selected_training_checkpoint: None,
         },
     );
     save_carey_lora_catalog(&catalog)?;
 
+    let state = build_carey_lora_state(repo_root.inner())?;
+    let _ = try_reload_carey_admin().await;
+    Ok(state)
+}
+
+#[tauri::command]
+async fn activate_carey_lora_checkpoint(
+    name: String,
+    checkpoint_id: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyLoraState, String> {
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let requested_id = checkpoint_id.trim();
+    let mut catalog = read_carey_lora_catalog()?;
+    let checkpoint = {
+        let entry = catalog
+            .get(&normalized_name)
+            .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+        if entry.training_job_id.is_none() || entry.training_checkpoints.is_empty() {
+            return Err(format!(
+                "LoRA '{}' was not registered by Gary's Carey trainer",
+                normalized_name
+            ));
+        }
+        entry
+            .training_checkpoints
+            .iter()
+            .find(|checkpoint| checkpoint.id == requested_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Training checkpoint '{}' is not registered for '{}'",
+                    requested_id, normalized_name
+                )
+            })?
+    };
+
+    let source = PathBuf::from(&checkpoint.path);
+    resolve_managed_path(&source, &carey_runtime_dir())?;
+    if !looks_like_lora_checkpoint_dir(&source) {
+        return Err(format!(
+            "Training checkpoint {} is missing or invalid",
+            source.display()
+        ));
+    }
+
+    if let Some(entry) = catalog.get_mut(&normalized_name) {
+        entry.path = source.to_string_lossy().to_string();
+        entry.selected_training_checkpoint = Some(checkpoint.id);
+    }
+    save_carey_lora_catalog(&catalog)?;
     let state = build_carey_lora_state(repo_root.inner())?;
     let _ = try_reload_carey_admin().await;
     Ok(state)
@@ -5860,6 +6093,85 @@ async fn remove_carey_lora(
     catalog.remove(&normalized_name);
     save_carey_lora_catalog(&catalog)?;
 
+    let state = build_carey_lora_state(repo_root.inner())?;
+    let _ = try_reload_carey_admin().await;
+    Ok(state)
+}
+
+fn carey_current_job_matches(job_id: &str) -> bool {
+    std::fs::read_to_string(carey_training_current_job_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("jobId")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        })
+        .is_some_and(|current_job_id| current_job_id == job_id)
+}
+
+#[tauri::command]
+async fn delete_carey_trained_lora(
+    name: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyLoraState, String> {
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let mut catalog = read_carey_lora_catalog()?;
+    let entry = catalog
+        .get(&normalized_name)
+        .cloned()
+        .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+    let job_id = entry.training_job_id.as_deref().ok_or_else(|| {
+        format!(
+            "LoRA '{}' was not created by Gary's Carey trainer; only its registration can be removed",
+            normalized_name
+        )
+    })?;
+
+    let current_state = read_carey_ace_lora_training_state();
+    if current_state.job_id.as_deref() == Some(job_id)
+        && matches!(current_state.status.as_str(), "starting" | "running")
+    {
+        return Err(format!(
+            "Cannot delete '{}' while its training job is running",
+            normalized_name
+        ));
+    }
+
+    let managed_root = carey_runtime_dir();
+    if !managed_root.exists() {
+        return Err(format!(
+            "Gary's Carey runtime storage is missing at {}",
+            managed_root.display()
+        ));
+    }
+
+    let mut artifact_paths = std::collections::BTreeSet::new();
+    artifact_paths.insert(PathBuf::from(&entry.path));
+    artifact_paths.extend(
+        entry
+            .training_checkpoints
+            .iter()
+            .map(|checkpoint| PathBuf::from(&checkpoint.path)),
+    );
+    artifact_paths.insert(carey_training_logs_dir().join(format!("{}.log", job_id)));
+    artifact_paths.insert(carey_training_jobs_dir().join(job_id));
+    if carey_current_job_matches(job_id) {
+        artifact_paths.insert(carey_training_current_job_path());
+    }
+
+    for path in &artifact_paths {
+        resolve_managed_path(path, &managed_root)?;
+    }
+    for path in artifact_paths {
+        remove_managed_path(&path, &managed_root)?;
+    }
+
+    remove_carey_caption_pool(&normalized_name)?;
+    catalog.remove(&normalized_name);
+    save_carey_lora_catalog(&catalog)?;
     let state = build_carey_lora_state(repo_root.inner())?;
     let _ = try_reload_carey_admin().await;
     Ok(state)
@@ -6702,6 +7014,64 @@ fn remove_managed_path(path: &Path, managed_root: &Path) -> Result<bool, String>
             .map_err(|e| format!("Cannot delete {}: {}", path.display(), e))?;
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod carey_lora_catalog_tests {
+    use super::{infer_carey_training_metadata, CareyLoraCatalogEntry};
+    use std::path::{Path, PathBuf};
+
+    fn write_adapter(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(path.join("adapter_model.safetensors"), b"adapter").unwrap();
+        std::fs::write(path.join("adapter_config.json"), b"{}").unwrap();
+    }
+
+    fn test_root() -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gary4local-carey-catalog-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn recognizes_legacy_gary_training_output_without_claiming_external_adapters() {
+        let root = test_root();
+        let jobs_root = root.join("jobs");
+        let output = jobs_root.join("my-job").join("output");
+        write_adapter(&output.join("checkpoints").join("epoch_25"));
+        write_adapter(&output.join("best"));
+        write_adapter(&output.join("final"));
+        let external = root.join("external");
+        write_adapter(&external);
+
+        let make_entry = |path: &Path| CareyLoraCatalogEntry {
+            path: path.to_string_lossy().to_string(),
+            captions_path: None,
+            scale: 1.0,
+            backends: vec!["base".to_string(), "turbo".to_string()],
+            model_family: "standard".to_string(),
+            training_job_id: None,
+            training_checkpoints: Vec::new(),
+            selected_training_checkpoint: None,
+        };
+        let mut trained = make_entry(&output.join("best"));
+        let mut manual = make_entry(&external);
+
+        infer_carey_training_metadata(&mut trained, &jobs_root);
+        infer_carey_training_metadata(&mut manual, &jobs_root);
+
+        assert_eq!(trained.training_job_id.as_deref(), Some("my-job"));
+        assert_eq!(trained.selected_training_checkpoint.as_deref(), Some("best"));
+        assert_eq!(trained.training_checkpoints.len(), 3);
+        assert!(manual.training_job_id.is_none());
+        assert!(manual.training_checkpoints.is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
 
 #[cfg(test)]

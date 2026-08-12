@@ -466,6 +466,57 @@ def is_complete_peft_adapter(path: Path) -> bool:
     )
 
 
+def collect_training_checkpoints(
+    output_dir: Path, selected_checkpoint: Path
+) -> tuple[list[dict[str, object]], str | None]:
+    checkpoints: list[dict[str, object]] = []
+    checkpoint_root = output_dir / "checkpoints"
+    epoch_dirs: list[tuple[int, Path]] = []
+    if checkpoint_root.is_dir():
+        for path in checkpoint_root.iterdir():
+            if not path.is_dir() or not path.name.startswith("epoch_"):
+                continue
+            try:
+                epoch = int(path.name.removeprefix("epoch_"))
+            except ValueError:
+                continue
+            if is_complete_peft_adapter(path):
+                epoch_dirs.append((epoch, path))
+
+    for epoch, path in sorted(epoch_dirs):
+        checkpoints.append(
+            {
+                "id": f"epoch-{epoch}",
+                "label": f"epoch {epoch}",
+                "epoch": epoch,
+                "path": str(path),
+            }
+        )
+
+    for checkpoint_id, label in (("best", "best moving average"), ("final", "final epoch")):
+        path = output_dir / checkpoint_id
+        if is_complete_peft_adapter(path):
+            checkpoints.append(
+                {
+                    "id": checkpoint_id,
+                    "label": label,
+                    "epoch": None,
+                    "path": str(path),
+                }
+            )
+
+    selected_resolved = selected_checkpoint.resolve()
+    selected_id = next(
+        (
+            str(checkpoint["id"])
+            for checkpoint in checkpoints
+            if Path(str(checkpoint["path"])).resolve() == selected_resolved
+        ),
+        None,
+    )
+    return checkpoints, selected_id
+
+
 def parse_carey_endpoint(url: str) -> tuple[str, int]:
     parsed = urlparse(url)
     host = parsed.hostname or "127.0.0.1"
@@ -1243,6 +1294,12 @@ def collect_caption_pool(dataset_dir: Path) -> list[str]:
 
 def register_trained_lora(args: argparse.Namespace, final_checkpoint: Path) -> None:
     family = MODEL_MAP[args.model]["family"]
+    output_dir = Path(getattr(args, "run_dir", final_checkpoint.parent)) / "output"
+    if not output_dir.is_dir():
+        output_dir = final_checkpoint.parent
+    training_checkpoints, selected_training_checkpoint = collect_training_checkpoints(
+        output_dir, final_checkpoint
+    )
     metadata = {
         "path": str(final_checkpoint),
         "captionsPath": str(args.dataset_dir),
@@ -1252,6 +1309,9 @@ def register_trained_lora(args: argparse.Namespace, final_checkpoint: Path) -> N
         "adapterType": args.adapter_type,
         "moduleProfile": args.module_profile,
         "timestepMu": resolve_timestep_mu(args),
+        "trainingJobId": getattr(args, "job_id", None),
+        "trainingCheckpoints": training_checkpoints,
+        "selectedTrainingCheckpoint": selected_training_checkpoint,
     }
 
     if args.lora_catalog_path:
