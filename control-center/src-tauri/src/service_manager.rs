@@ -517,6 +517,16 @@ impl ServiceManager {
         self.running.contains_key(service_id)
     }
 
+    pub fn is_building(&self, service_id: &str) -> bool {
+        self.build_statuses
+            .get(service_id)
+            .is_some_and(|status| status.building)
+    }
+
+    pub fn any_building(&self) -> bool {
+        self.build_statuses.values().any(|status| status.building)
+    }
+
     pub fn stop_all(&mut self) {
         let ids: Vec<String> = self.running.keys().cloned().collect();
         for id in ids {

@@ -606,6 +606,42 @@ impl ModelManager {
     pub fn get_download_progress(&self) -> Vec<DownloadProgress> {
         self.downloads.values().cloned().collect()
     }
+
+    pub fn is_downloading(&self, model_id: &str) -> bool {
+        self.downloads
+            .get(model_id)
+            .is_some_and(|download| matches!(download.status, ModelStatus::Downloading))
+    }
+
+    pub fn forget_model_status(&mut self, model_id: &str) {
+        self.downloads.remove(model_id);
+        self.model_cache.remove(model_id);
+    }
+}
+
+pub fn carey_component_path(checkpoint_dir: &Path, model_id: &str) -> Result<PathBuf, String> {
+    let component = model_id
+        .strip_prefix("carey::")
+        .ok_or_else(|| format!("'{}' is not a Carey model", model_id))?;
+    let known = matches!(
+        component,
+        "acestep-v15-base"
+            | "acestep-v15-sft"
+            | "acestep-v15-turbo"
+            | "acestep-v15-xl-base"
+            | "acestep-v15-xl-sft"
+            | "acestep-v15-xl-turbo"
+            | "vae"
+            | "scrag-vae"
+            | "Qwen3-Embedding-0.6B"
+            | "acestep-5Hz-lm-0.6B"
+            | "acestep-5Hz-lm-1.7B"
+            | "acestep-5Hz-lm-4B"
+    );
+    if !known {
+        return Err(format!("Unknown Carey component: {}", component));
+    }
+    Ok(checkpoint_dir.join(component))
 }
 
 fn friendly_hf_download_error(raw_detail: &str) -> String {
@@ -1519,7 +1555,8 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_hf_download_error, ModelManager, ModelStatus};
+    use super::{carey_component_path, friendly_hf_download_error, ModelManager, ModelStatus};
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1572,5 +1609,16 @@ fine-grained token settings to view this repository."#;
         assert_eq!(scrag.service, "carey");
         assert_eq!(scrag.size_category.as_deref(), Some("shared"));
         assert_eq!(scrag.status, ModelStatus::Available);
+    }
+
+    #[test]
+    fn carey_component_paths_are_catalog_owned() {
+        let root = Path::new("D:\\gary4local-data\\services\\carey\\checkpoints");
+        assert_eq!(
+            carey_component_path(root, "carey::acestep-v15-base").unwrap(),
+            root.join("acestep-v15-base")
+        );
+        assert!(carey_component_path(root, "carey::..\\outside").is_err());
+        assert!(carey_component_path(root, "stabilityai/stable-audio-3-medium").is_err());
     }
 }

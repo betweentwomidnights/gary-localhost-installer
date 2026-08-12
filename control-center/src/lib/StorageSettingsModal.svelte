@@ -44,6 +44,11 @@
     canMigrateStorageLoras: boolean;
   }
 
+  interface RuntimeCacheInfo {
+    uvCachePath: string;
+    uvCacheBytes: number;
+  }
+
   let {
     open,
     info,
@@ -54,6 +59,10 @@
     maintenanceError,
     maintenanceWarning,
     maintenanceMessage,
+    cacheInfo,
+    cacheBusy = false,
+    cacheError,
+    cacheMessage,
     restarting = false,
     onChoose,
     onReset,
@@ -62,6 +71,7 @@
     onMigrateLoras,
     onMigrateStorageLoras,
     onCleanupLegacy,
+    onClearUvCache,
     onRestart,
     onClose,
   }: {
@@ -74,6 +84,10 @@
     maintenanceError: string | null;
     maintenanceWarning: string | null;
     maintenanceMessage: string | null;
+    cacheInfo: RuntimeCacheInfo | null;
+    cacheBusy?: boolean;
+    cacheError: string | null;
+    cacheMessage: string | null;
     restarting?: boolean;
     onChoose: (path: string) => void;
     onReset: () => void;
@@ -82,6 +96,7 @@
     onMigrateLoras: () => void;
     onMigrateStorageLoras: () => void;
     onCleanupLegacy: () => void;
+    onClearUvCache: () => void;
     onRestart: () => void;
     onClose: () => void;
   } = $props();
@@ -191,6 +206,16 @@
       onChoose(selected);
     }
   }
+
+  function confirmClearUvCache() {
+    const size = formatBytes(cacheInfo?.uvCacheBytes ?? 0);
+    const confirmed = window.confirm(
+      `Clear ${size} from the UV package cache?\n\n` +
+      "Installed service environments and models are not removed. " +
+      "UV will download packages again when environments are rebuilt."
+    );
+    if (confirmed) onClearUvCache();
+  }
 </script>
 
 {#if open}
@@ -253,6 +278,31 @@
       {#if error}
         <div class="error-note">{error}</div>
       {/if}
+
+      <div class="active-cache">
+        <div class="section-row">
+          <div>
+            <div class="section-title">UV package cache</div>
+            <div class="section-copy">
+              {cacheInfo ? formatBytes(cacheInfo.uvCacheBytes) : "scanning..."}
+            </div>
+          </div>
+          <button
+            type="button"
+            class="small-action"
+            onclick={confirmClearUvCache}
+            disabled={busy || cacheBusy || !cacheInfo || cacheInfo.uvCacheBytes === 0}
+          >{cacheBusy ? "clearing..." : "clear cache"}</button>
+        </div>
+        {#if cacheInfo}
+          <button type="button" class="cache-path" onclick={() => onReveal(cacheInfo.uvCachePath)} title="Open UV cache folder">
+            {cacheInfo.uvCachePath}
+          </button>
+        {/if}
+        <div class="note">UV keeps downloaded Python packages here to make environment rebuilds faster. Clearing it does not remove installed environments or models; future rebuilds download those packages again.</div>
+        {#if cacheMessage}<div class="success-note">{cacheMessage}</div>{/if}
+        {#if cacheError}<div class="error-note">{cacheError}</div>{/if}
+      </div>
 
       <div class="maintenance">
         <div class="section-row">
@@ -554,6 +604,37 @@
     margin-top: 16px;
     border-top: 1px solid var(--border);
     padding-top: 14px;
+  }
+
+  .active-cache {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+
+  .cache-path {
+    width: 100%;
+    margin-top: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-align: left;
+    padding: 0;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  .cache-path:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
+  }
+
+  .success-note {
+    margin-top: 10px;
+    color: #9bd8aa;
+    font-size: 12px;
   }
 
   .section-row,

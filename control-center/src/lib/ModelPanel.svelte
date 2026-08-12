@@ -22,6 +22,11 @@
     error: string | null;
   }
 
+  interface ModelRemovalResult {
+    modelId: string;
+    removedBytes: number;
+  }
+
   let { serviceId, onBack }: {
     serviceId: string;
     onBack: () => void;
@@ -30,6 +35,9 @@
   let models: ModelEntry[] = $state([]);
   let progress: Map<string, DownloadProgress> = $state(new Map());
   let filterSize: string = $state("all");
+  let removingModelId: string | null = $state(null);
+  let modelActionError: string | null = $state(null);
+  let modelActionMessage: string | null = $state(null);
 
   // Jerry finetune state
   let finetuneRepo: string = $state("thepatch/jerry_grunge");
@@ -49,11 +57,51 @@
   }
 
   async function startDownload(modelId: string) {
+    modelActionError = null;
+    modelActionMessage = null;
     try {
       await invoke("download_model", { modelId, serviceId });
       await loadModels();
     } catch (e) {
       console.error("Download failed:", e);
+    }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+  }
+
+  async function removeCareyModel(model: ModelEntry) {
+    const confirmed = window.confirm(
+      `Remove ${model.display_name} from this runtime storage?\n\n` +
+      "Carey must be stopped. You can download this model again later."
+    );
+    if (!confirmed) return;
+
+    removingModelId = model.id;
+    modelActionError = null;
+    modelActionMessage = null;
+    try {
+      const result = await invoke<ModelRemovalResult>("remove_model", {
+        modelId: model.id,
+        serviceId,
+      });
+      modelActionMessage = result.removedBytes > 0
+        ? `removed ${model.display_name} (${formatBytes(result.removedBytes)})`
+        : `${model.display_name} was already removed`;
+      await loadModels();
+    } catch (e) {
+      modelActionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      removingModelId = null;
     }
   }
 
@@ -196,6 +244,12 @@
   </div>
 
   <div class="model-list">
+    {#if modelActionMessage}
+      <div class="model-action-message">{modelActionMessage}</div>
+    {/if}
+    {#if modelActionError}
+      <div class="model-action-error">{modelActionError}</div>
+    {/if}
     {#if isJerry}
       <!-- Jerry: Base model section -->
       <div class="size-group">
@@ -357,12 +411,19 @@
                 </div>
                 <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
               </div>
+            {:else if model.status === "downloaded"}
+              <button
+                class="remove-btn"
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); removeCareyModel(model); }}
+              >
+                {removingModelId === model.id ? "removing..." : "remove"}
+              </button>
             {:else}
               <button
                 class="dl-btn"
-                class:downloaded={model.status === "downloaded"}
                 class:failed={model.status === "failed"}
-                disabled={model.status === "downloading" || model.status === "downloaded"}
+                disabled={model.status === "downloading" || removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
               >
                 {statusLabels[model.status] || "Download"}
@@ -394,12 +455,19 @@
                 </div>
                 <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
               </div>
+            {:else if model.status === "downloaded"}
+              <button
+                class="remove-btn"
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); removeCareyModel(model); }}
+              >
+                {removingModelId === model.id ? "removing..." : "remove"}
+              </button>
             {:else}
               <button
                 class="dl-btn"
-                class:downloaded={model.status === "downloaded"}
                 class:failed={model.status === "failed"}
-                disabled={model.status === "downloading" || model.status === "downloaded"}
+                disabled={model.status === "downloading" || removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
               >
                 {statusLabels[model.status] || "Download"}
@@ -434,12 +502,19 @@
                 </div>
                 <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
               </div>
+            {:else if model.status === "downloaded"}
+              <button
+                class="remove-btn"
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); removeCareyModel(model); }}
+              >
+                {removingModelId === model.id ? "removing..." : "remove"}
+              </button>
             {:else}
               <button
                 class="dl-btn"
-                class:downloaded={model.status === "downloaded"}
                 class:failed={model.status === "failed"}
-                disabled={model.status === "downloading" || model.status === "downloaded"}
+                disabled={model.status === "downloading" || removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
               >
                 {statusLabels[model.status] || "Download"}
@@ -622,6 +697,22 @@
     padding: 8px 0;
   }
 
+  .model-action-message,
+  .model-action-error {
+    padding: 6px 16px;
+    font-size: 11px;
+    line-height: 1.4;
+    user-select: text;
+  }
+
+  .model-action-message {
+    color: var(--green);
+  }
+
+  .model-action-error {
+    color: var(--red);
+  }
+
   .empty {
     padding: 40px 20px;
     text-align: center;
@@ -712,6 +803,27 @@
   }
 
   .dl-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .remove-btn {
+    flex-shrink: 0;
+    font-size: 10px;
+    padding: 3px 10px;
+    border: 1px solid var(--red);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--red);
+    cursor: pointer;
+  }
+
+  .remove-btn:hover:not(:disabled) {
+    background: var(--red);
+    color: white;
+  }
+
+  .remove-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
