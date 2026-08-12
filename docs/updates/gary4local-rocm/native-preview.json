@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.6",
-    "notes":  "this was very silly: medium-base downloaded correctly, but Hugging Face represented its files as shortcuts into the model cache. we moved the shortcut and broke where it pointed.\nthis version follows the shortcut to the real model file before staging it, verifies every staged file, and gives pre-encoding the exact paths.\nclick update and retry the same one-audio-file, 5-step test. you should not need to download medium-base or rebuild the environment again.",
-    "pub_date":  "2026-08-11T03:02:31.8886056Z",
+    "version":  "0.2.1-rocm.7",
+    "notes":  "this one\u0027s for carey.\nrebuild the carey environment, download the shared models plus acestep-v15-base, and try one short regular/base generation without a LoRA. don\u0027t start with XL yet.\nif that works, try your trained Carey LoRA and switch between Gary\u0027s saved checkpoints.\nSA3 auto-labelling is ready for an AMD test too; it additionally needs the acestep-5Hz-lm-1.7B caption model.\nsend me the carey log if base generation doesn\u0027t finish - this is our first real AMD test of that inference stack.",
+    "pub_date":  "2026-08-12T12:58:42.9683496Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEg3ZDVBaHF3aDRsdFkzNWFuVU95cER5cStHRm5GS0V0SEZLdVRjQmVDZXZsV3BqYzdjREx5RDFYNEpwcytLckdrbUVPblNjM2l3NjNBZWh4UHh1K0FFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NDE3MzE4CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uNl94NjQtc2V0dXAuZXhlClZJUzRkMWpMU0RtZUw4ejJlbExxL2VyRGRHeHRSWmYyeHBnbTg4MEpPNVBtQ3JacW9hMUZLalZnTEdra2dvSnVTcTI4bDE2aHBzY0d3TXFrOVlPN0J3PT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.6/gary4local-rocm_0.2.1-rocm.6_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVPQWt3WkVuZHFLSWhzVWFYM1libk1HNU9SUnd5RjFFVEgzMVFTZTN0SUhCTm1JUjFVWkRlYVJzVGpidGtSUitPMktkL0ZqSlZWdkVmdzBjUnJqRkFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTM5NDQ1CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uN194NjQtc2V0dXAuZXhlCm9sVXU2RndPRGQ3dHpNNURZVWdaM3JRcXhPNFJkQVBBcUp4OGpDa2NrL1VDWGxPY2FLdUZnWUhoK205ZGFwWjdGbVZOT25SN1F0dWlXdzlUL2p0cEJRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.7/gary4local-rocm_0.2.1-rocm.7_x64-setup.exe"
                                          }
                   }
 }

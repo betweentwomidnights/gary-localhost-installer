@@ -1,12 +1,14 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.6",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.6/gary4local-rocm_0.2.1-rocm.6_x64-setup.exe",
-    "sha256":  "042660af211b39ac68709a2225811742509d1a0cc4de8da185cb3f8a1db042aa",
-    "published_at":  "2026-08-11T03:02:31.8886056Z",
+    "latest_version":  "0.2.1-rocm.7",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.7/gary4local-rocm_0.2.1-rocm.7_x64-setup.exe",
+    "sha256":  "da0ddec0c8a9e48508346fd2ca4782fc91f7500a72bfa319a55c0c56c3f29c8f",
+    "published_at":  "2026-08-12T12:58:42.9683496Z",
     "notes":  [
-                  "this was very silly: medium-base downloaded correctly, but Hugging Face represented its files as shortcuts into the model cache. we moved the shortcut and broke where it pointed.",
-                  "this version follows the shortcut to the real model file before staging it, verifies every staged file, and gives pre-encoding the exact paths.",
-                  "click update and retry the same one-audio-file, 5-step test. you should not need to download medium-base or rebuild the environment again."
+                  "this one\u0027s for carey.",
+                  "rebuild the carey environment, download the shared models plus acestep-v15-base, and try one short regular/base generation without a LoRA. don\u0027t start with XL yet.",
+                  "if that works, try your trained Carey LoRA and switch between Gary\u0027s saved checkpoints.",
+                  "SA3 auto-labelling is ready for an AMD test too; it additionally needs the acestep-5Hz-lm-1.7B caption model.",
+                  "send me the carey log if base generation doesn\u0027t finish - this is our first real AMD test of that inference stack."
               ]
 }
