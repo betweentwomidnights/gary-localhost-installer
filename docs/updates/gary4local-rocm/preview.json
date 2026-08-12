@@ -3,12 +3,12 @@
     "latest_version":  "0.2.1-rocm.7",
     "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.7/gary4local-rocm_0.2.1-rocm.7_x64-setup.exe",
     "sha256":  "da0ddec0c8a9e48508346fd2ca4782fc91f7500a72bfa319a55c0c56c3f29c8f",
-    "published_at":  "2026-08-12T12:58:42.9683496Z",
+    "published_at":  "2026-08-12T13:19:19.5897824Z",
     "notes":  [
                   "this one\u0027s for carey.",
                   "rebuild the carey environment, download the shared models plus acestep-v15-base, and try one short regular/base generation without a LoRA. don\u0027t start with XL yet.",
-                  "if that works, try your trained Carey LoRA and switch between Gary\u0027s saved checkpoints.",
-                  "SA3 auto-labelling is ready for an AMD test too; it additionally needs the acestep-5Hz-lm-1.7B caption model.",
+                  "if base generation works, you can also try SA3\u0027s auto-labeller; that additionally needs the acestep-5Hz-lm-1.7B caption model.",
+                  "Carey training and Carey LoRA inference are up next. you do not need a Carey LoRA for this test.",
                   "send me the carey log if base generation doesn\u0027t finish - this is our first real AMD test of that inference stack."
               ]
 }

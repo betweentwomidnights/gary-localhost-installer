@@ -1,7 +1,7 @@
 {
     "version":  "0.2.1-rocm.7",
-    "notes":  "this one\u0027s for carey.\nrebuild the carey environment, download the shared models plus acestep-v15-base, and try one short regular/base generation without a LoRA. don\u0027t start with XL yet.\nif that works, try your trained Carey LoRA and switch between Gary\u0027s saved checkpoints.\nSA3 auto-labelling is ready for an AMD test too; it additionally needs the acestep-5Hz-lm-1.7B caption model.\nsend me the carey log if base generation doesn\u0027t finish - this is our first real AMD test of that inference stack.",
-    "pub_date":  "2026-08-12T12:58:42.9683496Z",
+    "notes":  "this one\u0027s for carey.\nrebuild the carey environment, download the shared models plus acestep-v15-base, and try one short regular/base generation without a LoRA. don\u0027t start with XL yet.\nif base generation works, you can also try SA3\u0027s auto-labeller; that additionally needs the acestep-5Hz-lm-1.7B caption model.\nCarey training and Carey LoRA inference are up next. you do not need a Carey LoRA for this test.\nsend me the carey log if base generation doesn\u0027t finish - this is our first real AMD test of that inference stack.",
+    "pub_date":  "2026-08-12T13:19:19.5897824Z",
     "platforms":  {
                       "windows-x86_64":  {
                                              "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVPQWt3WkVuZHFLSWhzVWFYM1libk1HNU9SUnd5RjFFVEgzMVFTZTN0SUhCTm1JUjFVWkRlYVJzVGpidGtSUitPMktkL0ZqSlZWdkVmdzBjUnJqRkFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTM5NDQ1CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uN194NjQtc2V0dXAuZXhlCm9sVXU2RndPRGQ3dHpNNURZVWdaM3JRcXhPNFJkQVBBcUp4OGpDa2NrL1VDWGxPY2FLdUZnWUhoK205ZGFwWjdGbVZOT25SN1F0dWlXdzlUL2p0cEJRPT0K",
