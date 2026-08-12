@@ -4985,6 +4985,7 @@ pub fn run() {
             upsert_sa3_lora,
             activate_sa3_lora_checkpoint,
             remove_sa3_lora,
+            delete_sa3_trained_lora,
             build_sa3_lora_prompts,
             get_sa3_dataset_sidecars,
             save_sa3_dataset_sidecars,
@@ -6709,6 +6710,168 @@ async fn remove_sa3_lora(
     let state = build_sa3_lora_state(repo_root.inner())?;
     // Adapters are baked into the pipeline at load time, so a running SA3 service
     // would keep serving the old adapter until restarted. Ask it to re-apply.
+    let _ = try_reload_sa3_admin().await;
+    Ok(state)
+}
+
+fn resolve_managed_path(path: &Path, managed_root: &Path) -> Result<Option<PathBuf>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let canonical_root = managed_root
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", managed_root.display(), e))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {}: {}", path.display(), e))?;
+    if !canonical_path.starts_with(&canonical_root) || canonical_path == canonical_root {
+        return Err(format!(
+            "Refusing to delete {} because it is outside Gary's runtime storage",
+            path.display()
+        ));
+    }
+
+    Ok(Some(canonical_path))
+}
+
+fn remove_managed_path(path: &Path, managed_root: &Path) -> Result<bool, String> {
+    let Some(canonical_path) = resolve_managed_path(path, managed_root)? else {
+        return Ok(false);
+    };
+
+    if canonical_path.is_dir() {
+        std::fs::remove_dir_all(&canonical_path)
+            .map_err(|e| format!("Cannot delete {}: {}", path.display(), e))?;
+    } else {
+        std::fs::remove_file(&canonical_path)
+            .map_err(|e| format!("Cannot delete {}: {}", path.display(), e))?;
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod managed_lora_deletion_tests {
+    use super::remove_managed_path;
+    use std::path::PathBuf;
+
+    fn test_root(label: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gary4local-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn removes_files_and_directories_inside_runtime_storage() {
+        let root = test_root("managed-delete");
+        let run_dir = root.join("training").join("jobs").join("test-1");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("checkpoint.safetensors"), b"test").unwrap();
+
+        assert!(remove_managed_path(&run_dir, &root).unwrap());
+        assert!(!run_dir.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_remove_paths_outside_runtime_storage() {
+        let root = test_root("managed-root");
+        let outside = test_root("outside-file");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&outside, b"keep").unwrap();
+
+        let error = remove_managed_path(&outside, &root).unwrap_err();
+        assert!(error.contains("outside Gary's runtime storage"));
+        assert!(outside.exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_file(&outside).unwrap();
+    }
+}
+
+fn sa3_current_job_matches(job_id: &str) -> bool {
+    let current_path = sa3_training_current_job_path();
+    std::fs::read_to_string(&current_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("jobId")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        })
+        .is_some_and(|current_job_id| current_job_id == job_id)
+}
+
+#[tauri::command]
+async fn delete_sa3_trained_lora(
+    name: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Sa3LoraState, String> {
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let mut catalog = read_sa3_lora_catalog()?;
+    let entry = catalog
+        .get(&normalized_name)
+        .cloned()
+        .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+    let job_id = entry.training_job_id.as_deref().ok_or_else(|| {
+        format!(
+            "LoRA '{}' was not created by Gary's SA3 trainer; only its registration can be removed",
+            normalized_name
+        )
+    })?;
+
+    let current_state = read_sa3_lora_training_state();
+    if current_state.job_id.as_deref() == Some(job_id)
+        && matches!(current_state.status.as_str(), "starting" | "running")
+    {
+        return Err(format!(
+            "Cannot delete '{}' while its training job is running",
+            normalized_name
+        ));
+    }
+
+    let managed_root = sa3_runtime_dir();
+    if !managed_root.exists() {
+        return Err(format!(
+            "Gary's SA3 runtime storage is missing at {}",
+            managed_root.display()
+        ));
+    }
+
+    let mut artifact_paths = std::collections::BTreeSet::new();
+    artifact_paths.insert(PathBuf::from(&entry.path));
+    artifact_paths.extend(
+        entry
+            .training_checkpoints
+            .iter()
+            .map(|checkpoint| PathBuf::from(&checkpoint.path)),
+    );
+    artifact_paths.insert(sa3_prompt_file_path(&normalized_name));
+    artifact_paths.insert(sa3_training_logs_dir().join(format!("{}.log", job_id)));
+    artifact_paths.insert(sa3_training_jobs_dir().join(job_id));
+    if sa3_current_job_matches(job_id) {
+        artifact_paths.insert(sa3_training_current_job_path());
+    }
+
+    // Validate every existing artifact before deleting the first one. This keeps
+    // a malformed catalog from causing a partial cleanup before safety refuses it.
+    for path in &artifact_paths {
+        resolve_managed_path(path, &managed_root)?;
+    }
+    for path in artifact_paths {
+        remove_managed_path(&path, &managed_root)?;
+    }
+
+    catalog.remove(&normalized_name);
+    save_sa3_lora_catalog(&catalog)?;
+    let state = build_sa3_lora_state(repo_root.inner())?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }

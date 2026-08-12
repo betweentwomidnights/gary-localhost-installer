@@ -55,6 +55,7 @@
   let saving = $state(false);
   let building = $state(false);
   let switchingName = $state<string | null>(null);
+  let deletingName = $state<string | null>(null);
   let checkpointSelections = $state<Record<string, number>>({});
   let message: string | null = $state(null);
   let error: string | null = $state(null);
@@ -201,6 +202,30 @@
     }
   }
 
+  async function deleteTrainedLora(entry: Sa3LoraEntry) {
+    const confirmed = window.confirm(
+      `Permanently delete '${entry.name}' and all files from its Gary training run?\n\n` +
+      `This deletes the managed LoRA, saved checkpoints, training cache/logs, and generated prompt JSON. ` +
+      `Your original audio dataset and sidecars will not be changed.`
+    );
+    if (!confirmed) return;
+
+    deletingName = entry.name;
+    error = null;
+    message = null;
+    buildOutput = null;
+    try {
+      loraState = await invoke<Sa3LoraState>("delete_sa3_trained_lora", {
+        name: entry.name,
+      });
+      message = `deleted ${entry.name} and its Gary training files`;
+    } catch (e) {
+      error = describeError(e);
+    } finally {
+      deletingName = null;
+    }
+  }
+
   async function buildPrompts() {
     building = true;
     error = null;
@@ -326,7 +351,20 @@
                   <div class="entry-name">{entry.name}</div>
                   <div class="entry-meta">strength {entry.strength}</div>
                 </div>
-                <button class="danger" onclick={() => removeLora(entry.name)} disabled={switchingName === entry.name}>remove</button>
+                <div class="entry-actions">
+                  <button
+                    class="danger"
+                    onclick={() => removeLora(entry.name)}
+                    disabled={switchingName === entry.name || deletingName === entry.name}
+                  >remove</button>
+                  {#if entry.trainingJobId}
+                    <button
+                      class="danger delete-files"
+                      onclick={() => deleteTrainedLora(entry)}
+                      disabled={switchingName === entry.name || deletingName === entry.name}
+                    >{deletingName === entry.name ? "deleting..." : "delete files"}</button>
+                  {/if}
+                </div>
               </div>
 
               {#if entry.trainingCheckpoints.length > 0}
@@ -607,6 +645,17 @@
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
+  }
+
+  .entry-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .delete-files {
+    background: #6f2020;
   }
 
   .checkpoint-switcher {
