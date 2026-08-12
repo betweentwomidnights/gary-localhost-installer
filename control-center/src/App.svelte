@@ -125,6 +125,16 @@
     errors: string[];
   }
 
+  interface RuntimeCacheInfo {
+    uvCachePath: string;
+    uvCacheBytes: number;
+  }
+
+  interface RuntimeCacheClearResult {
+    info: RuntimeCacheInfo;
+    clearedBytes: number;
+  }
+
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
   const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
@@ -169,6 +179,10 @@
   let storageMaintenanceError: string | null = $state(null);
   let storageMaintenanceWarning: string | null = $state(null);
   let storageMaintenanceMessage: string | null = $state(null);
+  let runtimeCacheInfo: RuntimeCacheInfo | null = $state(null);
+  let runtimeCacheBusy = $state(false);
+  let runtimeCacheError: string | null = $state(null);
+  let runtimeCacheMessage: string | null = $state(null);
   let storageRestarting = $state(false);
   let careyLoraModalOpen = $state(false);
   let careyAceTrainingModalOpen = $state(false);
@@ -305,8 +319,30 @@
     return storageMaintenanceInfo;
   }
 
+  async function loadRuntimeCacheInfo() {
+    try {
+      runtimeCacheInfo = await invoke<RuntimeCacheInfo>("get_runtime_cache_info");
+      runtimeCacheError = null;
+    } catch (e) {
+      runtimeCacheError = formatError(e);
+    }
+    return runtimeCacheInfo;
+  }
+
   function formatError(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  function formatByteCount(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
   }
 
   async function runUpdateCheck(options: {
@@ -431,7 +467,11 @@
 
   async function openStorageSettings() {
     storageModalOpen = true;
-    await Promise.all([loadRuntimeStorageInfo(), loadStorageMaintenanceInfo()]);
+    await Promise.all([
+      loadRuntimeStorageInfo(),
+      loadStorageMaintenanceInfo(),
+      loadRuntimeCacheInfo(),
+    ]);
   }
 
   function closeStorageSettings() {
@@ -440,6 +480,25 @@
     storageMaintenanceError = null;
     storageMaintenanceWarning = null;
     storageMaintenanceMessage = null;
+    runtimeCacheError = null;
+    runtimeCacheMessage = null;
+  }
+
+  async function clearRuntimeUvCache() {
+    runtimeCacheBusy = true;
+    runtimeCacheError = null;
+    runtimeCacheMessage = null;
+    try {
+      const result = await invoke<RuntimeCacheClearResult>("clear_uv_cache");
+      runtimeCacheInfo = result.info;
+      runtimeCacheMessage = result.clearedBytes > 0
+        ? `cleared ${formatByteCount(result.clearedBytes)} from the UV cache`
+        : "the UV cache was already empty";
+    } catch (e) {
+      runtimeCacheError = formatError(e);
+    } finally {
+      runtimeCacheBusy = false;
+    }
   }
 
   async function saveRuntimeStorageRoot(path: string) {
@@ -801,6 +860,10 @@
     maintenanceError={storageMaintenanceError}
     maintenanceWarning={storageMaintenanceWarning}
     maintenanceMessage={storageMaintenanceMessage}
+    cacheInfo={runtimeCacheInfo}
+    cacheBusy={runtimeCacheBusy}
+    cacheError={runtimeCacheError}
+    cacheMessage={runtimeCacheMessage}
     restarting={storageRestarting}
     onChoose={saveRuntimeStorageRoot}
     onReset={resetRuntimeStorageRoot}
@@ -809,6 +872,7 @@
     onMigrateLoras={migrateLegacyLoras}
     onMigrateStorageLoras={migrateStorageLorasToPendingRoot}
     onCleanupLegacy={cleanupLegacyStorage}
+    onClearUvCache={clearRuntimeUvCache}
     onRestart={restartApplication}
     onClose={closeStorageSettings}
   />

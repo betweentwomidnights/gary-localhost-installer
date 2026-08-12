@@ -471,6 +471,27 @@ struct LegacyStorageMaintenanceResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RuntimeCacheInfo {
+    uv_cache_path: String,
+    uv_cache_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeCacheClearResult {
+    info: RuntimeCacheInfo,
+    cleared_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelRemovalResult {
+    model_id: String,
+    removed_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Sa3DatasetSidecarEntry {
     audio_path: String,
     relative_path: String,
@@ -5143,6 +5164,7 @@ pub fn run() {
             get_service_log,
             get_models,
             download_model,
+            remove_model,
             get_download_progress,
             fetch_jerry_checkpoints,
             get_carey_lora_state,
@@ -5180,6 +5202,8 @@ pub fn run() {
             save_hf_token,
             delete_hf_token,
             get_runtime_storage_info,
+            get_runtime_cache_info,
+            clear_uv_cache,
             save_runtime_storage_root,
             reset_runtime_storage_root,
             get_legacy_storage_maintenance_info,
@@ -5931,6 +5955,62 @@ async fn download_model(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+async fn remove_model(
+    model_id: String,
+    service_id: String,
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+    app_handle: tauri::AppHandle,
+) -> Result<ModelRemovalResult, String> {
+    if service_id != "carey" || !model_id.starts_with("carey::") {
+        return Err("Model removal is currently available only for Carey models.".to_string());
+    }
+
+    {
+        let mgr = svc_mgr.lock().await;
+        if mgr.is_running("carey") {
+            return Err("Stop Carey before removing one of its models.".to_string());
+        }
+        if mgr.is_building("carey") {
+            return Err("Wait for the Carey environment build to finish first.".to_string());
+        }
+    }
+
+    let training = read_carey_ace_lora_training_state();
+    if matches!(training.status.as_str(), "starting" | "running") {
+        return Err("Wait for Carey LoRA training to finish or cancel it first.".to_string());
+    }
+    let autolabel = read_sa3_autolabel_state();
+    if matches!(autolabel.status.as_str(), "starting" | "running") {
+        return Err("Wait for SA3 auto-labelling to finish or cancel it first.".to_string());
+    }
+
+    {
+        let mgr = model_mgr.lock().await;
+        if mgr.is_downloading(&model_id) {
+            return Err("Wait for this model download to finish first.".to_string());
+        }
+    }
+
+    let checkpoint_root = repo_root.join("services").join("carey").join("checkpoints");
+    let model_path = model_manager::carey_component_path(&checkpoint_root, &model_id)?;
+    let removed_bytes = path_size(&model_path);
+    remove_managed_path(&model_path, &checkpoint_root)?;
+
+    {
+        let mut mgr = model_mgr.lock().await;
+        mgr.forget_model_status(&model_id);
+    }
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+
+    Ok(ModelRemovalResult {
+        model_id,
+        removed_bytes,
+    })
 }
 
 #[tauri::command]
@@ -8131,6 +8211,98 @@ fn get_runtime_storage_info(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<storage::RuntimeStorageInfo, String> {
     Ok(storage::storage_info(repo_root.inner()))
+}
+
+fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {
+    let uv_cache_path = storage::uv_cache_dir(active_root);
+    RuntimeCacheInfo {
+        uv_cache_path: uv_cache_path.to_string_lossy().to_string(),
+        uv_cache_bytes: path_size(&uv_cache_path),
+    }
+}
+
+fn clear_runtime_uv_cache_at(active_root: &Path) -> Result<u64, String> {
+    let cache_root = storage::cache_dir(active_root);
+    let uv_cache_path = storage::uv_cache_dir(active_root);
+    let cleared_bytes = path_size(&uv_cache_path);
+    if uv_cache_path.exists() {
+        if !cache_root.exists() {
+            return Err(format!(
+                "Runtime cache root is missing at {}",
+                cache_root.display()
+            ));
+        }
+        remove_managed_path(&uv_cache_path, &cache_root)?;
+    }
+    std::fs::create_dir_all(&uv_cache_path)
+        .map_err(|e| format!("Cannot recreate {}: {}", uv_cache_path.display(), e))?;
+    Ok(cleared_bytes)
+}
+
+#[tauri::command]
+fn get_runtime_cache_info(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<RuntimeCacheInfo, String> {
+    Ok(build_runtime_cache_info(repo_root.inner()))
+}
+
+#[tauri::command]
+async fn clear_uv_cache(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<RuntimeCacheClearResult, String> {
+    {
+        let mgr = manager.lock().await;
+        if mgr.any_building() {
+            return Err(
+                "Wait for all environment builds to finish before clearing the UV cache."
+                    .to_string(),
+            );
+        }
+    }
+
+    let active_root = repo_root.inner();
+    let cleared_bytes = clear_runtime_uv_cache_at(active_root)?;
+
+    Ok(RuntimeCacheClearResult {
+        info: build_runtime_cache_info(active_root),
+        cleared_bytes,
+    })
+}
+
+#[cfg(test)]
+mod runtime_cache_tests {
+    use super::clear_runtime_uv_cache_at;
+
+    #[test]
+    fn clearing_uv_cache_preserves_neighboring_runtime_data() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-runtime-cache-{}-{unique}",
+            std::process::id()
+        ));
+        let uv_file = root.join("cache").join("uv").join("archive.whl");
+        let sibling_file = root.join("cache").join("pip").join("keep.txt");
+        let model_file = root.join("models").join("keep.bin");
+        std::fs::create_dir_all(uv_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(sibling_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(model_file.parent().unwrap()).unwrap();
+        std::fs::write(&uv_file, b"uv-cache").unwrap();
+        std::fs::write(&sibling_file, b"pip-cache").unwrap();
+        std::fs::write(&model_file, b"model").unwrap();
+
+        let cleared_bytes = clear_runtime_uv_cache_at(&root).unwrap();
+
+        assert_eq!(cleared_bytes, 8);
+        assert!(root.join("cache").join("uv").is_dir());
+        assert!(!uv_file.exists());
+        assert!(sibling_file.exists());
+        assert!(model_file.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[tauri::command]
