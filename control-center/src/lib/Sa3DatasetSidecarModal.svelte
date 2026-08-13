@@ -47,6 +47,10 @@
   }
 
   type PromptStyle = "bare" | "labeled";
+  type CaptionLmModel =
+    | "acestep-5Hz-lm-0.6B"
+    | "acestep-5Hz-lm-1.7B"
+    | "acestep-5Hz-lm-4B";
 
   let {
     open,
@@ -69,6 +73,7 @@
   let selectedIndex = $state(0);
   let templateText = $state(barePrompt);
   let promptStyle = $state<PromptStyle>("bare");
+  let captionLmModel = $state<CaptionLmModel>("acestep-5Hz-lm-1.7B");
   let showStyleInfo = $state(false);
   let loading = $state(false);
   let saving = $state(false);
@@ -243,19 +248,34 @@
 
   // Called when the modal opens: probe availability and resume polling if a job is
   // already running (e.g. the modal was closed and reopened mid-run).
-  async function initAutolabel() {
+  function captionerLabel(model: CaptionLmModel): string {
+    if (model === "acestep-5Hz-lm-0.6B") return "0.6B";
+    if (model === "acestep-5Hz-lm-4B") return "4B";
+    return "1.7B";
+  }
+
+  async function refreshAutolabelAvailability() {
+    const requestedModel = captionLmModel;
+    autolabelAvailable = false;
     try {
       const availability = await invoke<Sa3AutolabelAvailability>(
-        "get_sa3_autolabel_availability"
+        "get_sa3_autolabel_availability",
+        { captionLmModel }
       );
+      if (requestedModel !== captionLmModel) return;
       autolabelAvailable = availability.available;
       autolabelCareyBuilt = availability.careyBuilt;
       autolabelCaptionerDownloaded = availability.captionerDownloaded;
     } catch {
+      if (requestedModel !== captionLmModel) return;
       autolabelAvailable = false;
       autolabelCareyBuilt = false;
       autolabelCaptionerDownloaded = false;
     }
+  }
+
+  async function initAutolabel() {
+    await refreshAutolabelAvailability();
     try {
       autolabelState = await invoke<Sa3AutolabelState>("get_sa3_autolabel_state");
       if (autolabelState.status === "starting" || autolabelState.status === "running") {
@@ -276,7 +296,7 @@
     }
     if (!autolabelAvailable) {
       error = autolabelCareyBuilt && !autolabelCaptionerDownloaded
-        ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
+        ? `Download the ACE-Step ${captionerLabel(captionLmModel)} captioner from Carey → Models before auto-labeling.`
         : "Build Carey before auto-labeling.";
       return;
     }
@@ -285,6 +305,7 @@
       autolabelState = await invoke<Sa3AutolabelState>("start_sa3_autolabel", {
         datasetPath,
         style: promptStyle,
+        captionLmModel,
       });
       startAutolabelPolling();
     } catch (e) {
@@ -409,7 +430,7 @@
     !autolabelCareyBuilt
       ? "Requires Carey — build Carey first."
       : !autolabelCaptionerDownloaded
-        ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models first."
+        ? `Download the ACE-Step ${captionerLabel(captionLmModel)} captioner from Carey → Models first.`
         : dirtyCount
           ? "Save or discard unsaved sidecar changes before auto-labeling."
           : "Auto-label every track's genre, BPM and key (overwrites existing sidecars). Runs the Carey caption model."
@@ -482,6 +503,22 @@
         <div class="template-actions">
           <div class="action-buttons">
             <button type="button" onclick={fillMissing} disabled={loading || !entries.length || autolabelRunning}>fill missing</button>
+            <label class="captioner-select">
+              <span>captioner</span>
+              <select
+                value={captionLmModel}
+                disabled={autolabelRunning}
+                onchange={(event) => {
+                  captionLmModel = event.currentTarget.value as CaptionLmModel;
+                  error = null;
+                  void refreshAutolabelAvailability();
+                }}
+              >
+                <option value="acestep-5Hz-lm-0.6B">0.6B · not recommended</option>
+                <option value="acestep-5Hz-lm-1.7B">1.7B · good quality</option>
+                <option value="acestep-5Hz-lm-4B">4B · best quality, large GPU</option>
+              </select>
+            </label>
             {#if autolabelRunning}
               <button type="button" class="autolabel-cancel" onclick={cancelAutolabel}>
                 cancel auto-label{autolabelState?.total ? ` (${autolabelState.done}/${autolabelState.total})` : ""}
@@ -871,6 +908,27 @@
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  .captioner-select {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .captioner-select > span {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+
+  .captioner-select select {
+    min-width: 184px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: 11px var(--font-mono);
+    padding: 5px 7px;
   }
 
   .autolabel-cancel {
