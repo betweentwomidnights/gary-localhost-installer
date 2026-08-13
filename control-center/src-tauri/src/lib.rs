@@ -5192,7 +5192,6 @@ pub fn run() {
             get_sa3_dataset_sidecars,
             save_sa3_dataset_sidecars,
             suggest_sa3_track_metadata,
-            sa3_autolabel_available,
             get_sa3_autolabel_availability,
             get_sa3_autolabel_state,
             start_sa3_autolabel,
@@ -6486,10 +6485,7 @@ async fn start_carey_ace_lora_training(
         "min_snr" => "min_snr",
         other => return Err(format!("Unknown loss weighting: {}", other)),
     };
-    match caption_lm_model.trim() {
-        "acestep-5Hz-lm-0.6B" | "acestep-5Hz-lm-1.7B" | "acestep-5Hz-lm-4B" => {}
-        other => return Err(format!("Unknown ACE-Step LM model: {}", other)),
-    }
+    validate_carey_caption_lm_model(&caption_lm_model)?;
     if rank == 0 {
         return Err("LoRA rank must be greater than 0".to_string());
     }
@@ -7613,15 +7609,42 @@ fn carey_autolabel_script(repo_root: &Path) -> PathBuf {
         .join("sa3_autolabel.py")
 }
 
-fn carey_sa3_captioner_downloaded(repo_root: &Path) -> bool {
+const CAREY_CAPTION_LM_MODELS: [&str; 3] = [
+    "acestep-5Hz-lm-0.6B",
+    "acestep-5Hz-lm-1.7B",
+    "acestep-5Hz-lm-4B",
+];
+
+fn validate_carey_caption_lm_model(model: &str) -> Result<&str, String> {
+    let model = model.trim();
+    if CAREY_CAPTION_LM_MODELS.contains(&model) {
+        Ok(model)
+    } else {
+        Err(format!("Unknown ACE-Step LM model: {model}"))
+    }
+}
+
+fn carey_sa3_captioner_required_files(repo_root: &Path, model: &str) -> Vec<PathBuf> {
     let model_dir = repo_root
         .join("services")
         .join("carey")
         .join("checkpoints")
-        .join("acestep-5Hz-lm-1.7B");
-    model_dir.join("config.json").is_file()
-        && model_dir.join("model.safetensors").is_file()
-        && model_dir.join("tokenizer.json").is_file()
+        .join(model);
+    let mut required = vec![
+        model_dir.join("config.json"),
+        model_dir.join("tokenizer.json"),
+        model_dir.join("tokenizer_config.json"),
+    ];
+    if model == "acestep-5Hz-lm-4B" {
+        required.extend([
+            model_dir.join("model.safetensors.index.json"),
+            model_dir.join("model-00001-of-00002.safetensors"),
+            model_dir.join("model-00002-of-00002.safetensors"),
+        ]);
+    } else {
+        required.push(model_dir.join("model.safetensors"));
+    }
+    required
 }
 
 fn carey_sa3_analysis_models_downloaded(repo_root: &Path) -> bool {
@@ -7631,10 +7654,19 @@ fn carey_sa3_analysis_models_downloaded(repo_root: &Path) -> bool {
         .all(|path| path.is_file())
 }
 
-fn build_sa3_autolabel_availability(repo_root: &Path) -> Sa3AutolabelAvailability {
+fn carey_sa3_captioner_downloaded(repo_root: &Path, model: &str) -> bool {
+    carey_sa3_captioner_required_files(repo_root, model)
+        .into_iter()
+        .all(|path| path.is_file())
+}
+
+fn build_sa3_autolabel_availability(
+    repo_root: &Path,
+    caption_lm_model: &str,
+) -> Sa3AutolabelAvailability {
     let carey_built =
         carey_autolabel_python(repo_root).is_file() && carey_autolabel_script(repo_root).is_file();
-    let captioner_downloaded = carey_sa3_captioner_downloaded(repo_root);
+    let captioner_downloaded = carey_sa3_captioner_downloaded(repo_root, caption_lm_model);
     let analysis_models_downloaded = carey_sa3_analysis_models_downloaded(repo_root);
     Sa3AutolabelAvailability {
         available: carey_built && captioner_downloaded && analysis_models_downloaded,
@@ -7645,15 +7677,15 @@ fn build_sa3_autolabel_availability(repo_root: &Path) -> Sa3AutolabelAvailabilit
 }
 
 #[tauri::command]
-fn sa3_autolabel_available(repo_root: tauri::State<'_, std::path::PathBuf>) -> bool {
-    build_sa3_autolabel_availability(repo_root.inner()).available
-}
-
-#[tauri::command]
 fn get_sa3_autolabel_availability(
+    caption_lm_model: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
-) -> Sa3AutolabelAvailability {
-    build_sa3_autolabel_availability(repo_root.inner())
+) -> Result<Sa3AutolabelAvailability, String> {
+    let caption_lm_model = validate_carey_caption_lm_model(&caption_lm_model)?;
+    Ok(build_sa3_autolabel_availability(
+        repo_root.inner(),
+        caption_lm_model,
+    ))
 }
 
 #[tauri::command]
@@ -7665,6 +7697,7 @@ fn get_sa3_autolabel_state() -> Sa3AutolabelState {
 async fn start_sa3_autolabel(
     dataset_path: String,
     style: String,
+    caption_lm_model: String,
     manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3AutolabelState, String> {
@@ -7673,6 +7706,7 @@ async fn start_sa3_autolabel(
         "labeled" => "labeled",
         _ => return Err("style must be 'bare' or 'labeled'".to_string()),
     };
+    let caption_lm_model = validate_carey_caption_lm_model(&caption_lm_model)?;
     let root = canonical_sa3_dataset_root(&dataset_path)?;
 
     let current = read_reconciled_sa3_autolabel_state();
@@ -7680,16 +7714,15 @@ async fn start_sa3_autolabel(
         return Err("An auto-label job is already running.".to_string());
     }
 
-    let availability = build_sa3_autolabel_availability(repo_root.inner());
+    let availability = build_sa3_autolabel_availability(repo_root.inner(), caption_lm_model);
     let python_exe = carey_autolabel_python(repo_root.inner());
     if !availability.carey_built {
         return Err("Carey must be built to auto-label — it runs the caption model.".to_string());
     }
     if !availability.captioner_downloaded {
-        return Err(
-            "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
-                .to_string(),
-        );
+        return Err(format!(
+            "Download the selected ACE-Step captioner ({caption_lm_model}) from Carey → Models before auto-labeling."
+        ));
     }
     if !availability.analysis_models_downloaded {
         return Err(
@@ -7733,7 +7766,7 @@ async fn start_sa3_autolabel(
         .arg("--style")
         .arg(style)
         .arg("--caption-lm-model")
-        .arg("acestep-5Hz-lm-1.7B")
+        .arg(caption_lm_model)
         .arg("--run-dir")
         .arg(&dir)
         .arg("--log-path")
@@ -7815,11 +7848,11 @@ fn cancel_sa3_autolabel() -> Result<Sa3AutolabelState, String> {
 
 #[cfg(test)]
 mod sa3_autolabel_availability_tests {
-    use super::build_sa3_autolabel_availability;
+    use super::{build_sa3_autolabel_availability, validate_carey_caption_lm_model};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn requires_built_carey_captioner_and_analysis_models() {
+    fn checks_selected_captioner_and_analysis_model_files() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after epoch")
@@ -7837,7 +7870,7 @@ mod sa3_autolabel_availability_tests {
         std::fs::write(&python, []).expect("create fake Python");
         std::fs::write(&script, []).expect("create fake helper");
 
-        let missing = build_sa3_autolabel_availability(&root);
+        let missing = build_sa3_autolabel_availability(&root, "acestep-5Hz-lm-1.7B");
         assert!(missing.carey_built);
         assert!(!missing.captioner_downloaded);
         assert!(!missing.analysis_models_downloaded);
@@ -7846,11 +7879,14 @@ mod sa3_autolabel_availability_tests {
         let captioner = carey.join("checkpoints").join("acestep-5Hz-lm-1.7B");
         std::fs::create_dir_all(&captioner).expect("create captioner path");
         std::fs::write(captioner.join("config.json"), []).expect("create config");
-        assert!(!build_sa3_autolabel_availability(&root).available);
+        assert!(!build_sa3_autolabel_availability(&root, "acestep-5Hz-lm-1.7B").available);
 
         std::fs::write(captioner.join("model.safetensors"), []).expect("create weights");
         std::fs::write(captioner.join("tokenizer.json"), []).expect("create tokenizer");
-        let missing_analysis = build_sa3_autolabel_availability(&root);
+        std::fs::write(captioner.join("tokenizer_config.json"), [])
+            .expect("create tokenizer config");
+        let missing_analysis =
+            build_sa3_autolabel_availability(&root, "acestep-5Hz-lm-1.7B");
         assert!(missing_analysis.captioner_downloaded);
         assert!(!missing_analysis.analysis_models_downloaded);
         assert!(!missing_analysis.available);
@@ -7872,13 +7908,33 @@ mod sa3_autolabel_availability_tests {
             std::fs::write(path, []).expect("create model file");
         }
 
-        let ready = build_sa3_autolabel_availability(&root);
+        let ready = build_sa3_autolabel_availability(&root, "acestep-5Hz-lm-1.7B");
         assert!(ready.carey_built);
         assert!(ready.captioner_downloaded);
         assert!(ready.analysis_models_downloaded);
         assert!(ready.available);
 
+        let four_b = carey.join("checkpoints").join("acestep-5Hz-lm-4B");
+        std::fs::create_dir_all(&four_b).expect("create 4B captioner path");
+        for file in [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "model.safetensors.index.json",
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        ] {
+            std::fs::write(four_b.join(file), []).expect("create 4B captioner file");
+        }
+        assert!(build_sa3_autolabel_availability(&root, "acestep-5Hz-lm-4B").available);
+        assert!(!build_sa3_autolabel_availability(&root, "acestep-5Hz-lm-0.6B").available);
+
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_unknown_captioner_models() {
+        assert!(validate_carey_caption_lm_model("anything-else").is_err());
     }
 }
 
