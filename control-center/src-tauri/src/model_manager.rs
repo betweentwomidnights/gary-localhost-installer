@@ -504,7 +504,7 @@ impl ModelManager {
         // Check all snapshot directories for this file
         if let Ok(entries) = std::fs::read_dir(&snapshots_dir) {
             for entry in entries.flatten() {
-                if entry.path().join(filename).exists() {
+                if regular_file_nonempty(&entry.path().join(filename)) {
                     return true;
                 }
             }
@@ -1909,5 +1909,33 @@ fine-grained token settings to view this repository."#;
             known_hf_required_files("thepatch/vanya_ai_dnb_0.1").unwrap(),
             &["state_dict.bin", "compression_state_dict.bin"]
         );
+    }
+
+    #[test]
+    fn jerry_finetune_status_rejects_empty_checkpoint_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-jerry-finetune-status-{}-{unique}",
+            std::process::id()
+        ));
+        let manager = ModelManager::new(root);
+        let checkpoint = manager
+            .hf_hub_cache_dir()
+            .join("models--thepatch--jerry-test")
+            .join("snapshots")
+            .join("test-revision")
+            .join("jerry-test.ckpt");
+        std::fs::create_dir_all(checkpoint.parent().unwrap()).unwrap();
+        std::fs::write(&checkpoint, []).unwrap();
+
+        assert!(!manager.is_finetune_file_cached("thepatch/jerry-test", "jerry-test.ckpt"));
+
+        std::fs::write(&checkpoint, b"checkpoint").unwrap();
+        assert!(manager.is_finetune_file_cached("thepatch/jerry-test", "jerry-test.ckpt"));
+
+        let _ = std::fs::remove_dir_all(manager.hf_hub_cache_dir());
     }
 }
