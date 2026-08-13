@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub const MELODYFLOW_MODEL_ID: &str = "facebook/melodyflow-t24-30secs";
 
 fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
@@ -31,6 +32,7 @@ fn known_hf_required_files(model_id: &str) -> Option<&'static [&'static str]> {
         return Some(&["state_dict.bin", "compression_state_dict.bin"]);
     }
     match model_id {
+        MELODYFLOW_MODEL_ID => Some(&["state_dict.bin", "compression_state_dict.bin"]),
         "stabilityai/stable-audio-open-small" => Some(&["model_config.json", "model.safetensors"]),
         "stabilityai/stable-audio-3-medium" | "stabilityai/stable-audio-3-medium-base" => Some(&[
             "model_config.json",
@@ -184,6 +186,22 @@ impl ModelManager {
         }
 
         entries
+    }
+
+    /// Get Terry's single MelodyFlow checkpoint.
+    pub fn get_melodyflow_models(&self) -> Vec<ModelEntry> {
+        vec![ModelEntry {
+            id: MELODYFLOW_MODEL_ID.to_string(),
+            display_name: "MelodyFlow 30 seconds".to_string(),
+            service: "melodyflow".to_string(),
+            size_category: Some("model".to_string()),
+            group: None,
+            epoch: None,
+            status: self.get_model_status_with_required_files(
+                MELODYFLOW_MODEL_ID,
+                known_hf_required_files(MELODYFLOW_MODEL_ID).unwrap(),
+            ),
+        }]
     }
 
     /// Get Jerry (Stable Audio) base model + any fetched finetune checkpoints
@@ -1724,6 +1742,7 @@ except Exception as e:
 pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &tauri::AppHandle) {
     let mgr = manager.lock().await;
     let mut models = mgr.get_gary_models();
+    models.extend(mgr.get_melodyflow_models());
     models.extend(mgr.get_jerry_models());
     models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
@@ -1741,6 +1760,7 @@ mod tests {
     use super::{
         carey_component_path, carey_component_required_files, carey_download_source,
         friendly_hf_download_error, known_hf_required_files, ModelManager, ModelStatus,
+        MELODYFLOW_MODEL_ID,
     };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1883,6 +1903,7 @@ fine-grained token settings to view this repository."#;
         let mut manager = ModelManager::new(root);
         for model_id in [
             "thepatch/vanya_ai_dnb_0.1",
+            MELODYFLOW_MODEL_ID,
             "stabilityai/stable-audio-open-small",
             "stabilityai/stable-audio-3-medium",
             "foundation::foundation-1",
@@ -1895,6 +1916,10 @@ fine-grained token settings to view this repository."#;
             .get_gary_models()
             .iter()
             .all(|model| model.status == ModelStatus::Available));
+        assert_eq!(
+            manager.get_melodyflow_models()[0].status,
+            ModelStatus::Available
+        );
         assert_eq!(manager.get_jerry_models()[0].status, ModelStatus::Available);
         assert!(manager
             .get_sa3_models()
@@ -1907,6 +1932,10 @@ fine-grained token settings to view this repository."#;
 
         assert_eq!(
             known_hf_required_files("thepatch/vanya_ai_dnb_0.1").unwrap(),
+            &["state_dict.bin", "compression_state_dict.bin"]
+        );
+        assert_eq!(
+            known_hf_required_files(MELODYFLOW_MODEL_ID).unwrap(),
             &["state_dict.bin", "compression_state_dict.bin"]
         );
     }

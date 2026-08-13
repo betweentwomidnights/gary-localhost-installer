@@ -79,10 +79,11 @@
     return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
   }
 
-  async function removeCareyModel(model: ModelEntry) {
+  async function removeManagedModel(model: ModelEntry) {
+    const owner = serviceId === "melodyflow" ? "Terry" : "Carey";
     const confirmed = window.confirm(
       `Remove ${model.display_name} from this runtime storage?\n\n` +
-      "Carey must be stopped. You can download this model again later."
+      `${owner} must be stopped. You can download this model again later.`
     );
     if (!confirmed) return;
 
@@ -197,6 +198,7 @@
   // Derive service display name
   let serviceLabel = $derived(
     serviceId === "gary" ? "gary (musicgen)" :
+    serviceId === "melodyflow" ? "terry (melodyflow)" :
     serviceId === "stable-audio" ? "jerry (stable audio)" :
     serviceId === "sa3" ? "sa3 (stable audio 3)" :
     serviceId === "carey" ? "carey (ace-step)" :
@@ -415,7 +417,7 @@
               <button
                 class="remove-btn"
                 disabled={removingModelId !== null}
-                onclick={(e) => { e.stopPropagation(); removeCareyModel(model); }}
+                onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
               >
                 {removingModelId === model.id ? "removing..." : "remove"}
               </button>
@@ -459,7 +461,7 @@
               <button
                 class="remove-btn"
                 disabled={removingModelId !== null}
-                onclick={(e) => { e.stopPropagation(); removeCareyModel(model); }}
+                onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
               >
                 {removingModelId === model.id ? "removing..." : "remove"}
               </button>
@@ -506,7 +508,7 @@
               <button
                 class="remove-btn"
                 disabled={removingModelId !== null}
-                onclick={(e) => { e.stopPropagation(); removeCareyModel(model); }}
+                onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
               >
                 {removingModelId === model.id ? "removing..." : "remove"}
               </button>
@@ -554,6 +556,14 @@
                       </div>
                       <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
                     </div>
+                  {:else if model.status === "downloaded" && serviceId === "melodyflow"}
+                    <button
+                      class="remove-btn"
+                      disabled={removingModelId !== null}
+                      onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+                    >
+                      {removingModelId === model.id ? "removing..." : "remove"}
+                    </button>
                   {:else}
                     <button
                       class="dl-btn"
@@ -592,6 +602,14 @@
                     </div>
                     <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
                   </div>
+                {:else if model.status === "downloaded" && serviceId === "melodyflow"}
+                  <button
+                    class="remove-btn"
+                    disabled={removingModelId !== null}
+                    onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+                  >
+                    {removingModelId === model.id ? "removing..." : "remove"}
+                  </button>
                 {:else}
                   <button
                     class="dl-btn"

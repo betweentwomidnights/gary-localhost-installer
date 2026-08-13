@@ -43,7 +43,7 @@
   }
 
   // Services that have downloadable models
-  const servicesWithModels = new Set(["gary", "stable-audio", "sa3", "carey", "foundation"]);
+  const servicesWithModels = new Set(["gary", "melodyflow", "stable-audio", "sa3", "carey", "foundation"]);
   const showRebuildAll = import.meta.env.VITE_ENABLE_REBUILD_ALL === "1";
 </script>
 
