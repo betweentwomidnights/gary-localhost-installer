@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.9",
-    "notes":  "carey should stop hammering your GPU while it prepares Complete and Cover audio now.\nit also downloads only the ACE-Step model pieces each task actually needs.",
-    "pub_date":  "2026-08-13T05:40:53.7497730Z",
+    "version":  "0.2.1-rocm.10",
+    "notes":  "first, pick your 4B captioner and run caption / prepare on a small audio folder.\nif that works, try five epochs of Carey training. save every 5 will test the checkpoint too.",
+    "pub_date":  "2026-08-13T08:16:58.8064529Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEQyN05pVlZtbm84R1NFaG14SkFCSlBGa3B1ZzZvcUxjVXc4ZkdGdW1GVVhIYXI2NlhobEFZQUlUcFdteU1DRUQ3amthM09yN1hOaTVuQVFZclVURUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTk5NjE5CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uOV94NjQtc2V0dXAuZXhlClVrZHBoS3VVa211RzhsVjhyUC9MNDNYYmdIbmYrSE1uaWcrVHVHYURwSFN4bEJJZUVKVjNFSjV0RVR2K2xPU1NUOGtUZXpXOVYvNWI3TnpiSndZOUNnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.9/gary4local-rocm_0.2.1-rocm.9_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtSVDAxc1dJTXNrSGFIQXQxM2VWVnQ5M1ZJb3Y0enlTUExDS1E5KzdKK1NWcklVb1NDYnJjTVd3SGdScmtjSVl3ZUlvSHFSbzEvRUxlVHlWdUlwK1FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjA4OTIzCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTBfeDY0LXNldHVwLmV4ZQpybmtPbmdJQzQ0aEx6Zk5HVW5DdlUxZHJWTVVaMU8xeWhlcG81VkUrWWtiQkk2aFpvbUQyY1RuVk5WSUtBZnZQbzhpOTJJSlM0OENIakxWOFF6UWpEdz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.10/gary4local-rocm_0.2.1-rocm.10_x64-setup.exe"
                                          }
                   }
 }
