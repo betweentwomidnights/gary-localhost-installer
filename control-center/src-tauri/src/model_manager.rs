@@ -348,7 +348,9 @@ impl ModelManager {
                 "lm",
                 &[
                     "acestep-5Hz-lm-4B/config.json",
-                    "acestep-5Hz-lm-4B/model.safetensors",
+                    "acestep-5Hz-lm-4B/model.safetensors.index.json",
+                    "acestep-5Hz-lm-4B/model-00001-of-00002.safetensors",
+                    "acestep-5Hz-lm-4B/model-00002-of-00002.safetensors",
                 ],
             ),
         ];
@@ -380,9 +382,6 @@ impl ModelManager {
         // Check active downloads first
         if let Some(dl) = self.downloads.get(id) {
             return dl.status.clone();
-        }
-        if let Some(status) = self.model_cache.get(id) {
-            return status.clone();
         }
         // Check if the required files exist on disk
         let all_present = check_files.iter().all(|f| checkpoint_dir.join(f).exists());
@@ -641,6 +640,83 @@ pub fn carey_component_path(checkpoint_dir: &Path, model_id: &str) -> Result<Pat
         return Err(format!("Unknown Carey component: {}", component));
     }
     Ok(checkpoint_dir.join(component))
+}
+
+fn carey_component_required_files(component: &str) -> Result<&'static [&'static str], String> {
+    match component {
+        "acestep-v15-base" => Ok(&[
+            "acestep-v15-base/config.json",
+            "acestep-v15-base/model.safetensors",
+        ]),
+        "acestep-v15-sft" => Ok(&[
+            "acestep-v15-sft/config.json",
+            "acestep-v15-sft/model.safetensors",
+        ]),
+        "acestep-v15-turbo" => Ok(&[
+            "acestep-v15-turbo/config.json",
+            "acestep-v15-turbo/model.safetensors",
+        ]),
+        "acestep-v15-xl-base" => Ok(&[
+            "acestep-v15-xl-base/config.json",
+            "acestep-v15-xl-base/model.safetensors",
+        ]),
+        "acestep-v15-xl-sft" => Ok(&[
+            "acestep-v15-xl-sft/config.json",
+            "acestep-v15-xl-sft/model.safetensors",
+        ]),
+        "acestep-v15-xl-turbo" => Ok(&[
+            "acestep-v15-xl-turbo/config.json",
+            "acestep-v15-xl-turbo/model.safetensors",
+        ]),
+        "vae" => Ok(&["vae/config.json", "vae/diffusion_pytorch_model.safetensors"]),
+        "scrag-vae" => Ok(&[
+            "scrag-vae/config.json",
+            "scrag-vae/diffusion_pytorch_model.safetensors",
+        ]),
+        "Qwen3-Embedding-0.6B" => Ok(&[
+            "Qwen3-Embedding-0.6B/config.json",
+            "Qwen3-Embedding-0.6B/tokenizer.json",
+        ]),
+        "acestep-5Hz-lm-0.6B" => Ok(&[
+            "acestep-5Hz-lm-0.6B/config.json",
+            "acestep-5Hz-lm-0.6B/model.safetensors",
+        ]),
+        "acestep-5Hz-lm-1.7B" => Ok(&[
+            "acestep-5Hz-lm-1.7B/config.json",
+            "acestep-5Hz-lm-1.7B/model.safetensors",
+        ]),
+        "acestep-5Hz-lm-4B" => Ok(&[
+            "acestep-5Hz-lm-4B/config.json",
+            "acestep-5Hz-lm-4B/model.safetensors.index.json",
+            "acestep-5Hz-lm-4B/model-00001-of-00002.safetensors",
+            "acestep-5Hz-lm-4B/model-00002-of-00002.safetensors",
+        ]),
+        other => Err(format!("Unknown Carey component: {}", other)),
+    }
+}
+
+fn carey_download_source(
+    component: &str,
+) -> Result<(&'static str, &'static str, &'static [&'static str]), String> {
+    match component {
+        "acestep-v15-base" => Ok(("ACE-Step/acestep-v15-base", "", &[])),
+        "acestep-v15-sft" => Ok(("ACE-Step/acestep-v15-sft", "", &[])),
+        "acestep-v15-turbo" => Ok(("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**", &[])),
+        "acestep-v15-xl-base" => Ok(("ACE-Step/acestep-v15-xl-base", "", &[])),
+        "acestep-v15-xl-sft" => Ok(("ACE-Step/acestep-v15-xl-sft", "", &[])),
+        "acestep-v15-xl-turbo" => Ok(("ACE-Step/acestep-v15-xl-turbo", "", &[])),
+        "vae" => Ok(("ACE-Step/Ace-Step1.5", "vae/**", &[])),
+        "scrag-vae" => Ok((
+            "scragnog/Ace-Step-1.5-ScragVAE",
+            "",
+            &["config.json", "diffusion_pytorch_model.safetensors"],
+        )),
+        "Qwen3-Embedding-0.6B" => Ok(("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**", &[])),
+        "acestep-5Hz-lm-0.6B" => Ok(("ACE-Step/acestep-5Hz-lm-0.6B", "", &[])),
+        "acestep-5Hz-lm-1.7B" => Ok(("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**", &[])),
+        "acestep-5Hz-lm-4B" => Ok(("ACE-Step/acestep-5Hz-lm-4B", "", &[])),
+        other => Err(format!("Unknown Carey component: {}", other)),
+    }
 }
 
 fn friendly_hf_download_error(raw_detail: &str) -> String {
@@ -1108,25 +1184,7 @@ pub async fn download_carey_model(
     let component = model_id.strip_prefix("carey::").unwrap_or(&model_id);
 
     // Map component to HF repo, optional subfolder filters, and optional root allow-lists.
-    let (repo_id, allow_pattern, root_allow_files): (&str, &str, &[&str]) = match component {
-        "acestep-v15-base" => ("ACE-Step/acestep-v15-base", "", &[]),
-        "acestep-v15-sft" => ("ACE-Step/acestep-v15-sft", "", &[]),
-        "acestep-v15-turbo" => ("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**", &[]),
-        "acestep-v15-xl-base" => ("ACE-Step/acestep-v15-xl-base", "", &[]),
-        "acestep-v15-xl-sft" => ("ACE-Step/acestep-v15-xl-sft", "", &[]),
-        "acestep-v15-xl-turbo" => ("ACE-Step/acestep-v15-xl-turbo", "", &[]),
-        "vae" => ("ACE-Step/Ace-Step1.5", "vae/**", &[]),
-        "scrag-vae" => (
-            "scragnog/Ace-Step-1.5-ScragVAE",
-            "",
-            &["config.json", "diffusion_pytorch_model.safetensors"],
-        ),
-        "Qwen3-Embedding-0.6B" => ("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**", &[]),
-        "acestep-5Hz-lm-0.6B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-0.6B/**", &[]),
-        "acestep-5Hz-lm-1.7B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**", &[]),
-        "acestep-5Hz-lm-4B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-4B/**", &[]),
-        other => return Err(format!("Unknown Carey component: {}", other)),
-    };
+    let (repo_id, allow_pattern, root_allow_files) = carey_download_source(component)?;
 
     let ckpt_str = checkpoint_dir.to_string_lossy().to_string();
     let root_allow_files_json =
@@ -1187,9 +1245,7 @@ try:
     completed_bytes = 0
 
     if not file_entries:
-        report(1.0, "No files to download")
-        print(json.dumps({{"status": "done"}}), flush=True)
-        sys.exit(0)
+        raise RuntimeError(f"No files matched {{component}} in {{repo_id}}")
 
     report(0.0, f"Downloading {{len(file_entries)}} files ({{fmt_size(total_bytes)}})")
 
@@ -1325,6 +1381,23 @@ except Exception as e:
         .map_err(|e| format!("Download process error: {}", e))?;
 
     if exit_status.success() {
+        let missing_files = carey_component_required_files(component)?
+            .iter()
+            .filter(|relative| !checkpoint_dir.join(relative).is_file())
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing_files.is_empty() {
+            let msg = format!(
+                "Download finished but {} is incomplete; missing: {}",
+                model_id,
+                missing_files.join(", ")
+            );
+            let mut mgr = manager.lock().await;
+            mgr.set_download_done(&model_id, Some(msg.clone()));
+            drop(mgr);
+            emit_model_status(&manager, &handle).await;
+            return Err(msg);
+        }
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, None);
         drop(mgr);
@@ -1554,7 +1627,10 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
 
 #[cfg(test)]
 mod tests {
-    use super::{carey_component_path, friendly_hf_download_error, ModelManager, ModelStatus};
+    use super::{
+        carey_component_path, carey_component_required_files, carey_download_source,
+        friendly_hf_download_error, ModelManager, ModelStatus,
+    };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1619,5 +1695,40 @@ fine-grained token settings to view this repository."#;
         );
         assert!(carey_component_path(root, "carey::..\\outside").is_err());
         assert!(carey_component_path(root, "stabilityai/stable-audio-3-medium").is_err());
+    }
+
+    #[test]
+    fn carey_4b_captioner_uses_its_sharded_repository() {
+        let (repo, filter, _) = carey_download_source("acestep-5Hz-lm-4B").unwrap();
+        assert_eq!(repo, "ACE-Step/acestep-5Hz-lm-4B");
+        assert!(filter.is_empty());
+
+        let required = carey_component_required_files("acestep-5Hz-lm-4B").unwrap();
+        assert!(required.contains(&"acestep-5Hz-lm-4B/model.safetensors.index.json"));
+        assert!(required.contains(&"acestep-5Hz-lm-4B/model-00001-of-00002.safetensors"));
+        assert!(required.contains(&"acestep-5Hz-lm-4B/model-00002-of-00002.safetensors"));
+        assert!(!required.contains(&"acestep-5Hz-lm-4B/model.safetensors"));
+    }
+
+    #[test]
+    fn carey_status_does_not_trust_a_stale_download_cache() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-carey-model-status-{}-{unique}",
+            std::process::id()
+        ));
+        let mut manager = ModelManager::new(root);
+        manager.set_download_started("carey::acestep-5Hz-lm-4B");
+        manager.set_download_done("carey::acestep-5Hz-lm-4B", None);
+
+        let model = manager
+            .get_carey_models()
+            .into_iter()
+            .find(|model| model.id == "carey::acestep-5Hz-lm-4B")
+            .unwrap();
+        assert_eq!(model.status, ModelStatus::Available);
     }
 }
