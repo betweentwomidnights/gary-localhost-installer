@@ -3999,9 +3999,18 @@ fn carey_training_required_checkpoint_files(
     caption_lm_model: Option<&str>,
 ) -> Vec<PathBuf> {
     let model_dir = checkpoint_dir.join(model_folder);
-    let mut required = vec![
-        model_dir.join("config.json"),
-        model_dir.join("model.safetensors"),
+    let mut required = vec![model_dir.join("config.json")];
+    if model_folder.starts_with("acestep-v15-xl-") {
+        required.push(model_dir.join("model.safetensors.index.json"));
+        for shard in 1..=4 {
+            required.push(model_dir.join(format!(
+                "model-{shard:05}-of-00004.safetensors"
+            )));
+        }
+    } else {
+        required.push(model_dir.join("model.safetensors"));
+    }
+    required.extend([
         model_dir.join("silence_latent.pt"),
         checkpoint_dir.join("vae").join("config.json"),
         checkpoint_dir
@@ -4016,7 +4025,7 @@ fn carey_training_required_checkpoint_files(
         checkpoint_dir
             .join("Qwen3-Embedding-0.6B")
             .join("tokenizer.json"),
-    ];
+    ]);
     if let Some(lm_model) = caption_lm_model {
         let lm_dir = checkpoint_dir.join(lm_model);
         required.push(lm_dir.join("config.json"));
@@ -4051,7 +4060,15 @@ mod carey_training_checkpoint_tests {
             Some("acestep-5Hz-lm-4B"),
         );
 
-        assert!(required.contains(&root.join("acestep-v15-xl-base").join("model.safetensors")));
+        let model_dir = root.join("acestep-v15-xl-base");
+        assert!(required.contains(&model_dir.join("model.safetensors.index.json")));
+        for shard in 1..=4 {
+            assert!(required.contains(
+                &model_dir.join(format!("model-{shard:05}-of-00004.safetensors"))
+            ));
+        }
+        assert!(!required.contains(&model_dir.join("model.safetensors")));
+        assert!(required.contains(&model_dir.join("silence_latent.pt")));
         assert!(required.contains(&root.join("vae").join("diffusion_pytorch_model.safetensors")));
         assert!(required.contains(&root.join("Qwen3-Embedding-0.6B").join("model.safetensors")));
         assert!(required.contains(

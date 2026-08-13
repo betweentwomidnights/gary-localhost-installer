@@ -294,6 +294,7 @@ impl ModelManager {
                 &[
                     "acestep-v15-base/config.json",
                     "acestep-v15-base/model.safetensors",
+                    "acestep-v15-base/silence_latent.pt",
                 ],
             ),
             (
@@ -303,6 +304,7 @@ impl ModelManager {
                 &[
                     "acestep-v15-sft/config.json",
                     "acestep-v15-sft/model.safetensors",
+                    "acestep-v15-sft/silence_latent.pt",
                 ],
             ),
             (
@@ -312,6 +314,7 @@ impl ModelManager {
                 &[
                     "acestep-v15-turbo/config.json",
                     "acestep-v15-turbo/model.safetensors",
+                    "acestep-v15-turbo/silence_latent.pt",
                 ],
             ),
             (
@@ -325,6 +328,7 @@ impl ModelManager {
                     "acestep-v15-xl-base/model-00002-of-00004.safetensors",
                     "acestep-v15-xl-base/model-00003-of-00004.safetensors",
                     "acestep-v15-xl-base/model-00004-of-00004.safetensors",
+                    "acestep-v15-xl-base/silence_latent.pt",
                 ],
             ),
             (
@@ -338,6 +342,7 @@ impl ModelManager {
                     "acestep-v15-xl-sft/model-00002-of-00004.safetensors",
                     "acestep-v15-xl-sft/model-00003-of-00004.safetensors",
                     "acestep-v15-xl-sft/model-00004-of-00004.safetensors",
+                    "acestep-v15-xl-sft/silence_latent.pt",
                 ],
             ),
             (
@@ -351,6 +356,7 @@ impl ModelManager {
                     "acestep-v15-xl-turbo/model-00002-of-00004.safetensors",
                     "acestep-v15-xl-turbo/model-00003-of-00004.safetensors",
                     "acestep-v15-xl-turbo/model-00004-of-00004.safetensors",
+                    "acestep-v15-xl-turbo/silence_latent.pt",
                 ],
             ),
             (
@@ -706,14 +712,17 @@ fn carey_component_required_files(component: &str) -> Result<&'static [&'static 
         "acestep-v15-base" => Ok(&[
             "acestep-v15-base/config.json",
             "acestep-v15-base/model.safetensors",
+            "acestep-v15-base/silence_latent.pt",
         ]),
         "acestep-v15-sft" => Ok(&[
             "acestep-v15-sft/config.json",
             "acestep-v15-sft/model.safetensors",
+            "acestep-v15-sft/silence_latent.pt",
         ]),
         "acestep-v15-turbo" => Ok(&[
             "acestep-v15-turbo/config.json",
             "acestep-v15-turbo/model.safetensors",
+            "acestep-v15-turbo/silence_latent.pt",
         ]),
         "acestep-v15-xl-base" => Ok(&[
             "acestep-v15-xl-base/config.json",
@@ -722,6 +731,7 @@ fn carey_component_required_files(component: &str) -> Result<&'static [&'static 
             "acestep-v15-xl-base/model-00002-of-00004.safetensors",
             "acestep-v15-xl-base/model-00003-of-00004.safetensors",
             "acestep-v15-xl-base/model-00004-of-00004.safetensors",
+            "acestep-v15-xl-base/silence_latent.pt",
         ]),
         "acestep-v15-xl-sft" => Ok(&[
             "acestep-v15-xl-sft/config.json",
@@ -730,6 +740,7 @@ fn carey_component_required_files(component: &str) -> Result<&'static [&'static 
             "acestep-v15-xl-sft/model-00002-of-00004.safetensors",
             "acestep-v15-xl-sft/model-00003-of-00004.safetensors",
             "acestep-v15-xl-sft/model-00004-of-00004.safetensors",
+            "acestep-v15-xl-sft/silence_latent.pt",
         ]),
         "acestep-v15-xl-turbo" => Ok(&[
             "acestep-v15-xl-turbo/config.json",
@@ -738,6 +749,7 @@ fn carey_component_required_files(component: &str) -> Result<&'static [&'static 
             "acestep-v15-xl-turbo/model-00002-of-00004.safetensors",
             "acestep-v15-xl-turbo/model-00003-of-00004.safetensors",
             "acestep-v15-xl-turbo/model-00004-of-00004.safetensors",
+            "acestep-v15-xl-turbo/silence_latent.pt",
         ]),
         "vae" => Ok(&["vae/config.json", "vae/diffusion_pytorch_model.safetensors"]),
         "scrag-vae" => Ok(&[
@@ -1877,8 +1889,23 @@ fine-grained token settings to view this repository."#;
                 let filename = format!("{component}/model-{shard:05}-of-00004.safetensors");
                 assert!(required.contains(&filename.as_str()));
             }
+            let silence_latent = format!("{component}/silence_latent.pt");
+            assert!(required.contains(&silence_latent.as_str()));
             let unsharded = format!("{component}/model.safetensors");
             assert!(!required.contains(&unsharded.as_str()));
+        }
+    }
+
+    #[test]
+    fn regular_dits_require_silence_latent() {
+        for component in [
+            "acestep-v15-base",
+            "acestep-v15-sft",
+            "acestep-v15-turbo",
+        ] {
+            let required = carey_component_required_files(component).unwrap();
+            let silence_latent = format!("{component}/silence_latent.pt");
+            assert!(required.contains(&silence_latent.as_str()));
         }
     }
 

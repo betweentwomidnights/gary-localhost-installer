@@ -297,16 +297,25 @@ def required_model_checkpoint_files(
 ) -> list[Path]:
     model = MODEL_MAP[args.model]
     model_dir = args.checkpoint_dir / model["folder"]
-    required = [
-        model_dir / "config.json",
-        model_dir / "model.safetensors",
+    required = [model_dir / "config.json"]
+    if model["folder"].startswith("acestep-v15-xl-"):
+        required.extend(
+            [model_dir / "model.safetensors.index.json"]
+            + [
+                model_dir / f"model-{shard:05d}-of-00004.safetensors"
+                for shard in range(1, 5)
+            ]
+        )
+    else:
+        required.append(model_dir / "model.safetensors")
+    required.extend([
         model_dir / "silence_latent.pt",
         args.checkpoint_dir / "vae" / "config.json",
         args.checkpoint_dir / "vae" / "diffusion_pytorch_model.safetensors",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "config.json",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "model.safetensors",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "tokenizer.json",
-    ]
+    ])
     if include_caption_lm:
         lm_dir = args.checkpoint_dir / args.caption_lm_model
         required.extend([lm_dir / "config.json", lm_dir / "tokenizer.json"])
