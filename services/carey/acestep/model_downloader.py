@@ -164,6 +164,7 @@ def _download_from_huggingface_internal(
     repo_id: str,
     local_dir: Path,
     token: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
 ) -> None:
     """
     Internal function to download from HuggingFace Hub.
@@ -185,12 +186,14 @@ def _download_from_huggingface_internal(
         local_dir=str(local_dir),
         local_dir_use_symlinks=False,
         token=token,
+        allow_patterns=allow_patterns,
     )
 
 
 def _download_from_modelscope_internal(
     repo_id: str,
     local_dir: Path,
+    allow_patterns: Optional[List[str]] = None,
 ) -> None:
     """
     Internal function to download from ModelScope.
@@ -209,6 +212,7 @@ def _download_from_modelscope_internal(
     snapshot_download(
         model_id=repo_id,
         local_dir=str(local_dir),
+        allow_patterns=allow_patterns,
     )
 
 
@@ -217,6 +221,7 @@ def _smart_download(
     local_dir: Path,
     token: Optional[str] = None,
     prefer_source: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
 ) -> Tuple[bool, str]:
     """
     Smart download with automatic fallback between HuggingFace and ModelScope.
@@ -252,13 +257,15 @@ def _smart_download(
     if use_huggingface_first:
         logger.info("[Model Download] Using HuggingFace Hub...")
         try:
-            _download_from_huggingface_internal(repo_id, local_dir, token)
+            _download_from_huggingface_internal(
+                repo_id, local_dir, token, allow_patterns
+            )
             return True, f"Successfully downloaded from HuggingFace: {repo_id}"
         except Exception as e:
             logger.warning(f"[Model Download] HuggingFace download failed: {e}")
             logger.info("[Model Download] Falling back to ModelScope...")
             try:
-                _download_from_modelscope_internal(repo_id, local_dir)
+                _download_from_modelscope_internal(repo_id, local_dir, allow_patterns)
                 return True, f"Successfully downloaded from ModelScope: {repo_id}"
             except Exception as e2:
                 error_msg = f"Both HuggingFace and ModelScope downloads failed. HF: {e}, MS: {e2}"
@@ -267,13 +274,15 @@ def _smart_download(
     else:
         logger.info("[Model Download] Using ModelScope...")
         try:
-            _download_from_modelscope_internal(repo_id, local_dir)
+            _download_from_modelscope_internal(repo_id, local_dir, allow_patterns)
             return True, f"Successfully downloaded from ModelScope: {repo_id}"
         except Exception as e:
             logger.warning(f"[Model Download] ModelScope download failed: {e}")
             logger.info("[Model Download] Falling back to HuggingFace Hub...")
             try:
-                _download_from_huggingface_internal(repo_id, local_dir, token)
+                _download_from_huggingface_internal(
+                    repo_id, local_dir, token, allow_patterns
+                )
                 return True, f"Successfully downloaded from HuggingFace: {repo_id}"
             except Exception as e2:
                 error_msg = f"Both ModelScope and HuggingFace downloads failed. MS: {e}, HF: {e2}"
@@ -310,6 +319,86 @@ MAIN_MODEL_COMPONENTS = [
     "Qwen3-Embedding-0.6B",    # Text encoder
     "acestep-5Hz-lm-1.7B",     # Default LM model (1.7B)
 ]
+
+SHARED_INFERENCE_COMPONENTS = [
+    "vae",
+    "Qwen3-Embedding-0.6B",
+]
+
+COMPONENT_REQUIRED_FILES: Dict[str, List[str]] = {
+    "vae": [
+        "config.json",
+        "diffusion_pytorch_model.safetensors",
+    ],
+    "Qwen3-Embedding-0.6B": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ],
+    "acestep-v15-turbo": [
+        "config.json",
+        "model.safetensors",
+        "silence_latent.pt",
+    ],
+    "acestep-v15-base": [
+        "config.json",
+        "model.safetensors",
+        "silence_latent.pt",
+    ],
+    "acestep-v15-sft": [
+        "config.json",
+        "model.safetensors",
+        "silence_latent.pt",
+    ],
+    "acestep-v15-xl-base": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "silence_latent.pt",
+    ],
+    "acestep-v15-xl-sft": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "silence_latent.pt",
+    ],
+    "acestep-v15-xl-turbo": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "silence_latent.pt",
+    ],
+    "acestep-5Hz-lm-0.6B": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ],
+    "acestep-5Hz-lm-1.7B": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ],
+    "acestep-5Hz-lm-4B": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ],
+}
 
 # Default LM model (included in main model)
 DEFAULT_LM_MODEL = "acestep-5Hz-lm-1.7B"
@@ -433,12 +522,40 @@ def check_main_model_exists(checkpoints_dir: Optional[Path] = None) -> bool:
         checkpoints_dir = Path(checkpoints_dir)
 
     for component in MAIN_MODEL_COMPONENTS:
-        component_path = checkpoints_dir / component
-        if not component_path.exists():
-            return False
-        if not checkpoint_files_valid(component, checkpoints_dir):
+        if not check_component_exists(component, checkpoints_dir):
             return False
     return True
+
+
+def check_component_exists(
+    component: str,
+    checkpoints_dir: Optional[Path] = None,
+) -> bool:
+    """Return whether a bundled component has all files needed by Carey."""
+    if checkpoints_dir is None:
+        checkpoints_dir = get_checkpoints_dir()
+    elif isinstance(checkpoints_dir, str):
+        checkpoints_dir = Path(checkpoints_dir)
+
+    component_dir = checkpoints_dir / component
+    required_files = COMPONENT_REQUIRED_FILES.get(component, [])
+    if not component_dir.is_dir():
+        return False
+    if required_files and not all(
+        (component_dir / relative_path).is_file()
+        and (component_dir / relative_path).stat().st_size > 0
+        for relative_path in required_files
+    ):
+        return False
+    return checkpoint_files_valid(component, checkpoints_dir)
+
+
+def check_shared_models_exist(checkpoints_dir: Optional[Path] = None) -> bool:
+    """Return whether the VAE and text embedding model are available."""
+    return all(
+        check_component_exists(component, checkpoints_dir)
+        for component in SHARED_INFERENCE_COMPONENTS
+    )
 
 
 def check_model_exists(model_name: str, checkpoints_dir: Optional[Path] = None) -> bool:
@@ -460,8 +577,7 @@ def check_model_exists(model_name: str, checkpoints_dir: Optional[Path] = None) 
     elif isinstance(checkpoints_dir, str):
         checkpoints_dir = Path(checkpoints_dir)
 
-    model_path = checkpoints_dir / model_name
-    return model_path.exists() and checkpoint_files_valid(model_name, checkpoints_dir)
+    return check_component_exists(model_name, checkpoints_dir)
 
 
 def list_available_models() -> Dict[str, str]:
@@ -534,6 +650,74 @@ def download_main_model(
     return success, msg
 
 
+def download_main_components(
+    components: List[str],
+    checkpoints_dir: Optional[Path] = None,
+    token: Optional[str] = None,
+    prefer_source: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Download selected component folders from the unified main repository."""
+    unknown = [
+        component for component in components if component not in MAIN_MODEL_COMPONENTS
+    ]
+    if unknown:
+        return False, f"Unknown main model components: {', '.join(unknown)}"
+
+    if checkpoints_dir is None:
+        checkpoints_dir = get_checkpoints_dir()
+    elif isinstance(checkpoints_dir, str):
+        checkpoints_dir = Path(checkpoints_dir)
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+
+    missing = [
+        component
+        for component in components
+        if not check_component_exists(component, checkpoints_dir)
+    ]
+    if not missing:
+        return True, f"Requested components already exist at {checkpoints_dir}"
+
+    allow_patterns = [f"{component}/**" for component in missing]
+    print(f"Downloading selected components from {MAIN_MODEL_REPO}: {', '.join(missing)}")
+    print(f"Destination: {checkpoints_dir}")
+    success, msg = _smart_download(
+        MAIN_MODEL_REPO,
+        checkpoints_dir,
+        token,
+        prefer_source,
+        allow_patterns,
+    )
+    if not success:
+        return success, msg
+
+    for component in missing:
+        if component in _CHECKPOINT_TO_VARIANT:
+            _sync_model_code_files(component, checkpoints_dir)
+        if not check_component_exists(component, checkpoints_dir):
+            return False, f"Component '{component}' download completed, but it is incomplete"
+    return True, msg
+
+
+def ensure_shared_models(
+    checkpoints_dir: Optional[Path] = None,
+    token: Optional[str] = None,
+    prefer_source: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Ensure only the shared assets required for DiT inference are present."""
+    if check_shared_models_exist(checkpoints_dir):
+        return True, "Shared inference models are available"
+
+    print("\n" + "=" * 60)
+    print("Shared inference models not found. Starting selective download...")
+    print("=" * 60 + "\n")
+    return download_main_components(
+        SHARED_INFERENCE_COMPONENTS,
+        checkpoints_dir,
+        token,
+        prefer_source,
+    )
+
+
 def download_submodel(
     model_name: str,
     checkpoints_dir: Optional[Path] = None,
@@ -568,7 +752,7 @@ def download_submodel(
 
     model_path = checkpoints_dir / model_name
 
-    if not force and model_path.exists() and checkpoint_files_valid(model_name, checkpoints_dir):
+    if not force and check_model_exists(model_name, checkpoints_dir):
         return True, f"Model '{model_name}' already exists at {model_path}"
 
     quarantine_invalid_checkpoint_files(model_name, checkpoints_dir)
@@ -692,7 +876,9 @@ def ensure_lm_model(
         return True, f"LM model '{model_name}' is available"
 
     if model_name == DEFAULT_LM_MODEL:
-        return ensure_main_model(checkpoints_dir, token, prefer_source)
+        return download_main_components(
+            [DEFAULT_LM_MODEL], checkpoints_dir, token, prefer_source
+        )
 
     # Check if this is a known LM model
     if model_name not in SUBMODEL_REGISTRY:
@@ -737,9 +923,11 @@ def ensure_dit_model(
     if check_model_exists(model_name, checkpoints_dir):
         return True, f"DiT model '{model_name}' is available"
 
-    # Check if this is the default turbo model (part of main)
+    # The default turbo model is a folder in the unified main repository.
     if model_name == "acestep-v15-turbo":
-        return ensure_main_model(checkpoints_dir, token, prefer_source)
+        return download_main_components(
+            [model_name], checkpoints_dir, token, prefer_source
+        )
 
     # Check if it's a known sub-model
     if model_name in SUBMODEL_REGISTRY:

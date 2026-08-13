@@ -6,10 +6,10 @@ from typing import Optional, Tuple
 from loguru import logger
 
 from acestep.model_downloader import (
-    check_main_model_exists,
+    check_shared_models_exist,
     check_model_exists,
     ensure_dit_model,
-    ensure_main_model,
+    ensure_shared_models,
 )
 
 
@@ -24,11 +24,11 @@ class InitServiceDownloadsMixin:
         prefer_source: Optional[str],
     ) -> Optional[Tuple[str, bool]]:
         """Ensure required checkpoint assets exist locally, downloading when missing."""
-        if not check_main_model_exists(checkpoint_path):
-            logger.info("[initialize_service] Main model not found, starting auto-download...")
-            success, msg = ensure_main_model(checkpoint_path, prefer_source=prefer_source)
+        if not check_shared_models_exist(checkpoint_path):
+            logger.info("[initialize_service] Shared models not found, starting selective auto-download...")
+            success, msg = ensure_shared_models(checkpoint_path, prefer_source=prefer_source)
             if not success:
-                return f"ERROR: Failed to download main model: {msg}", False
+                return f"ERROR: Failed to download shared models: {msg}", False
             logger.info(f"[initialize_service] {msg}")
 
         if config_path == "":

@@ -262,17 +262,17 @@ class InitServiceMixinTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             host._validate_quantization_setup(quantization="int8_weight_only", compile_model=False)
 
-    def test_ensure_models_present_returns_download_error_when_main_model_fails(self):
-        """It returns an error tuple when main model download fails."""
+    def test_ensure_models_present_returns_download_error_when_shared_models_fail(self):
+        """It returns an error tuple when shared model download fails."""
         host = _Host(project_root="K:/fake_root", device="cpu")
-        with patch.object(INIT_SERVICE_DOWNLOADS_MODULE, "check_main_model_exists", return_value=False):
-            with patch.object(INIT_SERVICE_DOWNLOADS_MODULE, "ensure_main_model", return_value=(False, "boom")):
+        with patch.object(INIT_SERVICE_DOWNLOADS_MODULE, "check_shared_models_exist", return_value=False):
+            with patch.object(INIT_SERVICE_DOWNLOADS_MODULE, "ensure_shared_models", return_value=(False, "boom")):
                 result = host._ensure_models_present(
                     checkpoint_path=Path("K:/fake_root/checkpoints"),
                     config_path="acestep-v15-turbo",
                     prefer_source=None,
                 )
-        self.assertEqual(result, ("ERROR: Failed to download main model: boom", False))
+        self.assertEqual(result, ("ERROR: Failed to download shared models: boom", False))
 
     def test_build_initialize_status_message_reports_mlx_compile_label(self):
         """It renders the mx.compile label when MLX compile redirection is active."""

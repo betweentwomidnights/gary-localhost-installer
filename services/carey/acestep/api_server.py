@@ -167,6 +167,7 @@ def _download_from_huggingface(repo_id: str, local_dir: str, model_name: str) ->
         repo_id=repo_id,
         local_dir=download_dir,
         local_dir_use_symlinks=False,
+        allow_patterns=[f"{model_name}/**"] if is_unified_repo else None,
     )
 
     return os.path.join(local_dir, model_name)
@@ -193,6 +194,7 @@ def _download_from_modelscope(repo_id: str, local_dir: str, model_name: str) -> 
         result_path = snapshot_download(
             model_id=repo_id,
             local_dir=download_dir,
+            allow_patterns=[f"{model_name}/**"] if is_unified_repo else None,
         )
         print(f"[Model Download] ModelScope download completed: {result_path}")
     except TypeError:
@@ -201,6 +203,7 @@ def _download_from_modelscope(repo_id: str, local_dir: str, model_name: str) -> 
         result_path = snapshot_download(
             model_id=repo_id,
             cache_dir=download_dir,
+            allow_file_pattern=[f"{model_name}/**"] if is_unified_repo else None,
         )
         print(f"[Model Download] ModelScope download completed: {result_path}")
 
@@ -228,12 +231,12 @@ def _sync_local_model_code(model_name: str, checkpoint_dir: str) -> None:
 
 def _checkpoint_files_valid(model_name: str, checkpoint_dir: str) -> bool:
     try:
-        from acestep.model_downloader import checkpoint_files_valid
+        from acestep.model_downloader import check_component_exists
     except Exception as exc:
         print(f"[Model Download] Warning: could not import checkpoint validator: {exc}")
         return True
 
-    return checkpoint_files_valid(model_name, checkpoint_dir)
+    return check_component_exists(model_name, checkpoint_dir)
 
 
 def _quarantine_invalid_checkpoint_files(model_name: str, checkpoint_dir: str) -> None:
