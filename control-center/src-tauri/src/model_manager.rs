@@ -84,9 +84,14 @@ impl ModelManager {
         self.repo_root.clone()
     }
 
-    /// Get the Hugging Face cache directory inside the selected runtime root.
+    /// Get the effective Hugging Face home for this storage profile.
     pub fn hf_cache_dir(&self) -> PathBuf {
-        crate::storage::hf_home_dir(&self.repo_root)
+        crate::storage::effective_hf_home_dir(&self.repo_root)
+    }
+
+    /// Get the hub cache used by service processes for this storage profile.
+    pub fn hf_hub_cache_dir(&self) -> PathBuf {
+        crate::storage::effective_hf_hub_cache_dir(&self.repo_root)
     }
 
     /// Get the full list of Gary models with their download status
@@ -448,8 +453,7 @@ impl ModelManager {
 
     /// Check if a specific file from a finetune repo is cached
     fn is_finetune_file_cached(&self, repo: &str, filename: &str) -> bool {
-        let cache_dir = self.hf_cache_dir();
-        let hub_dir = cache_dir.join("hub");
+        let hub_dir = self.hf_hub_cache_dir();
         let folder_name = format!("models--{}", repo.replace('/', "--"));
         let snapshots_dir = hub_dir.join(&folder_name).join("snapshots");
 
@@ -517,11 +521,7 @@ impl ModelManager {
 
     fn is_model_snapshot_complete(&self, model_id: &str, required_files: &[&str]) -> bool {
         let folder_name = format!("models--{}", model_id.replace('/', "--"));
-        let snapshots_dir = self
-            .hf_cache_dir()
-            .join("hub")
-            .join(folder_name)
-            .join("snapshots");
+        let snapshots_dir = self.hf_hub_cache_dir().join(folder_name).join("snapshots");
 
         let Ok(entries) = std::fs::read_dir(snapshots_dir) else {
             return false;
@@ -538,8 +538,7 @@ impl ModelManager {
 
     /// Check if a model exists in the HuggingFace cache
     fn is_model_cached(&self, model_id: &str) -> bool {
-        let cache_dir = self.hf_cache_dir();
-        let hub_dir = cache_dir.join("hub");
+        let hub_dir = self.hf_hub_cache_dir();
 
         // HF cache uses format: models--org--name
         let folder_name = format!("models--{}", model_id.replace('/', "--"));
