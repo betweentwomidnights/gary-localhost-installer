@@ -61,14 +61,44 @@ from acestep.training_v2.vram_preflight import (
 
 logger = logging.getLogger(__name__)
 
-# Try to import Lightning Fabric
-try:
-    from lightning.fabric import Fabric
+# Windows ROCm wheels have an intentionally incomplete torch.distributed surface.
+# Do not import Fabric there: its import-time distributed probing can fail before
+# the trainer gets a chance to select the direct PyTorch loop.
+def is_windows_rocm_runtime(
+    *,
+    platform: str = sys.platform,
+    torch_module: Any = torch,
+) -> bool:
+    is_rocm = bool(getattr(getattr(torch_module, "version", None), "hip", None))
+    return platform == "win32" and is_rocm
 
-    _FABRIC_AVAILABLE = True
-except ImportError:
+
+if is_windows_rocm_runtime():
+    Fabric = None
     _FABRIC_AVAILABLE = False
-    logger.warning("[WARN] Lightning Fabric not installed. Training will use basic loop.")
+    logger.info("[Side-Step] Windows ROCm detected; skipping Lightning Fabric import.")
+else:
+    try:
+        from lightning.fabric import Fabric
+
+        _FABRIC_AVAILABLE = True
+    except ImportError:
+        Fabric = None
+        _FABRIC_AVAILABLE = False
+        logger.warning("[WARN] Lightning Fabric not installed. Training will use basic loop.")
+
+
+def should_use_fabric(
+    *,
+    fabric_available: bool = _FABRIC_AVAILABLE,
+    platform: str = sys.platform,
+    torch_module: Any = torch,
+) -> bool:
+    """Avoid Fabric's distributed setup on incomplete Windows ROCm builds."""
+    return fabric_available and not is_windows_rocm_runtime(
+        platform=platform,
+        torch_module=torch_module,
+    )
 
 
 # ===========================================================================
@@ -166,9 +196,16 @@ class FixedLoRATrainer:
             yield TrainingUpdate(0, 0.0, f"[OK] Loaded {len(data_module.train_dataset)} preprocessed samples", kind="info")
 
             # -- Dispatch to Fabric or basic loop ---------------------------
-            if _FABRIC_AVAILABLE:
+            if should_use_fabric():
                 yield from self._train_fabric(data_module, training_state)
             else:
+                if is_windows_rocm_runtime():
+                    yield TrainingUpdate(
+                        0,
+                        0.0,
+                        "[INFO] Windows ROCm detected; using the direct PyTorch training loop",
+                        kind="info",
+                    )
                 yield from run_basic_training_loop(self, data_module, training_state)
 
         except Exception as exc:

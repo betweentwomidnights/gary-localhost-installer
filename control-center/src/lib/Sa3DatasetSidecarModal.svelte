@@ -44,6 +44,7 @@
     available: boolean;
     careyBuilt: boolean;
     captionerDownloaded: boolean;
+    analysisModelsDownloaded: boolean;
   }
 
   type PromptStyle = "bare" | "labeled";
@@ -76,6 +77,7 @@
   let autolabelAvailable = $state(false);
   let autolabelCareyBuilt = $state(false);
   let autolabelCaptionerDownloaded = $state(false);
+  let autolabelAnalysisModelsDownloaded = $state(false);
   let autolabelState = $state<Sa3AutolabelState | null>(null);
   let autolabelPollTimer: ReturnType<typeof setInterval> | null = null;
   let lastAutolabelDone = 0; // completed count at the previous poll, to pull focus once per finish
@@ -251,10 +253,12 @@
       autolabelAvailable = availability.available;
       autolabelCareyBuilt = availability.careyBuilt;
       autolabelCaptionerDownloaded = availability.captionerDownloaded;
+      autolabelAnalysisModelsDownloaded = availability.analysisModelsDownloaded;
     } catch {
       autolabelAvailable = false;
       autolabelCareyBuilt = false;
       autolabelCaptionerDownloaded = false;
+      autolabelAnalysisModelsDownloaded = false;
     }
     try {
       autolabelState = await invoke<Sa3AutolabelState>("get_sa3_autolabel_state");
@@ -275,9 +279,11 @@
       return;
     }
     if (!autolabelAvailable) {
-      error = autolabelCareyBuilt && !autolabelCaptionerDownloaded
-        ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
-        : "Build Carey before auto-labeling.";
+      error = !autolabelCareyBuilt
+        ? "Build Carey before auto-labeling."
+        : !autolabelCaptionerDownloaded
+          ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
+          : "Download ACE-Step Base, VAE, and Qwen3 Embedding from Carey → Models before auto-labeling.";
       return;
     }
     lastAutolabelDone = 0;
@@ -410,9 +416,11 @@
       ? "Requires Carey — build Carey first."
       : !autolabelCaptionerDownloaded
         ? "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models first."
-        : dirtyCount
-          ? "Save or discard unsaved sidecar changes before auto-labeling."
-          : "Auto-label every track's genre, BPM and key (overwrites existing sidecars). Runs the Carey caption model."
+        : !autolabelAnalysisModelsDownloaded
+          ? "Download ACE-Step Base, VAE, and Qwen3 Embedding from Carey → Models first."
+          : dirtyCount
+            ? "Save or discard unsaved sidecar changes before auto-labeling."
+            : "Auto-label every track's genre, BPM and key (overwrites existing sidecars). Runs the Carey caption model."
   );
 
   $effect(() => {

@@ -271,11 +271,25 @@ def ensure_job_dependencies(args: argparse.Namespace) -> None:
 def require_training_environment(args: argparse.Namespace) -> None:
     ensure_job_dependencies(args)
     check_cancel(args)
-    update_status(args, status="running", phase="checking-gpu", message="Checking CUDA GPU")
+    update_status(
+        args,
+        status="running",
+        phase="checking-gpu",
+        message="Checking CUDA or ROCm accelerator",
+    )
     import torch
 
     if not torch.cuda.is_available():
-        raise RuntimeError("ACE-Step LoRA training requires an NVIDIA CUDA GPU.")
+        raise RuntimeError("ACE-Step LoRA training requires a CUDA or ROCm accelerator.")
+
+    print(
+        "[checking-gpu] "
+        f"torch={torch.__version__}; "
+        f"hip={getattr(torch.version, 'hip', None)}; "
+        f"cuda_build={getattr(torch.version, 'cuda', None)}; "
+        f"device={torch.cuda.get_device_name(0)}",
+        flush=True,
+    )
 
 
 def required_model_checkpoint_files(

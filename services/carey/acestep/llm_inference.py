@@ -31,6 +31,14 @@ from acestep.gpu_config import get_lm_gpu_memory_ratio, get_gpu_memory_gb, get_l
 VRAM_SAFE_FREE_GB = 2.0
 
 
+def resolve_lm_backend(backend: str, device: str, torch_module: Any = torch) -> str:
+    """Resolve backends whose CUDA-only implementations do not support HIP."""
+    is_rocm = bool(getattr(getattr(torch_module, "version", None), "hip", None))
+    if backend == "vllm" and (is_rocm or device != "cuda"):
+        return "pt"
+    return backend
+
+
 def _warn_if_prerelease_python():
     v = sys.version_info
     if getattr(v, "releaselevel", "final") != "final" and sys.platform.startswith("linux"):
@@ -631,11 +639,14 @@ class LLMHandler:
                     status_msg = f"✅ 5Hz LM initialized (PyTorch fallback, MLX not available)\nModel: {full_lm_model_path}\nBackend: PyTorch"
                     return _success(status_msg)
 
-            if backend == "vllm" and device != "cuda":
+            resolved_backend = resolve_lm_backend(backend, device)
+            if resolved_backend != backend:
+                reason = "ROCm/HIP" if is_rocm else f"device={device}"
                 logger.info(
-                    f"[initialize] vllm backend requires CUDA, using PyTorch backend for device={device}."
+                    f"[initialize] vllm backend is unavailable for {reason}; "
+                    "using the PyTorch backend."
                 )
-                backend = "pt"
+                backend = resolved_backend
 
             # Initialize based on user-selected backend
             if backend == "vllm":

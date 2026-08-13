@@ -578,6 +578,7 @@ struct Sa3AutolabelAvailability {
     available: bool,
     carey_built: bool,
     captioner_downloaded: bool,
+    analysis_models_downloaded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7618,17 +7619,28 @@ fn carey_sa3_captioner_downloaded(repo_root: &Path) -> bool {
         .join("carey")
         .join("checkpoints")
         .join("acestep-5Hz-lm-1.7B");
-    model_dir.join("config.json").is_file() && model_dir.join("model.safetensors").is_file()
+    model_dir.join("config.json").is_file()
+        && model_dir.join("model.safetensors").is_file()
+        && model_dir.join("tokenizer.json").is_file()
+}
+
+fn carey_sa3_analysis_models_downloaded(repo_root: &Path) -> bool {
+    let checkpoint_dir = carey_checkpoint_dir(repo_root);
+    carey_training_required_checkpoint_files(&checkpoint_dir, "acestep-v15-base", None)
+        .into_iter()
+        .all(|path| path.is_file())
 }
 
 fn build_sa3_autolabel_availability(repo_root: &Path) -> Sa3AutolabelAvailability {
     let carey_built =
         carey_autolabel_python(repo_root).is_file() && carey_autolabel_script(repo_root).is_file();
     let captioner_downloaded = carey_sa3_captioner_downloaded(repo_root);
+    let analysis_models_downloaded = carey_sa3_analysis_models_downloaded(repo_root);
     Sa3AutolabelAvailability {
-        available: carey_built && captioner_downloaded,
+        available: carey_built && captioner_downloaded && analysis_models_downloaded,
         carey_built,
         captioner_downloaded,
+        analysis_models_downloaded,
     }
 }
 
@@ -7676,6 +7688,12 @@ async fn start_sa3_autolabel(
     if !availability.captioner_downloaded {
         return Err(
             "Download the ACE-Step 5Hz LM 1.7B captioner from Carey → Models before auto-labeling."
+                .to_string(),
+        );
+    }
+    if !availability.analysis_models_downloaded {
+        return Err(
+            "Download ACE-Step Base, VAE, and Qwen3 Embedding from Carey's Models panel before auto-labeling."
                 .to_string(),
         );
     }
@@ -7801,7 +7819,7 @@ mod sa3_autolabel_availability_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn requires_built_carey_and_complete_1_7b_captioner() {
+    fn requires_built_carey_captioner_and_analysis_models() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after epoch")
@@ -7822,6 +7840,7 @@ mod sa3_autolabel_availability_tests {
         let missing = build_sa3_autolabel_availability(&root);
         assert!(missing.carey_built);
         assert!(!missing.captioner_downloaded);
+        assert!(!missing.analysis_models_downloaded);
         assert!(!missing.available);
 
         let captioner = carey.join("checkpoints").join("acestep-5Hz-lm-1.7B");
@@ -7830,9 +7849,33 @@ mod sa3_autolabel_availability_tests {
         assert!(!build_sa3_autolabel_availability(&root).available);
 
         std::fs::write(captioner.join("model.safetensors"), []).expect("create weights");
+        std::fs::write(captioner.join("tokenizer.json"), []).expect("create tokenizer");
+        let missing_analysis = build_sa3_autolabel_availability(&root);
+        assert!(missing_analysis.captioner_downloaded);
+        assert!(!missing_analysis.analysis_models_downloaded);
+        assert!(!missing_analysis.available);
+
+        let checkpoints = carey.join("checkpoints");
+        for relative in [
+            "acestep-v15-base/config.json",
+            "acestep-v15-base/model.safetensors",
+            "acestep-v15-base/silence_latent.pt",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.safetensors",
+            "Qwen3-Embedding-0.6B/config.json",
+            "Qwen3-Embedding-0.6B/model.safetensors",
+            "Qwen3-Embedding-0.6B/tokenizer.json",
+        ] {
+            let path = checkpoints.join(relative);
+            std::fs::create_dir_all(path.parent().expect("model file should have a parent"))
+                .expect("create model path");
+            std::fs::write(path, []).expect("create model file");
+        }
+
         let ready = build_sa3_autolabel_availability(&root);
         assert!(ready.carey_built);
         assert!(ready.captioner_downloaded);
+        assert!(ready.analysis_models_downloaded);
         assert!(ready.available);
 
         let _ = std::fs::remove_dir_all(root);

@@ -5,7 +5,7 @@ Provides ``build_optimizer()`` and ``build_scheduler()`` so that
 ``trainer_fixed.py`` doesn't need to hard-code AdamW / CosineAnnealing.
 
 Supported optimizers:
-    adamw       -- torch.optim.AdamW (default, fused on CUDA)
+    adamw       -- torch.optim.AdamW (default, fused on NVIDIA CUDA)
     adamw8bit   -- bitsandbytes.optim.AdamW8bit (optional dep)
     adafactor   -- transformers.optimization.Adafactor
     prodigy     -- prodigyopt.Prodigy (optional dep, auto-tunes LR)
@@ -102,7 +102,8 @@ def build_optimizer(
 
     # Default: AdamW
     kwargs = {"lr": lr, "weight_decay": weight_decay}
-    if device_type == "cuda":
+    is_rocm = bool(getattr(torch.version, "hip", None))
+    if device_type == "cuda" and not is_rocm:
         kwargs["fused"] = True
     logger.info("[Side-Step] Using AdamW optimizer")
     return AdamW(params, **kwargs)
