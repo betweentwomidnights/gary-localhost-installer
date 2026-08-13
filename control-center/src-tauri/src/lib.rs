@@ -2559,6 +2559,7 @@ fn known_legacy_hf_repos() -> &'static [&'static str] {
         "thepatch/bleeps-large-20",
         "thepatch/keygen-gary-v2-large-12",
         "thepatch/keygen-gary-v2-large-16",
+        model_manager::MELODYFLOW_MODEL_ID,
         "stabilityai/stable-audio-open-small",
         "stabilityai/stable-audio-3-medium",
         "stabilityai/stable-audio-3-medium-base",
@@ -5864,6 +5865,7 @@ async fn get_models(
 ) -> Result<Vec<model_manager::ModelEntry>, String> {
     let mgr = model_mgr.lock().await;
     let mut models = mgr.get_gary_models();
+    models.extend(mgr.get_melodyflow_models());
     models.extend(mgr.get_jerry_models());
     models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
@@ -5883,6 +5885,7 @@ async fn download_model(
     // Pick the Python env based on which service the model belongs to.
     let svc = service_id.as_deref().unwrap_or("gary");
     let env_dir = match svc {
+        "melodyflow" => "melodyflow",
         "stable-audio" => "stable-audio",
         "sa3" => "sa3",
         "carey" => "carey",
@@ -5898,6 +5901,7 @@ async fn download_model(
 
     if !python_exe.exists() {
         let label = match env_dir {
+            "melodyflow" => "Terry (MelodyFlow)",
             "stable-audio" => "Jerry (Stable Audio)",
             "sa3" => "SA3 (Stable Audio 3)",
             "carey" => "Carey (ACE-Step)",
@@ -5966,27 +5970,36 @@ async fn remove_model(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<ModelRemovalResult, String> {
-    if service_id != "carey" || !model_id.starts_with("carey::") {
-        return Err("Model removal is currently available only for Carey models.".to_string());
+    let is_carey_model = service_id == "carey" && model_id.starts_with("carey::");
+    let is_melodyflow_model = service_id == "melodyflow"
+        && model_id == model_manager::MELODYFLOW_MODEL_ID;
+    if !is_carey_model && !is_melodyflow_model {
+        return Err("This model is not available for managed removal.".to_string());
     }
+
+    let service_label = if is_carey_model { "Carey" } else { "Terry" };
 
     {
         let mgr = svc_mgr.lock().await;
-        if mgr.is_running("carey") {
-            return Err("Stop Carey before removing one of its models.".to_string());
+        if mgr.is_running(&service_id) {
+            return Err(format!("Stop {service_label} before removing its model."));
         }
-        if mgr.is_building("carey") {
-            return Err("Wait for the Carey environment build to finish first.".to_string());
+        if mgr.is_building(&service_id) {
+            return Err(format!(
+                "Wait for the {service_label} environment build to finish first."
+            ));
         }
     }
 
-    let training = read_carey_ace_lora_training_state();
-    if matches!(training.status.as_str(), "starting" | "running") {
-        return Err("Wait for Carey LoRA training to finish or cancel it first.".to_string());
-    }
-    let autolabel = read_sa3_autolabel_state();
-    if matches!(autolabel.status.as_str(), "starting" | "running") {
-        return Err("Wait for SA3 auto-labelling to finish or cancel it first.".to_string());
+    if is_carey_model {
+        let training = read_carey_ace_lora_training_state();
+        if matches!(training.status.as_str(), "starting" | "running") {
+            return Err("Wait for Carey LoRA training to finish or cancel it first.".to_string());
+        }
+        let autolabel = read_sa3_autolabel_state();
+        if matches!(autolabel.status.as_str(), "starting" | "running") {
+            return Err("Wait for SA3 auto-labelling to finish or cancel it first.".to_string());
+        }
     }
 
     {
@@ -5996,10 +6009,20 @@ async fn remove_model(
         }
     }
 
-    let checkpoint_root = repo_root.join("services").join("carey").join("checkpoints");
-    let model_path = model_manager::carey_component_path(&checkpoint_root, &model_id)?;
+    let (managed_root, model_path) = if is_carey_model {
+        let root = repo_root.join("services").join("carey").join("checkpoints");
+        let path = model_manager::carey_component_path(&root, &model_id)?;
+        (root, path)
+    } else {
+        let root = {
+            let mgr = model_mgr.lock().await;
+            mgr.hf_hub_cache_dir()
+        };
+        let path = root.join(format!("models--{}", model_id.replace('/', "--")));
+        (root, path)
+    };
     let removed_bytes = path_size(&model_path);
-    remove_managed_path(&model_path, &checkpoint_root)?;
+    remove_managed_path(&model_path, &managed_root)?;
 
     {
         let mut mgr = model_mgr.lock().await;
