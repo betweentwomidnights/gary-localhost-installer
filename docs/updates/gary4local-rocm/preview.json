@@ -1,14 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.7",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.7/gary4local-rocm_0.2.1-rocm.7_x64-setup.exe",
-    "sha256":  "da0ddec0c8a9e48508346fd2ca4782fc91f7500a72bfa319a55c0c56c3f29c8f",
-    "published_at":  "2026-08-12T13:19:19.5897824Z",
+    "latest_version":  "0.2.1-rocm.8",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.8/gary4local-rocm_0.2.1-rocm.8_x64-setup.exe",
+    "sha256":  "06d52f2a8ee9cec0901f4e524bef139a8d4523661b0a7266de73d52c4ece6dde",
+    "published_at":  "2026-08-13T04:34:22.6983121Z",
     "notes":  [
-                  "this one\u0027s for carey.",
-                  "rebuild the carey environment, download the shared models plus acestep-v15-base, and try one short regular/base generation without a LoRA. don\u0027t start with XL yet.",
-                  "if base generation works, you can also try SA3\u0027s auto-labeller; that additionally needs the acestep-5Hz-lm-1.7B caption model.",
-                  "Carey training and Carey LoRA inference are up next. you do not need a Carey LoRA for this test.",
-                  "send me the carey log if base generation doesn\u0027t finish - this is our first real AMD test of that inference stack."
+                  "we fixed the XL models UI, added UV cache cleanup in the storage UI, and hopefully fixed Lego, Complete, and Cover generation with Carey.",
+                  "rebuild the Carey environment after installing this update, then try those modes."
               ]
 }
