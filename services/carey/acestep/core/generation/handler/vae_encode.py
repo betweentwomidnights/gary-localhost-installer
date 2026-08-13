@@ -58,6 +58,13 @@ class VaeEncodeMixin:
             audio = audio.unsqueeze(0)
 
         batch_size, _channels, samples = audio.shape
+        encode_mode = "direct" if samples <= chunk_size else "tiled"
+        logger.info(
+            "[tiled_encode] "
+            f"audio_duration={samples / 48000:.2f}s, "
+            f"chunk_duration={chunk_size / 48000:.2f}s, "
+            f"overlap={overlap / 48000:.2f}s, mode={encode_mode}"
+        )
 
         if samples <= chunk_size:
             vae_input = audio.to(self.device).to(self.vae.dtype)

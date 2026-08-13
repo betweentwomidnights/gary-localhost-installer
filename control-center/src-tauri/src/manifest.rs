@@ -74,3 +74,27 @@ pub fn load_manifest(path: &Path) -> Result<Vec<ServiceDef>, String> {
 
     Ok(manifest.services)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Manifest;
+
+    #[test]
+    fn carey_rocm_profile_uses_fast_miopen_find_mode() {
+        let manifest: Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .expect("bundled service manifest should be valid JSON");
+
+        let carey = manifest
+            .services
+            .iter()
+            .find(|service| service.id == "carey")
+            .expect("bundled manifest should define Carey");
+
+        assert!(carey.accelerator_profile.contains("rocm"));
+        assert_eq!(
+            carey.env.get("MIOPEN_FIND_MODE").map(String::as_str),
+            Some("2")
+        );
+    }
+}

@@ -1200,7 +1200,14 @@ async def _run_generation(job: Job, req):
                 raw_audio_path = tmp.name
 
             job.duration = _probe_duration(raw_audio_path)
-            print(f"[wrapper] Audio duration: {job.duration}s, path: {raw_audio_path}", flush=True)
+            duration_context = ""
+            if job.task_type == "complete":
+                duration_context = f", requested final duration: {req.audio_duration}s"
+            print(
+                f"[wrapper] Source audio duration: {job.duration}s{duration_context}, "
+                f"path: {raw_audio_path}",
+                flush=True,
+            )
             if job.duration is None:
                 raise RuntimeError("Could not determine audio duration")
 
