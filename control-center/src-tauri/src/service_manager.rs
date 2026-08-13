@@ -140,11 +140,11 @@ impl ServiceManager {
     }
 
     fn hf_home_dir(&self) -> PathBuf {
-        crate::storage::hf_home_dir(&self.repo_root)
+        crate::storage::effective_hf_home_dir(&self.repo_root)
     }
 
     fn hf_hub_cache_dir(&self) -> PathBuf {
-        crate::storage::hf_hub_cache_dir(&self.repo_root)
+        crate::storage::effective_hf_hub_cache_dir(&self.repo_root)
     }
 
     fn python_exe(&self, svc: &ServiceDef) -> PathBuf {

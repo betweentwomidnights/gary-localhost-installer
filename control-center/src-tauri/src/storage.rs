@@ -75,6 +75,32 @@ pub fn hf_hub_cache_dir(runtime_root: &Path) -> PathBuf {
     hf_home_dir(runtime_root).join("hub")
 }
 
+fn user_cache_dir() -> PathBuf {
+    if let Some(path) = env_path("XDG_CACHE_HOME") {
+        return path;
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".cache")
+}
+
+pub fn effective_hf_home_dir(runtime_root: &Path) -> PathBuf {
+    if !paths_equivalent(runtime_root, &legacy_runtime_root()) {
+        return hf_home_dir(runtime_root);
+    }
+    env_path("HF_HOME").unwrap_or_else(|| user_cache_dir().join("huggingface"))
+}
+
+pub fn effective_hf_hub_cache_dir(runtime_root: &Path) -> PathBuf {
+    if !paths_equivalent(runtime_root, &legacy_runtime_root()) {
+        return hf_hub_cache_dir(runtime_root);
+    }
+    env_path("HF_HUB_CACHE")
+        .or_else(|| env_path("HUGGINGFACE_HUB_CACHE"))
+        .unwrap_or_else(|| effective_hf_home_dir(runtime_root).join("hub"))
+}
+
 pub fn torch_home_dir(runtime_root: &Path) -> PathBuf {
     models_dir(runtime_root).join("torch")
 }
@@ -104,22 +130,31 @@ pub fn runtime_env_vars(runtime_root: &Path) -> Vec<(String, String)> {
         .to_string();
     let pip_cache = pip_cache_dir(runtime_root).to_string_lossy().to_string();
 
-    vec![
+    let mut env = vec![
         ("GARY4LOCAL_RUNTIME_DIR".to_string(), runtime.clone()),
         ("GARY_RUNTIME".to_string(), runtime.clone()),
         ("GARY4LOCAL_MODELS_DIR".to_string(), models.clone()),
         ("MODELS_DIR".to_string(), models),
         ("GARY4LOCAL_CACHE_DIR".to_string(), cache.clone()),
-        ("XDG_CACHE_HOME".to_string(), cache),
-        ("HF_HOME".to_string(), hf_home),
-        ("HF_HUB_CACHE".to_string(), hf_hub.clone()),
-        ("HUGGINGFACE_HUB_CACHE".to_string(), hf_hub.clone()),
-        ("TRANSFORMERS_CACHE".to_string(), hf_hub),
-        ("TORCH_HOME".to_string(), torch_home),
         ("UV_CACHE_DIR".to_string(), uv_cache),
         ("UV_PYTHON_INSTALL_DIR".to_string(), uv_python),
         ("PIP_CACHE_DIR".to_string(), pip_cache),
-    ]
+    ];
+
+    // Existing installations historically used each library's standard user
+    // cache. Preserve that behavior until the user chooses a new runtime root.
+    if !paths_equivalent(runtime_root, &legacy_runtime_root()) {
+        env.extend([
+            ("XDG_CACHE_HOME".to_string(), cache),
+            ("HF_HOME".to_string(), hf_home),
+            ("HF_HUB_CACHE".to_string(), hf_hub.clone()),
+            ("HUGGINGFACE_HUB_CACHE".to_string(), hf_hub.clone()),
+            ("TRANSFORMERS_CACHE".to_string(), hf_hub),
+            ("TORCH_HOME".to_string(), torch_home),
+        ]);
+    }
+
+    env
 }
 
 pub fn set_active_runtime_root(path: &Path) {
@@ -350,5 +385,21 @@ mod tests {
         assert!(legacy_runtime_root()
             .to_string_lossy()
             .contains("Gary4JUCE"));
+    }
+
+    #[test]
+    fn legacy_runtime_preserves_external_model_cache_defaults() {
+        let env = runtime_env_vars(&legacy_runtime_root());
+        for key in [
+            "XDG_CACHE_HOME",
+            "HF_HOME",
+            "HF_HUB_CACHE",
+            "HUGGINGFACE_HUB_CACHE",
+            "TRANSFORMERS_CACHE",
+            "TORCH_HOME",
+        ] {
+            assert!(env.iter().all(|(name, _)| name != key), "unexpected {key}");
+        }
+        assert!(env.iter().any(|(name, _)| name == "UV_CACHE_DIR"));
     }
 }
