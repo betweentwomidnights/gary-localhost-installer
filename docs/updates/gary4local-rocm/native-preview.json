@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.8",
-    "notes":  "we fixed the XL models UI, added UV cache cleanup in the storage UI, and hopefully fixed Lego, Complete, and Cover generation with Carey.\nrebuild the Carey environment after installing this update, then try those modes.",
-    "pub_date":  "2026-08-13T04:34:22.6983121Z",
+    "version":  "0.2.1-rocm.9",
+    "notes":  "carey should stop hammering your GPU while it prepares Complete and Cover audio now.\nit also downloads only the ACE-Step model pieces each task actually needs.",
+    "pub_date":  "2026-08-13T05:40:53.7497730Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtVY3pKS1Y4WmVHQUlZZGw0TEl2bVlpWDJNWWtOWU04T2QvY21GQWVEYUhlU3hUcGZWUFBuWTFZSGFIeHM2dmRaYXhLcHhod2Z6WDJzRUUxR0g5RFE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTk1NTg3CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uOF94NjQtc2V0dXAuZXhlCk5rU0h1WUJiaXYrb01UMnNVeHFKV0IyUmIvSkNNN1E5am44eTNXMHJqdEx6OVJMejYxRjhNQ2JBZWtYa0dPTTlLRUE0Z2ZjRTYwSWJ6Y1VhR3BTWENBPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.8/gary4local-rocm_0.2.1-rocm.8_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEQyN05pVlZtbm84R1NFaG14SkFCSlBGa3B1ZzZvcUxjVXc4ZkdGdW1GVVhIYXI2NlhobEFZQUlUcFdteU1DRUQ3amthM09yN1hOaTVuQVFZclVURUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTk5NjE5CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uOV94NjQtc2V0dXAuZXhlClVrZHBoS3VVa211RzhsVjhyUC9MNDNYYmdIbmYrSE1uaWcrVHVHYURwSFN4bEJJZUVKVjNFSjV0RVR2K2xPU1NUOGtUZXpXOVYvNWI3TnpiSndZOUNnPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.9/gary4local-rocm_0.2.1-rocm.9_x64-setup.exe"
                                          }
                   }
 }

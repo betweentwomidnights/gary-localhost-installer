@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.8",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.8/gary4local-rocm_0.2.1-rocm.8_x64-setup.exe",
-    "sha256":  "06d52f2a8ee9cec0901f4e524bef139a8d4523661b0a7266de73d52c4ece6dde",
-    "published_at":  "2026-08-13T04:34:22.6983121Z",
+    "latest_version":  "0.2.1-rocm.9",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.9/gary4local-rocm_0.2.1-rocm.9_x64-setup.exe",
+    "sha256":  "abc5938aae530bca2667d000351c10d72cf0201d94c2b31efdb4413e50c42054",
+    "published_at":  "2026-08-13T05:40:53.7497730Z",
     "notes":  [
-                  "we fixed the XL models UI, added UV cache cleanup in the storage UI, and hopefully fixed Lego, Complete, and Cover generation with Carey.",
-                  "rebuild the Carey environment after installing this update, then try those modes."
+                  "carey should stop hammering your GPU while it prepares Complete and Cover audio now.",
+                  "it also downloads only the ACE-Step model pieces each task actually needs."
               ]
 }
