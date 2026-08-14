@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.14",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.14/gary4local-rocm_0.2.1-rocm.14_x64-setup.exe",
-    "sha256":  "4c2d85458f40a6c4d495322bad69a95505a9426873992fadc0a5e6319fb53c6a",
-    "published_at":  "2026-08-14T02:31:12.5519676Z",
+    "latest_version":  "0.2.1-rocm.15",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.15/gary4local-rocm_0.2.1-rocm.15_x64-setup.exe",
+    "sha256":  "56b7b6b6b140fafdaa81903e99dd5ba60031ab31b0001164d2aa86df11ce80ab",
+    "published_at":  "2026-08-14T06:05:45.9493296Z",
     "notes":  [
-                  "carey training now keeps xl-base selected all the way through captioning, preprocessing, and training.",
-                  "flac files no longer require torchcodec, so try the same file again with dora."
+                  "jerry and foundation-1 now have their first Windows ROCm builds.",
+                  "after updating, rebuild both environments before testing."
               ]
 }

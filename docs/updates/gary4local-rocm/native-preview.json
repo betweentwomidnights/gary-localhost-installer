@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.14",
-    "notes":  "carey training now keeps xl-base selected all the way through captioning, preprocessing, and training.\nflac files no longer require torchcodec, so try the same file again with dora.",
-    "pub_date":  "2026-08-14T02:31:12.5519676Z",
+    "version":  "0.2.1-rocm.15",
+    "notes":  "jerry and foundation-1 now have their first Windows ROCm builds.\nafter updating, rebuild both environments before testing.",
+    "pub_date":  "2026-08-14T06:05:45.9493296Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1TTkx5ZmVTRDZkbXpOeEtKVmVvWTE2TVF3dG5LSHl5b294K2h6UzFGQWhEU3FQZHBNcTV3Y05zTWpBc1c1UEVQQ2pUcDRkaFNMZ2hGUzVlOFVhVmd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Njc0NjIzCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTRfeDY0LXNldHVwLmV4ZQpvWXlpUHZIUmV4ZE93dGxhcmttT1hORWt3UVo0NFYwczZXVkVqb1pzQmRDK2x3ZzROUUtlcExjSFpZcG9venZacEZxbE9KRWV4R2t5elQyTWR1ZDFEZz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.14/gary4local-rocm_0.2.1-rocm.14_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEZnc1hkRHVXekM0YTR6aVdldzhISTgyS1pYVks1WTlXSzFNNXBBVmZGeWY3cngwMmlobmFwOWYzcjdNUGtxUFhFaWJuYlRCdTA2MklwY25XSWtBT3djPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Njg3NDQxCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTVfeDY0LXNldHVwLmV4ZQoycjBPU0NVeVdydnVSWm9wZWQ1NFpsd3BNWFdHNU9VVWZ0UlZaRVNsK2FHZWhnaFFoODMrSkhyUnBXNU82d28vd051T0lpM1ZtUEdQQUtvODN5ZXpCQT09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.15/gary4local-rocm_0.2.1-rocm.15_x64-setup.exe"
                                          }
                   }
 }
