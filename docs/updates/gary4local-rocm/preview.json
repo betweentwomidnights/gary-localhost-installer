@@ -1,10 +1,10 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.11",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.11/gary4local-rocm_0.2.1-rocm.11_x64-setup.exe",
-    "sha256":  "135b6f9ab0141ab7fbe742162c4465955013181848bda5726ad8e77afb1c28eb",
-    "published_at":  "2026-08-14T00:01:34.2189598Z",
+    "latest_version":  "0.2.1-rocm.12",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.12/gary4local-rocm_0.2.1-rocm.12_x64-setup.exe",
+    "sha256":  "45fc5b668d67842d8f59aed2634c8b7d48f2d583c700d346af0ab351064766ad",
+    "published_at":  "2026-08-14T01:14:11.1938606Z",
     "notes":  [
-                  "fixed the bug in the training UI for checking that xl-base was downloaded or not"
+                  "all file pickers should remember the last location you picked now...fingers crossed"
               ]
 }

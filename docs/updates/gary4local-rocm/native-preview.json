@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.11",
-    "notes":  "fixed the bug in the training UI for checking that xl-base was downloaded or not",
-    "pub_date":  "2026-08-14T00:01:34.2189598Z",
+    "version":  "0.2.1-rocm.12",
+    "notes":  "all file pickers should remember the last location you picked now...fingers crossed",
+    "pub_date":  "2026-08-14T01:14:11.1938606Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFBPU2g1T2JpejJ2b1pBN0g3OVBUYk85VHZCWjhVTmcrbG8yNjAzU0tCclZCS3AyNi9HVW05QnlYcnlVdS85RVlWcXlKbENKOFVqY2JXOUxCdFZjS2dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjY1NjE4CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTFfeDY0LXNldHVwLmV4ZQphbEpMQWVHVHlXdHJIK2plVEJLaUtEeGJnNlk0dmE5dWdxSjFuenkvTnFkbmIyL3pNVHQ1R0xCOGRpNkJOY1JBYUowL3JwZytqRnpaREU4bmNSdTZBQT09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.11/gary4local-rocm_0.2.1-rocm.11_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVmK0tJS3BJVEUzVDh0QjlRT3N6dnM1N0x3UU9FczRqdFh3a09UL05SenBIaWRXQ1lGb09zUkF6b080SlI4N0V6VDVsTGdSbGNRRW80MUR4Qit6TVFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjcwMDE0CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTJfeDY0LXNldHVwLmV4ZQp5bE5jSFFuL29EZk5MMzh3c1hudGlRWlNCeHZwNkN6cDNJTzBGaHhDeDZad2xERkxZSUZhUU9TL0ttdjlZa2JucUJDNEtBSWlHNlprdlVjMStYaW9BQT09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.12/gary4local-rocm_0.2.1-rocm.12_x64-setup.exe"
                                          }
                   }
 }
