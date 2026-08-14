@@ -59,6 +59,7 @@
   let building = $state(false);
   let switchingName = $state<string | null>(null);
   let deletingName = $state<string | null>(null);
+  let deletingCheckpoint = $state<string | null>(null);
   let checkpointSelections = $state<Record<string, string>>({});
   let message: string | null = $state(null);
   let error: string | null = $state(null);
@@ -209,6 +210,36 @@
       error = describeError(e);
     } finally {
       switchingName = null;
+    }
+  }
+
+  async function deleteCheckpoint(entry: CareyLoraEntry) {
+    const checkpointId = selectedCheckpointId(entry);
+    const checkpoint = entry.trainingCheckpoints.find((item) => item.id === checkpointId);
+    if (!checkpoint) return;
+    const confirmed = window.confirm(
+      `Permanently delete ${checkpoint.label} from '${entry.name}'?\n\n` +
+      `The active adapter, captions, and other checkpoints will be kept.`
+    );
+    if (!confirmed) return;
+
+    deletingCheckpoint = `${entry.name}:${checkpointId}`;
+    error = null;
+    message = null;
+    buildOutput = null;
+    try {
+      loraState = await invoke<CareyLoraState>("delete_carey_training_checkpoint", {
+        name: entry.name,
+        checkpointId,
+      });
+      const remainingSelections = { ...checkpointSelections };
+      delete remainingSelections[entry.name];
+      checkpointSelections = remainingSelections;
+      message = `deleted ${checkpoint.label} from ${entry.name}`;
+    } catch (e) {
+      error = describeError(e);
+    } finally {
+      deletingCheckpoint = null;
     }
   }
 
@@ -392,14 +423,14 @@
                   <button
                     class="danger"
                     onclick={() => removeLora(entry.name)}
-                    disabled={switchingName === entry.name || deletingName === entry.name}
+                    disabled={switchingName === entry.name || deletingName === entry.name || deletingCheckpoint?.startsWith(`${entry.name}:`)}
                   >remove</button>
                   {#if entry.trainingJobId}
                     <button
                       class="danger delete-files"
                       onclick={() => deleteTrainedLora(entry)}
-                      disabled={switchingName === entry.name || deletingName === entry.name}
-                    >{deletingName === entry.name ? "deleting..." : "delete files"}</button>
+                      disabled={switchingName === entry.name || deletingName === entry.name || deletingCheckpoint?.startsWith(`${entry.name}:`)}
+                    >{deletingName === entry.name ? "deleting..." : "delete training run"}</button>
                   {/if}
                 </div>
               </div>
@@ -430,10 +461,16 @@
                         type="button"
                         class="checkpoint-action"
                         onclick={() => activateCheckpoint(entry)}
-                        disabled={switchingName === entry.name || selectedCheckpointId(entry) === entry.selectedTrainingCheckpoint}
+                        disabled={switchingName === entry.name || deletingCheckpoint?.startsWith(`${entry.name}:`) || selectedCheckpointId(entry) === entry.selectedTrainingCheckpoint}
                       >{switchingName === entry.name ? "switching..." : "use checkpoint"}</button>
+                      <button
+                        type="button"
+                        class="checkpoint-action danger"
+                        onclick={() => deleteCheckpoint(entry)}
+                        disabled={switchingName === entry.name || deletingCheckpoint?.startsWith(`${entry.name}:`) || selectedCheckpointId(entry) === entry.selectedTrainingCheckpoint}
+                      >{deletingCheckpoint === `${entry.name}:${selectedCheckpointId(entry)}` ? "deleting..." : "delete checkpoint"}</button>
                     </div>
-                    <div class="note">switching keeps this LoRA name and caption pool unchanged.</div>
+                    <div class="note">switching or deleting an older checkpoint keeps this LoRA name and caption pool unchanged.</div>
                   {/if}
                 </div>
               {/if}
@@ -712,7 +749,7 @@
 
   .checkpoint-row {
     display: grid;
-    grid-template-columns: minmax(220px, 280px) auto;
+    grid-template-columns: minmax(220px, 280px) auto auto;
     justify-content: start;
     gap: 8px;
     align-items: end;

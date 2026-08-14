@@ -4184,6 +4184,7 @@ pub fn run() {
             activate_carey_lora_checkpoint,
             remove_carey_lora,
             delete_carey_trained_lora,
+            delete_carey_training_checkpoint,
             build_carey_lora_captions,
             get_carey_ace_dataset_sidecars,
             save_carey_ace_dataset_sidecars,
@@ -5191,6 +5192,106 @@ async fn delete_carey_trained_lora(
     Ok(state)
 }
 
+fn delete_carey_training_checkpoint_from_catalog(
+    catalog: &mut BTreeMap<String, CareyLoraCatalogEntry>,
+    name: &str,
+    checkpoint_id: &str,
+    managed_root: &Path,
+) -> Result<String, String> {
+    let entry = catalog
+        .get_mut(name)
+        .ok_or_else(|| format!("LoRA '{}' is not registered", name))?;
+    if entry.training_job_id.is_none() {
+        return Err(format!(
+            "LoRA '{}' was not created by Gary's Carey trainer",
+            name
+        ));
+    }
+
+    let checkpoint = entry
+        .training_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.id == checkpoint_id)
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "Training checkpoint '{}' is not registered for LoRA '{}'",
+                checkpoint_id, name
+            )
+        })?;
+    let checkpoint_path = PathBuf::from(&checkpoint.path);
+    let active_path = PathBuf::from(&entry.path);
+    let points_to_active_adapter = entry.selected_training_checkpoint.as_deref()
+        == Some(checkpoint_id)
+        || match (checkpoint_path.canonicalize(), active_path.canonicalize()) {
+            (Ok(checkpoint), Ok(active)) => checkpoint == active,
+            _ => checkpoint_path == active_path,
+        };
+    if points_to_active_adapter {
+        return Err(format!(
+            "'{}' is the active checkpoint for '{}'. Switch to another checkpoint before deleting it.",
+            checkpoint.label, name
+        ));
+    }
+
+    resolve_managed_path(&checkpoint_path, managed_root)?;
+    remove_managed_path(&checkpoint_path, managed_root)?;
+    entry
+        .training_checkpoints
+        .retain(|candidate| candidate.id != checkpoint_id);
+    Ok(checkpoint.label)
+}
+
+#[tauri::command]
+async fn delete_carey_training_checkpoint(
+    name: String,
+    checkpoint_id: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<CareyLoraState, String> {
+    let normalized_name =
+        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+    let checkpoint_id = checkpoint_id.trim();
+    if checkpoint_id.is_empty() {
+        return Err("Choose a training checkpoint to delete".to_string());
+    }
+
+    let mut catalog = read_carey_lora_catalog()?;
+    let job_id = catalog
+        .get(&normalized_name)
+        .and_then(|entry| entry.training_job_id.clone())
+        .ok_or_else(|| {
+            format!(
+                "LoRA '{}' was not created by Gary's Carey trainer",
+                normalized_name
+            )
+        })?;
+    let current_state = read_carey_ace_lora_training_state();
+    if current_state.job_id.as_deref() == Some(&job_id)
+        && matches!(current_state.status.as_str(), "starting" | "running")
+    {
+        return Err(format!(
+            "Cannot delete checkpoints while '{}' is training",
+            normalized_name
+        ));
+    }
+
+    let managed_root = carey_runtime_dir();
+    if !managed_root.exists() {
+        return Err(format!(
+            "Gary's Carey runtime storage is missing at {}",
+            managed_root.display()
+        ));
+    }
+    delete_carey_training_checkpoint_from_catalog(
+        &mut catalog,
+        &normalized_name,
+        checkpoint_id,
+        &managed_root,
+    )?;
+    save_carey_lora_catalog(&catalog)?;
+    build_carey_lora_state(repo_root.inner())
+}
+
 #[tauri::command]
 async fn build_carey_lora_captions(
     repo_root: tauri::State<'_, std::path::PathBuf>,
@@ -6020,7 +6121,11 @@ fn remove_managed_path(path: &Path, managed_root: &Path) -> Result<bool, String>
 
 #[cfg(test)]
 mod carey_lora_catalog_tests {
-    use super::{infer_carey_training_metadata, CareyLoraCatalogEntry};
+    use super::{
+        delete_carey_training_checkpoint_from_catalog, infer_carey_training_metadata,
+        CareyLoraCatalogEntry, CareyTrainingCheckpoint,
+    };
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     fn write_adapter(path: &Path) {
@@ -6072,6 +6177,63 @@ mod carey_lora_catalog_tests {
         assert_eq!(trained.training_checkpoints.len(), 3);
         assert!(manual.training_job_id.is_none());
         assert!(manual.training_checkpoints.is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn deletes_only_inactive_registered_training_checkpoints() {
+        let root = test_root();
+        let output = root
+            .join("training")
+            .join("jobs")
+            .join("my-job")
+            .join("output");
+        let epoch = output.join("checkpoints").join("epoch_2");
+        let final_checkpoint = output.join("final");
+        write_adapter(&epoch);
+        write_adapter(&final_checkpoint);
+
+        let mut catalog = BTreeMap::from([(
+            "test".to_string(),
+            CareyLoraCatalogEntry {
+                path: final_checkpoint.to_string_lossy().to_string(),
+                captions_path: None,
+                scale: 1.0,
+                backends: vec!["base".to_string(), "turbo".to_string()],
+                model_family: "standard".to_string(),
+                training_job_id: Some("my-job".to_string()),
+                training_checkpoints: vec![
+                    CareyTrainingCheckpoint {
+                        id: "epoch-2".to_string(),
+                        label: "epoch 2".to_string(),
+                        epoch: Some(2),
+                        path: epoch.to_string_lossy().to_string(),
+                    },
+                    CareyTrainingCheckpoint {
+                        id: "final".to_string(),
+                        label: "final epoch".to_string(),
+                        epoch: None,
+                        path: final_checkpoint.to_string_lossy().to_string(),
+                    },
+                ],
+                selected_training_checkpoint: Some("final".to_string()),
+            },
+        )]);
+
+        let deleted =
+            delete_carey_training_checkpoint_from_catalog(&mut catalog, "test", "epoch-2", &root)
+                .unwrap();
+        assert_eq!(deleted, "epoch 2");
+        assert!(!epoch.exists());
+        assert!(final_checkpoint.exists());
+        assert_eq!(catalog["test"].training_checkpoints.len(), 1);
+
+        let error =
+            delete_carey_training_checkpoint_from_catalog(&mut catalog, "test", "final", &root)
+                .unwrap_err();
+        assert!(error.contains("active checkpoint"));
+        assert!(final_checkpoint.exists());
+
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

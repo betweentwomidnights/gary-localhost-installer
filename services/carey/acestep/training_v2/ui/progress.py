@@ -429,7 +429,8 @@ def _process_structured(update: TrainingUpdate, stats: TrainingStats) -> None:
     """Extract stats from a TrainingUpdate."""
     stats.current_step = update.step
     stats.last_loss = update.loss
-    stats.current_epoch = update.epoch
+    if update.epoch > 0:
+        stats.current_epoch = max(stats.current_epoch, update.epoch)
     if update.max_epochs > 0:
         stats.max_epochs = update.max_epochs
     if update.lr >= 0 and update.kind == "step":
