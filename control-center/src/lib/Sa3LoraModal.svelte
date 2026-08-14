@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
 
   interface Sa3LoraEntry {
     name: string;
@@ -115,9 +116,11 @@
     const selected = await openDialog({
       directory: false,
       multiple: false,
+      defaultPath: rememberedDialogDirectory("sa3-lora-checkpoint"),
       filters: [{ name: "SA3 LoRA", extensions: ["ckpt", "safetensors"] }],
     });
     if (typeof selected !== "string") return;
+    rememberDialogSelection("sa3-lora-checkpoint", selected, "file");
     checkpointPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);
@@ -125,8 +128,13 @@
   }
 
   async function pickPromptsFolder() {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory("sa3-lora-prompts"),
+    });
     if (typeof selected !== "string") return;
+    rememberDialogSelection("sa3-lora-prompts", selected, "directory");
     promptsPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);

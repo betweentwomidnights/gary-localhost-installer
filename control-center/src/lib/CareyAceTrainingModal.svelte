@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import CareyAceDatasetSidecarModal from "./CareyAceDatasetSidecarModal.svelte";
+  import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
 
   interface CareyAceTrainingState {
     jobId: string | null;
@@ -182,8 +183,13 @@
   }
 
   async function pickDatasetFolder() {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory("carey-training-dataset"),
+    });
     if (typeof selected !== "string") return;
+    rememberDialogSelection("carey-training-dataset", selected, "directory");
     datasetPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);
