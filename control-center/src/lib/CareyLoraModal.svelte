@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
 
   interface CareyLoraEntry {
     name: string;
@@ -115,8 +116,13 @@
   }
 
   async function pickCheckpointFolder() {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory("carey-lora-checkpoint"),
+    });
     if (typeof selected !== "string") return;
+    rememberDialogSelection("carey-lora-checkpoint", selected, "directory");
     checkpointPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);
@@ -127,8 +133,13 @@
   }
 
   async function pickCaptionsFolder() {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory("carey-lora-captions"),
+    });
     if (typeof selected !== "string") return;
+    rememberDialogSelection("carey-lora-captions", selected, "directory");
     captionsPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);
