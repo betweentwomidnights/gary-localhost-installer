@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "gary4local-rocm",
-  "version": "0.2.1-rocm.12",
+  "version": "0.2.1-rocm.13",
   "identifier": "com.betweentwomidnights.gary4local.rocm",
   "build": {
     "frontendDist": "../dist",
