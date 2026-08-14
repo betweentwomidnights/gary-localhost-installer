@@ -12,6 +12,7 @@
     group: string | null;
     epoch: number | null;
     status: "available" | "downloading" | "downloaded" | "failed";
+    downloaded_bytes: number | null;
   }
 
   interface DownloadProgress {
@@ -189,6 +190,9 @@
   );
 
   let downloadedCount = $derived(serviceModels.filter((m) => m.status === "downloaded").length);
+  let downloadedBytes = $derived(
+    serviceModels.reduce((total, model) => total + (model.downloaded_bytes ?? 0), 0)
+  );
   let activeDownloads = $derived(serviceModels.filter((m) => m.status === "downloading").length);
 
   function getProgress(modelId: string): DownloadProgress | undefined {
@@ -229,6 +233,9 @@
     <div class="header-info">
       <h2>{serviceLabel} models</h2>
       <span class="count">{downloadedCount}/{serviceModels.length} downloaded</span>
+      {#if downloadedBytes > 0}
+        <span class="count">{formatBytes(downloadedBytes)} on disk</span>
+      {/if}
       {#if activeDownloads > 0}
         <span class="active-badge">{activeDownloads} downloading</span>
       {/if}
@@ -262,6 +269,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
               {#if prog?.error}
                 <span class="download-error">{prog.error}</span>
               {/if}
@@ -316,6 +326,9 @@
               <div class="model-info">
                 <span class="model-name">{model.display_name}</span>
                 <span class="model-path">{model.group || ""}</span>
+                {#if model.status === "downloaded" && model.downloaded_bytes}
+                  <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+                {/if}
                 {#if prog?.error}
                   <span class="download-error">{prog.error}</span>
                 {/if}
@@ -362,6 +375,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
               {#if prog?.error}
                 <span class="download-error">{prog.error}</span>
               {/if}
@@ -402,6 +418,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id.replace("carey::", "")}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
               {#if prog?.error}
                 <span class="download-error">{prog.error}</span>
               {/if}
@@ -446,6 +465,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id.replace("carey::", "")}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
               {#if prog?.error}
                 <span class="download-error">{prog.error}</span>
               {/if}
@@ -493,6 +515,9 @@
             <div class="model-info">
               <span class="model-name">{model.display_name}</span>
               <span class="model-path">{model.id.replace("carey::", "")}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
               {#if prog?.error}
                 <span class="download-error">{prog.error}</span>
               {/if}
@@ -544,6 +569,9 @@
                   <div class="model-info">
                     <span class="model-name">{model.display_name}</span>
                     <span class="model-path">{model.id}</span>
+                    {#if model.status === "downloaded" && model.downloaded_bytes}
+                      <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+                    {/if}
                     {#if prog?.error}
                       <span class="download-error">{prog.error}</span>
                     {/if}
@@ -591,6 +619,9 @@
                 <div class="model-info">
                   <span class="model-name">{model.display_name}</span>
                   <span class="model-path">{model.id}</span>
+                  {#if model.status === "downloaded" && model.downloaded_bytes}
+                    <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+                  {/if}
                   {#if prog?.error}
                     <span class="download-error">{prog.error}</span>
                   {/if}
@@ -789,6 +820,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .model-size {
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
   }
 
   .dl-btn {
