@@ -1,11 +1,10 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.10",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.10/gary4local-rocm_0.2.1-rocm.10_x64-setup.exe",
-    "sha256":  "99769a8428cb71eaf5cb6f846cfd7e2c14b5fffe305a2989c0cd6a34bee825b0",
-    "published_at":  "2026-08-13T08:16:58.8064529Z",
+    "latest_version":  "0.2.1-rocm.11",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.11/gary4local-rocm_0.2.1-rocm.11_x64-setup.exe",
+    "sha256":  "135b6f9ab0141ab7fbe742162c4465955013181848bda5726ad8e77afb1c28eb",
+    "published_at":  "2026-08-14T00:01:34.2189598Z",
     "notes":  [
-                  "first, pick your 4B captioner and run caption / prepare on a small audio folder.",
-                  "if that works, try five epochs of Carey training. save every 5 will test the checkpoint too."
+                  "fixed the bug in the training UI for checking that xl-base was downloaded or not"
               ]
 }

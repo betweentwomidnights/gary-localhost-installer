@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.10",
-    "notes":  "first, pick your 4B captioner and run caption / prepare on a small audio folder.\nif that works, try five epochs of Carey training. save every 5 will test the checkpoint too.",
-    "pub_date":  "2026-08-13T08:16:58.8064529Z",
+    "version":  "0.2.1-rocm.11",
+    "notes":  "fixed the bug in the training UI for checking that xl-base was downloaded or not",
+    "pub_date":  "2026-08-14T00:01:34.2189598Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtSVDAxc1dJTXNrSGFIQXQxM2VWVnQ5M1ZJb3Y0enlTUExDS1E5KzdKK1NWcklVb1NDYnJjTVd3SGdScmtjSVl3ZUlvSHFSbzEvRUxlVHlWdUlwK1FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjA4OTIzCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTBfeDY0LXNldHVwLmV4ZQpybmtPbmdJQzQ0aEx6Zk5HVW5DdlUxZHJWTVVaMU8xeWhlcG81VkUrWWtiQkk2aFpvbUQyY1RuVk5WSUtBZnZQbzhpOTJJSlM0OENIakxWOFF6UWpEdz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.10/gary4local-rocm_0.2.1-rocm.10_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFBPU2g1T2JpejJ2b1pBN0g3OVBUYk85VHZCWjhVTmcrbG8yNjAzU0tCclZCS3AyNi9HVW05QnlYcnlVdS85RVlWcXlKbENKOFVqY2JXOUxCdFZjS2dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjY1NjE4CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTFfeDY0LXNldHVwLmV4ZQphbEpMQWVHVHlXdHJIK2plVEJLaUtEeGJnNlk0dmE5dWdxSjFuenkvTnFkbmIyL3pNVHQ1R0xCOGRpNkJOY1JBYUowL3JwZytqRnpaREU4bmNSdTZBQT09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.11/gary4local-rocm_0.2.1-rocm.11_x64-setup.exe"
                                          }
                   }
 }
