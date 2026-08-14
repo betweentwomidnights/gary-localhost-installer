@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -93,9 +94,19 @@ def slugify(raw: str) -> str:
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.replace(temp_path, path)
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        for attempt in range(6):
+            try:
+                os.replace(temp_path, path)
+                return
+            except PermissionError:
+                if os.name != "nt" or attempt == 5:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -120,10 +131,9 @@ def update_status(args: argparse.Namespace, **updates: Any) -> None:
     )
     payload.update(updates)
     write_json(args.status_path, payload)
-    write_json(
-        args.current_job_path,
-        {"jobId": args.job_id, "statusPath": str(args.status_path)},
-    )
+    current_job = {"jobId": args.job_id, "statusPath": str(args.status_path)}
+    if read_json(args.current_job_path, {}) != current_job:
+        write_json(args.current_job_path, current_job)
 
 
 def cancel_requested(args: argparse.Namespace) -> bool:

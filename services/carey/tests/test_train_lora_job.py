@@ -14,6 +14,7 @@ sys.path.insert(0, str(CAREY_DIR))
 
 import train_lora_job  # noqa: E402
 import train as carey_train  # noqa: E402
+from acestep.training_v2.model_loader import _resolve_silence_latent_path  # noqa: E402
 
 
 def make_args(root: Path) -> argparse.Namespace:
@@ -40,6 +41,50 @@ def make_args(root: Path) -> argparse.Namespace:
 
 
 class TrainLoraJobTests(unittest.TestCase):
+    def test_xl_literal_variant_resolves_its_own_silence_latent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            checkpoints = Path(temp)
+            regular = checkpoints / "acestep-v15-base"
+            xl = checkpoints / "acestep-v15-xl-base"
+            regular.mkdir()
+            xl.mkdir()
+            (regular / "silence_latent.pt").write_bytes(b"regular")
+            (xl / "silence_latent.pt").write_bytes(b"xl")
+
+            resolved = _resolve_silence_latent_path(
+                checkpoints, "acestep-v15-xl-base"
+            )
+
+            self.assertEqual(resolved, xl / "silence_latent.pt")
+
+    def test_status_update_does_not_rewrite_unchanged_current_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            args = argparse.Namespace(
+                job_id="test-job",
+                name="test",
+                run_dir=root / "run",
+                log_path=root / "test.log",
+                cancel_path=root / "cancel.requested",
+                status_path=root / "run" / "status.json",
+                current_job_path=root / "current_job.json",
+            )
+            current_job = {
+                "jobId": args.job_id,
+                "statusPath": str(args.status_path),
+            }
+            train_lora_job.write_json(args.current_job_path, current_job)
+
+            with patch.object(
+                train_lora_job,
+                "write_json",
+                wraps=train_lora_job.write_json,
+            ) as writer:
+                train_lora_job.update_status(args, status="running")
+
+            self.assertEqual(writer.call_count, 1)
+            self.assertEqual(writer.call_args.args[0], args.status_path)
+
     def test_collect_training_checkpoints_records_complete_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "output"
