@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import Sa3DatasetSidecarModal from "./Sa3DatasetSidecarModal.svelte";
+  import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
 
   interface Sa3LoraTrainingState {
     jobId: string | null;
@@ -221,8 +222,13 @@
   }
 
   async function pickDatasetFolder() {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory("sa3-training-dataset"),
+    });
     if (typeof selected !== "string") return;
+    rememberDialogSelection("sa3-training-dataset", selected, "directory");
     datasetPath = selected;
     if (!formName.trim()) {
       formName = suggestName(selected);
