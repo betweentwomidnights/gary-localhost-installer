@@ -1,10 +1,10 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.12",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.12/gary4local-rocm_0.2.1-rocm.12_x64-setup.exe",
-    "sha256":  "45fc5b668d67842d8f59aed2634c8b7d48f2d583c700d346af0ab351064766ad",
-    "published_at":  "2026-08-14T01:14:11.1938606Z",
+    "latest_version":  "0.2.1-rocm.13",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.13/gary4local-rocm_0.2.1-rocm.13_x64-setup.exe",
+    "sha256":  "c2efdda15e3b0d05ebfa91e4f59e2eedd9c2f5d1be597f3d635a7dfd54339b05",
+    "published_at":  "2026-08-14T01:45:17.4670478Z",
     "notes":  [
-                  "all file pickers should remember the last location you picked now...fingers crossed"
+                  "xl-base training should now find the right silence latent and make it past preprocessing"
               ]
 }
