@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.13",
-    "notes":  "xl-base training should now find the right silence latent and make it past preprocessing",
-    "pub_date":  "2026-08-14T01:45:17.4670478Z",
+    "version":  "0.2.1-rocm.14",
+    "notes":  "carey training now keeps xl-base selected all the way through captioning, preprocessing, and training.\nflac files no longer require torchcodec, so try the same file again with dora.",
+    "pub_date":  "2026-08-14T02:31:12.5519676Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEJZSVV5Q24yTTA3Y3l2ZGcwamJjWTl1TUtJTGp1SlB6Y2dGZjMwdVkzY2Q1NmhLbGJXVzczYWQxUDBJWlYwMExYUlNscnRIWDlRTW9tdk1ZVnhoSFFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjcxODU2CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTNfeDY0LXNldHVwLmV4ZQpsMDVIVWhZWUpwWWhEN3RyR3QxbkgxdnpSbisrZUk1Z0g1YVAyVmJvaU9kcFJWVzFQb25TYmJJcjBlTmxiRW9GTmdoYi9BRnp1d1Q3anlpd3FHT2xDUT09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.13/gary4local-rocm_0.2.1-rocm.13_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1TTkx5ZmVTRDZkbXpOeEtKVmVvWTE2TVF3dG5LSHl5b294K2h6UzFGQWhEU3FQZHBNcTV3Y05zTWpBc1c1UEVQQ2pUcDRkaFNMZ2hGUzVlOFVhVmd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Njc0NjIzCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTRfeDY0LXNldHVwLmV4ZQpvWXlpUHZIUmV4ZE93dGxhcmttT1hORWt3UVo0NFYwczZXVkVqb1pzQmRDK2x3ZzROUUtlcExjSFpZcG9venZacEZxbE9KRWV4R2t5elQyTWR1ZDFEZz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.14/gary4local-rocm_0.2.1-rocm.14_x64-setup.exe"
                                          }
                   }
 }
