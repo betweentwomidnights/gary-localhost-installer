@@ -19,7 +19,7 @@ from acestep.training_v2.model_loader import _resolve_silence_latent_path  # noq
 
 def make_args(root: Path) -> argparse.Namespace:
     return argparse.Namespace(
-        model="base",
+        model="acestep-v15-base",
         checkpoint_dir=root / "checkpoints",
         max_duration=240.0,
         rank=64,
@@ -114,7 +114,10 @@ class TrainLoraJobTests(unittest.TestCase):
             checkpoint.mkdir()
             registry_path = root / "lora_registry.json"
 
-            for model, expected_family in (("base", "standard"), ("xl-base", "xl")):
+            for model, expected_family in (
+                ("acestep-v15-base", "standard"),
+                ("acestep-v15-xl-base", "xl"),
+            ):
                 args = make_args(root)
                 args.model = model
                 args.name = f"test-{expected_family}"
@@ -204,6 +207,31 @@ class TrainLoraJobTests(unittest.TestCase):
                 required,
             )
 
+    def test_xl_checkpoint_preflight_never_requires_standard_base(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            args = make_args(Path(temp))
+            args.model = "acestep-v15-xl-base"
+
+            required = train_lora_job.required_model_checkpoint_files(args)
+            relative = [path.relative_to(args.checkpoint_dir) for path in required]
+
+            self.assertIn(
+                Path("acestep-v15-xl-base/model.safetensors.index.json"), relative
+            )
+            self.assertIn(Path("acestep-v15-xl-base/silence_latent.pt"), relative)
+            self.assertFalse(
+                any(path.parts[0] == "acestep-v15-base" for path in relative)
+            )
+
+    def test_legacy_training_model_aliases_normalize_to_exact_ids(self) -> None:
+        self.assertEqual(
+            train_lora_job.normalize_training_model("xl-base"),
+            "acestep-v15-xl-base",
+        )
+        self.assertEqual(
+            train_lora_job.normalize_training_model("base"), "acestep-v15-base"
+        )
+
     def test_run_step_surfaces_trainer_failure_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             output_dir = Path(temp)
@@ -286,6 +314,33 @@ class TrainLoraJobTests(unittest.TestCase):
             self.assertEqual(train[train.index("--save-best-after") + 1], "25")
             self.assertEqual(train[train.index("--loss-weighting") + 1], "min_snr")
             self.assertEqual(train[train.index("--snr-gamma") + 1], "5.0")
+
+    def test_xl_commands_stay_on_xl_for_lora_and_dora(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for adapter_type in ("lora", "dora"):
+                args = make_args(root)
+                args.model = "acestep-v15-xl-base"
+                args.adapter_type = adapter_type
+                preprocess = train_lora_job.build_preprocess_command(
+                    args,
+                    root / "dataset.json",
+                    root / "tensors",
+                    root / "output",
+                )
+                train = train_lora_job.build_train_command(
+                    args,
+                    root / "tensors",
+                    root / "output",
+                )
+
+                for command in (preprocess, train):
+                    self.assertEqual(
+                        command[command.index("--model-variant") + 1],
+                        "acestep-v15-xl-base",
+                    )
+                    self.assertNotIn("acestep-v15-base", command)
+                self.assertEqual("--use-dora" in train, adapter_type == "dora")
 
     def test_normalize_analysis_result_handles_query_result_shapes(self) -> None:
         nested = json.dumps(
@@ -500,7 +555,7 @@ class TrainLoraJobTests(unittest.TestCase):
     def test_caption_server_uses_private_lm_api_profile(self) -> None:
         args = argparse.Namespace(
             carey_url="http://127.0.0.1:8013",
-            model="base",
+            model="acestep-v15-base",
             caption_lm_model="acestep-5Hz-lm-1.7B",
         )
 
@@ -539,7 +594,7 @@ class TrainLoraJobTests(unittest.TestCase):
 
         small_args = argparse.Namespace(
             carey_url="http://127.0.0.1:8013",
-            model="base",
+            model="acestep-v15-base",
             caption_lm_model="acestep-5Hz-lm-0.6B",
         )
         small_env = train_lora_job.build_caption_server_env(small_args, {})
@@ -658,7 +713,7 @@ class TrainLoraJobTests(unittest.TestCase):
     def test_ensure_carey_model_loaded_calls_load_for_no_init_backend(self) -> None:
         args = argparse.Namespace(
             carey_url="http://127.0.0.1:8011",
-            model="base",
+            model="acestep-v15-base",
             model_load_timeout=900.0,
         )
         health = Mock()
@@ -678,6 +733,36 @@ class TrainLoraJobTests(unittest.TestCase):
         client.post.assert_called_once_with(
             "http://127.0.0.1:8011/v1/load",
             params={"config_path": "acestep-v15-base"},
+            timeout=900.0,
+        )
+
+    def test_xl_captioner_and_loader_use_exact_xl_checkpoint(self) -> None:
+        args = argparse.Namespace(
+            carey_url="http://127.0.0.1:8011",
+            model="acestep-v15-xl-base",
+            caption_lm_model="acestep-5Hz-lm-4B",
+            model_load_timeout=900.0,
+        )
+        env = train_lora_job.build_caption_server_env(args, {})
+        self.assertEqual(env["ACESTEP_CONFIG_PATH"], "acestep-v15-xl-base")
+
+        health = Mock()
+        health.json.return_value = {
+            "data": {"initialized": False, "current_model": None}
+        }
+        health.raise_for_status.return_value = None
+        loaded = Mock()
+        loaded.json.return_value = {"code": 200, "data": {"status": "loaded"}}
+        loaded.raise_for_status.return_value = None
+        client = Mock()
+        client.get.return_value = health
+        client.post.return_value = loaded
+
+        train_lora_job.ensure_carey_model_loaded(args, client)
+
+        client.post.assert_called_once_with(
+            "http://127.0.0.1:8011/v1/load",
+            params={"config_path": "acestep-v15-xl-base"},
             timeout=900.0,
         )
 
