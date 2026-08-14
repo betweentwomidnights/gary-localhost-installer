@@ -35,6 +35,7 @@ import threading
 import gc
 import ctypes
 import numpy as np
+import soundfile as sf
 
 # RC stable-audio-tools imports
 from stable_audio_tools.models.factory import create_model_from_config
@@ -98,6 +99,64 @@ FOUNDATION_CONFIG_PATH = os.environ.get(
 )
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/app/outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+
+
+ACCELERATOR_PROFILE = os.environ.get("FOUNDATION_ACCELERATOR_PROFILE", "").strip()
+REQUIRE_ACCELERATOR = env_flag("FOUNDATION_REQUIRE_ACCELERATOR")
+EXPECT_HIP = env_flag("FOUNDATION_EXPECT_HIP") or "rocm" in ACCELERATOR_PROFILE.lower()
+
+
+def validate_accelerator_or_raise():
+    hip_version = getattr(torch.version, "hip", None)
+    cuda_version = getattr(torch.version, "cuda", None)
+    available = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if available else 0
+    devices = [torch.cuda.get_device_name(index) for index in range(device_count)]
+    print(
+        "[foundation] torch backend: "
+        f"torch={torch.__version__}; hip={hip_version}; cuda_build={cuda_version}; "
+        f"cuda_available={available}; devices={devices}; profile={ACCELERATOR_PROFILE or None}"
+    )
+
+    if EXPECT_HIP and not hip_version:
+        raise RuntimeError(
+            "Foundation-1 ROCm profile expected a ROCm/HIP PyTorch build, but "
+            "torch.version.hip is empty. Rebuild the Foundation-1 environment."
+        )
+    if REQUIRE_ACCELERATOR and not available:
+        raise RuntimeError(
+            "Foundation-1 requires an AMD GPU, but the ROCm/HIP PyTorch runtime "
+            "cannot see one. Check the Radeon driver and rebuild the environment."
+        )
+
+
+def decode_wav(audio_bytes: bytes) -> tuple[torch.Tensor, int]:
+    samples, sample_rate = sf.read(
+        io.BytesIO(audio_bytes), dtype="float32", always_2d=True
+    )
+    return torch.from_numpy(samples.T.copy()), int(sample_rate)
+
+
+def encode_wav(audio: torch.Tensor, sample_rate: int) -> bytes:
+    rendered = audio.detach().to(torch.float32).clamp(-1.0, 1.0).cpu()
+    if rendered.dim() == 1:
+        rendered = rendered.unsqueeze(0)
+    buffer = io.BytesIO()
+    sf.write(
+        buffer,
+        rendered.transpose(0, 1).numpy(),
+        sample_rate,
+        format="WAV",
+        subtype="PCM_16",
+    )
+    return buffer.getvalue()
 
 SUPPORTED_BPMS = [100, 110, 120, 128, 130, 140, 150]
 SUPPORTED_BARS = [4, 8]
@@ -185,6 +244,7 @@ def load_model():
         if "model" in model_cache:
             return model_cache["model"], model_cache["config"], model_cache["device"]
 
+        validate_accelerator_or_raise()
         print("Loading Foundation-1 model...")
         print(f"  Config : {FOUNDATION_CONFIG_PATH}")
         print(f"  Ckpt   : {FOUNDATION_CKPT_PATH}")
@@ -450,9 +510,7 @@ def generation_worker(session_id: str, data: dict):
 
         # Encode to base64 WAV
         update_session(session_id, progress=97)
-        audio_buffer = io.BytesIO()
-        torchaudio.save(audio_buffer, audio, sample_rate, format="wav")
-        audio_bytes = audio_buffer.getvalue()
+        audio_bytes = encode_wav(audio, sample_rate)
         audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
         # Also save to disk
@@ -887,8 +945,7 @@ def audio2audio():
 
         # Decode the input audio from base64
         audio_bytes = base64.b64decode(audio_b64)
-        audio_buf = io.BytesIO(audio_bytes)
-        input_waveform, input_sr = torchaudio.load(audio_buf)
+        input_waveform, input_sr = decode_wav(audio_bytes)
 
         # Pre-stretch: host_bpm -> foundation_bpm so the model hears it at
         # a tempo it was trained on.  The ratio we need is the inverse of
@@ -1061,9 +1118,7 @@ def audio2audio_worker(
 
         # Encode to base64 WAV
         update_session(session_id, progress=97)
-        audio_buffer = io.BytesIO()
-        torchaudio.save(audio_buffer, audio, sample_rate, format="wav")
-        audio_bytes = audio_buffer.getvalue()
+        audio_bytes = encode_wav(audio, sample_rate)
         audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
         # Save to disk

@@ -1,4 +1,5 @@
 from functools import reduce
+import os
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
@@ -19,10 +20,12 @@ except ImportError as e:
 
 from .utils import compile
 
-try: 
+try:
+    if os.environ.get("ENABLE_TORCH_COMPILE", "0") != "1":
+        raise RuntimeError("torch.compile disabled")
     torch._dynamo.config.cache_size_limit = 5000
     flex_attention_compiled = torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")
-except:
+except Exception:
     flex_attention_compiled = flex_attention
 
 def checkpoint(function, *args, **kwargs):

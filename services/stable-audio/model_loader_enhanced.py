@@ -18,6 +18,43 @@ from stable_audio_tools import get_pretrained_model
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict, copy_state_dict
 
+
+def env_flag(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+
+
+ACCELERATOR_PROFILE = os.environ.get("STABLE_AUDIO_ACCELERATOR_PROFILE", "").strip()
+REQUIRE_ACCELERATOR = env_flag("STABLE_AUDIO_REQUIRE_ACCELERATOR")
+EXPECT_HIP = env_flag("STABLE_AUDIO_EXPECT_HIP") or "rocm" in ACCELERATOR_PROFILE.lower()
+
+
+def validate_accelerator_or_raise():
+    hip_version = getattr(torch.version, "hip", None)
+    cuda_version = getattr(torch.version, "cuda", None)
+    available = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if available else 0
+    devices = [torch.cuda.get_device_name(index) for index in range(device_count)]
+    print(
+        "[jerry] torch backend: "
+        f"torch={torch.__version__}; hip={hip_version}; cuda_build={cuda_version}; "
+        f"cuda_available={available}; devices={devices}; profile={ACCELERATOR_PROFILE or None}"
+    )
+
+    if EXPECT_HIP and not hip_version:
+        raise RuntimeError(
+            "Jerry ROCm profile expected a ROCm/HIP PyTorch build, but "
+            "torch.version.hip is empty. Rebuild the Jerry environment."
+        )
+    if REQUIRE_ACCELERATOR and not available:
+        raise RuntimeError(
+            "Jerry requires an AMD GPU, but the ROCm/HIP PyTorch runtime cannot "
+            "see one. Check the Radeon driver and rebuild the environment."
+        )
+
+
 class ModelManager:
     """Smart model cache with memory management for multiple model support"""
     
@@ -172,6 +209,8 @@ class ModelManager:
                 print(f"[TARGET] Using cached model: {cache_key}")
                 self._update_usage(cache_key)
                 return self.model_cache[cache_key]
+
+            validate_accelerator_or_raise()
 
             # Evict LRU if needed
             self._evict_lru_model()

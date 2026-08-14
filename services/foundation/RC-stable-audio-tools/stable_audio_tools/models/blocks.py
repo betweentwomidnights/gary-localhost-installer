@@ -1,5 +1,6 @@
 from functools import reduce
 import math
+import os
 import numpy as np
 import torch
 from torch import nn
@@ -244,7 +245,7 @@ class ForcedWNConv1d(nn.Module):
         
 # Kernels
 
-use_compile = True
+use_compile = os.environ.get("ENABLE_TORCH_COMPILE", "1") == "1"
 
 def compile(function, *args, **kwargs):
     if not use_compile:

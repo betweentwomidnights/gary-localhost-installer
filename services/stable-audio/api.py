@@ -333,6 +333,12 @@ def save_audio(buffer, audio_tensor, sample_rate):
     audio_np = audio_tensor.cpu().numpy().T  # Shape: (samples, channels)
     sf.write(buffer, audio_np, sample_rate, format='WAV', subtype='PCM_16')
 
+
+def load_audio(source):
+    """Decode audio without torchaudio's TorchCodec-backed file I/O."""
+    samples, sample_rate = sf.read(source, dtype="float32", always_2d=True)
+    return torch.from_numpy(samples.T.copy()), int(sample_rate)
+
 # Replace your existing load_model() function with this:
 def get_model(model_type="standard", finetune_repo=None, finetune_checkpoint=None, base_repo=None):
     """Get model using the enhanced model manager with caching"""
@@ -399,15 +405,11 @@ def extract_bpm(prompt):
 def process_input_audio(audio_file, target_sr):
     """Process uploaded audio file into tensor format."""
     try:
-        # Load audio file
         if hasattr(audio_file, 'read'):
-            # File-like object from Flask
             audio_bytes = audio_file.read()
-            audio_buffer = io.BytesIO(audio_bytes)
-            waveform, sample_rate = torchaudio.load(audio_buffer)
+            waveform, sample_rate = load_audio(io.BytesIO(audio_bytes))
         else:
-            # File path
-            waveform, sample_rate = torchaudio.load(audio_file)
+            waveform, sample_rate = load_audio(audio_file)
         
         # Convert to mono if stereo (take average of channels)
         if waveform.shape[0] > 1:
@@ -423,7 +425,7 @@ def process_input_audio(audio_file, target_sr):
             waveform = waveform.repeat(2, 1)
         
         print(f"[FILE] Processed input audio: {waveform.shape} at {target_sr}Hz")
-        return sample_rate, waveform
+        return target_sr, waveform
     
     except Exception as e:
         raise ValueError(f"Failed to process input audio: {str(e)}")
@@ -1980,7 +1982,7 @@ def get_available_riffs():
 def process_input_audio_from_path(file_path, target_sr):
     """Process audio file from path into tensor format."""
     try:
-        waveform, sample_rate = torchaudio.load(file_path)
+        waveform, sample_rate = load_audio(file_path)
         
         # Convert to mono if stereo
         if waveform.shape[0] > 1:
@@ -1996,7 +1998,7 @@ def process_input_audio_from_path(file_path, target_sr):
             waveform = waveform.repeat(2, 1)
         
         print(f"[FILE] Processed riff audio: {waveform.shape} at {target_sr}Hz")
-        return sample_rate, waveform
+        return target_sr, waveform
     
     except Exception as e:
         raise ValueError(f"Failed to process riff audio: {str(e)}")

@@ -97,4 +97,36 @@ mod tests {
             Some("2")
         );
     }
+
+    #[test]
+    fn stable_audio_services_use_the_windows_rocm_runtime() {
+        let manifest: Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .expect("bundled service manifest should be valid JSON");
+
+        for id in ["stable-audio", "foundation"] {
+            let service = manifest
+                .services
+                .iter()
+                .find(|service| service.id == id)
+                .unwrap_or_else(|| panic!("bundled manifest should define {id}"));
+
+            assert_eq!(service.python_version, "3.12");
+            assert_eq!(service.accelerator_profile, "amd-rocm-windows-7.2.1");
+            assert!(service.build_steps.iter().any(|step| step.contains("rocm7.2.1")));
+            assert!(service
+                .build_steps
+                .iter()
+                .any(|step| step.contains("torchvision-0.24.1")));
+            assert!(!service.build_steps.iter().any(|step| step.contains("flash_attn")));
+            assert_eq!(
+                service.env.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL").map(String::as_str),
+                Some("1")
+            );
+            assert_eq!(
+                service.env.get("MIOPEN_FIND_MODE").map(String::as_str),
+                Some("2")
+            );
+        }
+    }
 }
