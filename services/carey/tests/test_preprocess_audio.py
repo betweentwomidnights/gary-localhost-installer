@@ -30,7 +30,7 @@ class PreprocessAudioTests(unittest.TestCase):
             )
 
             with patch(
-                "acestep.training.dataset_builder_modules.preprocess_audio.torchaudio.load",
+                "acestep.audio_loading.torchaudio.load",
                 side_effect=RuntimeError("TorchCodec is required"),
             ) as torchaudio_load:
                 audio, source_rate = load_audio_stereo(

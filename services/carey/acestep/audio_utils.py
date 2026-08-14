@@ -20,6 +20,8 @@ import numpy as np
 import torchaudio
 from loguru import logger
 
+from acestep.audio_loading import load_audio_file
+
 
 def normalize_audio(audio_data: Union[torch.Tensor, np.ndarray], target_db: float = -1.0) -> Union[torch.Tensor, np.ndarray]:
     """
@@ -236,7 +238,7 @@ class AudioSaver:
             raise FileNotFoundError(f"Input file not found: {input_path}")
         
         # Load audio
-        audio_tensor, sample_rate = torchaudio.load(str(input_path))
+        audio_tensor, sample_rate = load_audio_file(input_path)
         
         # Save as new format
         output_path = self.save_audio(
@@ -466,4 +468,3 @@ def save_audio(
     return _default_saver.save_audio(
         audio_data, output_path, sample_rate, format, channels_first
     )
-

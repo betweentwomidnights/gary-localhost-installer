@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from loguru import logger
 
 from acestep.training.path_safety import safe_path
+from acestep.audio_loading import load_audio_file
 
 import torch
 import torchaudio
@@ -494,7 +495,7 @@ class AceStepTrainingDataset(Dataset):
         sample = self.valid_samples[idx]
         
         audio_path = sample["audio_path"]
-        audio, sr = torchaudio.load(audio_path)
+        audio, sr = load_audio_file(audio_path)
         
         # Resample to 48kHz
         if sr != self.target_sample_rate:

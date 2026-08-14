@@ -1,31 +1,11 @@
-import torch
 import torchaudio
 
-
-def _load_audio_without_torchcodec(audio_path: str):
-    """Decode common training formats without TorchCodec when possible."""
-    try:
-        import soundfile as sf
-
-        samples, sample_rate = sf.read(
-            audio_path,
-            dtype="float32",
-            always_2d=True,
-        )
-        return torch.from_numpy(samples.T.copy()), int(sample_rate)
-    except Exception as soundfile_error:
-        try:
-            return torchaudio.load(audio_path)
-        except Exception as torchaudio_error:
-            raise RuntimeError(
-                f"Could not decode {audio_path} with soundfile ({soundfile_error}) "
-                f"or torchaudio ({torchaudio_error})"
-            ) from torchaudio_error
+from acestep.audio_loading import load_audio_file
 
 
 def load_audio_stereo(audio_path: str, target_sample_rate: int, max_duration: float):
     """Load audio, resample, convert to stereo, and truncate."""
-    audio, sr = _load_audio_without_torchcodec(audio_path)
+    audio, sr = load_audio_file(audio_path)
 
     if sr != target_sample_rate:
         resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
