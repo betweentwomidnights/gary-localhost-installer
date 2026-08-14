@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -14,6 +14,48 @@ fn hide_console_window(cmd: &mut tokio::process::Command) {
     }
 }
 
+fn path_size(path: &Path) -> u64 {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return 0;
+    };
+    if metadata.is_file() {
+        return metadata.len();
+    }
+    if !metadata.is_dir() {
+        return 0;
+    }
+
+    std::fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| path_size(&entry.path()))
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+fn hf_repo_downloaded_size(hub_dir: &Path, model_id: &str) -> Option<u64> {
+    let repo_dir = hub_dir.join(format!("models--{}", model_id.replace('/', "--")));
+    if !repo_dir.is_dir() {
+        return None;
+    }
+
+    let blob_bytes = path_size(&repo_dir.join("blobs"));
+    if blob_bytes > 0 {
+        return Some(blob_bytes);
+    }
+
+    let snapshots_dir = repo_dir.join("snapshots");
+    let largest_snapshot = std::fs::read_dir(snapshots_dir)
+        .ok()?
+        .flatten()
+        .map(|entry| path_size(&entry.path()))
+        .max()
+        .unwrap_or(0);
+    (largest_snapshot > 0).then_some(largest_snapshot)
+}
+
 /// A single model that can be downloaded
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
@@ -24,6 +66,7 @@ pub struct ModelEntry {
     pub group: Option<String>,         // checkpoint group name
     pub epoch: Option<u32>,            // checkpoint epoch number
     pub status: ModelStatus,
+    pub downloaded_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -91,6 +134,31 @@ impl ModelManager {
         }
     }
 
+    fn hf_hub_cache_dir() -> PathBuf {
+        Self::hf_cache_dir().join("hub")
+    }
+
+    fn hf_model_downloaded_size(model_id: &str) -> Option<u64> {
+        hf_repo_downloaded_size(&Self::hf_hub_cache_dir(), model_id)
+    }
+
+    fn finetune_file_downloaded_size(repo: &str, filename: &str) -> Option<u64> {
+        let snapshots_dir = Self::hf_hub_cache_dir()
+            .join(format!("models--{}", repo.replace('/', "--")))
+            .join("snapshots");
+
+        std::fs::read_dir(snapshots_dir)
+            .ok()?
+            .flatten()
+            .find_map(|entry| {
+                let path = entry.path().join(filename);
+                std::fs::metadata(path)
+                    .ok()
+                    .filter(|metadata| metadata.is_file())
+                    .map(|metadata| metadata.len())
+            })
+    }
+
     /// Get the full list of Gary models with their download status
     pub fn get_gary_models(&self) -> Vec<ModelEntry> {
         let models_by_size: Vec<(&str, &[&str])> = vec![
@@ -140,6 +208,9 @@ impl ModelManager {
                 };
 
                 let status = self.get_model_status(model_path);
+                let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
+                    .then(|| Self::hf_model_downloaded_size(model_path))
+                    .flatten();
 
                 entries.push(ModelEntry {
                     id: model_path.to_string(),
@@ -149,6 +220,7 @@ impl ModelManager {
                     group,
                     epoch,
                     status,
+                    downloaded_bytes,
                 });
             }
         }
@@ -162,6 +234,10 @@ impl ModelManager {
 
         // Base model
         let base_id = "stabilityai/stable-audio-open-small";
+        let base_status = self.get_model_status(base_id);
+        let base_downloaded_bytes = matches!(&base_status, ModelStatus::Downloaded)
+            .then(|| Self::hf_model_downloaded_size(base_id))
+            .flatten();
         entries.push(ModelEntry {
             id: base_id.to_string(),
             display_name: "stable-audio-open-small (base)".to_string(),
@@ -169,7 +245,8 @@ impl ModelManager {
             size_category: Some("base".to_string()),
             group: None,
             epoch: None,
-            status: self.get_model_status(base_id),
+            status: base_status,
+            downloaded_bytes: base_downloaded_bytes,
         });
 
         // Any dynamically fetched finetune checkpoints
@@ -178,6 +255,9 @@ impl ModelManager {
                 // Composite ID: "repo::filename" so we can identify it uniquely
                 let composite_id = format!("{}::{}", repo, ckpt.filename);
                 let status = self.get_model_status(&composite_id);
+                let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
+                    .then(|| Self::finetune_file_downloaded_size(repo, &ckpt.filename))
+                    .flatten();
                 entries.push(ModelEntry {
                     id: composite_id,
                     display_name: ckpt.filename.clone(),
@@ -186,6 +266,7 @@ impl ModelManager {
                     group: Some(repo.clone()),
                     epoch: None,
                     status,
+                    downloaded_bytes,
                 });
             }
         }
@@ -221,14 +302,21 @@ impl ModelManager {
 
         components
             .iter()
-            .map(|(id, display_name, category)| ModelEntry {
-                id: id.to_string(),
-                display_name: display_name.to_string(),
-                service: "sa3".to_string(),
-                size_category: Some(category.to_string()),
-                group: None,
-                epoch: None,
-                status: self.get_model_status_with_required_files(id, &required_files),
+            .map(|(id, display_name, category)| {
+                let status = self.get_model_status_with_required_files(id, &required_files);
+                let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
+                    .then(|| Self::hf_model_downloaded_size(id))
+                    .flatten();
+                ModelEntry {
+                    id: id.to_string(),
+                    display_name: display_name.to_string(),
+                    service: "sa3".to_string(),
+                    size_category: Some(category.to_string()),
+                    group: None,
+                    epoch: None,
+                    status,
+                    downloaded_bytes,
+                }
             })
             .collect()
     }
@@ -354,6 +442,15 @@ impl ModelManager {
             .iter()
             .map(|(id, name, category, check_files)| {
                 let status = self.get_carey_component_status(id, &checkpoint_dir, check_files);
+                let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
+                    .then(|| {
+                        check_files
+                            .first()
+                            .and_then(|file| Path::new(file).components().next())
+                            .map(|component| path_size(&checkpoint_dir.join(component.as_os_str())))
+                    })
+                    .flatten()
+                    .filter(|bytes| *bytes > 0);
                 ModelEntry {
                     id: id.to_string(),
                     display_name: name.to_string(),
@@ -362,6 +459,7 @@ impl ModelManager {
                     group: None,
                     epoch: None,
                     status,
+                    downloaded_bytes,
                 }
             })
             .collect()
@@ -398,6 +496,9 @@ impl ModelManager {
 
         let id = "foundation::foundation-1";
         let status = self.get_foundation_status(id, &model_dir);
+        let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
+            .then(|| path_size(&model_dir))
+            .filter(|bytes| *bytes > 0);
 
         vec![ModelEntry {
             id: id.to_string(),
@@ -407,6 +508,7 @@ impl ModelManager {
             group: None,
             epoch: None,
             status,
+            downloaded_bytes,
         }]
     }
 
@@ -1519,7 +1621,7 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_hf_download_error, ModelManager, ModelStatus};
+    use super::{friendly_hf_download_error, hf_repo_downloaded_size, ModelManager, ModelStatus};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1572,5 +1674,54 @@ fine-grained token settings to view this repository."#;
         assert_eq!(scrag.service, "carey");
         assert_eq!(scrag.size_category.as_deref(), Some("shared"));
         assert_eq!(scrag.status, ModelStatus::Available);
+    }
+
+    #[test]
+    fn hugging_face_size_uses_stored_blobs_without_counting_snapshot_links() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let hub = std::env::temp_dir().join(format!("gary-model-size-hf-{unique}"));
+        let repo = hub.join("models--example--model");
+        std::fs::create_dir_all(repo.join("blobs")).unwrap();
+        std::fs::create_dir_all(repo.join("snapshots").join("revision")).unwrap();
+        std::fs::write(repo.join("blobs").join("weights"), vec![0; 7]).unwrap();
+        std::fs::write(
+            repo.join("snapshots").join("revision").join("weights"),
+            vec![0; 13],
+        )
+        .unwrap();
+
+        assert_eq!(hf_repo_downloaded_size(&hub, "example/model"), Some(7));
+        let _ = std::fs::remove_dir_all(hub);
+    }
+
+    #[test]
+    fn carey_catalog_reports_the_downloaded_component_folder_size() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_root = std::env::temp_dir().join(format!("gary-model-size-carey-{unique}"));
+        let model_dir = repo_root
+            .join("services")
+            .join("carey")
+            .join("checkpoints")
+            .join("acestep-v15-base");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), vec![0; 3]).unwrap();
+        std::fs::write(model_dir.join("model.safetensors"), vec![0; 5]).unwrap();
+
+        let manager = ModelManager::new(repo_root.clone());
+        let model = manager
+            .get_carey_models()
+            .into_iter()
+            .find(|model| model.id == "carey::acestep-v15-base")
+            .unwrap();
+
+        assert_eq!(model.status, ModelStatus::Downloaded);
+        assert_eq!(model.downloaded_bytes, Some(8));
+        let _ = std::fs::remove_dir_all(repo_root);
     }
 }
