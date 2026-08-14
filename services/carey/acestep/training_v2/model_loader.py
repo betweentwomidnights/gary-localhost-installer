@@ -328,45 +328,41 @@ def load_silence_latent(
 
     Search order:
         1. ``checkpoint_dir/silence_latent.pt`` (root -- custom layouts)
-        2. ``checkpoint_dir/<variant_subdir>/silence_latent.pt`` (upstream)
-        3. Scan all known variant subdirectories as a last-resort fallback
+        2. The selected model directory, resolved from an alias or literal name
+        3. Known variant subdirectories when no variant was selected
 
     Raises ``FileNotFoundError`` if the file cannot be found anywhere.
     """
-    ckpt = Path(checkpoint_dir)
-    sl_path: Path | None = None
-
-    # 1. Direct root path
-    candidate = ckpt / "silence_latent.pt"
-    if candidate.is_file():
-        sl_path = candidate
-
-    # 2. Variant-specific subdirectory
-    if sl_path is None and variant is not None:
-        subdir = _VARIANT_DIR.get(variant, f"acestep-v15-{variant}")
-        candidate = ckpt / subdir / "silence_latent.pt"
-        if candidate.is_file():
-            sl_path = candidate
-
-    # 3. Last-resort: scan all known variant subdirectories
-    if sl_path is None:
-        for subdir in _VARIANT_DIR.values():
-            candidate = ckpt / subdir / "silence_latent.pt"
-            if candidate.is_file():
-                sl_path = candidate
-                break
-
-    if sl_path is None:
-        raise FileNotFoundError(
-            f"silence_latent.pt not found under {ckpt} "
-            f"(checked root and variant subdirectories)"
-        )
+    sl_path = _resolve_silence_latent_path(checkpoint_dir, variant)
 
     dtype = _resolve_dtype(precision)
     sl = torch.load(str(sl_path), weights_only=True).transpose(1, 2)
     sl = sl.to(device=device, dtype=dtype)
     logger.info("[OK] silence_latent loaded from %s", sl_path)
     return sl
+
+
+def _resolve_silence_latent_path(
+    checkpoint_dir: str | Path,
+    variant: str | None = None,
+) -> Path:
+    """Resolve the silence latent without falling back to another model family."""
+    ckpt = Path(checkpoint_dir)
+    candidates = [ckpt / "silence_latent.pt"]
+
+    if variant is not None:
+        candidates.append(_resolve_model_dir(ckpt, variant) / "silence_latent.pt")
+    else:
+        candidates.extend(
+            ckpt / subdir / "silence_latent.pt" for subdir in _VARIANT_DIR.values()
+        )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    checked = ", ".join(str(candidate) for candidate in candidates)
+    raise FileNotFoundError(f"silence_latent.pt not found; checked: {checked}")
 
 
 def unload_models(*models: Any) -> None:
