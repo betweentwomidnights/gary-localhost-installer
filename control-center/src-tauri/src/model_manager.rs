@@ -810,7 +810,9 @@ pub fn carey_component_path(checkpoint_dir: &Path, model_id: &str) -> Result<Pat
     Ok(checkpoint_dir.join(component))
 }
 
-fn carey_component_required_files(component: &str) -> Result<&'static [&'static str], String> {
+pub(crate) fn carey_component_required_files(
+    component: &str,
+) -> Result<&'static [&'static str], String> {
     match component {
         "acestep-v15-base" => Ok(&[
             "acestep-v15-base/config.json",

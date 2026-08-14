@@ -5,7 +5,7 @@ mod storage;
 mod update;
 mod workload_job;
 
-use model_manager::ModelManager;
+use model_manager::{carey_component_required_files, ModelManager};
 use serde::{Deserialize, Serialize};
 use service_manager::ServiceManager;
 use std::collections::{BTreeMap, HashMap};
@@ -3997,48 +3997,30 @@ fn carey_training_required_checkpoint_files(
     checkpoint_dir: &Path,
     model_folder: &str,
     caption_lm_model: Option<&str>,
-) -> Vec<PathBuf> {
-    let model_dir = checkpoint_dir.join(model_folder);
-    let mut required = vec![model_dir.join("config.json")];
-    if model_folder.starts_with("acestep-v15-xl-") {
-        required.push(model_dir.join("model.safetensors.index.json"));
-        for shard in 1..=4 {
-            required.push(model_dir.join(format!(
-                "model-{shard:05}-of-00004.safetensors"
-            )));
-        }
-    } else {
-        required.push(model_dir.join("model.safetensors"));
+) -> Result<Vec<PathBuf>, String> {
+    let components = [
+        Some(model_folder),
+        Some("vae"),
+        Some("Qwen3-Embedding-0.6B"),
+        caption_lm_model,
+    ];
+    let mut required = Vec::new();
+    for component in components.into_iter().flatten() {
+        required.extend(
+            carey_component_required_files(component)?
+                .iter()
+                .map(|relative| checkpoint_dir.join(relative)),
+        );
     }
-    required.extend([
-        model_dir.join("silence_latent.pt"),
-        checkpoint_dir.join("vae").join("config.json"),
-        checkpoint_dir
-            .join("vae")
-            .join("diffusion_pytorch_model.safetensors"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("config.json"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("model.safetensors"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("tokenizer.json"),
-    ]);
-    if let Some(lm_model) = caption_lm_model {
-        let lm_dir = checkpoint_dir.join(lm_model);
-        required.push(lm_dir.join("config.json"));
-        required.push(lm_dir.join("tokenizer.json"));
-        if lm_model == "acestep-5Hz-lm-4B" {
-            required.push(lm_dir.join("model.safetensors.index.json"));
-            required.push(lm_dir.join("model-00001-of-00002.safetensors"));
-            required.push(lm_dir.join("model-00002-of-00002.safetensors"));
-        } else {
-            required.push(lm_dir.join("model.safetensors"));
-        }
+    Ok(required)
+}
+
+fn resolve_carey_training_model(model: &str) -> Result<&'static str, String> {
+    match model.trim() {
+        "base" | "acestep-v15-base" => Ok("acestep-v15-base"),
+        "xl-base" | "acestep-v15-xl-base" => Ok("acestep-v15-xl-base"),
+        other => Err(format!("Unknown ACE-Step model: {other}")),
     }
-    required
 }
 
 #[cfg(test)]
@@ -4047,9 +4029,25 @@ mod carey_training_checkpoint_tests {
         carey_training_required_checkpoint_files, mark_carey_ace_training_failed,
         mark_sa3_lora_training_failed, reconcile_carey_ace_training_parent_exit,
         reconcile_owned_workload_status, reconcile_sa3_lora_training_parent_exit,
-        write_carey_ace_training_cancelled_state,
+        resolve_carey_training_model, write_carey_ace_training_cancelled_state,
     };
     use std::path::Path;
+
+    #[test]
+    fn selected_training_models_resolve_to_exact_checkpoint_folders() {
+        assert_eq!(
+            resolve_carey_training_model("acestep-v15-xl-base").unwrap(),
+            "acestep-v15-xl-base"
+        );
+        assert_eq!(
+            resolve_carey_training_model("xl-base").unwrap(),
+            "acestep-v15-xl-base"
+        );
+        assert_eq!(
+            resolve_carey_training_model("acestep-v15-base").unwrap(),
+            "acestep-v15-base"
+        );
+    }
 
     #[test]
     fn complete_preflight_covers_shared_models_and_sharded_captioner() {
@@ -4058,16 +4056,19 @@ mod carey_training_checkpoint_tests {
             root,
             "acestep-v15-xl-base",
             Some("acestep-5Hz-lm-4B"),
-        );
+        )
+        .unwrap();
 
         let model_dir = root.join("acestep-v15-xl-base");
         assert!(required.contains(&model_dir.join("model.safetensors.index.json")));
         for shard in 1..=4 {
-            assert!(required.contains(
-                &model_dir.join(format!("model-{shard:05}-of-00004.safetensors"))
-            ));
+            assert!(required
+                .contains(&model_dir.join(format!("model-{shard:05}-of-00004.safetensors"))));
         }
         assert!(!required.contains(&model_dir.join("model.safetensors")));
+        assert!(!required
+            .iter()
+            .any(|path| path.starts_with(root.join("acestep-v15-base"))));
         assert!(required.contains(&model_dir.join("silence_latent.pt")));
         assert!(required.contains(&root.join("vae").join("diffusion_pytorch_model.safetensors")));
         assert!(required.contains(&root.join("Qwen3-Embedding-0.6B").join("model.safetensors")));
@@ -6482,11 +6483,7 @@ async fn start_carey_ace_lora_training(
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
     require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
-    let model = match model.trim() {
-        "base" => "base",
-        "xl-base" => "xl-base",
-        other => return Err(format!("Unknown ACE-Step model: {}", other)),
-    };
+    let model = resolve_carey_training_model(&model)?;
     let adapter_type = match adapter_type.trim() {
         "lora" => "lora",
         "dora" => "dora",
@@ -6576,17 +6573,12 @@ async fn start_carey_ace_lora_training(
     }
 
     let checkpoint_dir = carey_checkpoint_dir(repo_root.inner());
-    let model_folder = if model == "xl-base" {
-        "acestep-v15-xl-base"
-    } else {
-        "acestep-v15-base"
-    };
     if !prepare_only || auto_caption {
         let missing = carey_training_required_checkpoint_files(
             &checkpoint_dir,
-            model_folder,
+            model,
             auto_caption.then_some(caption_lm_model.trim()),
-        )
+        )?
         .into_iter()
         .filter(|path| !path.is_file())
         .map(|path| {
@@ -7667,8 +7659,7 @@ fn carey_sa3_captioner_required_files(repo_root: &Path, model: &str) -> Vec<Path
 fn carey_sa3_analysis_models_downloaded(repo_root: &Path) -> bool {
     let checkpoint_dir = carey_checkpoint_dir(repo_root);
     carey_training_required_checkpoint_files(&checkpoint_dir, "acestep-v15-base", None)
-        .into_iter()
-        .all(|path| path.is_file())
+        .is_ok_and(|required| required.into_iter().all(|path| path.is_file()))
 }
 
 fn carey_sa3_captioner_downloaded(repo_root: &Path, model: &str) -> bool {
@@ -7918,6 +7909,7 @@ mod sa3_autolabel_availability_tests {
             "Qwen3-Embedding-0.6B/config.json",
             "Qwen3-Embedding-0.6B/model.safetensors",
             "Qwen3-Embedding-0.6B/tokenizer.json",
+            "Qwen3-Embedding-0.6B/tokenizer_config.json",
         ] {
             let path = checkpoints.join(relative);
             std::fs::create_dir_all(path.parent().expect("model file should have a parent"))
