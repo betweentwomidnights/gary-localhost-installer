@@ -38,13 +38,17 @@ from key_analysis import choose_key, estimate_key
 
 SERVICE_DIR = Path(__file__).resolve().parent
 TRAIN_ENTRY = SERVICE_DIR / "train.py"
+MODEL_ALIASES = {
+    "base": "acestep-v15-base",
+    "xl-base": "acestep-v15-xl-base",
+}
 MODEL_MAP = {
-    "base": {
+    "acestep-v15-base": {
         "variant": "base",
         "folder": "acestep-v15-base",
         "family": "standard",
     },
-    "xl-base": {
+    "acestep-v15-xl-base": {
         "variant": "acestep-v15-xl-base",
         "folder": "acestep-v15-xl-base",
         "family": "xl",
@@ -84,6 +88,13 @@ class PreparedCaptionAudio:
 
 class Cancelled(RuntimeError):
     pass
+
+
+def normalize_training_model(model: str) -> str:
+    normalized = MODEL_ALIASES.get(model.strip(), model.strip())
+    if normalized not in MODEL_MAP:
+        raise ValueError(f"Unknown ACE-Step training model: {model}")
+    return normalized
 
 
 def slugify(raw: str) -> str:
@@ -293,19 +304,35 @@ def required_model_checkpoint_files(
 ) -> list[Path]:
     model = MODEL_MAP[args.model]
     model_dir = args.checkpoint_dir / model["folder"]
-    required = [
-        model_dir / "config.json",
-        model_dir / "model.safetensors",
+    required = [model_dir / "config.json"]
+    if model["folder"].startswith("acestep-v15-xl-"):
+        required.extend(
+            [model_dir / "model.safetensors.index.json"]
+            + [
+                model_dir / f"model-{shard:05d}-of-00004.safetensors"
+                for shard in range(1, 5)
+            ]
+        )
+    else:
+        required.append(model_dir / "model.safetensors")
+    required.extend([
         model_dir / "silence_latent.pt",
         args.checkpoint_dir / "vae" / "config.json",
         args.checkpoint_dir / "vae" / "diffusion_pytorch_model.safetensors",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "config.json",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "model.safetensors",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "tokenizer.json",
-    ]
+        args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "tokenizer_config.json",
+    ])
     if include_caption_lm:
         lm_dir = args.checkpoint_dir / args.caption_lm_model
-        required.extend([lm_dir / "config.json", lm_dir / "tokenizer.json"])
+        required.extend(
+            [
+                lm_dir / "config.json",
+                lm_dir / "tokenizer.json",
+                lm_dir / "tokenizer_config.json",
+            ]
+        )
         if args.caption_lm_model == "acestep-5Hz-lm-4B":
             required.extend(
                 [
@@ -1365,7 +1392,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--current-job-path", type=Path, required=True)
     parser.add_argument("--cancel-path", type=Path)
     parser.add_argument("--log-path", type=Path, required=True)
-    parser.add_argument("--model", choices=MODEL_MAP, default="base")
+    parser.add_argument(
+        "--model",
+        choices=tuple(MODEL_MAP) + tuple(MODEL_ALIASES),
+        default="acestep-v15-base",
+    )
     parser.add_argument("--instrumental", action="store_true")
     parser.add_argument("--trigger", default="")
     parser.add_argument(
@@ -1512,6 +1543,12 @@ def validate_args(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.model = normalize_training_model(args.model)
+    print(
+        f"[launch] model={args.model}; adapter={args.adapter_type}; "
+        f"prepare_only={args.prepare_only}; caption={args.caption}",
+        flush=True,
+    )
     args.name = slugify(args.name)
     args.dataset_dir = args.dataset_dir.resolve()
     args.checkpoint_dir = args.checkpoint_dir.resolve()

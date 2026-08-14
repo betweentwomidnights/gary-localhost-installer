@@ -103,7 +103,7 @@
   let formName = $state("");
   let nameNotice = $state<string | null>(null);
   let datasetPath = $state("");
-  let model = $state<"base" | "xl-base">("base");
+  let model = $state<"acestep-v15-base" | "acestep-v15-xl-base">("acestep-v15-base");
   let adapterType = $state<"lora" | "dora">("dora");
   let moduleProfile = $state<"attention" | "balanced">("balanced");
   let trigger = $state("");
@@ -349,7 +349,7 @@
   let timestepMu = $derived(Number(timestepMuText));
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
   let vramAdvisory = $derived(
-    model === "xl-base"
+    model === "acestep-v15-xl-base"
       ? "XL-base training requires substantially more VRAM; the runtime preflight will verify measured headroom before the first batch."
       : moduleProfile === "balanced" && rank >= 128 && maxDuration > 240
         ? "High-VRAM combination: balanced rank 128+ with tracks over 240 seconds. The runtime preflight may stop this run on an 8 GB GPU."
@@ -495,6 +495,17 @@
         </label>
       </div>
 
+      <div class="section-label">model</div>
+      <div class="settings-grid">
+        <label class="field">
+          <span>preparation + training model</span>
+          <select bind:value={model}>
+            <option value="acestep-v15-base">ace-step-v15-base</option>
+            <option value="acestep-v15-xl-base">ace-step-v15-xl-base</option>
+          </select>
+        </label>
+      </div>
+
       <div class="section-label">captioner</div>
       <div class="settings-grid">
         <label class="field">
@@ -532,13 +543,6 @@
 
       <div class="section-label">training</div>
       <div class="settings-grid">
-        <label class="field">
-          <span>base model</span>
-          <select bind:value={model}>
-            <option value="base">ace-step-v15-base</option>
-            <option value="xl-base">ace-step-v15-xl-base</option>
-          </select>
-        </label>
         <label class="field">
           <span>adapter type</span>
           <select bind:value={adapterType}>
