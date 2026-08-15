@@ -24,6 +24,16 @@ except ImportError:
 
 from flask import Flask, request, jsonify
 import torch
+
+from rocm_compat import install_windows_rocm_distributed_fallback
+
+if install_windows_rocm_distributed_fallback():
+    print(
+        "[foundation] Installed single-process torch.distributed compatibility "
+        "for Windows ROCm",
+        flush=True,
+    )
+
 import torchaudio
 import json
 import io
