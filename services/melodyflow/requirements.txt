@@ -1,12 +1,10 @@
 # MelodyFlow (Terry) localhost backend requirements
 #
-# Install order:
-#   1. pip install torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-#   2. pip install -r requirements.txt     (this file)
-#   3. pip install flash-attn wheel        (see services manifest for exact URL)
-#   4. Install xformers SDPA shim          (see setup script)
-#   5. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-#      ^ step 5: restore CUDA torch if transitive deps pulled CPU version
+# Install order for the ROCm preview:
+#   1. install AMD ROCm 7.2.1 SDK wheels
+#   2. install matching torch/torchaudio/torchvision wheels for Python 3.12
+#   3. pip install -r requirements.txt
+#   4. force-reinstall the ROCm Torch wheel set after transitive dependencies
 #
 # Note: audiocraft is NOT installed as a package. It lives in ./audiocraft/
 # and is imported via sys.path / PYTHONPATH from the working directory.
@@ -31,7 +29,10 @@ sentencepiece
 spacy>=3.6.1
 huggingface_hub
 tqdm
-transformers>=4.31.0,<5.0.0
+# Newer Transformers versions import Dynamo/FSDP while loading T5. AMD's
+# Windows ROCm wheel intentionally omits the distributed backend they require.
+transformers==4.39.3
+tokenizers==0.15.2
 librosa
 soundfile
 torchmetrics

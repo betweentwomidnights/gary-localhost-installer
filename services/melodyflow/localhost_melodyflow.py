@@ -1,7 +1,16 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import torch
-import torchaudio
+
+from rocm_compat import install_windows_rocm_distributed_fallback
+
+if install_windows_rocm_distributed_fallback():
+    print(
+        "[melodyflow] Installed single-process torch.distributed compatibility "
+        "for Windows ROCm",
+        flush=True,
+    )
+
 import time
 import io
 import tempfile
@@ -13,6 +22,7 @@ import psutil
 import logging
 from contextlib import contextmanager
 from melodyflow_fast import optimize_model as optimize_melodyflow_model
+from audio_io import load_audio, save_audio
 
 import sys
 
@@ -44,6 +54,43 @@ CORS(app)
 model = None
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 DEVICE = device
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+
+
+ACCELERATOR_PROFILE = os.environ.get("MELODYFLOW_ACCELERATOR_PROFILE", "").strip()
+REQUIRE_ACCELERATOR = env_flag("MELODYFLOW_REQUIRE_ACCELERATOR")
+EXPECT_HIP = env_flag("MELODYFLOW_EXPECT_HIP") or "rocm" in ACCELERATOR_PROFILE.lower()
+
+
+def validate_accelerator_or_raise():
+    hip_version = getattr(torch.version, "hip", None)
+    cuda_version = getattr(torch.version, "cuda", None)
+    available = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if available else 0
+    devices = [torch.cuda.get_device_name(index) for index in range(device_count)]
+    print(
+        "[melodyflow] torch backend: "
+        f"torch={torch.__version__}; hip={hip_version}; cuda_build={cuda_version}; "
+        f"cuda_available={available}; devices={devices}; "
+        f"profile={ACCELERATOR_PROFILE or None}"
+    )
+
+    if EXPECT_HIP and not hip_version:
+        raise RuntimeError(
+            "MelodyFlow ROCm profile expected a ROCm/HIP PyTorch build, but "
+            "torch.version.hip is empty. Rebuild the MelodyFlow environment."
+        )
+    if REQUIRE_ACCELERATOR and not available:
+        raise RuntimeError(
+            "MelodyFlow requires an AMD GPU, but the ROCm/HIP PyTorch runtime "
+            "cannot see one. Check the Radeon driver and rebuild the environment."
+        )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +140,7 @@ def load_model():
     """Initialize the MelodyFlow model."""
     global model
     if model is None:
+        validate_accelerator_or_raise()
         print("Loading MelodyFlow model...")
         model = MelodyFlow.get_pretrained('facebook/melodyflow-t24-30secs', device=DEVICE)
         if os.environ.get("MELODYFLOW_USE_FLASH_ATTN", "0") == "1":
@@ -105,21 +153,7 @@ def load_audio_from_file(file_path: str, target_sr: int = 32000) -> torch.Tensor
         if not os.path.exists(file_path):
             raise AudioProcessingError(f"Audio file not found: {file_path}")
         
-        waveform, sr = torchaudio.load(file_path)
-
-        # Resample if needed
-        if sr != target_sr:
-            waveform = torchaudio.functional.resample(waveform, sr, target_sr)
-
-        # Ensure stereo
-        if waveform.dim() == 1:
-            waveform = waveform.unsqueeze(0)
-        if waveform.shape[0] == 1:
-            waveform = waveform.repeat(2, 1)
-        elif waveform.shape[0] > 2:
-            waveform = waveform[:2, :]
-
-        return waveform.unsqueeze(0).to(device)
+        return load_audio(file_path, target_sr, device)
 
     except Exception as e:
         raise AudioProcessingError(f"Failed to load audio from file: {str(e)}")
@@ -321,7 +355,7 @@ def transform_audio():
         output_filename = f"output_{session_id}_{uuid.uuid4().hex[:8]}.wav"
         output_file_path = os.path.join(SHARED_TEMP_DIR, output_filename)
 
-        torchaudio.save(output_file_path, processed_waveform.cpu(), 32000)
+        save_audio(output_file_path, processed_waveform, 32000)
 
         # Explicit tensor cleanup (before model unload)
         del input_waveform
@@ -423,7 +457,7 @@ def _queue_transform_job(session_id, audio_base64, variation, flowstep, solver, 
 
             output_filename = f"output_{session_id}_{uuid.uuid4().hex[:8]}.wav"
             output_path = os.path.join(SHARED_TEMP_DIR, output_filename)
-            torchaudio.save(output_path, processed_waveform.cpu(), 32000)
+            save_audio(output_path, processed_waveform, 32000)
 
             with open(output_path, 'rb') as f:
                 result_b64 = base64.b64encode(f.read()).decode("utf-8")

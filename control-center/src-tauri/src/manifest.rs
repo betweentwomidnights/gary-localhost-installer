@@ -129,4 +129,30 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn melodyflow_uses_the_windows_rocm_runtime_without_cuda_extensions() {
+        let manifest: Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .expect("bundled service manifest should be valid JSON");
+        let service = manifest
+            .services
+            .iter()
+            .find(|service| service.id == "melodyflow")
+            .expect("bundled manifest should define melodyflow");
+
+        assert_eq!(service.python_version, "3.12");
+        assert_eq!(service.accelerator_profile, "amd-rocm-windows-7.2.1");
+        assert!(service.build_steps.iter().any(|step| step.contains("rocm7.2.1")));
+        assert!(!service.build_steps.iter().any(|step| step.contains("flash_attn")));
+        assert!(!service
+            .build_steps
+            .iter()
+            .any(|step| step.contains("install_xformers_shim")));
+        assert_eq!(service.env.get("MIOPEN_FIND_MODE").map(String::as_str), Some("2"));
+
+        let requirements = include_str!("../../../services/melodyflow/requirements.txt");
+        assert!(requirements.contains("transformers==4.39.3"));
+        assert!(requirements.contains("tokenizers==0.15.2"));
+    }
 }
