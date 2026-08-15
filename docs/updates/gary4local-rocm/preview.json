@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.15",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.15/gary4local-rocm_0.2.1-rocm.15_x64-setup.exe",
-    "sha256":  "56b7b6b6b140fafdaa81903e99dd5ba60031ab31b0001164d2aa86df11ce80ab",
-    "published_at":  "2026-08-14T06:05:45.9493296Z",
+    "latest_version":  "0.2.1-rocm.16",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.16/gary4local-rocm_0.2.1-rocm.16_x64-setup.exe",
+    "sha256":  "38855b2d0ff90f89bbca41e4058aa3f24f697099d6b3a0640abe18388559e75b",
+    "published_at":  "2026-08-15T11:06:39.3840728Z",
     "notes":  [
-                  "jerry and foundation-1 now have their first Windows ROCm builds.",
-                  "after updating, rebuild both environments before testing."
+                  "foundation-1 should now get past the torch.distributed ReduceOp error.",
+                  "just update, restart gary4local-rocm, and try foundation-1 again. no environment rebuild needed."
               ]
 }
