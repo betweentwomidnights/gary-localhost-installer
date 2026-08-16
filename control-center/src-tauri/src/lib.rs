@@ -8805,34 +8805,51 @@ fn get_runtime_cache_info(
 /// Describe every service environment so the storage UI can show what each one
 /// costs and whether it is safe to remove right now.
 async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
-    let mgr = svc_mgr.lock().await;
-    mgr.get_service_info()
-        .into_iter()
-        .map(|info| {
-            let env_path = mgr.env_dir_for(&info.id);
-            let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
-            let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
-            let blocked_reason = if mgr.is_running(&info.id) {
-                Some(format!("stop {} first", info.display_name))
-            } else if mgr.is_building(&info.id) {
-                Some(format!("{} is building its environment", info.display_name))
-            } else if !present {
-                Some("no environment installed".to_string())
-            } else {
-                None
-            };
-            ServiceEnvInfo {
-                service_id: info.id,
-                display_name: info.display_name,
-                env_path: env_path
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-                env_bytes,
-                present,
-                blocked_reason,
-            }
-        })
-        .collect()
+    // Take what the manager knows and let the lock go before measuring. Sizing
+    // six environments walks tens of GB, and every other command -- including
+    // the status poll that keeps the UI alive -- waits on this same mutex.
+    let pending: Vec<(String, String, Option<std::path::PathBuf>, Option<String>)> = {
+        let mgr = svc_mgr.lock().await;
+        mgr.get_service_info()
+            .into_iter()
+            .map(|info| {
+                let env_path = mgr.env_dir_for(&info.id);
+                let blocked = if mgr.is_running(&info.id) {
+                    Some(format!("stop {} first", info.display_name))
+                } else if mgr.is_building(&info.id) {
+                    Some(format!("{} is building its environment", info.display_name))
+                } else {
+                    None
+                };
+                (info.id, info.display_name, env_path, blocked)
+            })
+            .collect()
+    };
+
+    // And keep the walk off the async runtime, which is single threaded here.
+    tauri::async_runtime::spawn_blocking(move || {
+        pending
+            .into_iter()
+            .map(|(service_id, display_name, env_path, blocked)| {
+                let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
+                let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
+                let blocked_reason = blocked
+                    .or_else(|| (!present).then(|| "no environment installed".to_string()));
+                ServiceEnvInfo {
+                    service_id,
+                    display_name,
+                    env_path: env_path
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    env_bytes,
+                    present,
+                    blocked_reason,
+                }
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Sweep every cached repo for blob copies Windows duplicated. Downloads do
@@ -8861,20 +8878,26 @@ async fn reclaim_duplicate_blobs(
         mgr.hf_hub_cache_dir()
     };
 
-    let mut reclaimed = 0;
-    if let Ok(entries) = std::fs::read_dir(&hub_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("models--"))
-            {
-                reclaimed += reclaim_duplicate_hf_blobs(&path);
+    // Sweeping the cache is all filesystem work, so keep it off the runtime.
+    let reclaimed = tauri::async_runtime::spawn_blocking(move || {
+        let mut reclaimed = 0;
+        if let Ok(entries) = std::fs::read_dir(&hub_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("models--"))
+                {
+                    reclaimed += reclaim_duplicate_hf_blobs(&path);
+                }
             }
         }
-    }
+        reclaimed
+    })
+    .await
+    .map_err(|e| format!("Reclaim task failed: {e}"))?;
 
     model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
     Ok(reclaimed)
