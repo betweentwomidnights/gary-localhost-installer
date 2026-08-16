@@ -798,30 +798,47 @@ class StreamingTransformer(StreamingModule):
 
 # special attention related function
 
+_logged_attention_notices: set = set()
+
+
+def _log_attention_notice_once(message: str) -> None:
+    """Say each attention-backend notice once per process.
+
+    The checks below run from StreamingMultiheadAttention's constructor, so a
+    24-layer DiT with cross attention fires them ~48 times while the model is
+    built. The service unloads the model between requests, which means the same
+    handful of lines repeated on every single generation.
+    """
+    if message in _logged_attention_notices:
+        return
+    _logged_attention_notices.add(message)
+    print(message)
+
+
 def _verify_xformers_memory_efficient_compat():
     """Verify xformers memory efficient attention compatibility - now gracefully handles missing xformers."""
     if not _has_xformers:
-        print("[WARN] Memory efficient attention requested, but xformers not installed. Using PyTorch scaled_dot_product_attention.")
+        _log_attention_notice_once("[WARN] Memory efficient attention requested, but xformers not installed. Using PyTorch scaled_dot_product_attention.")
         return
-    
+
     try:
         from xformers.ops import memory_efficient_attention, LowerTriangularMask  # noqa
-        print("[OK] xformers memory efficient attention available")
+        _log_attention_notice_once("[OK] xformers memory efficient attention available")
     except ImportError:
-        print("[WARN] xformers installed but memory_efficient_attention not available - using torch fallback")
+        _log_attention_notice_once("[WARN] xformers installed but memory_efficient_attention not available - using torch fallback")
 
 
 def _verify_xformers_internal_compat():
     """Verify xformers internal checkpointing compatibility - now gracefully handles missing xformers."""
     if not _has_xformers:
-        print("[WARN] xformers checkpointing requested, but xformers not installed. Using PyTorch checkpointing.")
+        _log_attention_notice_once("[WARN] xformers checkpointing requested, but xformers not installed. Using PyTorch checkpointing.")
         return
-        
+
     try:
         from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy  # noqa
-        print("[OK] xformers fairinternal checkpointing available")
+        _log_attention_notice_once("[OK] xformers fairinternal checkpointing available")
     except ImportError:
-        print("[WARN] xformers installed but fairinternal checkpointing not available - using torch fallback")
+        _log_attention_notice_once("[WARN] xformers installed but fairinternal checkpointing not available - using torch fallback")
 
 
 def _is_custom(custom: bool, memory_efficient: bool):
