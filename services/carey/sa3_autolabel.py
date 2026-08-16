@@ -32,6 +32,7 @@ from train_lora_job import (  # noqa: E402 - path is set up above
     decide_sidecar_key,
     ensure_carey_model_loaded,
     ensure_carey_stopped,
+    normalize_training_model,
     request_music_analysis,
     start_caption_server,
     stop_caption_server,
@@ -157,7 +158,10 @@ def build_reuse_args(cli: argparse.Namespace) -> SimpleNamespace:
         carey_url=cli.carey_url,
         inference_carey_url="http://127.0.0.1:8003",
         caption_lm_model=cli.caption_lm_model,
-        model=cli.model,
+        # The shared helpers index MODEL_MAP with this directly, and that map is
+        # keyed by full model names. Passing the "base" alias through raised a
+        # bare KeyError whose message was just the alias.
+        model=normalize_training_model(cli.model),
         caption_timeout=cli.caption_timeout,
         caption_startup_timeout=cli.caption_startup_timeout,
         model_load_timeout=cli.model_load_timeout,
