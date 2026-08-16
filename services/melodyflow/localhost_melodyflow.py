@@ -4,6 +4,7 @@ import torch
 import torchaudio
 import time
 import io
+import random
 import tempfile
 import os
 from audiocraft.models import MelodyFlow
@@ -156,12 +157,29 @@ def encode_within_latent_window(model: MelodyFlow, waveform: torch.Tensor, sr: i
     trimmed = waveform[..., :max_latents * samples_per_latent]
     return trimmed.shape[-1] / sr, model.encode_audio(trimmed)
 
-def process_audio(waveform: torch.Tensor, variation_name: str, 
-                 custom_flowstep: float = None, solver: str = "euler", 
-                 custom_prompt: str = None, session_id: str = None, 
-                 progress_callback = None) -> torch.Tensor:
+def resolve_seed(value) -> int:
+    """Turn a requested seed into the one we will actually run.
+
+    -1, missing, or blank means "pick one for me". The range matches SA3's so
+    the number stays short enough to read out loud — these get compared between
+    machines over chat when we are chasing a backend difference.
+    """
+    if value in (None, ""):
+        seed = -1
+    else:
+        try:
+            seed = int(value)
+        except (TypeError, ValueError):
+            raise AudioProcessingError(f"Invalid seed: {value!r}")
+    return random.randint(0, 99999) if seed < 0 else seed
+
+
+def process_audio(waveform: torch.Tensor, variation_name: str,
+                 custom_flowstep: float = None, solver: str = "euler",
+                 custom_prompt: str = None, session_id: str = None,
+                 progress_callback = None, seed: int = None) -> torch.Tensor:
     """Process audio with selected variation."""
-    
+
     try:
         if variation_name not in VARIATIONS:
             raise AudioProcessingError(f"Unknown variation: {variation_name}")
@@ -210,6 +228,13 @@ def process_audio(waveform: torch.Tensor, variation_name: str,
                 def model_progress_callback(elapsed_steps: int, total_steps: int):
                     progress_callback(session_id, elapsed_steps, total_steps)
                 current_model._progress_callback = model_progress_callback
+
+            # Seed immediately before edit(). Every transform draws noise twice:
+            # once sampling the VAE posterior of the encoded prompt, and again
+            # per solver step when regularizing. Both come from the global RNG,
+            # so one manual_seed here makes the whole transform reproducible.
+            if seed is not None:
+                torch.manual_seed(seed)
 
             edited_audio = current_model.edit(
                 prompt_tokens=tokens,
@@ -266,6 +291,7 @@ def transform_audio():
             solver = request.form.get('solver', 'euler')
             custom_prompt = request.form.get('prompt', request.form.get('custom_prompt'))
             session_id = request.form.get('session_id')
+            seed = resolve_seed(request.form.get('seed'))
 
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
                 audio_file.save(tmp_file.name)
@@ -287,6 +313,7 @@ def transform_audio():
             solver = data.get('solver', 'euler')
             custom_prompt = data.get('custom_prompt')
             session_id = data.get('session_id')
+            seed = resolve_seed(data.get('seed'))
 
             if 'audio_file_path' in data and data['audio_file_path']:
                 audio_file_path = data['audio_file_path']
@@ -318,7 +345,8 @@ def transform_audio():
             solver,
             custom_prompt,
             session_id=session_id,
-            progress_callback=redis_progress_callback
+            progress_callback=redis_progress_callback,
+            seed=seed
         )
 
         import uuid
@@ -331,12 +359,16 @@ def transform_audio():
         del input_waveform
         del processed_waveform
 
-        return send_file(
+        # This path answers with the WAV itself, so the seed rides along in a
+        # header rather than a JSON body.
+        response = send_file(
             output_file_path,
             as_attachment=True,
             download_name='transformed_audio.wav',
             mimetype='audio/wav'
         )
+        response.headers['X-Melodyflow-Seed'] = str(seed)
+        return response
 
     except AudioProcessingError as e:
         return jsonify({'error': str(e)}), e.status_code
@@ -398,7 +430,7 @@ def _write_base64_audio_to_file(audio_base64, session_id):
         f.write(audio_data)
     return file_path
 
-def _queue_transform_job(session_id, audio_base64, variation, flowstep, solver, custom_prompt):
+def _queue_transform_job(session_id, audio_base64, variation, flowstep, solver, custom_prompt, seed):
     def worker():
         input_path = None
         output_path = None
@@ -422,7 +454,7 @@ def _queue_transform_job(session_id, audio_base64, variation, flowstep, solver, 
 
             processed_waveform = process_audio(
                 input_waveform, variation, flowstep, solver, custom_prompt,
-                session_id=session_id, progress_callback=progress_cb
+                session_id=session_id, progress_callback=progress_cb, seed=seed
             )
 
             output_filename = f"output_{session_id}_{uuid.uuid4().hex[:8]}.wav"
@@ -479,17 +511,19 @@ def juce_transform_audio():
             flowstep = float(flowstep)
         solver = (data.get('solver') or 'euler').lower()
         custom_prompt = data.get('custom_prompt')
+        seed = resolve_seed(data.get('seed'))
 
         _update_session(session_id,
                         original_audio=audio_data,
-                        status="queued", progress=0,
+                        status="queued", progress=0, seed=seed,
                         created_at=datetime.now(timezone.utc).isoformat())
 
-        _queue_transform_job(session_id, audio_data, variation, flowstep, solver, custom_prompt)
+        _queue_transform_job(session_id, audio_data, variation, flowstep, solver, custom_prompt, seed)
 
         return jsonify({
             "success": True,
             "session_id": session_id,
+            "seed": seed,
             "message": "Audio transform started",
             "note": "Poll /api/juce/poll_status/{session_id} for progress and results"
         })
@@ -514,6 +548,9 @@ def juce_poll_status(session_id):
             "queue_status": sess.get("queue_status", {}),
             "transform_in_progress": status in ("warming", "processing", "queued"),
         }
+
+        if sess.get("seed") is not None:
+            response["seed"] = sess["seed"]
 
         if status == "completed":
             response["transform_in_progress"] = False
