@@ -13,6 +13,40 @@ sys.path.insert(0, str(CAREY_DIR))
 import sa3_autolabel  # noqa: E402
 
 
+class BuildReuseArgsTests(unittest.TestCase):
+    """The reused train_lora_job helpers index MODEL_MAP with args.model, and
+    that map is keyed by full model names rather than the CLI aliases."""
+
+    def cli(self, model: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            job_id="job", name=None, run_dir=".", log_path=".", cancel_path=".",
+            status_path=".", current_job_path=".", dataset_dir=".",
+            carey_url="http://127.0.0.1:8003", caption_lm_model="acestep-5Hz-lm-1.7B",
+            model=model, caption_timeout=1.0, caption_startup_timeout=1.0,
+            model_load_timeout=1.0, carey_stop_timeout=1.0,
+            caption_window_seconds=1.0, analysis_duration=1.0,
+            style="", trigger="", job_dir=".",
+        )
+
+    def test_the_default_alias_resolves_to_a_real_model_key(self) -> None:
+        from train_lora_job import MODEL_MAP
+
+        args = sa3_autolabel.build_reuse_args(self.cli("base"))
+
+        self.assertEqual(args.model, "acestep-v15-base")
+        # The bug this covers surfaced as a bare KeyError('base') in the UI.
+        self.assertIn(args.model, MODEL_MAP)
+
+    def test_a_full_model_name_is_left_alone(self) -> None:
+        args = sa3_autolabel.build_reuse_args(self.cli("acestep-v15-xl-base"))
+
+        self.assertEqual(args.model, "acestep-v15-xl-base")
+
+    def test_an_unknown_model_says_so_instead_of_raising_a_key_error(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown ACE-Step training model"):
+            sa3_autolabel.build_reuse_args(self.cli("nonsense"))
+
+
 class Sa3AudioDiscoveryTests(unittest.TestCase):
     def test_matches_ui_audio_extensions_including_aiff(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
