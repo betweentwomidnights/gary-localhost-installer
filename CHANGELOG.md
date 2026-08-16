@@ -6,19 +6,40 @@ this file gets to remember how we got here.
 
 ## v0.2.1
 
+the real substance of this one is in carey's LoRA trainer.
+
+it picks the right model now. the base/xl-base selector was sending short names
+that didn't resolve to real model folders, and it has moved into its own
+**preparation + training model** section because it decides how your dataset
+gets preprocessed as well as what you train against. worse, when the selected
+model's `silence_latent.pt` was missing, the loader used to scan every variant
+folder and take whichever it found first — so choosing xl-base without its
+assets downloaded quietly trained against base's latent instead of telling you.
+it now resolves the model you picked or says it can't.
+
+if you had every carey model downloaded, you never saw either of these. they
+turned up while testing on a machine that only had some of them.
+
+the carey trainer also gets LoRA catalog controls, refuses to reuse a name
+that's already taken, and cleans up its checkpoints more carefully when a run
+ends.
+
 terry gets a seed. tick **use seed** and the box below it fills in with whatever
-seed the last transform actually ran, so you can send the same one again and get
-that take back. it works the way sa3 and carey already do. one honest caveat: the
-same seed isn't bit-identical run to run, because the gpu picks its own
-convolution algorithms and a 75 step solve amplifies the difference. it is very,
-very close — close enough to compare two machines, but don't expect byte
-equality.
+seed the last transform actually ran, so you can send the same one again. being
+straight about why it's here: seed doesn't matter much for melodyflow
+transformations the way it does for sa3 LoRA blending. it's here so we can test
+properly on new hardware — comparing an AMD machine against an NVIDIA one is a
+lot easier when both can run the same seed. it works the way sa3 and carey
+already do. it also isn't bit-identical run to run, because the gpu picks its
+own convolution algorithms, though it lands very close.
 
 **terry now runs at its native 48kHz, and transforms cap at 30 seconds instead
-of 45.** we were resampling input to 32kHz and writing the output back at 32kHz,
-and those two mistakes cancelled out for listening, which is why nobody caught
-it. the model was hearing everything a fifth high the whole time. the extra 15
-seconds was a side effect of the same mismatch. output files are 48kHz now.
+of 45.** the old path resampled input to 32kHz and wrote the output back at
+32kHz. that round-tripped correctly — results matched the input in pitch and
+tempo, which is why it stayed this way so long — and the extra 15 seconds came
+out of the same arrangement. we've moved to the model's own rate in the hope it
+improves quality. don't expect a night and day difference. the shorter cap is
+the part you'll actually notice.
 
 foundation tells you what went wrong when your host reports a nonsense tempo.
 savihost sent 3159345 BPM through gary4juce and all you got back was a bare 400
@@ -30,22 +51,6 @@ fits used to binary search with a gpu encode per step, and it swallowed every
 error while doing it, so a failing encoder turned into a silent one second
 result instead of an error. and the `[OK] xformers memory efficient attention
 available` line now appears once instead of roughly 48 times per generation.
-
-carey's trainer picks the right model now. the base/xl-base selector was
-sending short names that didn't resolve to real model folders, and it has moved
-into its own **preparation + training model** section because it decides how
-your dataset gets preprocessed as well as what you train against. worse, when
-the selected model's `silence_latent.pt` was missing, the loader used to scan
-every variant folder and take whichever it found first — so choosing xl-base
-without its assets downloaded quietly trained against base's latent instead of
-telling you. it now resolves the model you picked or says it can't.
-
-if you had every carey model downloaded, you never saw either of these. they
-turned up while testing on a machine that only had some of them.
-
-the carey trainer also gets LoRA catalog controls, refuses to reuse a name
-that's already taken, and cleans up its checkpoints more carefully when a run
-ends.
 
 sa3 gets selectable LoRA layer scopes, a captioner choice for auto-labelling
 datasets, and falls back to the bundled dice prompts when it can't reach the

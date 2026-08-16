@@ -17,29 +17,26 @@ PyInstaller/Inno Setup flow remains available in the older branch history.
 
 ## v0.2.1
 
-terry gets a seed. tick **use seed** and the box fills in with whatever seed the
-last transform ran, so you can get that take back. the same seed isn't
-bit-identical run to run — the gpu picks its own convolution algorithms — but
-it's very close.
+carey's LoRA trainer is the real substance here. it picks the right model now —
+the base/xl-base selector was sending names that didn't resolve to real model
+folders, and when the model you chose was missing its `silence_latent.pt` the
+loader quietly used a different variant's instead of saying so. if you had every
+carey model downloaded you never saw this. the trainer also gets LoRA catalog
+controls and won't reuse a name that's taken.
 
-**terry now runs at its native 48kHz, and transforms cap at 30 seconds instead
-of 45.** we were resampling input to 32kHz and writing output back at 32kHz, and
-the two cancelled out for listening, so nobody noticed the model was hearing
-everything a fifth high. output files are 48kHz now.
+terry gets a seed, mostly so we can test the same transform on different
+hardware. seed doesn't matter much for melodyflow the way it does for sa3 LoRA
+blending, but it's there now.
 
-foundation also tells you what went wrong when your host reports a nonsense
-tempo, instead of answering with a bare 400.
-
-carey's trainer picks the right model now. the base/xl-base selector was sending
-names that didn't resolve to real model folders, and when the model you chose
-was missing its `silence_latent.pt` the loader quietly used a different
-variant's instead of saying so. if you had every carey model downloaded you
-never saw this. the trainer also gets LoRA catalog controls and won't reuse a
-name that's taken.
+**terry also runs at its native 48kHz, and transforms cap at 30 seconds instead
+of 45.** the old 32kHz path round-tripped correctly, so this is a hoped-for
+quality improvement rather than a fix. the shorter cap is the part you'll
+notice.
 
 sa3 gets selectable LoRA layer scopes and a captioner choice for auto-labelling.
-the model panel shows how much disk each model is using, and the LoRA pickers
-remember where you were.
+foundation says what's wrong when your host reports a nonsense tempo instead of
+answering with a bare 400. the model panel shows how much disk each model is
+using, and the LoRA pickers remember where you were.
 
 compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
 
