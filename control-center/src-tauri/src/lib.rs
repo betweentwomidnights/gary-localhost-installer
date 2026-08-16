@@ -8700,10 +8700,16 @@ fn clear_runtime_uv_cache_at(active_root: &Path) -> Result<u64, String> {
 }
 
 #[tauri::command]
-fn get_runtime_cache_info(
+async fn get_runtime_cache_info(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<RuntimeCacheInfo, String> {
-    Ok(build_runtime_cache_info(repo_root.inner()))
+    // The UV cache reaches tens of thousands of files. A sync command would
+    // size it on the main thread, which freezes the window itself -- the
+    // scrollbar stops moving -- rather than merely delaying the number.
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || build_runtime_cache_info(&root))
+        .await
+        .map_err(|e| format!("Cache scan failed: {e}"))
 }
 
 /// Describe every service environment so the storage UI can show what each one
@@ -9079,10 +9085,15 @@ fn reset_runtime_storage_root(
 }
 
 #[tauri::command]
-fn get_legacy_storage_maintenance_info(
+async fn get_legacy_storage_maintenance_info(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceInfo, String> {
-    build_legacy_storage_maintenance_info(repo_root.inner())
+    // Sizes legacy roots and LoRA candidates, so it is off the main thread for
+    // the same reason as the cache scan above.
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || build_legacy_storage_maintenance_info(&root))
+        .await
+        .map_err(|e| format!("Storage maintenance scan failed: {e}"))?
 }
 
 #[tauri::command]
