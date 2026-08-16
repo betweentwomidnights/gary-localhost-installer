@@ -504,6 +504,11 @@
     storageMaintenanceMessage = null;
     runtimeCacheError = null;
     runtimeCacheMessage = null;
+    serviceEnvError = null;
+    serviceEnvMessage = null;
+    blobReclaimMessage = null;
+    // serviceEnvs is kept so reopening shows the last known sizes straight
+    // away while the rescan runs behind it.
   }
 
   async function clearRuntimeUvCache() {
