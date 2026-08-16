@@ -36,6 +36,8 @@ import gc
 import ctypes
 import numpy as np
 
+from bpm_range import HostBpmError, resolve_host_bpm
+
 # RC stable-audio-tools imports
 from stable_audio_tools.models.factory import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict
@@ -347,11 +349,25 @@ def validate_request(data: dict) -> list:
     if key_mode and key_mode.lower() not in VALID_KEY_MODES:
         errors.append(f"key_mode must be one of {VALID_KEY_MODES}")
 
-    host_bpm = data.get("host_bpm")
-    if host_bpm is not None and (host_bpm < 40 or host_bpm > 300):
-        errors.append("host_bpm must be between 40 and 300")
+    try:
+        resolve_host_bpm(data.get("host_bpm"), default=120.0)
+    except HostBpmError as e:
+        errors.append(str(e))
 
     return errors
+
+
+def reject(route: str, message: str, errors: list | None = None, status: int = 400):
+    """Return an error response and say why in the service log.
+
+    Clients read the singular `error` key, so every rejection carries one even
+    when there is a list of them.
+    """
+    print(f"[foundation] {route} rejected: {message}", flush=True)
+    payload = {"success": False, "error": message}
+    if errors:
+        payload["errors"] = errors
+    return jsonify(payload), status
 
 
 # ---------------------------------------------------------------------------
@@ -722,11 +738,11 @@ def generate():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"success": False, "error": "JSON body required"}), 400
+            return reject("/generate", "JSON body required")
 
         errors = validate_request(data)
         if errors:
-            return jsonify({"success": False, "errors": errors}), 400
+            return reject("/generate", "; ".join(errors), errors=errors)
 
         # Check model readiness
         if not model_ready.is_set():
@@ -735,7 +751,7 @@ def generate():
         # Parse and resolve params
         seed = int(data.get("seed", -1))
         bars = int(data.get("bars", 4))
-        host_bpm = float(data.get("host_bpm", 120.0))
+        host_bpm = resolve_host_bpm(data.get("host_bpm"), default=120.0)
         guidance_scale = float(data.get("guidance_scale", 7.0))
         steps = int(data.get("steps", 100))
         custom_override = (data.get("custom_prompt_override") or "").strip()
@@ -843,16 +859,16 @@ def audio2audio():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"success": False, "error": "JSON body required"}), 400
+            return reject("/audio2audio", "JSON body required")
 
         audio_b64 = (data.get("audio_data") or "").strip()
         if not audio_b64:
-            return jsonify({"success": False, "error": "audio_data (base64 WAV) is required"}), 400
+            return reject("/audio2audio", "audio_data (base64 WAV) is required")
 
-        host_bpm = data.get("host_bpm")
-        if host_bpm is None:
-            return jsonify({"success": False, "error": "host_bpm is required"}), 400
-        host_bpm = float(host_bpm)
+        try:
+            host_bpm = resolve_host_bpm(data.get("host_bpm"))
+        except HostBpmError as e:
+            return reject("/audio2audio", str(e))
 
         if not model_ready.is_set():
             return jsonify({"success": False, "error": "loading model — warming up"}), 503
