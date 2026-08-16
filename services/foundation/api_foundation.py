@@ -49,6 +49,8 @@ import soundfile as sf
 
 from bpm_range import HostBpmError, resolve_host_bpm
 
+from bpm_range import HostBpmError, resolve_host_bpm
+
 # RC stable-audio-tools imports
 from stable_audio_tools.models.factory import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict

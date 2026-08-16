@@ -967,7 +967,12 @@
     serviceStatus={careyService?.status ?? "stopped"}
     serviceEnvExists={careyService?.env_exists ?? false}
     onClose={closeCareyAceTraining}
-    onShowModels={() => showModels("carey")}
+    onShowModels={() => {
+      // The models panel lives in the main window behind this modal, so
+      // sending someone there without closing it looks like nothing happened.
+      closeCareyAceTraining();
+      showModels("carey");
+    }}
   />
   <Sa3LoraModal
     open={sa3LoraModalOpen}

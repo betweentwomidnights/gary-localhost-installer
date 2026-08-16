@@ -336,10 +336,17 @@ def required_model_checkpoint_files(
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "config.json",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "model.safetensors",
         args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "tokenizer.json",
+        args.checkpoint_dir / "Qwen3-Embedding-0.6B" / "tokenizer_config.json",
     ])
     if include_caption_lm:
         lm_dir = args.checkpoint_dir / args.caption_lm_model
-        required.extend([lm_dir / "config.json", lm_dir / "tokenizer.json"])
+        required.extend(
+            [
+                lm_dir / "config.json",
+                lm_dir / "tokenizer.json",
+                lm_dir / "tokenizer_config.json",
+            ]
+        )
         if args.caption_lm_model == "acestep-5Hz-lm-4B":
             required.extend(
                 [
