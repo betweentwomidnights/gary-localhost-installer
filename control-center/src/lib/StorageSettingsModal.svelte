@@ -72,7 +72,7 @@
     cacheBusy = false,
     cacheError,
     cacheMessage,
-    serviceEnvs = [],
+    serviceEnvs = null,
     serviceEnvBusy = null,
     serviceEnvError,
     serviceEnvMessage,
@@ -102,7 +102,7 @@
     cacheBusy?: boolean;
     cacheError: string | null;
     cacheMessage: string | null;
-    serviceEnvs?: ServiceEnvInfo[];
+    serviceEnvs?: ServiceEnvInfo[] | null;
     serviceEnvBusy?: string | null;
     serviceEnvError: string | null;
     serviceEnvMessage: string | null;
@@ -236,7 +236,7 @@
     if (confirmed) onClearUvCache();
   }
 
-  const installedEnvs = $derived(serviceEnvs.filter((env) => env.present));
+  const installedEnvs = $derived((serviceEnvs ?? []).filter((env) => env.present));
   const totalEnvBytes = $derived(
     installedEnvs.reduce((sum, env) => sum + env.envBytes, 0)
   );
@@ -342,13 +342,17 @@
           <div>
             <div class="section-title">service environments</div>
             <div class="section-copy">
-              {installedEnvs.length > 0
-                ? `${installedEnvs.length} installed - ${formatBytes(totalEnvBytes)}`
-                : "none installed"}
+              {#if serviceEnvs === null}
+                scanning...
+              {:else if installedEnvs.length > 0}
+                {installedEnvs.length} installed - {formatBytes(totalEnvBytes)}
+              {:else}
+                none installed
+              {/if}
             </div>
           </div>
         </div>
-        {#each serviceEnvs as env (env.serviceId)}
+        {#each serviceEnvs ?? [] as env (env.serviceId)}
           <div class="env-row">
             <div class="env-label">
               <span class="env-name">{env.displayName}</span>

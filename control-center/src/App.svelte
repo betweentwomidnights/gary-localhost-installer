@@ -198,7 +198,7 @@
   let runtimeCacheBusy = $state(false);
   let runtimeCacheError: string | null = $state(null);
   let runtimeCacheMessage: string | null = $state(null);
-  let serviceEnvs: ServiceEnvInfo[] = $state([]);
+  let serviceEnvs: ServiceEnvInfo[] | null = $state(null);
   let serviceEnvBusy: string | null = $state(null);
   let serviceEnvError: string | null = $state(null);
   let serviceEnvMessage: string | null = $state(null);
