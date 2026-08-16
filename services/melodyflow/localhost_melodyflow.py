@@ -158,33 +158,21 @@ def load_audio_from_file(file_path: str, target_sr: int = 32000) -> torch.Tensor
     except Exception as e:
         raise AudioProcessingError(f"Failed to load audio from file: {str(e)}")
 
-def find_max_duration(model: MelodyFlow, waveform: torch.Tensor, sr: int = 32000, max_token_length: int = 750) -> tuple:
-    """Binary search to find maximum duration that produces tokens under the limit."""
-    min_seconds = 1
-    max_seconds = waveform.shape[-1] / sr
-    best_duration = min_seconds
-    best_tokens = None
+def encode_within_latent_window(model: MelodyFlow, waveform: torch.Tensor, sr: int = 32000) -> tuple:
+    """Trim the waveform to the model's latent window and encode it once.
 
-    while max_seconds - min_seconds > 0.1:
-        mid_seconds = (min_seconds + max_seconds) / 2
-        samples = int(mid_seconds * sr)
-        test_waveform = waveform[..., :samples]
-
-        try:
-            tokens = model.encode_audio(test_waveform)
-            token_length = tokens.shape[-1]
-
-            if token_length <= max_token_length:
-                best_duration = mid_seconds
-                best_tokens = tokens
-                min_seconds = mid_seconds
-            else:
-                max_seconds = mid_seconds
-
-        except Exception as e:
-            max_seconds = mid_seconds
-
-    return best_duration, best_tokens
+    MelodyFlow's window is fixed: max_duration (30s) at the VAE's 25Hz frame
+    rate, which _generate_tokens asserts against. The VAE hop is fixed too, so
+    the token count is exactly linear in the sample count — there is nothing to
+    search for. This used to be a binary search that re-derived that closed
+    form with a GPU encode per iteration, and swallowed every exception it hit
+    while doing so, which turned any encoder failure into a silent 1-second
+    result instead of an error.
+    """
+    samples_per_latent = round(model.sample_rate / model.frame_rate)
+    max_latents = int(model.max_duration * model.frame_rate)
+    trimmed = waveform[..., :max_latents * samples_per_latent]
+    return trimmed.shape[-1] / sr, model.encode_audio(trimmed)
 
 def process_audio(waveform: torch.Tensor, variation_name: str, 
                  custom_flowstep: float = None, solver: str = "euler", 
@@ -207,7 +195,7 @@ def process_audio(waveform: torch.Tensor, variation_name: str,
             current_model = load_model()
 
             # Find valid duration and get tokens
-            max_valid_duration, tokens = find_max_duration(current_model, waveform)
+            max_valid_duration, tokens = encode_within_latent_window(current_model, waveform)
             config['duration'] = max_valid_duration
 
             # Override steps and regularization based on solver
