@@ -4,6 +4,35 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.2.1
+
+terry gets a seed. tick **use seed** and the box below it fills in with whatever
+seed the last transform actually ran, so you can send the same one again and get
+that take back. it works the way sa3 and carey already do. one honest caveat: the
+same seed isn't bit-identical run to run, because the gpu picks its own
+convolution algorithms and a 75 step solve amplifies the difference. it is very,
+very close — close enough to compare two machines, but don't expect byte
+equality.
+
+**terry now runs at its native 48kHz, and transforms cap at 30 seconds instead
+of 45.** we were resampling input to 32kHz and writing the output back at 32kHz,
+and those two mistakes cancelled out for listening, which is why nobody caught
+it. the model was hearing everything a fifth high the whole time. the extra 15
+seconds was a side effect of the same mismatch. output files are 48kHz now.
+
+foundation tells you what went wrong when your host reports a nonsense tempo.
+savihost sent 3159345 BPM through gary4juce and all you got back was a bare 400
+with nothing in the log. it now says which value it rejected and what range it
+takes, in both the response and the service log.
+
+terry also stops re-deriving something it already knew: finding how much audio
+fits used to binary search with a gpu encode per step, and it swallowed every
+error while doing it, so a failing encoder turned into a silent one second
+result instead of an error. and the `[OK] xformers memory efficient attention
+available` line now appears once instead of roughly 48 times per generation.
+
+compatible with gary4juce v4.0.12.
+
 ## v0.2.0
 
 v0.2.0 swaps the SA3 LoRA trainer over to stable-audio-3's own Lightning

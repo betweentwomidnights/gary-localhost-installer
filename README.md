@@ -15,19 +15,24 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.2.0
+## v0.2.1
 
-v0.2.0 swaps the SA3 LoRA trainer over to stable-audio-3's own Lightning
-trainer, so the training step matches the reference instead of drifting from it.
-`pytorch-lightning` installs itself the first time you train.
+terry gets a seed. tick **use seed** and the box fills in with whatever seed the
+last transform ran, so you can get that take back. the same seed isn't
+bit-identical run to run — the gpu picks its own convolution algorithms — but
+it's very close.
 
-the shared trigger word now gets prepended to every caption instead of
-replacing it, so it actually comes to mean the style. if you trained a LoRA with
-a trigger word on an older version, it's worth retraining. training also fits
-better on 8 GB cards now that the VAE and T5Gemma encoder get freed once they
-aren't needed.
+**terry now runs at its native 48kHz, and transforms cap at 30 seconds instead
+of 45.** we were resampling input to 32kHz and writing output back at 32kHz, and
+the two cancelled out for listening, so nobody noticed the model was hearing
+everything a fifth high. output files are 48kHz now.
 
-compatible with [gary4juce v4.0.7](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.7).
+foundation also tells you what went wrong when your host reports a nonsense
+tempo, instead of answering with a bare 400.
+
+if you don't use terry, there's nothing here for you.
+
+compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
