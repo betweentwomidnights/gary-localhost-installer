@@ -56,6 +56,17 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 DEVICE = device
 
 
+# MelodyFlow's VAE is a 48kHz model, and its encoder takes raw samples without
+# resampling anything itself — so audio handed to it at another rate is heard
+# shifted. We used to resample input to 32k, which made the model hear
+# everything a fifth high, then write its 48kHz output back out labelled 32k,
+# which shifted it down again and cancelled for the listener. Staying at the
+# model's own rate keeps it inside the distribution it was trained on. It also
+# costs the extra length that mismatch bought us: the 750-latent window is now
+# exactly the 30 seconds it was meant to be, rather than 45.
+MODEL_SAMPLE_RATE = 48000
+
+
 def env_flag(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -143,11 +154,17 @@ def load_model():
         validate_accelerator_or_raise()
         print("Loading MelodyFlow model...")
         model = MelodyFlow.get_pretrained('facebook/melodyflow-t24-30secs', device=DEVICE)
+        if model.sample_rate != MODEL_SAMPLE_RATE:
+            raise RuntimeError(
+                f"MelodyFlow checkpoint is {model.sample_rate}Hz but this service "
+                f"resamples to {MODEL_SAMPLE_RATE}Hz. Feeding the encoder another "
+                f"rate pitch-shifts everything it hears. Update MODEL_SAMPLE_RATE."
+            )
         if os.environ.get("MELODYFLOW_USE_FLASH_ATTN", "0") == "1":
             model = optimize_melodyflow_model(model)
     return model
 
-def load_audio_from_file(file_path: str, target_sr: int = 32000) -> torch.Tensor:
+def load_audio_from_file(file_path: str, target_sr: int = MODEL_SAMPLE_RATE) -> torch.Tensor:
     """Load and preprocess audio from file path."""
     try:
         if not os.path.exists(file_path):
@@ -158,7 +175,7 @@ def load_audio_from_file(file_path: str, target_sr: int = 32000) -> torch.Tensor
     except Exception as e:
         raise AudioProcessingError(f"Failed to load audio from file: {str(e)}")
 
-def encode_within_latent_window(model: MelodyFlow, waveform: torch.Tensor, sr: int = 32000) -> tuple:
+def encode_within_latent_window(model: MelodyFlow, waveform: torch.Tensor, sr: int = MODEL_SAMPLE_RATE) -> tuple:
     """Trim the waveform to the model's latent window and encode it once.
 
     MelodyFlow's window is fixed: max_duration (30s) at the VAE's 25Hz frame
@@ -343,7 +360,7 @@ def transform_audio():
         output_filename = f"output_{session_id}_{uuid.uuid4().hex[:8]}.wav"
         output_file_path = os.path.join(SHARED_TEMP_DIR, output_filename)
 
-        save_audio(output_file_path, processed_waveform, 32000)
+        save_audio(output_file_path, processed_waveform, MODEL_SAMPLE_RATE)
 
         # Explicit tensor cleanup (before model unload)
         del input_waveform
@@ -445,7 +462,7 @@ def _queue_transform_job(session_id, audio_base64, variation, flowstep, solver, 
 
             output_filename = f"output_{session_id}_{uuid.uuid4().hex[:8]}.wav"
             output_path = os.path.join(SHARED_TEMP_DIR, output_filename)
-            save_audio(output_path, processed_waveform, 32000)
+            save_audio(output_path, processed_waveform, MODEL_SAMPLE_RATE)
 
             with open(output_path, 'rb') as f:
                 result_b64 = base64.b64encode(f.read()).decode("utf-8")
