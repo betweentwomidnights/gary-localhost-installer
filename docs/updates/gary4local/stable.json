@@ -1,14 +1,12 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.2.0",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.0/gary4local_0.2.0_x64-setup.exe",
-    "sha256":  "338d41ece4859d261cc91ae04c24f7d70a5a082e5e5864023dbace5726afaf47",
-    "published_at":  "2026-07-22T15:33:27.8369026Z",
+    "latest_version":  "0.2.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1/gary4local_0.2.1_x64-setup.exe",
+    "sha256":  "1b4ca854f332a3ef46f1925bc2a5660a9172d0157ad04a28c3b8ebbbd117f853",
+    "published_at":  "2026-08-16T10:47:22.5086641Z",
     "notes":  [
-                  "SA3 LoRA training now runs the official stable-audio-3 trainer.",
-                  "New option to train on full tracks instead of random crops.",
-                  "The shared trigger word is prepended to captions instead of replacing them - retrain trigger LoRAs made on older versions.",
-                  "New LoRAs and checkpoint switches apply without reopening the add loras popup.",
-                  "Lower VRAM use while training. Compatible with gary4juce v4.0.7."
+                  "Bugfix for ace-step lora training - the base/xl-base selector was sending names that did not resolve to real model folders.",
+                  "Terry gets a use seed toggle, and no longer converts to 32k before the edit. It hears more detail, but caps at 30 seconds instead of 45.",
+                  "SA3 lora training defaults to 168 layers instead of the full set. Trains faster, and you honestly will not hear a difference. Compatible with gary4juce v4.0.12."
               ]
 }

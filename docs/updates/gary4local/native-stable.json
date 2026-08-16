@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.0",
-    "notes":  "SA3 LoRA training now runs the official stable-audio-3 trainer.\nNew option to train on full tracks instead of random crops.\nThe shared trigger word is prepended to captions instead of replacing them - retrain trigger LoRAs made on older versions.\nNew LoRAs and checkpoint switches apply without reopening the add loras popup.\nLower VRAM use while training. Compatible with gary4juce v4.0.7.",
-    "pub_date":  "2026-07-22T15:33:27.8369026Z",
+    "version":  "0.2.1",
+    "notes":  "Bugfix for ace-step lora training - the base/xl-base selector was sending names that did not resolve to real model folders.\nTerry gets a use seed toggle, and no longer converts to 32k before the edit. It hears more detail, but caps at 30 seconds instead of 45.\nSA3 lora training defaults to 168 layers instead of the full set. Trains faster, and you honestly will not hear a difference. Compatible with gary4juce v4.0.12.",
+    "pub_date":  "2026-08-16T10:47:22.5086641Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEFuRlhBWXc3SkFyWTZNUHNvaEY5ZWZDVVNqMmQ1Nkd4R0oweE9MaFhIZ1AwNmdqVXJLMHJyWkQxSEl3c25xbEdBcEFUN1E4bGdsVENyRDRScFp4TndrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NzMyNDkzCWZpbGU6Z2FyeTRsb2NhbF8wLjIuMF94NjQtc2V0dXAuZXhlCitUd2RZektrOGdSVkU0ZlNkOXRlYzJKSjAzTVRXZStETWhENWJHdnBNWFBMNnAxWmhCSEM3c2NxdVl5bnI4Q0doaSsybFFZUGE2WnFZUGpoRnJ5a0RRPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.0/gary4local_0.2.0_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEJLK0NPd043V3MySFQzcG00cEpwKzhDUGV0MHBaVlJ1MXYyTkNNbFN0NFhibnVqWmJQYWl3anRnWGVWMVh3a1I4NFVGVDFZck52Y0QrZDhqdGlJcmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODc3MTQ2CWZpbGU6Z2FyeTRsb2NhbF8wLjIuMV94NjQtc2V0dXAuZXhlCmdXQlpyNzJScFRWUHJTMkFDVTZndW9hcGRxOGErMkNKVTlaUzFiTzVXakpRSTJkL1NIek5jeGExS0ZXL2JobEVSZTdOcXUvZkV3UnM0MjBQamFVNUNRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1/gary4local_0.2.1_x64-setup.exe"
                                          }
                   }
 }
