@@ -558,8 +558,8 @@
     try {
       const freed = await invoke<number>("reclaim_duplicate_blobs");
       blobReclaimMessage = freed > 0
-        ? `reclaimed ${formatByteCount(freed)} of duplicated model copies`
-        : "no duplicated copies found";
+        ? `freed ${formatByteCount(freed)} of duplicated copies`
+        : "no duplicates found - nothing to clean up";
     } catch (e) {
       serviceEnvError = formatError(e);
     } finally {

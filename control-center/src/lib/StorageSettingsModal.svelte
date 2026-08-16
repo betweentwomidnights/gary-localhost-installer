@@ -258,11 +258,11 @@
 
   function confirmReclaimBlobs() {
     const confirmed = window.confirm(
-      "Reclaim duplicated model copies?\n\n" +
-      "Windows can't create symlinks without developer mode, so Hugging Face " +
-      "saves every downloaded file twice. The spare copy is not used and can " +
-      "be deleted without re-downloading anything. New downloads clean up " +
-      "after themselves already."
+      "Look for duplicated model copies?\n\n" +
+      "A spare copy is sometimes left behind, usually when a download was " +
+      "interrupted and picked up again. It is never read, so removing it " +
+      "frees space without re-downloading anything.\n\n" +
+      "Often there is nothing to find."
     );
     if (confirmed) onReclaimBlobs();
   }
@@ -396,16 +396,16 @@
         <div class="section-row">
           <div>
             <div class="section-title">duplicated model copies</div>
-            <div class="section-copy">from downloads made before this cleanup existed</div>
+            <div class="section-copy">usually nothing to find</div>
           </div>
           <button
             type="button"
             class="small-action"
             onclick={confirmReclaimBlobs}
             disabled={busy || blobReclaimBusy}
-          >{blobReclaimBusy ? "reclaiming..." : "reclaim space"}</button>
+          >{blobReclaimBusy ? "checking..." : "check for duplicates"}</button>
         </div>
-        <div class="note">Windows can't create symlinks without developer mode, so Hugging Face saves every downloaded file twice - once as the model and once as a spare copy that never gets read. Deleting the spare frees roughly half of what your models occupy, and nothing is re-downloaded. New downloads already do this for themselves.</div>
+        <div class="note">A model file can end up stored twice - usually when a download was interrupted and picked up again, since Windows can't always link the second copy into place. The spare is never read, so removing it frees that space and nothing gets re-downloaded. New downloads tidy up after themselves, so this is here for anything already on disk.</div>
         {#if blobReclaimMessage}<div class="success-note">{blobReclaimMessage}</div>{/if}
       </div>
 
