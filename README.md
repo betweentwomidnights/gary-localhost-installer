@@ -30,7 +30,16 @@ everything a fifth high. output files are 48kHz now.
 foundation also tells you what went wrong when your host reports a nonsense
 tempo, instead of answering with a bare 400.
 
-if you don't use terry, there's nothing here for you.
+carey's trainer picks the right model now. the base/xl-base selector was sending
+names that didn't resolve to real model folders, and when the model you chose
+was missing its `silence_latent.pt` the loader quietly used a different
+variant's instead of saying so. if you had every carey model downloaded you
+never saw this. the trainer also gets LoRA catalog controls and won't reuse a
+name that's taken.
+
+sa3 gets selectable LoRA layer scopes and a captioner choice for auto-labelling.
+the model panel shows how much disk each model is using, and the LoRA pickers
+remember where you were.
 
 compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
 

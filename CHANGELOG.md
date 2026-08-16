@@ -31,6 +31,30 @@ error while doing it, so a failing encoder turned into a silent one second
 result instead of an error. and the `[OK] xformers memory efficient attention
 available` line now appears once instead of roughly 48 times per generation.
 
+carey's trainer picks the right model now. the base/xl-base selector was
+sending short names that didn't resolve to real model folders, and it has moved
+into its own **preparation + training model** section because it decides how
+your dataset gets preprocessed as well as what you train against. worse, when
+the selected model's `silence_latent.pt` was missing, the loader used to scan
+every variant folder and take whichever it found first — so choosing xl-base
+without its assets downloaded quietly trained against base's latent instead of
+telling you. it now resolves the model you picked or says it can't.
+
+if you had every carey model downloaded, you never saw either of these. they
+turned up while testing on a machine that only had some of them.
+
+the carey trainer also gets LoRA catalog controls, refuses to reuse a name
+that's already taken, and cleans up its checkpoints more carefully when a run
+ends.
+
+sa3 gets selectable LoRA layer scopes, a captioner choice for auto-labelling
+datasets, and falls back to the bundled dice prompts when it can't reach the
+prompt pool. LoRAs that were trained by gary rather than sa3 get cleaned up
+instead of sitting in the list.
+
+the model panel shows how much disk each downloaded model is using, and every
+LoRA picker remembers the folder you were last in.
+
 compatible with gary4juce v4.0.12.
 
 ## v0.2.0
