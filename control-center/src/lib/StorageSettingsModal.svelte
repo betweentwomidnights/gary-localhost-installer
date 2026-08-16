@@ -77,6 +77,9 @@
     serviceEnvError,
     serviceEnvMessage,
     onRemoveServiceEnv,
+    blobReclaimBusy = false,
+    blobReclaimMessage,
+    onReclaimBlobs,
     restarting = false,
     onChoose,
     onReset,
@@ -107,6 +110,9 @@
     serviceEnvError: string | null;
     serviceEnvMessage: string | null;
     onRemoveServiceEnv: (serviceId: string) => void;
+    blobReclaimBusy?: boolean;
+    blobReclaimMessage: string | null;
+    onReclaimBlobs: () => void;
     restarting?: boolean;
     onChoose: (path: string) => void;
     onReset: () => void;
@@ -249,6 +255,17 @@
     );
     if (confirmed) onRemoveServiceEnv(env.serviceId);
   }
+
+  function confirmReclaimBlobs() {
+    const confirmed = window.confirm(
+      "Reclaim duplicated model copies?\n\n" +
+      "Windows can't create symlinks without developer mode, so Hugging Face " +
+      "saves every downloaded file twice. The spare copy is not used and can " +
+      "be deleted without re-downloading anything. New downloads clean up " +
+      "after themselves already."
+    );
+    if (confirmed) onReclaimBlobs();
+  }
 </script>
 
 {#if open}
@@ -373,6 +390,23 @@
         <div class="note">Each environment is the Python install for one model, several GB apiece. Removing one keeps that model's downloaded weights and frees the packages; rebuild it from the service when you want to run it again.</div>
         {#if serviceEnvMessage}<div class="success-note">{serviceEnvMessage}</div>{/if}
         {#if serviceEnvError}<div class="error-note">{serviceEnvError}</div>{/if}
+      </div>
+
+      <div class="active-cache">
+        <div class="section-row">
+          <div>
+            <div class="section-title">duplicated model copies</div>
+            <div class="section-copy">from downloads made before this cleanup existed</div>
+          </div>
+          <button
+            type="button"
+            class="small-action"
+            onclick={confirmReclaimBlobs}
+            disabled={busy || blobReclaimBusy}
+          >{blobReclaimBusy ? "reclaiming..." : "reclaim space"}</button>
+        </div>
+        <div class="note">Windows can't create symlinks without developer mode, so Hugging Face saves every downloaded file twice - once as the model and once as a spare copy that never gets read. Deleting the spare frees roughly half of what your models occupy, and nothing is re-downloaded. New downloads already do this for themselves.</div>
+        {#if blobReclaimMessage}<div class="success-note">{blobReclaimMessage}</div>{/if}
       </div>
 
       <div class="maintenance">
