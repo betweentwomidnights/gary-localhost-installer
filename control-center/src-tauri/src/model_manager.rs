@@ -782,6 +782,14 @@ impl ModelManager {
             .is_some_and(|download| matches!(download.status, ModelStatus::Downloading))
     }
 
+    /// True while any download is in flight, so storage cleanup can wait for a
+    /// quiet moment rather than pulling files out from under one.
+    pub fn any_downloading(&self) -> bool {
+        self.downloads
+            .values()
+            .any(|download| matches!(download.status, ModelStatus::Downloading))
+    }
+
     pub fn forget_model_status(&mut self, model_id: &str) {
         self.downloads.remove(model_id);
         self.model_cache.remove(model_id);
@@ -1320,6 +1328,19 @@ except Exception as e:
             drop(mgr);
             emit_model_status(&manager, &handle).await;
             return Err(msg);
+        }
+        // Windows keeps a second full copy of everything it just downloaded,
+        // because the hub cannot symlink without developer mode. Only do this
+        // once the files are confirmed present, so a failed download is never
+        // left with the snapshot gone and the blob reclaimed.
+        let repo_dir = cache_dir.join(format!("models--{}", repo_id.replace('/', "--")));
+        let reclaimed = crate::reclaim_duplicate_hf_blobs(&repo_dir);
+        if reclaimed > 0 {
+            log::info!(
+                "Reclaimed {} bytes of duplicated blobs for {}",
+                reclaimed,
+                repo_id
+            );
         }
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, None);

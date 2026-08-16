@@ -199,6 +199,8 @@
   let runtimeCacheError: string | null = $state(null);
   let runtimeCacheMessage: string | null = $state(null);
   let serviceEnvs: ServiceEnvInfo[] | null = $state(null);
+  let blobReclaimBusy = $state(false);
+  let blobReclaimMessage: string | null = $state(null);
   let serviceEnvBusy: string | null = $state(null);
   let serviceEnvError: string | null = $state(null);
   let serviceEnvMessage: string | null = $state(null);
@@ -546,6 +548,22 @@
       serviceEnvError = formatError(e);
     } finally {
       serviceEnvBusy = null;
+    }
+  }
+
+  async function reclaimDuplicateBlobs() {
+    blobReclaimBusy = true;
+    blobReclaimMessage = null;
+    serviceEnvError = null;
+    try {
+      const freed = await invoke<number>("reclaim_duplicate_blobs");
+      blobReclaimMessage = freed > 0
+        ? `reclaimed ${formatByteCount(freed)} of duplicated model copies`
+        : "no duplicated copies found";
+    } catch (e) {
+      serviceEnvError = formatError(e);
+    } finally {
+      blobReclaimBusy = false;
     }
   }
 
@@ -917,6 +935,9 @@
     serviceEnvError={serviceEnvError}
     serviceEnvMessage={serviceEnvMessage}
     onRemoveServiceEnv={removeServiceEnv}
+    blobReclaimBusy={blobReclaimBusy}
+    blobReclaimMessage={blobReclaimMessage}
+    onReclaimBlobs={reclaimDuplicateBlobs}
     restarting={storageRestarting}
     onChoose={saveRuntimeStorageRoot}
     onReset={resetRuntimeStorageRoot}

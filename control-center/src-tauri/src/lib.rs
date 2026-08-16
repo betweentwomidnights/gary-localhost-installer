@@ -5247,6 +5247,7 @@ pub fn run() {
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
+            reclaim_duplicate_blobs,
             remove_service_env,
             save_runtime_storage_root,
             reset_runtime_storage_root,
@@ -7315,6 +7316,92 @@ fn resolve_managed_path(path: &Path, managed_root: &Path) -> Result<Option<PathB
     Ok(Some(canonical_path))
 }
 
+/// Collect every regular file under `dir`, skipping symlinks, as (size, path).
+fn collect_files_skipping_links(dir: &Path, out: &mut Vec<(u64, std::path::PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            collect_files_skipping_links(&path, out);
+        } else if meta.is_file() {
+            out.push((meta.len(), path));
+        }
+    }
+}
+
+/// Drop blob copies that Windows duplicated during download.
+///
+/// Without developer mode the hub cannot create symlinks, so it writes every
+/// file twice: once as blobs/{etag} and again as snapshots/{rev}/{name}. The
+/// snapshot copy is the one that gets used -- file_download checks the pointer
+/// path before it looks for a blob -- so the blob is dead weight costing as
+/// much as the model itself.
+///
+/// A symlinked snapshot is the opposite case: there the blob IS the file and
+/// the snapshot merely points at it. Deleting it would leave a broken link,
+/// which os.path.exists reports as missing and the hub answers by downloading
+/// again. Symlinks are skipped entirely, so this is a no-op once a user turns
+/// developer mode on.
+///
+/// Blobs are named by content hash, so a blob is matched to its snapshot twin
+/// by size. A size is only reclaimed when the snapshots hold at least as many
+/// real files of that size as there are blobs, which means every blob being
+/// dropped is accounted for by a copy that survives.
+fn reclaim_duplicate_hf_blobs(repo_dir: &Path) -> u64 {
+    let mut snapshot_files = Vec::new();
+    collect_files_skipping_links(&repo_dir.join("snapshots"), &mut snapshot_files);
+    if snapshot_files.is_empty() {
+        return 0;
+    }
+
+    let mut snapshot_counts: std::collections::HashMap<u64, usize> =
+        std::collections::HashMap::new();
+    for (size, _) in &snapshot_files {
+        *snapshot_counts.entry(*size).or_default() += 1;
+    }
+
+    let mut blobs_by_size: std::collections::HashMap<u64, Vec<std::path::PathBuf>> =
+        std::collections::HashMap::new();
+    let blobs_dir = repo_dir.join("blobs");
+    if let Ok(entries) = std::fs::read_dir(&blobs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // A partial download is still in flight; leave it alone.
+            if path.extension().is_some_and(|ext| ext == "incomplete") {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                continue;
+            }
+            blobs_by_size.entry(meta.len()).or_default().push(path);
+        }
+    }
+
+    let mut reclaimed = 0;
+    for (size, blobs) in blobs_by_size {
+        if snapshot_counts.get(&size).copied().unwrap_or(0) < blobs.len() {
+            continue;
+        }
+        for blob in blobs {
+            if remove_managed_path(&blob, &blobs_dir).unwrap_or(false) {
+                reclaimed += size;
+            }
+        }
+    }
+    reclaimed
+}
+
 /// Remove one file from a Hugging Face repo cache, blob copy included.
 ///
 /// Windows cannot symlink without developer mode, so the hub stores each file
@@ -8748,6 +8835,51 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
         .collect()
 }
 
+/// Sweep every cached repo for blob copies Windows duplicated. Downloads do
+/// this for themselves now, so this is for models already on disk.
+#[tauri::command]
+async fn reclaim_duplicate_blobs(
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<u64, String> {
+    {
+        let mgr = model_mgr.lock().await;
+        if mgr.any_downloading() {
+            return Err("Wait for downloads to finish before reclaiming space.".to_string());
+        }
+    }
+    {
+        let mgr = svc_mgr.lock().await;
+        if mgr.any_building() {
+            return Err("Wait for environment builds to finish first.".to_string());
+        }
+    }
+
+    let hub_dir = {
+        let mgr = model_mgr.lock().await;
+        mgr.hf_hub_cache_dir()
+    };
+
+    let mut reclaimed = 0;
+    if let Ok(entries) = std::fs::read_dir(&hub_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("models--"))
+            {
+                reclaimed += reclaim_duplicate_hf_blobs(&path);
+            }
+        }
+    }
+
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    Ok(reclaimed)
+}
+
 #[tauri::command]
 async fn get_service_envs(
     svc_mgr: tauri::State<'_, ManagerState>,
@@ -8911,6 +9043,51 @@ mod service_env_removal_tests {
         assert!(!blobs.join("hash-for-wanted").exists());
         assert!(snapshot.join("keep.ckpt").exists());
         assert!(blobs.join("hash-for-keep").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reclaiming_drops_the_duplicate_blob_and_keeps_the_snapshot() {
+        use super::reclaim_duplicate_hf_blobs;
+        let root = temp_root("hf-reclaim");
+        let repo = root.join("models--stabilityai--stable-audio-open-small");
+        let snapshot = repo.join("snapshots").join("rev1");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(snapshot.join("model.safetensors"), vec![7u8; 64]).unwrap();
+        std::fs::write(blobs.join("etag-hash"), vec![7u8; 64]).unwrap();
+        // Mid-download files must survive.
+        std::fs::write(blobs.join("etag-two.incomplete"), vec![9u8; 64]).unwrap();
+
+        let reclaimed = reclaim_duplicate_hf_blobs(&repo);
+
+        assert_eq!(reclaimed, 64);
+        assert!(!blobs.join("etag-hash").exists());
+        assert!(snapshot.join("model.safetensors").exists());
+        assert!(blobs.join("etag-two.incomplete").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reclaiming_keeps_a_blob_with_no_snapshot_copy() {
+        use super::reclaim_duplicate_hf_blobs;
+        let root = temp_root("hf-reclaim-orphan");
+        let repo = root.join("models--org--repo");
+        let snapshot = repo.join("snapshots").join("rev1");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(snapshot.join("small.json"), vec![1u8; 10]).unwrap();
+        std::fs::write(blobs.join("etag-small"), vec![1u8; 10]).unwrap();
+        // Two blobs of one size but only one snapshot copy: dropping both would
+        // lose a file that nothing else holds.
+        std::fs::write(blobs.join("etag-orphan"), vec![2u8; 10]).unwrap();
+
+        reclaim_duplicate_hf_blobs(&repo);
+
+        assert!(blobs.join("etag-small").exists());
+        assert!(blobs.join("etag-orphan").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
