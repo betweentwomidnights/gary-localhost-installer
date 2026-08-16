@@ -6,56 +6,77 @@ this file gets to remember how we got here.
 
 ## v0.2.1
 
-the real substance of this one is in carey's LoRA trainer.
+### carey (ACE-Step) LoRA trainer
 
-it picks the right model now. the base/xl-base selector was sending short names
-that didn't resolve to real model folders, and it has moved into its own
-**preparation + training model** section because it decides how your dataset
-gets preprocessed as well as what you train against. worse, when the selected
-model's `silence_latent.pt` was missing, the loader used to scan every variant
-folder and take whichever it found first — so choosing xl-base without its
-assets downloaded quietly trained against base's latent instead of telling you.
-it now resolves the model you picked or says it can't.
+the base/xl-base selector was sending the short aliases `base` and `xl-base`,
+which no longer resolve to anything: `MODEL_MAP` is keyed by the real folder
+names (`acestep-v15-base`, `acestep-v15-xl-base`). the selector has also moved
+into its own **preparation + training model** section, because it decides how
+the dataset gets preprocessed as well as what gets trained.
 
-if you had every carey model downloaded, you never saw either of these. they
-turned up while testing on a machine that only had some of them.
+the worse half was `load_silence_latent`. its third search step scanned every
+known variant subdirectory and took the first `silence_latent.pt` it found, so
+selecting xl-base without its assets downloaded silently trained against base's
+latent instead of failing. it now resolves the selected model or raises. if you
+had every carey model downloaded, step 2 always matched and you never reached
+the fallback — this only shows up on a partial install.
 
-the carey trainer also gets LoRA catalog controls, refuses to reuse a name
-that's already taken, and cleans up its checkpoints more carefully when a run
-ends.
+the trainer also gets LoRA catalog controls, refuses to reuse a name that is
+already registered, and cleans up checkpoints more carefully when a run ends or
+is cancelled.
 
-terry gets a seed. tick **use seed** and the box below it fills in with whatever
-seed the last transform actually ran, so you can send the same one again. being
-straight about why it's here: seed doesn't matter much for melodyflow
-transformations the way it does for sa3 LoRA blending. it's here so we can test
-properly on new hardware — comparing an AMD machine against an NVIDIA one is a
-lot easier when both can run the same seed. it works the way sa3 and carey
-already do. it also isn't bit-identical run to run, because the gpu picks its
-own convolution algorithms, though it lands very close.
+### sa3
 
-**terry now runs at its native 48kHz, and transforms cap at 30 seconds instead
-of 45.** the old path resampled input to 32kHz and wrote the output back at
-32kHz. that round-tripped correctly — results matched the input in pitch and
-tempo, which is why it stayed this way so long — and the extra 15 seconds came
-out of the same arrangement. we've moved to the model's own rate in the hope it
-improves quality. don't expect a night and day difference. the shorter cap is
-the part you'll actually notice.
+LoRA layer scope is selectable, and the default drops from the full reference
+set to `transformer-core`: the seven attention and feed-forward projections in
+each of the 24 transformer blocks, 168 adapters, matching the efficient MLX
+scope. the full 229-target reference scope and a 228-target variant without the
+duration conditioner are both still available for exact recipe parity. 168
+trains faster and produces a normal SA3 LoRA checkpoint.
 
-foundation tells you what went wrong when your host reports a nonsense tempo.
-savihost sent 3159345 BPM through gary4juce and all you got back was a bare 400
-with nothing in the log. it now says which value it rejected and what range it
-takes, in both the response and the service log.
+auto-labelling can now pick its captioner, including the 4B ACE-Step model if
+you have the VRAM for it. the prompt pool falls back to the bundled dice prompts
+when it can't be reached, and LoRAs trained by gary rather than sa3 are cleaned
+out instead of sitting in the list.
 
-terry also stops re-deriving something it already knew: finding how much audio
-fits used to binary search with a gpu encode per step, and it swallowed every
-error while doing it, so a failing encoder turned into a silent one second
-result instead of an error. and the `[OK] xformers memory efficient attention
-available` line now appears once instead of roughly 48 times per generation.
+### terry (MelodyFlow)
 
-sa3 gets selectable LoRA layer scopes, a captioner choice for auto-labelling
-datasets, and falls back to the bundled dice prompts when it can't reach the
-prompt pool. LoRAs that were trained by gary rather than sa3 get cleaned up
-instead of sitting in the list.
+**use seed** submits a fixed seed and the box fills in with whatever seed the
+last transform ran. worth being straight about why it exists: seed matters far
+less for melodyflow transformations than it does for sa3 LoRA blending. it is
+here so the same transform can be run on two machines and compared, which is
+what testing new hardware needs. every transform draws noise twice — once
+sampling the VAE posterior of the encoded prompt in `flow.generate`, and again
+per solver step while regularizing — and both come from the global RNG, so one
+`torch.manual_seed` before `edit()` covers the whole run. it is not
+bit-identical: the VAE encoder's convolutions pick nondeterministic cuDNN
+algorithms, so two same-seed euler transforms correlate at 1.000000 without
+being byte equal.
+
+terry no longer resamples to 32kHz before editing. that path round-tripped
+correctly — input resampled down, output written back down, results matching the
+source in pitch and tempo — which is why it survived this long. running at the
+model's own 48kHz means it sees more detail in the input. the tradeoff is
+length: the 750-latent window at the VAE's 25Hz frame rate is 30 seconds of
+48kHz audio, where the 32kHz stream stretched the same window to 45.
+
+finding how much audio fits used to be a binary search with a GPU encode per
+iteration, and it caught every exception as "too long", so a failing encoder
+became a silent one-second result rather than an error. the latent count is
+exactly linear in sample count, so it is one calculation and one encode now.
+
+foundation returns a real message when a host reports an impossible tempo.
+savihost sent 3159345 BPM through gary4juce and the reply was a bare 400 with
+nothing in the service log; the range check was working, but the response only
+carried a plural `errors` key that clients don't read. it now names the value
+and the accepted range in both the response and the log.
+
+the `[OK] xformers memory efficient attention available` line prints once per
+process instead of roughly 48 times per generation — it runs from
+`StreamingMultiheadAttention`'s constructor, and terry rebuilds its model
+between requests.
+
+### elsewhere
 
 the model panel shows how much disk each downloaded model is using, and every
 LoRA picker remembers the folder you were last in.

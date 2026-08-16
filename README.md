@@ -17,26 +17,11 @@ PyInstaller/Inno Setup flow remains available in the older branch history.
 
 ## v0.2.1
 
-carey's LoRA trainer is the real substance here. it picks the right model now —
-the base/xl-base selector was sending names that didn't resolve to real model
-folders, and when the model you chose was missing its `silence_latent.pt` the
-loader quietly used a different variant's instead of saying so. if you had every
-carey model downloaded you never saw this. the trainer also gets LoRA catalog
-controls and won't reuse a name that's taken.
+bugfix for ace-step lora training. the base/xl-base selector was sending names that didn't resolve to real model folders, if you had every model downloaded you never saw this. 
 
-terry gets a seed, mostly so we can test the same transform on different
-hardware. seed doesn't matter much for melodyflow the way it does for sa3 LoRA
-blending, but it's there now.
+'use seed' toggle added for melodyflow (terry), and it no longer converts to 32k before performing the edit. tradeoff: it hears more detail in your input audio but is capped at 30 seconds instead of 45 (like it was always supposed to be)
 
-**terry also runs at its native 48kHz, and transforms cap at 30 seconds instead
-of 45.** the old 32kHz path round-tripped correctly, so this is a hoped-for
-quality improvement rather than a fix. the shorter cap is the part you'll
-notice.
-
-sa3 gets selectable LoRA layer scopes and a captioner choice for auto-labelling.
-foundation says what's wrong when your host reports a nonsense tempo instead of
-answering with a bare 400. the model panel shows how much disk each model is
-using, and the LoRA pickers remember where you were.
+sa3 lora trainer now defaults to 168 layers instead of the full 228 just like the underfit repo. it trains faster and you honestly won't hear a difference in practice. there's also a drop down now to select the 4B ace-step captioner if you have the GPU and really want to for auto-labelling.
 
 compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
 
