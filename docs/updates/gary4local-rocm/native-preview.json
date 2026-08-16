@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.16",
-    "notes":  "foundation-1 should now get past the torch.distributed ReduceOp error.\njust update, restart gary4local-rocm, and try foundation-1 again. no environment rebuild needed.",
-    "pub_date":  "2026-08-15T11:06:39.3840728Z",
+    "version":  "0.2.1-rocm.17",
+    "notes":  "download and test a melodyflow generation. rebuild the terry environment first - it pins a specific transformers version and won\u0027t start without it.\nwe added the seed to gary4juce v4.0.12, but in practice i don\u0027t use it much for melodyflow.\nace-step has new env settings to try and help with your unified memory. lmk how that goes.\nthe new gary4juce also has the fix for the SAOS dropdown in your saved presets :)",
+    "pub_date":  "2026-08-16T13:22:58.7870722Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME5FeHJrck44dzY3U2dXVXBnTHlveDRrK0c2eFRBWitiY1ZYNFQ2Z0oyL3hPTHlqcHRNZzc5RFlTUld1ZXRqLy8zaUZialFZbE5uRmkwTmtoT3RmaVFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzkxOTcxCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTZfeDY0LXNldHVwLmV4ZQpsemd4YzRHdFBOQ2h3R00rYnJFcXBhWnhFM0I3Z3NtTnlzcVBmallVMjNKVjNNWmFUSWI4Tjk1SmlUallOSnVOLzV1Y04xSjlIRWpSenJtcWRGdXJCdz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.16/gary4local-rocm_0.2.1-rocm.16_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElPSEozNW5QQ0NuWlhVQ1IzaGhYRXpKc1k5djJFdHRjQ2RldDEva0J1cHduSGk5eEJtOWVvVXMvejNNMmF6RWdHaHVJMGtPQVlPL1VLZDFLM2FMN2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODg2NDA3CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTdfeDY0LXNldHVwLmV4ZQp5aHdHR2E5OEFzVWRqaUdrU2xsYU9kR0VRL2hGUnE4UUJPK0tkVjBCc2xNaFI4SXp0Uk1sdWM1elRtTVhhaUREcXdwYlhJMG05eFFVb2Z3YkJBNWRDZz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.17/gary4local-rocm_0.2.1-rocm.17_x64-setup.exe"
                                          }
                   }
 }

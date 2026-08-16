@@ -1,11 +1,13 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.16",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.16/gary4local-rocm_0.2.1-rocm.16_x64-setup.exe",
-    "sha256":  "38855b2d0ff90f89bbca41e4058aa3f24f697099d6b3a0640abe18388559e75b",
-    "published_at":  "2026-08-15T11:06:39.3840728Z",
+    "latest_version":  "0.2.1-rocm.17",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.17/gary4local-rocm_0.2.1-rocm.17_x64-setup.exe",
+    "sha256":  "46f009394fad8bc08c6c650271db7b570229e4ba243c25040aaab68b6ca6bf5a",
+    "published_at":  "2026-08-16T13:22:58.7870722Z",
     "notes":  [
-                  "foundation-1 should now get past the torch.distributed ReduceOp error.",
-                  "just update, restart gary4local-rocm, and try foundation-1 again. no environment rebuild needed."
+                  "download and test a melodyflow generation. rebuild the terry environment first - it pins a specific transformers version and won\u0027t start without it.",
+                  "we added the seed to gary4juce v4.0.12, but in practice i don\u0027t use it much for melodyflow.",
+                  "ace-step has new env settings to try and help with your unified memory. lmk how that goes.",
+                  "the new gary4juce also has the fix for the SAOS dropdown in your saved presets :)"
               ]
 }
