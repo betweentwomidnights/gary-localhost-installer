@@ -82,6 +82,47 @@ class MemoryUtilsMixin:
             return min(128, max_chunk)
         return min(256, max_chunk)
 
+    VAE_ENCODE_CHUNK_SECONDS = 30
+    VAE_ENCODE_CHUNK_SECONDS_TIGHT = 15
+
+    def _get_auto_encode_chunk_size(self) -> int:
+        """Choose a VAE encode chunk size, in samples at 48kHz.
+
+        Decode has always sized itself from memory that is actually free, while
+        encode sized itself from the card's total. That reads the whole device
+        even when another service is holding most of it, which is how a machine
+        with 36 GB total but 10 GB free ends up asking for a 30 second chunk and
+        failing to place the allocation.
+
+        This only ever shrinks the chunk. With room to work the answer is the
+        same 30 seconds it always was.
+        """
+        override = os.environ.get("ACESTEP_VAE_ENCODE_CHUNK_SIZE")
+        if override:
+            try:
+                value = int(override)
+                if value > 0:
+                    return value
+            except ValueError:
+                pass
+
+        seconds = self.VAE_ENCODE_CHUNK_SECONDS
+        if self.device == "cuda" or (
+            isinstance(self.device, str) and self.device.startswith("cuda")
+        ):
+            try:
+                free_gb = get_effective_free_vram_gb()
+            except Exception:
+                free_gb = 0.0
+            # 0 means we could not measure; leave the long-standing default be.
+            if 0 < free_gb < 12.0:
+                seconds = self.VAE_ENCODE_CHUNK_SECONDS_TIGHT
+                logger.info(
+                    f"[_get_auto_encode_chunk_size] {free_gb:.2f} GB free, "
+                    f"encoding in {seconds}s chunks"
+                )
+        return 48000 * seconds
+
     def _should_offload_wav_to_cpu(self) -> bool:
         """Decide whether to offload decoded wavs to CPU for memory safety."""
         override = os.environ.get("ACESTEP_MPS_DECODE_OFFLOAD")

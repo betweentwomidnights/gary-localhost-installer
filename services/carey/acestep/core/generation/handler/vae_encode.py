@@ -49,7 +49,12 @@ class VaeEncodeMixin:
                 mem_gb = self._get_effective_mps_memory_gb()
                 if mem_gb is not None:
                     gpu_memory = mem_gb
-            chunk_size = 48000 * 15 if gpu_memory <= 8 else 48000 * 30
+            if gpu_memory <= 8:
+                chunk_size = 48000 * 15
+            else:
+                # Sizes from memory that is free rather than installed, so a
+                # neighbouring service holding the card is accounted for.
+                chunk_size = self._get_auto_encode_chunk_size()
         if overlap is None:
             overlap = 48000 * 2
 
