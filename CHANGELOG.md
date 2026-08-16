@@ -4,6 +4,85 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.2.1
+
+### carey (ACE-Step) LoRA trainer
+
+the base/xl-base selector was sending the short aliases `base` and `xl-base`,
+which no longer resolve to anything: `MODEL_MAP` is keyed by the real folder
+names (`acestep-v15-base`, `acestep-v15-xl-base`). the selector has also moved
+into its own **preparation + training model** section, because it decides how
+the dataset gets preprocessed as well as what gets trained.
+
+the worse half was `load_silence_latent`. its third search step scanned every
+known variant subdirectory and took the first `silence_latent.pt` it found, so
+selecting xl-base without its assets downloaded silently trained against base's
+latent instead of failing. it now resolves the selected model or raises. if you
+had every carey model downloaded, step 2 always matched and you never reached
+the fallback — this only shows up on a partial install.
+
+the trainer also gets LoRA catalog controls, refuses to reuse a name that is
+already registered, and cleans up checkpoints more carefully when a run ends or
+is cancelled.
+
+### sa3
+
+LoRA layer scope is selectable, and the default drops from the full reference
+set to `transformer-core`: the seven attention and feed-forward projections in
+each of the 24 transformer blocks, 168 adapters, matching the efficient MLX
+scope. the full 229-target reference scope and a 228-target variant without the
+duration conditioner are both still available for exact recipe parity. 168
+trains faster and produces a normal SA3 LoRA checkpoint.
+
+auto-labelling can now pick its captioner, including the 4B ACE-Step model if
+you have the VRAM for it. the prompt pool falls back to the bundled dice prompts
+when it can't be reached, and LoRAs trained by gary rather than sa3 are cleaned
+out instead of sitting in the list.
+
+### terry (MelodyFlow)
+
+**use seed** submits a fixed seed and the box fills in with whatever seed the
+last transform ran. worth being straight about why it exists: seed matters far
+less for melodyflow transformations than it does for sa3 LoRA blending. it is
+here so the same transform can be run on two machines and compared, which is
+what testing new hardware needs. every transform draws noise twice — once
+sampling the VAE posterior of the encoded prompt in `flow.generate`, and again
+per solver step while regularizing — and both come from the global RNG, so one
+`torch.manual_seed` before `edit()` covers the whole run. it is not
+bit-identical: the VAE encoder's convolutions pick nondeterministic cuDNN
+algorithms, so two same-seed euler transforms correlate at 1.000000 without
+being byte equal.
+
+terry no longer resamples to 32kHz before editing. that path round-tripped
+correctly — input resampled down, output written back down, results matching the
+source in pitch and tempo — which is why it survived this long. running at the
+model's own 48kHz means it sees more detail in the input. the tradeoff is
+length: the 750-latent window at the VAE's 25Hz frame rate is 30 seconds of
+48kHz audio, where the 32kHz stream stretched the same window to 45.
+
+finding how much audio fits used to be a binary search with a GPU encode per
+iteration, and it caught every exception as "too long", so a failing encoder
+became a silent one-second result rather than an error. the latent count is
+exactly linear in sample count, so it is one calculation and one encode now.
+
+foundation returns a real message when a host reports an impossible tempo.
+savihost sent 3159345 BPM through gary4juce and the reply was a bare 400 with
+nothing in the service log; the range check was working, but the response only
+carried a plural `errors` key that clients don't read. it now names the value
+and the accepted range in both the response and the log.
+
+the `[OK] xformers memory efficient attention available` line prints once per
+process instead of roughly 48 times per generation — it runs from
+`StreamingMultiheadAttention`'s constructor, and terry rebuilds its model
+between requests.
+
+### elsewhere
+
+the model panel shows how much disk each downloaded model is using, and every
+LoRA picker remembers the folder you were last in.
+
+compatible with gary4juce v4.0.12.
+
 ## v0.2.0
 
 v0.2.0 swaps the SA3 LoRA trainer over to stable-audio-3's own Lightning

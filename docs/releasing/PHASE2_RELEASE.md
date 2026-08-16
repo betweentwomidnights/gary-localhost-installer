@@ -41,6 +41,11 @@ Normal users should not need any updater env vars. Production builds use the bak
    both should match the voice already in `CHANGELOG.md` — lowercase headings,
    contractions, no marketing language.
 
+   the changelog, the github release notes, and the updater feed notes are three
+   different registers, not one text pasted three times. see **the three tiers of
+   release notes** in `kevs_docs_style.md` for which gets prose, which gets
+   bullets, and what always earns a line in all three however short.
+
 3. Build the signed NSIS updater artifact:
 
 ```powershell

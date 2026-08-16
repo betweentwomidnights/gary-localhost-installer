@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.1",
-    "notes":  "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.\nFresh installs keep service environments, caches, and models under gary4local-data beside the selected app install folder, so both can live off C:.\nSA3 uses Python 3.12 with AMD ROCm Windows PyTorch 2.9.1+rocm7.2.1 and includes the T5Gemma Transformers compatibility pin.\nSave a Hugging Face read token, then test from Gary4JUCE: Jerry \u003e sa3 \u003e generate and make a short loop.\nSA3 loads lazily on first generation and fails instead of silently falling back to CPU when HIP cannot see the GPU.\nThis preview uses the separate gary4local-rocm updater feed.",
-    "pub_date":  "2026-08-09T07:48:57.9017235Z",
+    "version":  "0.2.1-rocm.16",
+    "notes":  "foundation-1 should now get past the torch.distributed ReduceOp error.\njust update, restart gary4local-rocm, and try foundation-1 again. no environment rebuild needed.",
+    "pub_date":  "2026-08-15T11:06:39.3840728Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME0vdk1xa3F1UWdaNmRtYkZFWmNjM1VKM1cxNEtTLytzZUNESStVU2R1N3JhdmtiMk40aFlKbXpHNVFhNnBPWFZxYzlsd01MdVdRL0g5blJYZ3ltNGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MjYxNzI2CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMV94NjQtc2V0dXAuZXhlClFJZG03VFRNQ283dDA0SkZkV2hIVGhMbGpObDQrMU1CenZ0MVE3b3k5TU9hYmVXanhwWml5YnBaRG9FQUFuRm85bHVBYnloUlJKbDRMUG5oa3c2UUJnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.1/gary4local-rocm_0.2.1-rocm.1_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME5FeHJrck44dzY3U2dXVXBnTHlveDRrK0c2eFRBWitiY1ZYNFQ2Z0oyL3hPTHlqcHRNZzc5RFlTUld1ZXRqLy8zaUZialFZbE5uRmkwTmtoT3RmaVFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzkxOTcxCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTZfeDY0LXNldHVwLmV4ZQpsemd4YzRHdFBOQ2h3R00rYnJFcXBhWnhFM0I3Z3NtTnlzcVBmallVMjNKVjNNWmFUSWI4Tjk1SmlUallOSnVOLzV1Y04xSjlIRWpSenJtcWRGdXJCdz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.16/gary4local-rocm_0.2.1-rocm.16_x64-setup.exe"
                                          }
                   }
 }

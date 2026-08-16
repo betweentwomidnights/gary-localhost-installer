@@ -15,19 +15,15 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.2.0
+## v0.2.1
 
-v0.2.0 swaps the SA3 LoRA trainer over to stable-audio-3's own Lightning
-trainer, so the training step matches the reference instead of drifting from it.
-`pytorch-lightning` installs itself the first time you train.
+bugfix for ace-step lora training. the base/xl-base selector was sending names that didn't resolve to real model folders, if you had every model downloaded you never saw this. 
 
-the shared trigger word now gets prepended to every caption instead of
-replacing it, so it actually comes to mean the style. if you trained a LoRA with
-a trigger word on an older version, it's worth retraining. training also fits
-better on 8 GB cards now that the VAE and T5Gemma encoder get freed once they
-aren't needed.
+'use seed' toggle added for melodyflow (terry), and it no longer converts to 32k before performing the edit. tradeoff: it hears more detail in your input audio but is capped at 30 seconds instead of 45 (like it was always supposed to be)
 
-compatible with [gary4juce v4.0.7](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.7).
+sa3 lora trainer now defaults to 168 layers instead of the full 228 just like the underfit repo. it trains faster and you honestly won't hear a difference in practice. there's also a drop down now to select the 4B ace-step captioner if you have the GPU and really want to for auto-labelling.
+
+compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

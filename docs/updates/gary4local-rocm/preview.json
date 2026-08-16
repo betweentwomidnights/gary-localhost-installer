@@ -1,15 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.1/gary4local-rocm_0.2.1-rocm.1_x64-setup.exe",
-    "sha256":  "cf082fd8b3f4c56cdddb352cf02f2582a06f631a0a3573ca57261e2c496604d0",
-    "published_at":  "2026-08-09T07:48:57.9017235Z",
+    "latest_version":  "0.2.1-rocm.16",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.16/gary4local-rocm_0.2.1-rocm.16_x64-setup.exe",
+    "sha256":  "38855b2d0ff90f89bbca41e4058aa3f24f697099d6b3a0640abe18388559e75b",
+    "published_at":  "2026-08-15T11:06:39.3840728Z",
     "notes":  [
-                  "ROCm test build for the ASUS ROG Flow Z13 / Radeon 8060S tester.",
-                  "Fresh installs keep service environments, caches, and models under gary4local-data beside the selected app install folder, so both can live off C:.",
-                  "SA3 uses Python 3.12 with AMD ROCm Windows PyTorch 2.9.1+rocm7.2.1 and includes the T5Gemma Transformers compatibility pin.",
-                  "Save a Hugging Face read token, then test from Gary4JUCE: Jerry \u003e sa3 \u003e generate and make a short loop.",
-                  "SA3 loads lazily on first generation and fails instead of silently falling back to CPU when HIP cannot see the GPU.",
-                  "This preview uses the separate gary4local-rocm updater feed."
+                  "foundation-1 should now get past the torch.distributed ReduceOp error.",
+                  "just update, restart gary4local-rocm, and try foundation-1 again. no environment rebuild needed."
               ]
 }
