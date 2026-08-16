@@ -478,6 +478,26 @@ struct RuntimeCacheInfo {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ServiceEnvInfo {
+    service_id: String,
+    display_name: String,
+    env_path: String,
+    env_bytes: u64,
+    present: bool,
+    /// None when the environment can be removed right now, otherwise why not.
+    blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceEnvRemovalResult {
+    service_id: String,
+    removed_bytes: u64,
+    environments: Vec<ServiceEnvInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RuntimeCacheClearResult {
     info: RuntimeCacheInfo,
     cleared_bytes: u64,
@@ -5223,6 +5243,8 @@ pub fn run() {
             get_runtime_storage_info,
             get_runtime_cache_info,
             clear_uv_cache,
+            get_service_envs,
+            remove_service_env,
             save_runtime_storage_root,
             reset_runtime_storage_root,
             get_legacy_storage_maintenance_info,
@@ -5989,13 +6011,35 @@ async fn remove_model(
     app_handle: tauri::AppHandle,
 ) -> Result<ModelRemovalResult, String> {
     let is_carey_model = service_id == "carey" && model_id.starts_with("carey::");
-    let is_melodyflow_model = service_id == "melodyflow"
-        && model_id == model_manager::MELODYFLOW_MODEL_ID;
-    if !is_carey_model && !is_melodyflow_model {
+    let is_foundation_model =
+        service_id == "foundation" && model_id == model_manager::FOUNDATION_MODEL_ID;
+    // Everything else we manage is a whole Hugging Face repo in the shared hub
+    // cache, so one path handles Terry, Gary, Jerry, and SA3 alike. Composite
+    // ids are not repos -- Jerry's finetunes are "repo::filename", a single
+    // file inside one -- so they are deliberately excluded here rather than
+    // resolving to a cache directory that does not exist.
+    let is_hf_cache_model = matches!(
+        service_id.as_str(),
+        "melodyflow" | "gary" | "stable-audio" | "sa3"
+    ) && !model_id.contains("::");
+    if !is_carey_model && !is_foundation_model && !is_hf_cache_model {
+        if model_id.contains("::") {
+            return Err(
+                "Only whole models can be removed here, not individual checkpoints.".to_string(),
+            );
+        }
         return Err("This model is not available for managed removal.".to_string());
     }
 
-    let service_label = if is_carey_model { "Carey" } else { "Terry" };
+    let service_label = match service_id.as_str() {
+        "carey" => "Carey",
+        "melodyflow" => "Terry",
+        "gary" => "Gary",
+        "stable-audio" => "Jerry",
+        "sa3" => "SA3",
+        "foundation" => "Foundation-1",
+        other => other,
+    };
 
     {
         let mgr = svc_mgr.lock().await;
@@ -6030,6 +6074,15 @@ async fn remove_model(
     let (managed_root, model_path) = if is_carey_model {
         let root = repo_root.join("services").join("carey").join("checkpoints");
         let path = model_manager::carey_component_path(&root, &model_id)?;
+        (root, path)
+    } else if is_foundation_model {
+        // Foundation-1 is a plain directory of weights under the runtime models
+        // dir rather than a Hugging Face repo, so it needs its own root.
+        let root = {
+            let mgr = model_mgr.lock().await;
+            mgr.foundation_models_dir()
+        };
+        let path = root.join("foundation-1");
         (root, path)
     } else {
         let root = {
@@ -8498,6 +8551,77 @@ fn get_runtime_cache_info(
     Ok(build_runtime_cache_info(repo_root.inner()))
 }
 
+/// Describe every service environment so the storage UI can show what each one
+/// costs and whether it is safe to remove right now.
+async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
+    let mgr = svc_mgr.lock().await;
+    mgr.get_service_info()
+        .into_iter()
+        .map(|info| {
+            let env_path = mgr.env_dir_for(&info.id);
+            let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
+            let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
+            let blocked_reason = if mgr.is_running(&info.id) {
+                Some(format!("stop {} first", info.display_name))
+            } else if mgr.is_building(&info.id) {
+                Some(format!("{} is building its environment", info.display_name))
+            } else if !present {
+                Some("no environment installed".to_string())
+            } else {
+                None
+            };
+            ServiceEnvInfo {
+                service_id: info.id,
+                display_name: info.display_name,
+                env_path: env_path
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                env_bytes,
+                present,
+                blocked_reason,
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn get_service_envs(
+    svc_mgr: tauri::State<'_, ManagerState>,
+) -> Result<Vec<ServiceEnvInfo>, String> {
+    Ok(collect_service_envs(svc_mgr.inner()).await)
+}
+
+/// Delete one service's Python environment. It can be rebuilt from the service
+/// manifest, so this is recoverable, but it is several GB either way.
+#[tauri::command]
+async fn remove_service_env(
+    service_id: String,
+    svc_mgr: tauri::State<'_, ManagerState>,
+) -> Result<ServiceEnvRemovalResult, String> {
+    let (env_path, managed_root) = {
+        let mgr = svc_mgr.lock().await;
+        let Some(env_path) = mgr.env_dir_for(&service_id) else {
+            return Err(format!("Unknown service: {service_id}"));
+        };
+        if mgr.is_running(&service_id) {
+            return Err("Stop this service before removing its environment.".to_string());
+        }
+        if mgr.is_building(&service_id) {
+            return Err("Wait for this environment build to finish first.".to_string());
+        }
+        (env_path, mgr.managed_services_root())
+    };
+
+    let removed_bytes = path_size(&env_path);
+    remove_managed_path(&env_path, &managed_root)?;
+
+    Ok(ServiceEnvRemovalResult {
+        service_id,
+        removed_bytes,
+        environments: collect_service_envs(svc_mgr.inner()).await,
+    })
+}
+
 #[tauri::command]
 async fn clear_uv_cache(
     repo_root: tauri::State<'_, std::path::PathBuf>,
@@ -8553,6 +8677,68 @@ mod runtime_cache_tests {
         assert!(!uv_file.exists());
         assert!(sibling_file.exists());
         assert!(model_file.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod service_env_removal_tests {
+    use super::remove_managed_path;
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gary4local-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn removing_an_env_leaves_the_rest_of_the_service_alone() {
+        let root = temp_root("service-env");
+        let services = root.join("services");
+        let env_file = services.join("melodyflow").join("env").join("python.exe");
+        // Things a storage-conscious user would be upset to lose along with a
+        // rebuildable environment.
+        let checkpoint = services.join("carey").join("checkpoints").join("keep.bin");
+        let sibling_env = services.join("sa3").join("env").join("python.exe");
+        let service_source = services
+            .join("melodyflow")
+            .join("localhost_melodyflow.py");
+        for path in [&env_file, &checkpoint, &sibling_env, &service_source] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"data").unwrap();
+        }
+
+        let removed = remove_managed_path(env_file.parent().unwrap(), &services).unwrap();
+
+        assert!(removed);
+        assert!(!env_file.exists());
+        assert!(checkpoint.exists());
+        assert!(sibling_env.exists());
+        assert!(service_source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_outside_the_services_root() {
+        let root = temp_root("service-env-escape");
+        let services = root.join("services");
+        let outsider = root.join("models").join("foundation-1").join("weights.bin");
+        std::fs::create_dir_all(services.join("melodyflow")).unwrap();
+        std::fs::create_dir_all(outsider.parent().unwrap()).unwrap();
+        std::fs::write(&outsider, b"weights").unwrap();
+
+        let result = remove_managed_path(outsider.parent().unwrap(), &services);
+
+        assert!(
+            !matches!(result, Ok(true)),
+            "a path outside the services root must not be deleted"
+        );
+        assert!(outsider.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
