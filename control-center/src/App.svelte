@@ -135,6 +135,21 @@
     clearedBytes: number;
   }
 
+  interface ServiceEnvInfo {
+    serviceId: string;
+    displayName: string;
+    envPath: string;
+    envBytes: number;
+    present: boolean;
+    blockedReason: string | null;
+  }
+
+  interface ServiceEnvRemovalResult {
+    serviceId: string;
+    removedBytes: number;
+    environments: ServiceEnvInfo[];
+  }
+
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
   const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
@@ -183,6 +198,10 @@
   let runtimeCacheBusy = $state(false);
   let runtimeCacheError: string | null = $state(null);
   let runtimeCacheMessage: string | null = $state(null);
+  let serviceEnvs: ServiceEnvInfo[] = $state([]);
+  let serviceEnvBusy: string | null = $state(null);
+  let serviceEnvError: string | null = $state(null);
+  let serviceEnvMessage: string | null = $state(null);
   let storageRestarting = $state(false);
   let careyLoraModalOpen = $state(false);
   let careyAceTrainingModalOpen = $state(false);
@@ -471,6 +490,7 @@
       loadRuntimeStorageInfo(),
       loadStorageMaintenanceInfo(),
       loadRuntimeCacheInfo(),
+      loadServiceEnvs(),
     ]);
   }
 
@@ -498,6 +518,34 @@
       runtimeCacheError = formatError(e);
     } finally {
       runtimeCacheBusy = false;
+    }
+  }
+
+  async function loadServiceEnvs() {
+    try {
+      serviceEnvs = await invoke<ServiceEnvInfo[]>("get_service_envs");
+      serviceEnvError = null;
+    } catch (e) {
+      serviceEnvError = formatError(e);
+    }
+    return serviceEnvs;
+  }
+
+  async function removeServiceEnv(serviceId: string) {
+    serviceEnvBusy = serviceId;
+    serviceEnvError = null;
+    serviceEnvMessage = null;
+    try {
+      const result = await invoke<ServiceEnvRemovalResult>("remove_service_env", { serviceId });
+      serviceEnvs = result.environments;
+      const label = result.serviceId;
+      serviceEnvMessage = result.removedBytes > 0
+        ? `removed ${label}'s environment (${formatByteCount(result.removedBytes)}) - rebuild it when you next need that model`
+        : `${label} had no environment installed`;
+    } catch (e) {
+      serviceEnvError = formatError(e);
+    } finally {
+      serviceEnvBusy = null;
     }
   }
 
@@ -864,6 +912,11 @@
     cacheBusy={runtimeCacheBusy}
     cacheError={runtimeCacheError}
     cacheMessage={runtimeCacheMessage}
+    serviceEnvs={serviceEnvs}
+    serviceEnvBusy={serviceEnvBusy}
+    serviceEnvError={serviceEnvError}
+    serviceEnvMessage={serviceEnvMessage}
+    onRemoveServiceEnv={removeServiceEnv}
     restarting={storageRestarting}
     onChoose={saveRuntimeStorageRoot}
     onReset={resetRuntimeStorageRoot}

@@ -80,8 +80,25 @@
     return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
   }
 
+  const serviceOwnerLabel: Record<string, string> = {
+    carey: "Carey",
+    melodyflow: "Terry",
+    gary: "Gary",
+    "stable-audio": "Jerry",
+    sa3: "SA3",
+    foundation: "Foundation-1",
+  };
+
+  // Whole models can be removed; composite ids point at a single checkpoint
+  // inside a repo (Jerry's finetunes) and are not managed for removal.
+  function canRemoveModel(model: ModelEntry): boolean {
+    if (!(serviceId in serviceOwnerLabel)) return false;
+    if (serviceId === "carey") return model.id.startsWith("carey::");
+    return !model.id.includes("::") || serviceId === "foundation";
+  }
+
   async function removeManagedModel(model: ModelEntry) {
-    const owner = serviceId === "melodyflow" ? "Terry" : "Carey";
+    const owner = serviceOwnerLabel[serviceId] ?? serviceId;
     const confirmed = window.confirm(
       `Remove ${model.display_name} from this runtime storage?\n\n` +
       `${owner} must be stopped. You can download this model again later.`
@@ -283,6 +300,14 @@
                 </div>
                 <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
               </div>
+            {:else if model.status === "downloaded" && canRemoveModel(model)}
+              <button
+                class="remove-btn"
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+              >
+                {removingModelId === model.id ? "removing..." : "remove"}
+              </button>
             {:else}
               <button
                 class="dl-btn"
@@ -389,6 +414,14 @@
                 </div>
                 <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
               </div>
+            {:else if model.status === "downloaded" && canRemoveModel(model)}
+              <button
+                class="remove-btn"
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+              >
+                {removingModelId === model.id ? "removing..." : "remove"}
+              </button>
             {:else}
               <button
                 class="dl-btn"
@@ -584,7 +617,7 @@
                       </div>
                       <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
                     </div>
-                  {:else if model.status === "downloaded" && serviceId === "melodyflow"}
+                  {:else if model.status === "downloaded" && canRemoveModel(model)}
                     <button
                       class="remove-btn"
                       disabled={removingModelId !== null}
@@ -633,7 +666,7 @@
                     </div>
                     <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
                   </div>
-                {:else if model.status === "downloaded" && serviceId === "melodyflow"}
+                {:else if model.status === "downloaded" && canRemoveModel(model)}
                   <button
                     class="remove-btn"
                     disabled={removingModelId !== null}

@@ -49,6 +49,15 @@
     uvCacheBytes: number;
   }
 
+  interface ServiceEnvInfo {
+    serviceId: string;
+    displayName: string;
+    envPath: string;
+    envBytes: number;
+    present: boolean;
+    blockedReason: string | null;
+  }
+
   let {
     open,
     info,
@@ -63,6 +72,11 @@
     cacheBusy = false,
     cacheError,
     cacheMessage,
+    serviceEnvs = [],
+    serviceEnvBusy = null,
+    serviceEnvError,
+    serviceEnvMessage,
+    onRemoveServiceEnv,
     restarting = false,
     onChoose,
     onReset,
@@ -88,6 +102,11 @@
     cacheBusy?: boolean;
     cacheError: string | null;
     cacheMessage: string | null;
+    serviceEnvs?: ServiceEnvInfo[];
+    serviceEnvBusy?: string | null;
+    serviceEnvError: string | null;
+    serviceEnvMessage: string | null;
+    onRemoveServiceEnv: (serviceId: string) => void;
     restarting?: boolean;
     onChoose: (path: string) => void;
     onReset: () => void;
@@ -216,6 +235,20 @@
     );
     if (confirmed) onClearUvCache();
   }
+
+  const installedEnvs = $derived(serviceEnvs.filter((env) => env.present));
+  const totalEnvBytes = $derived(
+    installedEnvs.reduce((sum, env) => sum + env.envBytes, 0)
+  );
+
+  function confirmRemoveServiceEnv(env: ServiceEnvInfo) {
+    const confirmed = window.confirm(
+      `Remove ${env.displayName}'s environment and free ${formatBytes(env.envBytes)}?\n\n` +
+      "Downloaded models are kept. This service can't run again until you rebuild " +
+      "its environment, which re-downloads its packages."
+    );
+    if (confirmed) onRemoveServiceEnv(env.serviceId);
+  }
 </script>
 
 {#if open}
@@ -302,6 +335,40 @@
         <div class="note">UV keeps downloaded Python packages here to make environment rebuilds faster. Clearing it does not remove installed environments or models; future rebuilds download those packages again.</div>
         {#if cacheMessage}<div class="success-note">{cacheMessage}</div>{/if}
         {#if cacheError}<div class="error-note">{cacheError}</div>{/if}
+      </div>
+
+      <div class="active-cache">
+        <div class="section-row">
+          <div>
+            <div class="section-title">service environments</div>
+            <div class="section-copy">
+              {installedEnvs.length > 0
+                ? `${installedEnvs.length} installed - ${formatBytes(totalEnvBytes)}`
+                : "none installed"}
+            </div>
+          </div>
+        </div>
+        {#each serviceEnvs as env (env.serviceId)}
+          <div class="env-row">
+            <div class="env-label">
+              <span class="env-name">{env.displayName}</span>
+              <span class="env-size">{env.present ? formatBytes(env.envBytes) : "not installed"}</span>
+            </div>
+            <button
+              type="button"
+              class="small-action"
+              title={env.blockedReason ?? `Remove ${env.displayName}'s environment`}
+              onclick={() => confirmRemoveServiceEnv(env)}
+              disabled={busy || serviceEnvBusy !== null || env.blockedReason !== null}
+            >{serviceEnvBusy === env.serviceId ? "removing..." : "remove env"}</button>
+          </div>
+          {#if env.blockedReason && env.present}
+            <div class="env-blocked">{env.blockedReason}</div>
+          {/if}
+        {/each}
+        <div class="note">Each environment is the Python install for one model, several GB apiece. Removing one keeps that model's downloaded weights and frees the packages; rebuild it from the service when you want to run it again.</div>
+        {#if serviceEnvMessage}<div class="success-note">{serviceEnvMessage}</div>{/if}
+        {#if serviceEnvError}<div class="error-note">{serviceEnvError}</div>{/if}
       </div>
 
       <div class="maintenance">
@@ -610,6 +677,38 @@
     margin-top: 16px;
     border-top: 1px solid var(--border);
     padding-top: 14px;
+  }
+
+  .env-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .env-label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .env-name {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .env-size {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+
+  .env-blocked {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-top: 2px;
   }
 
   .cache-path {

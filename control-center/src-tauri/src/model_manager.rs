@@ -7,6 +7,9 @@ use tokio::sync::Mutex;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub const MELODYFLOW_MODEL_ID: &str = "facebook/melodyflow-t24-30secs";
+/// Foundation-1 is a directory of weights rather than a Hugging Face repo, so
+/// it carries a synthetic id.
+pub const FOUNDATION_MODEL_ID: &str = "foundation::foundation-1";
 
 fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
@@ -565,7 +568,7 @@ impl ModelManager {
         let models_dir = self.foundation_models_dir();
         let model_dir = models_dir.join("foundation-1");
 
-        let id = "foundation::foundation-1";
+        let id = FOUNDATION_MODEL_ID;
         let status = self.get_foundation_status(id, &model_dir);
         let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
             .then(|| path_size(&model_dir))

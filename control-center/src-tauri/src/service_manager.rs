@@ -131,6 +131,18 @@ impl ServiceManager {
         self.repo_root.join("services")
     }
 
+    /// Where a service's Python environment lives, for callers that manage
+    /// storage rather than processes.
+    pub fn env_dir_for(&self, service_id: &str) -> Option<PathBuf> {
+        self.find_service(service_id).map(|svc| self.env_dir(svc))
+    }
+
+    /// The root every service directory sits under. Storage cleanup uses this
+    /// to prove a path it is about to delete is one of ours.
+    pub fn managed_services_root(&self) -> PathBuf {
+        self.services_dir()
+    }
+
     fn models_dir(&self) -> PathBuf {
         crate::storage::models_dir(&self.repo_root)
     }
