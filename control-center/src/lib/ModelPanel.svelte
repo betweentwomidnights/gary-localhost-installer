@@ -89,12 +89,12 @@
     foundation: "Foundation-1",
   };
 
-  // Whole models can be removed; composite ids point at a single checkpoint
-  // inside a repo (Jerry's finetunes) and are not managed for removal.
   function canRemoveModel(model: ModelEntry): boolean {
     if (!(serviceId in serviceOwnerLabel)) return false;
     if (serviceId === "carey") return model.id.startsWith("carey::");
-    return !model.id.includes("::") || serviceId === "foundation";
+    // Jerry's finetunes are "repo::filename" and are removed file by file, so
+    // a composite id is fine here too.
+    return true;
   }
 
   async function removeManagedModel(model: ModelEntry) {
@@ -365,6 +365,14 @@
                   </div>
                   <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
                 </div>
+              {:else if model.status === "downloaded" && canRemoveModel(model)}
+                <button
+                  class="remove-btn"
+                  disabled={removingModelId !== null}
+                  onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+                >
+                  {removingModelId === model.id ? "removing..." : "remove"}
+                </button>
               {:else}
                 <button
                   class="dl-btn"

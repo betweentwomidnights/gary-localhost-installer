@@ -6061,20 +6061,18 @@ async fn remove_model(
     let is_foundation_model =
         service_id == "foundation" && model_id == model_manager::FOUNDATION_MODEL_ID;
     // Everything else we manage is a whole Hugging Face repo in the shared hub
-    // cache, so one path handles Terry, Gary, Jerry, and SA3 alike. Composite
-    // ids are not repos -- Jerry's finetunes are "repo::filename", a single
-    // file inside one -- so they are deliberately excluded here rather than
-    // resolving to a cache directory that does not exist.
+    // cache, so one path handles Terry, Gary, Jerry, and SA3 alike.
     let is_hf_cache_model = matches!(
         service_id.as_str(),
         "melodyflow" | "gary" | "stable-audio" | "sa3"
     ) && !model_id.contains("::");
-    if !is_carey_model && !is_foundation_model && !is_hf_cache_model {
-        if model_id.contains("::") {
-            return Err(
-                "Only whole models can be removed here, not individual checkpoints.".to_string(),
-            );
-        }
+    // Jerry's finetunes are "repo::filename" -- one checkpoint inside a repo
+    // whose other files we must keep, so they need file-level removal.
+    let finetune = (service_id == "stable-audio")
+        .then(|| model_id.split_once("::"))
+        .flatten()
+        .map(|(repo, filename)| (repo.to_string(), filename.to_string()));
+    if !is_carey_model && !is_foundation_model && !is_hf_cache_model && finetune.is_none() {
         return Err("This model is not available for managed removal.".to_string());
     }
 
@@ -6139,8 +6137,15 @@ async fn remove_model(
         let path = root.join(format!("models--{}", model_id.replace('/', "--")));
         (root, path)
     };
-    let removed_bytes = path_size(&model_path);
-    remove_managed_path(&model_path, &managed_root)?;
+    let removed_bytes = if let Some((repo, filename)) = &finetune {
+        // Keep the rest of the repo; drop just this checkpoint.
+        let repo_dir = managed_root.join(format!("models--{}", repo.replace('/', "--")));
+        remove_hf_cached_file(&repo_dir, filename, &managed_root)?
+    } else {
+        let removed = path_size(&model_path);
+        remove_managed_path(&model_path, &managed_root)?;
+        removed
+    };
 
     {
         let mut mgr = model_mgr.lock().await;
@@ -7308,6 +7313,69 @@ fn resolve_managed_path(path: &Path, managed_root: &Path) -> Result<Option<PathB
     }
 
     Ok(Some(canonical_path))
+}
+
+/// Remove one file from a Hugging Face repo cache, blob copy included.
+///
+/// Windows cannot symlink without developer mode, so the hub stores each file
+/// twice: once under blobs/ and again under snapshots/. Deleting the snapshot
+/// entry alone leaves the larger half behind, and the blob is named by content
+/// hash so it cannot be found by name. Blobs are matched by size instead, and
+/// only dropped when no remaining snapshot entry wants a file that size.
+fn remove_hf_cached_file(
+    repo_dir: &Path,
+    filename: &str,
+    managed_root: &Path,
+) -> Result<u64, String> {
+    let size_before = path_size(repo_dir);
+    let snapshots_dir = repo_dir.join("snapshots");
+
+    let mut removed_sizes: Vec<u64> = Vec::new();
+    if let Ok(revisions) = std::fs::read_dir(&snapshots_dir) {
+        for revision in revisions.flatten() {
+            let candidate = revision.path().join(filename);
+            if candidate.is_file() {
+                removed_sizes.push(std::fs::metadata(&candidate).map(|m| m.len()).unwrap_or(0));
+                remove_managed_path(&candidate, managed_root)?;
+            }
+        }
+    }
+
+    if removed_sizes.is_empty() {
+        return Ok(0);
+    }
+
+    // What the snapshots still reference, so a shared blob is never dropped.
+    let mut surviving_sizes: Vec<u64> = Vec::new();
+    if let Ok(revisions) = std::fs::read_dir(&snapshots_dir) {
+        for revision in revisions.flatten() {
+            if let Ok(files) = std::fs::read_dir(revision.path()) {
+                for file in files.flatten() {
+                    if let Ok(meta) = file.metadata() {
+                        if meta.is_file() {
+                            surviving_sizes.push(meta.len());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let blobs_dir = repo_dir.join("blobs");
+    if let Ok(blobs) = std::fs::read_dir(&blobs_dir) {
+        for blob in blobs.flatten() {
+            let Ok(meta) = blob.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let size = meta.len();
+            if removed_sizes.contains(&size) && !surviving_sizes.contains(&size) {
+                remove_managed_path(&blob.path(), managed_root)?;
+            }
+        }
+    }
+
+    Ok(size_before.saturating_sub(path_size(repo_dir)))
 }
 
 fn remove_managed_path(path: &Path, managed_root: &Path) -> Result<bool, String> {
@@ -8816,6 +8884,58 @@ mod service_env_removal_tests {
         assert!(checkpoint.exists());
         assert!(sibling_env.exists());
         assert!(service_source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removing_a_finetune_drops_its_blob_copy_too() {
+        use super::remove_hf_cached_file;
+        let root = temp_root("hf-finetune");
+        let repo = root.join("models--thepatch--jerry_grunge");
+        let snapshot = repo.join("snapshots").join("rev1");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+
+        // Windows keeps two full copies of each file, so removing only the
+        // snapshot entry would leave the bigger half on disk.
+        std::fs::write(snapshot.join("wanted.ckpt"), vec![1u8; 40]).unwrap();
+        std::fs::write(blobs.join("hash-for-wanted"), vec![1u8; 40]).unwrap();
+        std::fs::write(snapshot.join("keep.ckpt"), vec![2u8; 25]).unwrap();
+        std::fs::write(blobs.join("hash-for-keep"), vec![2u8; 25]).unwrap();
+
+        let freed = remove_hf_cached_file(&repo, "wanted.ckpt", &root).unwrap();
+
+        assert_eq!(freed, 80, "both copies of the 40 byte checkpoint should go");
+        assert!(!snapshot.join("wanted.ckpt").exists());
+        assert!(!blobs.join("hash-for-wanted").exists());
+        assert!(snapshot.join("keep.ckpt").exists());
+        assert!(blobs.join("hash-for-keep").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_blob_shared_with_another_snapshot_survives() {
+        use super::remove_hf_cached_file;
+        let root = temp_root("hf-shared-blob");
+        let repo = root.join("models--thepatch--jerry_grunge");
+        let rev1 = repo.join("snapshots").join("rev1");
+        let rev2 = repo.join("snapshots").join("rev2");
+        let blobs = repo.join("blobs");
+        for dir in [&rev1, &rev2, &blobs] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(rev1.join("shared.ckpt"), vec![3u8; 30]).unwrap();
+        std::fs::write(rev2.join("other.ckpt"), vec![3u8; 30]).unwrap();
+        std::fs::write(blobs.join("hash-shared"), vec![3u8; 30]).unwrap();
+
+        remove_hf_cached_file(&repo, "shared.ckpt", &root).unwrap();
+
+        assert!(!rev1.join("shared.ckpt").exists());
+        assert!(
+            blobs.join("hash-shared").exists(),
+            "another snapshot still wants a file this size"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
