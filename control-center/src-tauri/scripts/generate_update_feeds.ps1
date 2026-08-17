@@ -14,7 +14,9 @@ param(
     [ValidateSet("stable", "preview")]
     [string]$Channel = "stable",
 
-    [string]$OutputDir = "docs\updates\gary4local",
+    # Leave empty to derive from the installer filename. See below - hardcoding a
+    # default here is what let a rocm build overwrite the cuda feed.
+    [string]$OutputDir = "",
 
     [string]$PublishedAt = (Get-Date).ToUniversalTime().ToString("o"),
 
@@ -36,7 +38,21 @@ function Ensure-ParentDirectory {
     }
 }
 
-$defaultOutputDir = "docs\updates\gary4local"
+$resolvedInstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
+
+# Which product this installer belongs to, taken from the filename: everything
+# before the first underscore, so `gary4local_0.2.1_x64-setup.exe` gives
+# `gary4local` and `gary4local-rocm_0.2.1-rocm.18_x64-setup.exe` gives
+# `gary4local-rocm`. The feed directory follows from the artifact rather than
+# from a per-branch default, because those defaults drifted apart between main
+# and the rocm branch and a rocm release silently overwrote the cuda feed.
+$installerLeaf = Split-Path -Leaf $resolvedInstallerPath
+$product = ($installerLeaf -split '_', 2)[0]
+if ([string]::IsNullOrWhiteSpace($product)) {
+    throw "Could not read a product name from installer filename '$installerLeaf'."
+}
+
+$defaultOutputDir = Join-Path "docs\updates" $product
 $effectiveOutputDir = $OutputDir
 
 $effectiveNotes = @(
@@ -56,7 +72,17 @@ if (
     $effectiveOutputDir = $defaultOutputDir
 }
 
-$resolvedInstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
+if ([string]::IsNullOrWhiteSpace($effectiveOutputDir)) {
+    $effectiveOutputDir = $defaultOutputDir
+}
+elseif ((Split-Path -Leaf $effectiveOutputDir) -ne $product) {
+    throw ("Output directory '$effectiveOutputDir' does not match installer product " +
+        "'$product'. Pass -OutputDir '$defaultOutputDir', or omit -OutputDir and let " +
+        "it follow the installer.")
+}
+
+Write-Host "Product: $product -> $effectiveOutputDir"
+
 $resolvedSignaturePath = (Resolve-Path -LiteralPath $SignaturePath).Path
 $resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($effectiveOutputDir)) {
     $effectiveOutputDir
