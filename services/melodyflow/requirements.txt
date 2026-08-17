@@ -28,6 +28,9 @@ num2words
 sentencepiece
 spacy>=3.6.1
 huggingface_hub
+# Xet-backed downloads. Every model repo we pull is on Xet storage, and
+# without this huggingface_hub logs a warning and falls back to plain HTTP.
+hf_xet
 tqdm
 # Newer Transformers versions import Dynamo/FSDP while loading T5. AMD's
 # Windows ROCm wheel intentionally omits the distributed backend they require.
