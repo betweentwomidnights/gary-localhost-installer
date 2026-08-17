@@ -18,7 +18,6 @@ import julius
 from .unet import DiffusionUnet
 from ..modules.diffusion_schedule import NoiseSchedule
 from .encodec import CompressionModel
-from ..solvers.compression import CompressionSolver
 from .loaders import load_compression_model, load_diffusion_models
 
 
@@ -90,6 +89,8 @@ class MultiBandDiffusion:
         """
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        from ..solvers.compression import CompressionSolver
+
         assert bw in [1.5, 3.0, 6.0], f"bandwidth {bw} not available"
         if n_q is not None:
             assert n_q in [2, 4, 8]
