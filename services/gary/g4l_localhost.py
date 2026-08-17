@@ -9,6 +9,7 @@ import time
 import uuid
 import gc
 import base64
+import random
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -18,7 +19,7 @@ import sys
 import torch
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 # Use in-memory session store instead of Redis for localhost
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -41,7 +42,26 @@ redis_client = LocalSessionStore()
 # PYDANTIC MODELS (Keep existing models for validation)
 # =============================================================================
 
-class AudioRequest(BaseModel):
+class SeededRequest(BaseModel):
+    """Every generate request accepts an optional seed.
+
+    -1, missing, or an empty string all mean 'pick one for me'; anything that
+    isn't an integer is a 400. The plugin always sends the field, so its
+    presence does NOT mean the user chose a seed.
+    """
+    seed: Optional[int] = None
+
+    @field_validator('seed', mode='before')
+    @classmethod
+    def _blank_seed_is_random(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip() == '':
+            return None
+        return v
+
+
+class AudioRequest(SeededRequest):
     audio_data: str
     model_name: str
     prompt_duration: int
@@ -50,7 +70,7 @@ class AudioRequest(BaseModel):
     cfg_coef: Optional[float] = None
     description: Optional[str] = None
 
-class SessionRequest(BaseModel):
+class SessionRequest(SeededRequest):
     session_id: str
     model_name: Optional[str] = None
     prompt_duration: Optional[int] = None
@@ -59,7 +79,7 @@ class SessionRequest(BaseModel):
     cfg_coef: Optional[float] = None
     description: Optional[str] = None
 
-class ContinueMusicRequest(BaseModel):
+class ContinueMusicRequest(SeededRequest):
     session_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_duration: Optional[int] = None
@@ -164,6 +184,19 @@ def get_last_input_audio(session_id: str):
 # CORE PROCESSING FUNCTIONS
 # =============================================================================
 
+def resolve_seed(seed):
+    """Resolve a requested seed to the concrete seed we'll run with.
+
+    None / -1 (or any negative) means 'pick one for me'. The 0-99999 range
+    matches sa3, terry and the remote backend, so a seed read off one machine
+    is typeable into the other. Deliberately not sticky: an omitted seed means
+    'give me a new take', not 'reuse the last one'.
+    """
+    if seed is None or int(seed) < 0:
+        return random.randint(0, 99999)
+    return int(seed)
+
+
 def sampling_value(kwargs, key, default):
     """Use API defaults when an optional Pydantic field was omitted or null."""
     value = kwargs.get(key)
@@ -212,7 +245,8 @@ def run_audio_processing(session_id: str, audio_data: str, model_name: str,
                     top_k=sampling_value(kwargs, 'top_k', 250),
                     temperature=sampling_value(kwargs, 'temperature', 1.0),
                     cfg_coef=sampling_value(kwargs, 'cfg_coef', 3.0),
-                    description=kwargs.get('description', '')
+                    description=kwargs.get('description', ''),
+                    seed=kwargs.get('seed')
                 )
 
                 store_audio_result(session_id, result_base64)
@@ -279,7 +313,8 @@ def run_continue_processing(session_id: str, audio_data: str, model_name: str,
                     top_k=sampling_value(kwargs, 'top_k', 250),
                     temperature=sampling_value(kwargs, 'temperature', 1.0),
                     cfg_coef=sampling_value(kwargs, 'cfg_coef', 3.0),
-                    description=kwargs.get('description', '')
+                    description=kwargs.get('description', ''),
+                    seed=kwargs.get('seed')
                 )
 
                 store_audio_result(session_id, result_base64)
@@ -353,6 +388,7 @@ def juce_process_audio():
         # Validate request
         request_data = AudioRequest(**request.json)
         session_id = generate_session_id()
+        seed = resolve_seed(request_data.seed)
         
         # Store session data (same format as remote)
         session_data = {
@@ -363,6 +399,7 @@ def juce_process_audio():
                 'top_k': request_data.top_k or 250,
                 'temperature': request_data.temperature or 1.0,
                 'cfg_coef': request_data.cfg_coef or 3.0,
+                'seed': seed,
             },
             'description': request_data.description or '',
             'created_at': datetime.now(timezone.utc).isoformat()
@@ -378,12 +415,14 @@ def juce_process_audio():
             top_k=request_data.top_k,
             temperature=request_data.temperature,
             cfg_coef=request_data.cfg_coef,
-            description=request_data.description
+            description=request_data.description,
+            seed=seed
         )
         
         return jsonify({
             'success': True,
             'session_id': session_id,
+            'seed': seed,
             'message': 'Audio processing started'
         })
         
@@ -398,12 +437,14 @@ def juce_continue_music():
     try:
         request_data = ContinueMusicRequest(**request.json)
         session_id = generate_session_id()
+        seed = resolve_seed(request_data.seed)
         
         # Store session data
         session_data = {
             'session_id': session_id,
             'model_name': request_data.model_name,
             'prompt_duration': request_data.prompt_duration,
+            'parameters': {'seed': seed},
             'type': 'continue',
             'created_at': datetime.now(timezone.utc).isoformat()
         }
@@ -418,12 +459,14 @@ def juce_continue_music():
             top_k=request_data.top_k,
             temperature=request_data.temperature,
             cfg_coef=request_data.cfg_coef,
-            description=request_data.description
+            description=request_data.description,
+            seed=seed
         )
         
         return jsonify({
             'success': True,
             'session_id': session_id,
+            'seed': seed,
             'message': 'Continue processing started'
         })
         
@@ -439,6 +482,7 @@ def juce_retry_music():
         request_data = SessionRequest(**request.json)
         old_session_id = request_data.session_id
         new_session_id = generate_session_id()
+        seed = resolve_seed(request_data.seed)
         
         # Get original session data
         old_session_data = get_session_data(old_session_id)
@@ -455,6 +499,10 @@ def juce_retry_music():
         new_session_data['session_id'] = new_session_id
         new_session_data['type'] = 'retry'
         new_session_data['original_session'] = old_session_id
+        new_session_data['parameters'] = {
+            **(new_session_data.get('parameters') or {}),
+            'seed': seed,
+        }
         
         # Update with new parameters if provided
         if request_data.model_name:
@@ -473,12 +521,14 @@ def juce_retry_music():
             top_k=request_data.top_k,
             temperature=request_data.temperature,
             cfg_coef=request_data.cfg_coef,
-            description=request_data.description
+            description=request_data.description,
+            seed=seed
         )
         
         return jsonify({
             'success': True,
             'session_id': new_session_id,
+            'seed': seed,
             'message': 'Retry processing started'
         })
         
@@ -508,10 +558,15 @@ def juce_poll_status(session_id):
                 "source": "synthetic-localhost"
             }
 
+        session_data = get_session_data(session_id) or {}
+
         response = {
             "success": True,
             "status": status_data.get("status", "unknown"),
             "progress": progress,
+            # Named to match the remote backend, where plain 'seed' is already
+            # the last transform's seed on the same session.
+            "generation_seed": (session_data.get("parameters") or {}).get("seed"),
             "queue_status": qstatus or {}
         }
 
