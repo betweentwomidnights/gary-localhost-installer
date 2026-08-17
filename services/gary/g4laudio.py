@@ -7,6 +7,7 @@ import os
 import torchaudio
 import torch
 import numpy as np
+import soundfile as sf
 from audiocraft.models import MusicGen
 from musicgen_fast import optimize_model
 import base64
@@ -368,7 +369,10 @@ def load_and_validate_audio(input_data_base64: str) -> tuple[torch.Tensor, int]:
     try:
         input_data = base64.b64decode(input_data_base64)
         input_audio = io.BytesIO(input_data)
-        song, sr = torchaudio.load(input_audio)
+        # soundfile rather than torchaudio.load: torchaudio's file I/O now goes
+        # through TorchCodec, which isn't available on the Windows ROCm build.
+        samples, sr = sf.read(input_audio, dtype="float32", always_2d=True)
+        song = torch.from_numpy(samples.T.copy())
         if song.size(0) == 0 or song.size(1) == 0:
             raise AudioProcessingError("Input audio is empty")
         return song.to(device), sr
@@ -396,11 +400,14 @@ def save_audio_to_base64(waveform: torch.Tensor, sample_rate: int) -> str:
             waveform = waveform / max_val
             
         output_audio = io.BytesIO()
-        torchaudio.save(
+        if waveform.dim() == 1:
+            waveform = waveform.unsqueeze(0)
+        sf.write(
             output_audio,
-            src=waveform,
-            sample_rate=sample_rate,
-            format='wav'
+            waveform.transpose(0, 1).numpy(),
+            sample_rate,
+            format="WAV",
+            subtype="PCM_16",
         )
         output_audio.seek(0)
         return base64.b64encode(output_audio.read()).decode('utf-8')
