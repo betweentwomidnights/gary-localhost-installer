@@ -433,11 +433,8 @@ impl ServiceManager {
         }
 
         if svc.id == "gary" {
-            let use_fast = crate::gary_use_fast_optimizations_enabled();
-            cmd.env(
-                "GARY_USE_FAST_OPTIMIZATIONS",
-                if use_fast { "1" } else { "0" },
-            );
+            let use_fp16 = crate::gary_use_fp16_enabled();
+            cmd.env("GARY_USE_FP16", if use_fp16 { "1" } else { "0" });
         }
 
         if svc.id == "melodyflow" {

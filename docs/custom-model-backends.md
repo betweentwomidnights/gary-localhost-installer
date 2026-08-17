@@ -10,20 +10,31 @@ that don't really belong on the front page.
 the local `gary` service applies several MusicGen inference optimizations that
 are specific to the localhost deployment:
 
-- `musicgen_fast.py` converts remaining float32 parameters and buffers to fp16
-  to avoid extra dtype conversion overhead during generation.
-- self-attention layers are patched to use a pre-allocated static KV cache
-  instead of repeatedly growing tensors with `torch.cat`.
 - if available in the local gary environment, Flash Attention 2 is patched in
-  directly for MusicGen self-attention.
+  directly for MusicGen self-attention. this one is on by default.
+- `musicgen_fast.py` can also convert remaining float32 parameters and buffers
+  to fp16, and can swap the growing `torch.cat` KV cache for a pre-allocated
+  static buffer.
 - the service performs a small first-load kernel warmup pass per model/device
   so later generations start faster.
 
-these are on by default and can be turned off with
-`GARY_USE_FAST_OPTIMIZATIONS=0` or from the `gary4local` gary panel. the fp16
-conversion in particular is not bit-exact - it moves the output projections and
-final LayerNorm to half precision, which can shift sampled tokens - so the
-toggle is there to A/B a suspect model against the stock path.
+measured on `vanya_ai_dnb_0.1` (10s, seed 1234, RTX 4060), which is why only
+FA2 is applied by default:
+
+| patch | speed | output |
+| --- | --- | --- |
+| flash attention 2 | 1.07x | greedy decode bit-identical over 500 tokens |
+| static KV cache | 0.96x | identical audio, but slower than the `torch.cat` it replaces |
+| fp16 | 1.28x | flips a greedy decision by token 68 of 500 |
+
+fp16 is off by default and can be turned on with `GARY_USE_FP16=1` or from the
+`gary4local` gary panel. it is most of the available speedup, but it halves
+`out_norm` and the output projections - the layers that produce the logits - so
+it samples from a slightly different distribution on every step. we suspect that
+makes outputs blander, which is why it is opt-in rather than assumed.
+
+the static KV cache is never applied. it produces identical audio while
+measuring slower than the code it replaced, so there is nothing to trade.
 
 for localhost we intentionally **don't** enable `torch.compile` by default.
 gary unloads models after generation so we can support many finetunes on
