@@ -1,13 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.17",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.17/gary4local-rocm_0.2.1-rocm.17_x64-setup.exe",
-    "sha256":  "46f009394fad8bc08c6c650271db7b570229e4ba243c25040aaab68b6ca6bf5a",
-    "published_at":  "2026-08-16T13:22:58.7870722Z",
+    "latest_version":  "0.2.1-rocm.18",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.18/gary4local-rocm_0.2.1-rocm.18_x64-setup.exe",
+    "sha256":  "e14be6815d88f1471d4eefa885f7d8df20fbda0aa6abbdae02266706a61291cf",
+    "published_at":  "2026-08-17T13:05:31.7377150Z",
     "notes":  [
-                  "download and test a melodyflow generation. rebuild the terry environment first - it pins a specific transformers version and won\u0027t start without it.",
-                  "we added the seed to gary4juce v4.0.12, but in practice i don\u0027t use it much for melodyflow.",
-                  "ace-step has new env settings to try and help with your unified memory. lmk how that goes.",
-                  "the new gary4juce also has the fix for the SAOS dropdown in your saved presets :)"
+                  "rebuild the gary environment first - it moved to python 3.12 on the rocm wheels.",
+                  "make a drum loop with SAOS, then \u0027send to gary\u0027 with vanya_ai_dnb_0.1."
               ]
 }

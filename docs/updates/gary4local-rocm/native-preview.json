@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.17",
-    "notes":  "download and test a melodyflow generation. rebuild the terry environment first - it pins a specific transformers version and won\u0027t start without it.\nwe added the seed to gary4juce v4.0.12, but in practice i don\u0027t use it much for melodyflow.\nace-step has new env settings to try and help with your unified memory. lmk how that goes.\nthe new gary4juce also has the fix for the SAOS dropdown in your saved presets :)",
-    "pub_date":  "2026-08-16T13:22:58.7870722Z",
+    "version":  "0.2.1-rocm.18",
+    "notes":  "rebuild the gary environment first - it moved to python 3.12 on the rocm wheels.\nmake a drum loop with SAOS, then \u0027send to gary\u0027 with vanya_ai_dnb_0.1.",
+    "pub_date":  "2026-08-17T13:05:31.7377150Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElPSEozNW5QQ0NuWlhVQ1IzaGhYRXpKc1k5djJFdHRjQ2RldDEva0J1cHduSGk5eEJtOWVvVXMvejNNMmF6RWdHaHVJMGtPQVlPL1VLZDFLM2FMN2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODg2NDA3CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTdfeDY0LXNldHVwLmV4ZQp5aHdHR2E5OEFzVWRqaUdrU2xsYU9kR0VRL2hGUnE4UUJPK0tkVjBCc2xNaFI4SXp0Uk1sdWM1elRtTVhhaUREcXdwYlhJMG05eFFVb2Z3YkJBNWRDZz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.17/gary4local-rocm_0.2.1-rocm.17_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEgwUTdrWnVXNWJWK3FXaEdJa1U4MnpEM1o2NENRaFV3TWpodFpaYnptRUdRSkpJVzBGcExwZTJ6RVdUZ1ZYZHlXNEQrSDhyaXRhNGtBSzRvUjNjdFFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTcxNDUyCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMThfeDY0LXNldHVwLmV4ZQpNZldpQ3c5SEw5WnBDMW9MdVp3MzZvTFFJaFAxTE1uaDArRWtSZVNEYTFTc1VjdzVVMzhFZTh1MzdMWkRnSm5WeXFFZk9uQU9SK2NPcDlwSDNNQ1lDZz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.18/gary4local-rocm_0.2.1-rocm.18_x64-setup.exe"
                                          }
                   }
 }
