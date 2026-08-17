@@ -297,6 +297,7 @@ class AudioConfig:
     cfg_coef: float = 3.0
     target_sr: int = 32000
     output_duration: float = 30.0
+    seed: Optional[int] = None  # None = don't touch the RNG (old behavior)
 
 @contextmanager
 def resource_cleanup():
@@ -586,7 +587,8 @@ def safe_musicgen_continuation_v2(
     descriptions: Optional[List[Optional[str]]] = None,
     progress: bool = True,
     max_retries: int = 2,
-    device_id: int = 0
+    device_id: int = 0,
+    seed: Optional[int] = None
 ) -> torch.Tensor:
     """
     Simplified safe wrapper for MusicGen's generate_continuation.
@@ -663,6 +665,11 @@ def safe_musicgen_continuation_v2(
                 except Exception as e:
                     print(f"Warning: Could not convert model components: {e}")
             
+            # Seed inside the retry loop, not outside it: a dtype retry must
+            # reproduce the same take, not consume RNG and drift.
+            if seed is not None:
+                torch.manual_seed(seed)
+
             # Call generation - let PyTorch handle CUDA async
             output = model.generate_continuation(
                 prompt,
@@ -845,7 +852,8 @@ def _process_audio_impl_v2(
                 prompt_sample_rate=config.target_sr,
                 descriptions=[final_description] if final_description else None,
                 progress=True,
-                device_id=device_id
+                device_id=device_id,
+                seed=config.seed
             )
             
             if output is None or output.size(0) == 0:
@@ -937,7 +945,8 @@ def _continue_music_impl_v2(
                 prompt_sample_rate=config.target_sr,
                 descriptions=[final_description] if final_description else None,
                 progress=True,
-                device_id=device_id
+                device_id=device_id,
+                seed=config.seed
             )
             
             # Ensure output is float32 and proper shape
@@ -990,7 +999,8 @@ def process_audio(
     temperature: float = 1.0,
     cfg_coef: float = 3.0,
     description: Optional[str] = None,
-    device_id: int = 0
+    device_id: int = 0,
+    seed: Optional[int] = None
 ) -> str:
     """
     Enhanced backwards-compatible wrapper for audio processing.
@@ -1005,7 +1015,8 @@ def process_audio(
         prompt_duration=prompt_duration,
         top_k=top_k,
         temperature=temperature,
-        cfg_coef=cfg_coef
+        cfg_coef=cfg_coef,
+        seed=seed
     )
     return _process_audio_impl_v2(
         input_data_base64,
@@ -1028,7 +1039,8 @@ def continue_music(
     temperature: float = 1.0,
     cfg_coef: float = 3.0,
     description: Optional[str] = None,
-    device_id: int = 0
+    device_id: int = 0,
+    seed: Optional[int] = None
 ) -> str:
     """
     Enhanced backwards-compatible wrapper for music continuation.
@@ -1043,7 +1055,8 @@ def continue_music(
         prompt_duration=prompt_duration,
         top_k=top_k,
         temperature=temperature,
-        cfg_coef=cfg_coef
+        cfg_coef=cfg_coef,
+        seed=seed
     )
     return _continue_music_impl_v2(
         input_data_base64,
