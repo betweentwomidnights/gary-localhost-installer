@@ -36,6 +36,10 @@ from .streaming import StreamingModule
 
 _efficient_attention_backend: str = 'torch'
 
+# Stands in for xformers' LowerTriangularMask on the torch backend, where the
+# causal mask is only ever tested for being non-None. See _get_mask.
+_CAUSAL_MASK_MARKER = object()
+
 
 def set_efficient_attention_backend(backend: str = 'torch'):
     # Using torch by default, it seems a bit faster on older P100 GPUs (~20% faster).
@@ -250,14 +254,23 @@ class StreamingMultiheadAttention(StreamingModule):
         # convention both in the builtin MHA in Pytorch, and Xformers functions.
         time_dim = _get_attention_time_dimension(self.memory_efficient)
         if self.memory_efficient:
-            from xformers.ops import LowerTriangularMask
             if current_steps == 1:
                 # If we only have one step, then we do not need a mask.
                 return None
             elif 'past_keys' in self._streaming_state:
                 raise RuntimeError("Not supported at the moment")
+            elif _efficient_attention_backend == 'torch':
+                # On the torch backend this value never reaches the attention
+                # call: scaled_dot_product_attention is given
+                # `is_causal=attn_mask is not None` and never sees the object
+                # itself. Only a non-None marker is needed, so don't import
+                # xformers to build one - it isn't installed on ROCm, and this
+                # import was the one place that still required it at generation
+                # time even after the rest of the module was made optional.
+                return _CAUSAL_MASK_MARKER
             else:
                 # Then we can safely use a lower triangular mask
+                from xformers.ops import LowerTriangularMask
                 return LowerTriangularMask()
         if self._streaming_state:
             past_keys = self._streaming_state['past_keys']
@@ -385,7 +398,13 @@ class StreamingMultiheadAttention(StreamingModule):
                     else:
                         bound_layout = "b t p h d"
                     packed = rearrange(projected, f"b t (p h d) -> {bound_layout}", p=3, h=self.num_heads)
-                    q, k, v = ops.unbind(packed, dim=2)
+                    if _has_xformers:
+                        q, k, v = ops.unbind(packed, dim=2)
+                    else:
+                        # xformers' unbind only differs in how it saves memory on
+                        # the backward pass; torch's is equivalent for inference,
+                        # and `ops` is None wherever xformers isn't installed.
+                        q, k, v = packed.unbind(dim=2)
                 else:
                     embed_dim = self.embed_dim
                     per_head_dim = (embed_dim // self.num_heads)
