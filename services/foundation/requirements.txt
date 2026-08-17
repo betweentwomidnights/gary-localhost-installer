@@ -24,6 +24,9 @@ soundfile
 
 # Model loading and inference
 huggingface_hub
+# Xet-backed downloads. Every model repo we pull is on Xet storage, and
+# without this huggingface_hub logs a warning and falls back to plain HTTP.
+hf_xet
 safetensors
 transformers
 diffusers
