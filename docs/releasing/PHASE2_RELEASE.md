@@ -72,7 +72,12 @@ npm.cmd run tauri build -- --config src-tauri/tauri.updater.conf.json
      `Compatible with gary4juce v4.0.2.` Do not include a URL. The current
      update prompt does not provide clickable links, and the raw URL wastes
      limited UI space.
-7. Generate both updater feeds from the exact built installer and signature:
+7. Generate both updater feeds from the exact built installer and signature. The
+   output directory is derived from the installer filename — `gary4local_…`
+   writes `docs/updates/gary4local/`, `gary4local-rocm_…` writes
+   `docs/updates/gary4local-rocm/` — so leave `-OutputDir` off and check the
+   `Product:` line the script prints. Passing an `-OutputDir` that disagrees
+   with the installer is an error rather than a silent overwrite:
 
 ```powershell
 cd C:\path\to\backend-installer
@@ -116,6 +121,66 @@ That writes:
 - `docs/updates/gary4local/native-preview.json`
 
 Preview apps can point at those feeds with runtime env overrides.
+
+## ROCm Preview Releases
+
+The AMD tester build is a different product (`gary4local-rocm`) living on
+`feature/rocm-custom-runtime-storage`, and it is deliberately lighter than the
+flow above. The differences are easy to get wrong, so they are spelled out here.
+
+**It is not the same as a stable release:**
+
+- No `CHANGELOG.md` entry and no `README.md` headline. Those track mainline
+  gary4local releases only. A ROCm release commit touches the five version
+  files and nothing else.
+- The version is `0.2.1-rocm.N` — bump `N` for each tester build.
+- The GitHub release is marked **prerelease**.
+
+**The version bump lives on the ROCm branch. The feed lives on `main`.**
+
+This trips people up every time. GitHub Pages serves `docs/updates/` from
+`main`, so the feed the tester's *check updates* reads is `main`'s copy. The
+ROCm branch has its own stale copies of those JSON files; ignore them, they are
+not served. Both the `Release gary4local-rocm …` commit (ROCm branch) and the
+`Update ROCm preview feed for …` commit (`main`) are required.
+
+Order:
+
+1. Bump the five version files on `feature/rocm-custom-runtime-storage`, commit,
+   and **push the branch**.
+2. Build the signed installer.
+3. Create the GitHub release. Push the branch *first* — `gh release create
+   --target <branch>` resolves the branch name on the server, so with an
+   unpushed branch the tag silently lands on whatever the remote tip still is.
+   Prefer `--target <full-sha>` and verify afterwards:
+
+   ```powershell
+   git ls-remote --tags origin v0.2.1-rocm.N   # must equal the release commit
+   ```
+
+4. Generate the feeds. Run this from `main`, and note that `-OutputDir` is
+   derived from the installer filename, so a `gary4local-rocm_…` installer can
+   only ever write `docs/updates/gary4local-rocm/`:
+
+   ```powershell
+   git checkout main
+   powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\generate_update_feeds.ps1 `
+     -Version "0.2.1-rocm.N" `
+     -ArtifactUrl "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.N/gary4local-rocm_0.2.1-rocm.N_x64-setup.exe" `
+     -InstallerPath "control-center\src-tauri\target\release\bundle\nsis\gary4local-rocm_0.2.1-rocm.N_x64-setup.exe" `
+     -SignaturePath "control-center\src-tauri\target\release\bundle\nsis\gary4local-rocm_0.2.1-rocm.N_x64-setup.exe.sig" `
+     -Channel "preview"
+   ```
+
+   The script prints `Product: gary4local-rocm -> docs\updates\gary4local-rocm`.
+   If it says `gary4local`, stop: the wrong installer was passed.
+
+5. Commit the two changed feed files to `main` and push. The release assets must
+   already be uploaded at this point, or the tester's updater will offer the new
+   version and 404 on the download.
+6. Confirm the live feed, which lags a minute or two behind the push while Pages
+   rebuilds:
+   `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm/preview.json`
 
 ## Source Builds
 
