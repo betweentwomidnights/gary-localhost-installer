@@ -40,7 +40,10 @@ hf_xet
 protobuf
 spacy==3.7.6
 librosa<0.11
-pesq
+# No pesq. It's an audiocraft *training* metric - nothing on the inference path
+# imports audiocraft.metrics - and it ships sdist-only with a Cython extension,
+# so installing it needs MSVC build tools. That went unnoticed while every
+# machine building this env happened to have Visual Studio on it.
 pystoi
 demucs
 sentencepiece
