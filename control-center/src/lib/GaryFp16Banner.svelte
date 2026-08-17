@@ -14,13 +14,13 @@
   let saving = $state(false);
   let message: string | null = $state(null);
 
-  async function toggleFastOptimizations(nextEnabled: boolean) {
+  async function toggleFp16(nextEnabled: boolean) {
     saving = true;
     message = null;
 
     try {
       await invoke("save_app_settings", {
-        settings: { garyUseFastOptimizations: nextEnabled },
+        settings: { garyUseFp16: nextEnabled },
       });
 
       onUpdated(nextEnabled);
@@ -28,12 +28,12 @@
       if (serviceStatus === "running" || serviceStatus === "starting" || serviceStatus === "unhealthy") {
         await invoke("restart_service", { serviceId: "gary" });
         message = nextEnabled
-          ? "optimizations on. gary is restarting."
-          : "optimizations off. gary is restarting.";
+          ? "fp16 on. gary is restarting."
+          : "fp16 off. gary is restarting.";
       } else {
         message = nextEnabled
-          ? "optimizations on for the next gary start."
-          : "optimizations off. gary will use the stock path next start.";
+          ? "fp16 on for the next gary start."
+          : "fp16 off. gary will use full precision next start.";
       }
     } catch (e: any) {
       message = "Failed: " + (typeof e === "string" ? e : e?.message || "unknown");
@@ -43,26 +43,27 @@
   }
 </script>
 
-<div class="fast-banner">
+<div class="fp16-banner">
   <div class="banner-row">
     <div class="copy">
-      <div class="banner-title">musicgen speed optimizations</div>
-      <div class="banner-subtitle">fp16 weights, static kv cache, flash attention</div>
+      <div class="banner-title">musicgen fp16</div>
+      <div class="banner-subtitle">half precision weights, about 25% faster</div>
     </div>
     <label class="toggle">
       <input
         type="checkbox"
         checked={enabled}
         disabled={saving}
-        onchange={(e) => toggleFastOptimizations((e.currentTarget as HTMLInputElement).checked)}
+        onchange={(e) => toggleFp16((e.currentTarget as HTMLInputElement).checked)}
       />
       <span>{enabled ? "on" : "off"}</span>
     </label>
   </div>
 
   <div class="note">
-    on by default, and a lot faster. turn it off to hear gary on the stock path if
-    you're comparing quality - the model has to reload either way.
+    off by default. it speeds generation up but it also changes what gary samples,
+    and we think it might make outputs more bland. flash attention stays on either
+    way - that one is bit-identical to full precision.
   </div>
 
   {#if message}
@@ -71,7 +72,7 @@
 </div>
 
 <style>
-  .fast-banner {
+  .fp16-banner {
     padding: 10px 16px;
     border-bottom: 1px solid var(--border);
     background: #1a2028;

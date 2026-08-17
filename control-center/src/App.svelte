@@ -7,7 +7,7 @@
   import ModelPanel from "./lib/ModelPanel.svelte";
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
-  import GaryFastOptimizationsBanner from "./lib/GaryFastOptimizationsBanner.svelte";
+  import GaryFp16Banner from "./lib/GaryFp16Banner.svelte";
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
   import CareyScragVaeBanner from "./lib/CareyScragVaeBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
@@ -51,7 +51,7 @@
 
   interface AppSettings {
     melodyflowUseFlashAttn: boolean;
-    garyUseFastOptimizations: boolean;
+    garyUseFp16: boolean;
     careyUseXlModels: boolean;
     careyUseScragVae: boolean;
     sa3Loudness: Sa3LoudnessSettings;
@@ -163,7 +163,7 @@
   let pollTimer: number;
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
-    garyUseFastOptimizations: true,
+    garyUseFp16: false,
     careyUseXlModels: false,
     careyUseScragVae: false,
     sa3Loudness: {
@@ -717,8 +717,8 @@
     appSettings = { ...appSettings, melodyflowUseFlashAttn: enabled };
   }
 
-  function onGaryFastOptimizationsSettingUpdated(enabled: boolean) {
-    appSettings = { ...appSettings, garyUseFastOptimizations: enabled };
+  function onGaryFp16SettingUpdated(enabled: boolean) {
+    appSettings = { ...appSettings, garyUseFp16: enabled };
   }
 
   function onCareyXlSettingUpdated(enabled: boolean) {
@@ -891,10 +891,10 @@
             onShowModels={() => showModels("carey")}
           />
         {:else if selectedServiceId === "gary"}
-          <GaryFastOptimizationsBanner
-            enabled={appSettings.garyUseFastOptimizations}
+          <GaryFp16Banner
+            enabled={appSettings.garyUseFp16}
             serviceStatus={selectedService?.status ?? "stopped"}
-            onUpdated={onGaryFastOptimizationsSettingUpdated}
+            onUpdated={onGaryFp16SettingUpdated}
           />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner
