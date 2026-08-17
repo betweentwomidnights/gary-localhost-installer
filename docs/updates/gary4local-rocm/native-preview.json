@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.19",
-    "notes":  "gary\u0027s environment builds without visual studio now - rebuild the gary env and it\u0027ll get all the way through.\nthen make a drum loop with SAOS and \u0027send to gary\u0027 with vanya_ai_dnb_0.1.",
-    "pub_date":  "2026-08-17T16:49:26.3002417Z",
+    "version":  "0.2.1-rocm.20",
+    "notes":  "fingers crossed the xformers issue is fixed.\nno env rebuild needed - just send to gary again.",
+    "pub_date":  "2026-08-17T18:15:59.0993572Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEMvdmxsOS9GRW91a1IxT29ETkRacUhGR1liOXlEUFl4RW9aa0JBaXhEZlczcmcwKytId2N4My96K3A1ckNGRDVBMERJQjVvLzBiVFdEYVJkdkhnSEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTg1MDczCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTlfeDY0LXNldHVwLmV4ZQpoVWNWbE5qam8zbnRIcXg5ZUsvaWV3N2ZVN3RpVTF6c292dHF1cDhNUkNsOE00aGxsOEpiRWt3S0Z0V0FGdWVZbTJHc29lWnZXZE1zL3lKelltOHpEZz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.19/gary4local-rocm_0.2.1-rocm.19_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEZCcDFXRkZtR1EyRW1UWlBnR0lRUmhQcllBNm1Wdi9lU3J3NkFQTnhqN2d6QWZiak5jSHp4VzBacm9zQ3plSVBsSE1xOEwyOFBleVBVeERrdm42QmdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTg4ODE2CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMjBfeDY0LXNldHVwLmV4ZQoybEowSnVST092aUk5Q0pGOFM5Z0dFRi9TOTc0WG1PWjJ1dE1jeENkZ05zWVgzckdZVjluK2ZOTk53azhFaERsZGJycGJhaThNQXBZdnFsZk5HRlFDZz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.20/gary4local-rocm_0.2.1-rocm.20_x64-setup.exe"
                                          }
                   }
 }

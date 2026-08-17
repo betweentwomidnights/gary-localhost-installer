@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.19",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.19/gary4local-rocm_0.2.1-rocm.19_x64-setup.exe",
-    "sha256":  "319312caeb391dae0feab5794f0ce1150e5996dd6df94229dd5987a139daa21e",
-    "published_at":  "2026-08-17T16:49:26.3002417Z",
+    "latest_version":  "0.2.1-rocm.20",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.20/gary4local-rocm_0.2.1-rocm.20_x64-setup.exe",
+    "sha256":  "6a14ac89c89880e2323260e84141f808897cea34d2a87872f6864205837a00f0",
+    "published_at":  "2026-08-17T18:15:59.0993572Z",
     "notes":  [
-                  "gary\u0027s environment builds without visual studio now - rebuild the gary env and it\u0027ll get all the way through.",
-                  "then make a drum loop with SAOS and \u0027send to gary\u0027 with vanya_ai_dnb_0.1."
+                  "fingers crossed the xformers issue is fixed.",
+                  "no env rebuild needed - just send to gary again."
               ]
 }
