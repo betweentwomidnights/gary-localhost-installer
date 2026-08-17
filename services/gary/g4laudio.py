@@ -27,24 +27,37 @@ import hashlib
 import time
 
 
-def fast_optimizations_enabled() -> bool:
-    """Whether to apply the musicgen_fast patches. On unless explicitly turned off."""
-    return os.environ.get("GARY_USE_FAST_OPTIMIZATIONS", "1").strip().lower() not in (
-        "0", "false", "no", "off",
+def fp16_enabled() -> bool:
+    """Whether to convert gary's remaining fp32 params to fp16. Off by default.
+
+    It's the largest single speedup and the only patch that changes what the
+    model samples, so it's opt-in rather than assumed.
+    """
+    return os.environ.get("GARY_USE_FP16", "0").strip().lower() in (
+        "1", "true", "yes", "on",
     )
 
 
 def maybe_optimize_model(model):
-    """Apply musicgen_fast optimizations unless they've been turned off.
+    """Apply the musicgen_fast patches worth having, plus fp16 if it was asked for.
+
+    Flash Attention 2 is bit-identical to the stock path and faster, so it always
+    applies. The static KV cache measured slower than the torch.cat it replaced
+    while producing identical audio, so it never does.
 
     Never fatal: a model that failed to patch still generates, just slower.
     """
-    if not fast_optimizations_enabled():
-        print("[OPTIMIZE] musicgen_fast disabled (GARY_USE_FAST_OPTIMIZATIONS=0) - using the stock path")
-        return model
+    use_fp16 = fp16_enabled()
+    print(f"[OPTIMIZE] musicgen_fast: fp16={'on' if use_fp16 else 'off'}, fa2=on, static_kv=off")
 
     try:
-        return optimize_model(model, enable_compile=False)
+        return optimize_model(
+            model,
+            enable_fp16=use_fp16,
+            enable_static_kv=False,
+            enable_fa2=True,
+            enable_compile=False,
+        )
     except Exception as e:
         print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
         return model

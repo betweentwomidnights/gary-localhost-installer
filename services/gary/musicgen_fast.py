@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """
-musicgen_fast.py - Lossless optimizations for MusicGen inference.
+musicgen_fast.py - Speed optimizations for MusicGen inference.
 
 Patches applied at runtime to any MusicGen model:
   1. Pure FP16: Convert remaining FP32 params, disable autocast overhead
   2. Static KV cache: Pre-allocated buffer, no torch.cat per step
-  3. torch.compile: Fuse kernels and eliminate Python/launch overhead
+  3. Flash Attention 2: Bypass the SDPA math fallback
+  4. torch.compile: Fuse kernels and eliminate Python/launch overhead
+
+Not all of these are free, so the defaults below only enable the ones that
+measured worth having on vanya_ai_dnb_0.1 (10s, seed 1234, RTX 4060):
+
+  FA2          1.07x, greedy decode bit-identical to stock over 500 tokens
+  static KV    0.96x, identical audio - slower than the torch.cat it replaces
+  FP16         1.28x, flips a greedy decision by token 68 of 500
+
+So FA2 is on by default, the static KV cache is off, and FP16 is left to the
+caller: it is the bulk of the available speedup and the only patch that changes
+what the model samples.
 
 Usage:
     from audiocraft.models import MusicGen
@@ -35,6 +47,10 @@ def apply_fp16_conversion(model):
     - condition_provider output proj
 
     Converting these eliminates ~11.5% overhead from aten::copy_ dtype casting.
+
+    This is not bit-exact. out_norm and the output projections are what produce
+    the logits, so halving them samples from a slightly different distribution -
+    enough to flip a greedy decision within the first couple of seconds.
     """
     lm = model.lm
     converted = 0
@@ -261,15 +277,18 @@ def apply_torch_compile(model, mode="reduce-overhead"):
 # ==========================================================================
 
 def optimize_model(model, max_seq_len=1536,
-                   enable_fp16=True, enable_static_kv=True, enable_fa2=True,
+                   enable_fp16=False, enable_static_kv=False, enable_fa2=True,
                    enable_compile=False, compile_mode="reduce-overhead"):
-    """Apply lossless optimizations to a MusicGen model.
+    """Apply speed optimizations to a MusicGen model.
+
+    See the module docstring for what each one costs and why the defaults are
+    what they are.
 
     Args:
         model: A MusicGen model from audiocraft.
         max_seq_len: Max KV cache length (1536 = 30s at 50Hz + headroom).
-        enable_fp16: Convert remaining FP32 params to FP16.
-        enable_static_kv: Use pre-allocated KV cache buffers.
+        enable_fp16: Convert remaining FP32 params to FP16. Changes sampled output.
+        enable_static_kv: Use pre-allocated KV cache buffers. Measured slower.
         enable_fa2: Use Flash Attention 2 (if installed).
         enable_compile: Apply torch.compile to transformer.
         compile_mode: torch.compile mode.
