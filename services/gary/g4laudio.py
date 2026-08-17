@@ -26,6 +26,29 @@ from weakref import WeakValueDictionary
 import hashlib
 import time
 
+
+def fast_optimizations_enabled() -> bool:
+    """Whether to apply the musicgen_fast patches. On unless explicitly turned off."""
+    return os.environ.get("GARY_USE_FAST_OPTIMIZATIONS", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def maybe_optimize_model(model):
+    """Apply musicgen_fast optimizations unless they've been turned off.
+
+    Never fatal: a model that failed to patch still generates, just slower.
+    """
+    if not fast_optimizations_enabled():
+        print("[OPTIMIZE] musicgen_fast disabled (GARY_USE_FAST_OPTIMIZATIONS=0) - using the stock path")
+        return model
+
+    try:
+        return optimize_model(model, enable_compile=False)
+    except Exception as e:
+        print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
+        return model
+
 class ModelKernelCache:
     """Cache compiled CUDA kernels across model instances."""
     _instance = None
@@ -511,10 +534,7 @@ def get_model(model_name, device_id=0):
     model = MusicGen.get_pretrained(model_name)
 
     # Apply musicgen_fast optimizations (FP16 + static KV cache + FA2)
-    try:
-        model = optimize_model(model, enable_compile=False)
-    except Exception as e:
-        print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
+    model = maybe_optimize_model(model)
 
     # If this is first load, do a dummy forward pass to force kernel compilation
     if not is_warmed:
@@ -790,10 +810,7 @@ def _process_audio_impl_v2(
             
             # Initialize model
             model = MusicGen.get_pretrained(model_name)
-            try:
-                model = optimize_model(model, enable_compile=False)
-            except Exception as e:
-                print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
+            model = maybe_optimize_model(model)
             if progress_callback:
                 model.set_custom_progress_callback(progress_callback)
 
@@ -883,10 +900,7 @@ def _continue_music_impl_v2(
             
             # Initialize model
             model = MusicGen.get_pretrained(model_name)
-            try:
-                model = optimize_model(model, enable_compile=False)
-            except Exception as e:
-                print(f"[OPTIMIZE] musicgen_fast optimization failed (non-fatal): {e}")
+            model = maybe_optimize_model(model)
             if progress_callback:
                 model.set_custom_progress_callback(progress_callback)
 
