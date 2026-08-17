@@ -19,6 +19,12 @@ are specific to the localhost deployment:
 - the service performs a small first-load kernel warmup pass per model/device
   so later generations start faster.
 
+these are on by default and can be turned off with
+`GARY_USE_FAST_OPTIMIZATIONS=0` or from the `gary4local` gary panel. the fp16
+conversion in particular is not bit-exact - it moves the output projections and
+final LayerNorm to half precision, which can shift sampled tokens - so the
+toggle is there to A/B a suspect model against the stock path.
+
 for localhost we intentionally **don't** enable `torch.compile` by default.
 gary unloads models after generation so we can support many finetunes on
 smaller GPUs without keeping large model instances resident, and that model

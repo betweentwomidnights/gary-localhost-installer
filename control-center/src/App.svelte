@@ -7,6 +7,7 @@
   import ModelPanel from "./lib/ModelPanel.svelte";
   import TokenBanner from "./lib/TokenBanner.svelte";
   import MelodyflowFlashBanner from "./lib/MelodyflowFlashBanner.svelte";
+  import GaryFastOptimizationsBanner from "./lib/GaryFastOptimizationsBanner.svelte";
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
   import CareyScragVaeBanner from "./lib/CareyScragVaeBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
@@ -50,6 +51,7 @@
 
   interface AppSettings {
     melodyflowUseFlashAttn: boolean;
+    garyUseFastOptimizations: boolean;
     careyUseXlModels: boolean;
     careyUseScragVae: boolean;
     sa3Loudness: Sa3LoudnessSettings;
@@ -161,6 +163,7 @@
   let pollTimer: number;
   let appSettings: AppSettings = $state({
     melodyflowUseFlashAttn: false,
+    garyUseFastOptimizations: true,
     careyUseXlModels: false,
     careyUseScragVae: false,
     sa3Loudness: {
@@ -714,6 +717,10 @@
     appSettings = { ...appSettings, melodyflowUseFlashAttn: enabled };
   }
 
+  function onGaryFastOptimizationsSettingUpdated(enabled: boolean) {
+    appSettings = { ...appSettings, garyUseFastOptimizations: enabled };
+  }
+
   function onCareyXlSettingUpdated(enabled: boolean) {
     appSettings = { ...appSettings, careyUseXlModels: enabled };
   }
@@ -882,6 +889,12 @@
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onCareyScragVaeSettingUpdated}
             onShowModels={() => showModels("carey")}
+          />
+        {:else if selectedServiceId === "gary"}
+          <GaryFastOptimizationsBanner
+            enabled={appSettings.garyUseFastOptimizations}
+            serviceStatus={selectedService?.status ?? "stopped"}
+            onUpdated={onGaryFastOptimizationsSettingUpdated}
           />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner
