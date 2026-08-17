@@ -52,3 +52,7 @@ torchcodec>=0.9.1
 # Model downloading
 modelscope
 typer-slim>=0.21.1
+
+# Xet-backed downloads. Every model repo we pull is on Xet storage, and
+# without this huggingface_hub logs a warning and falls back to plain HTTP.
+hf_xet

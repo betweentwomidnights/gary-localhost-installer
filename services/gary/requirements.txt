@@ -34,6 +34,9 @@ treetable==0.2.6
 colorlog
 transformers==4.39.3
 huggingface_hub
+# Xet-backed downloads. Every model repo we pull is on Xet storage, and
+# without this huggingface_hub logs a warning and falls back to plain HTTP.
+hf_xet
 protobuf
 spacy==3.7.6
 librosa<0.11

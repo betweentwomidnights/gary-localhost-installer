@@ -21,6 +21,9 @@ packaging>=26.0
 safetensors>=0.7.0
 tqdm>=4.67.3
 huggingface-hub>=1.7.1
+# Xet-backed downloads. Every model repo we pull is on Xet storage, and
+# without this huggingface_hub logs a warning and falls back to plain HTTP.
+hf_xet
 transformers>=5.8.0
 soundfile>=0.13.1
 
