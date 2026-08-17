@@ -95,6 +95,8 @@ struct Sa3LoudnessSettingsPatch {
 struct AppSettings {
     #[serde(default)]
     melodyflow_use_flash_attn: bool,
+    #[serde(default = "default_gary_use_fast_optimizations")]
+    gary_use_fast_optimizations: bool,
     #[serde(default)]
     carey_use_xl_models: bool,
     #[serde(default)]
@@ -115,6 +117,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             melodyflow_use_flash_attn: false,
+            gary_use_fast_optimizations: default_gary_use_fast_optimizations(),
             carey_use_xl_models: false,
             carey_use_scrag_vae: false,
             sa3_loudness: Sa3LoudnessSettings::default(),
@@ -127,6 +130,10 @@ impl Default for AppSettings {
 }
 
 fn default_auto_check_updates() -> bool {
+    true
+}
+
+fn default_gary_use_fast_optimizations() -> bool {
     true
 }
 
@@ -149,6 +156,8 @@ impl Default for CloseActionOnX {
 struct AppSettingsPatch {
     #[serde(default)]
     melodyflow_use_flash_attn: Option<bool>,
+    #[serde(default)]
+    gary_use_fast_optimizations: Option<bool>,
     #[serde(default)]
     carey_use_xl_models: Option<bool>,
     #[serde(default)]
@@ -1129,6 +1138,10 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(melodyflow_use_flash_attn) = patch.melodyflow_use_flash_attn {
         current.melodyflow_use_flash_attn = melodyflow_use_flash_attn;
+    }
+
+    if let Some(gary_use_fast_optimizations) = patch.gary_use_fast_optimizations {
+        current.gary_use_fast_optimizations = gary_use_fast_optimizations;
     }
 
     if let Some(carey_use_xl_models) = patch.carey_use_xl_models {
@@ -3718,6 +3731,10 @@ pub(crate) fn melodyflow_use_flash_attn_enabled() -> bool {
         return false;
     }
     read_app_settings().melodyflow_use_flash_attn
+}
+
+pub(crate) fn gary_use_fast_optimizations_enabled() -> bool {
+    read_app_settings().gary_use_fast_optimizations
 }
 
 pub(crate) fn carey_use_xl_models_enabled() -> bool {
