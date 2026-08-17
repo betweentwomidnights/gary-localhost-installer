@@ -11,7 +11,9 @@ the local `gary` service applies several MusicGen inference optimizations that
 are specific to the localhost deployment:
 
 - if available in the local gary environment, Flash Attention 2 is patched in
-  directly for MusicGen self-attention. this one is on by default.
+  directly for MusicGen self-attention. this one is on by default. the ROCm
+  build has no FA2 wheel, so there it logs `not installed, skipping` and gary
+  runs the stock attention path.
 - `musicgen_fast.py` can also convert remaining float32 parameters and buffers
   to fp16, and can swap the growing `torch.cat` KV cache for a pre-allocated
   static buffer.

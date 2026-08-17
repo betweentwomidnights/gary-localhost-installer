@@ -62,8 +62,8 @@
 
   <div class="note">
     off by default. it speeds generation up but it also changes what gary samples,
-    and we think it might make outputs more bland. flash attention stays on either
-    way - that one is bit-identical to full precision.
+    and we think it might make outputs more bland. flash attention stays on where
+    it's available - that one is bit-identical to full precision.
   </div>
 
   {#if message}
