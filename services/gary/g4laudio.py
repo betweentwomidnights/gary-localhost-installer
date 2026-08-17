@@ -460,8 +460,46 @@ def ensure_float32(tensor):
     return tensor
 
 # Instead of modifying the model, focus on ensuring input/output tensors are float32
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+
+
+ACCELERATOR_PROFILE = os.environ.get("GARY_ACCELERATOR_PROFILE", "").strip()
+REQUIRE_ACCELERATOR = env_flag("GARY_REQUIRE_ACCELERATOR")
+EXPECT_HIP = env_flag("GARY_EXPECT_HIP") or "rocm" in ACCELERATOR_PROFILE.lower()
+
+
+def validate_accelerator_or_raise():
+    hip_version = getattr(torch.version, "hip", None)
+    cuda_version = getattr(torch.version, "cuda", None)
+    available = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if available else 0
+    devices = [torch.cuda.get_device_name(index) for index in range(device_count)]
+    print(
+        "[gary] torch backend: "
+        f"torch={torch.__version__}; hip={hip_version}; cuda_build={cuda_version}; "
+        f"cuda_available={available}; devices={devices}; "
+        f"profile={ACCELERATOR_PROFILE or None}"
+    )
+
+    if EXPECT_HIP and not hip_version:
+        raise RuntimeError(
+            "Gary ROCm profile expected a ROCm/HIP PyTorch build, but "
+            "torch.version.hip is empty. Rebuild the Gary environment."
+        )
+    if REQUIRE_ACCELERATOR and not available:
+        raise RuntimeError(
+            "Gary requires an AMD GPU, but the ROCm/HIP PyTorch runtime "
+            "cannot see one. Check the Radeon driver and rebuild the environment."
+        )
+
+
 def get_model(model_name, device_id=0):
     """Load MusicGen model with kernel caching awareness."""
+    validate_accelerator_or_raise()
     cache_key = kernel_cache.get_cache_key(model_name, device_id)
     is_warmed = kernel_cache.has_warmed_kernels(model_name, device_id)
     

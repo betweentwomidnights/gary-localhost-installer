@@ -1,17 +1,14 @@
 # Gary (MusicGen) localhost backend requirements
 #
-# Install order:
-#   1. pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-#   2. pip install -e . --no-deps          (audiocraft editable, skip its pinned torch==2.1.0)
-#   3. pip install -r requirements.txt     (this file)
-#   4. pip install flash-attn (prebuilt wheel for Windows cu128+torch2.7.1)
-#   5. Install xformers SDPA shim          (see setup script — creates fake xformers package)
-#   6. pip install --force-reinstall --no-deps torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-#      ^ step 6: restore CUDA torch if transitive deps pulled CPU version
-#   7. pip uninstall torchvision
-#      ^ Gary does not need torchvision, and removing it avoids stray binary mismatches on some machines
+# Install order for the ROCm preview:
+#   1. install AMD ROCm 7.2.1 SDK wheels
+#   2. install matching torch/torchaudio/torchvision wheels for Python 3.12
+#   3. pip install -e . --no-deps          (audiocraft editable, skip its pinned torch==2.1.0)
+#   4. pip install -r requirements.txt     (this file)
+#   5. force-reinstall the ROCm Torch wheel set after transitive dependencies
 #
-# Lockfile: requirements.lock.txt contains exact frozen versions from a known-good build.
+# No flash-attn wheel and no xformers shim here: both are CUDA-only, and the
+# transformer falls back to PyTorch attention when xformers is absent.
 
 # Core web framework
 flask
@@ -32,7 +29,10 @@ num2words
 flashy<0.2
 treetable==0.2.6
 colorlog
+# Newer Transformers versions import Dynamo/FSDP while loading T5. AMD's
+# Windows ROCm wheel intentionally omits the distributed backend they require.
 transformers==4.39.3
+tokenizers==0.15.2
 huggingface_hub
 protobuf
 spacy==3.7.6
