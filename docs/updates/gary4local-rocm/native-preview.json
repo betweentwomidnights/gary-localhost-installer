@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1-rocm.18",
-    "notes":  "rebuild the gary environment first - it moved to python 3.12 on the rocm wheels.\nmake a drum loop with SAOS, then \u0027send to gary\u0027 with vanya_ai_dnb_0.1.",
-    "pub_date":  "2026-08-17T13:05:31.7377150Z",
+    "version":  "0.2.1-rocm.19",
+    "notes":  "gary\u0027s environment builds without visual studio now - rebuild the gary env and it\u0027ll get all the way through.\nthen make a drum loop with SAOS and \u0027send to gary\u0027 with vanya_ai_dnb_0.1.",
+    "pub_date":  "2026-08-17T16:49:26.3002417Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEgwUTdrWnVXNWJWK3FXaEdJa1U4MnpEM1o2NENRaFV3TWpodFpaYnptRUdRSkpJVzBGcExwZTJ6RVdUZ1ZYZHlXNEQrSDhyaXRhNGtBSzRvUjNjdFFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTcxNDUyCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMThfeDY0LXNldHVwLmV4ZQpNZldpQ3c5SEw5WnBDMW9MdVp3MzZvTFFJaFAxTE1uaDArRWtSZVNEYTFTc1VjdzVVMzhFZTh1MzdMWkRnSm5WeXFFZk9uQU9SK2NPcDlwSDNNQ1lDZz09Cg==",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.18/gary4local-rocm_0.2.1-rocm.18_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEMvdmxsOS9GRW91a1IxT29ETkRacUhGR1liOXlEUFl4RW9aa0JBaXhEZlczcmcwKytId2N4My96K3A1ckNGRDVBMERJQjVvLzBiVFdEYVJkdkhnSEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2OTg1MDczCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMi4xLXJvY20uMTlfeDY0LXNldHVwLmV4ZQpoVWNWbE5qam8zbnRIcXg5ZUsvaWV3N2ZVN3RpVTF6c292dHF1cDhNUkNsOE00aGxsOEpiRWt3S0Z0V0FGdWVZbTJHc29lWnZXZE1zL3lKelltOHpEZz09Cg==",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.19/gary4local-rocm_0.2.1-rocm.19_x64-setup.exe"
                                          }
                   }
 }

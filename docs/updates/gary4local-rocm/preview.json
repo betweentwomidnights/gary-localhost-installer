@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.18",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.18/gary4local-rocm_0.2.1-rocm.18_x64-setup.exe",
-    "sha256":  "e14be6815d88f1471d4eefa885f7d8df20fbda0aa6abbdae02266706a61291cf",
-    "published_at":  "2026-08-17T13:05:31.7377150Z",
+    "latest_version":  "0.2.1-rocm.19",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.19/gary4local-rocm_0.2.1-rocm.19_x64-setup.exe",
+    "sha256":  "319312caeb391dae0feab5794f0ce1150e5996dd6df94229dd5987a139daa21e",
+    "published_at":  "2026-08-17T16:49:26.3002417Z",
     "notes":  [
-                  "rebuild the gary environment first - it moved to python 3.12 on the rocm wheels.",
-                  "make a drum loop with SAOS, then \u0027send to gary\u0027 with vanya_ai_dnb_0.1."
+                  "gary\u0027s environment builds without visual studio now - rebuild the gary env and it\u0027ll get all the way through.",
+                  "then make a drum loop with SAOS and \u0027send to gary\u0027 with vanya_ai_dnb_0.1."
               ]
 }
