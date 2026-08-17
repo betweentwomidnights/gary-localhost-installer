@@ -182,6 +182,26 @@ Order:
    rebuilds:
    `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm/preview.json`
 
+   If the feed still shows the old version well after the push, check whether
+   the Pages build actually succeeded — during a GitHub incident it can fail
+   with a bare "Page build failed." and leave the site serving the previous
+   deploy:
+
+   ```powershell
+   gh api repos/betweentwomidnights/gary-localhost-installer/pages/builds `
+     --jq '.[0:3][] | .status + "  " + .created_at + "  " + (.error.message // "")'
+   ```
+
+   Pages here is the legacy builder on `main:/docs`, so a rebuild can be forced
+   without an empty commit:
+
+   ```powershell
+   gh api -X POST repos/betweentwomidnights/gary-localhost-installer/pages/builds
+   ```
+
+   The release assets are served by a different system and work immediately, so
+   a direct download link is always available while Pages catches up.
+
 ## Source Builds
 
 Source builders can still disable the entire updater UI and backend check path:
