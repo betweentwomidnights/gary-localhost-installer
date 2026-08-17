@@ -20,7 +20,16 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
-from xformers import ops
+
+# Safe xformers import - make it completely optional
+try:
+    from xformers import ops
+    _has_xformers = True
+    print("[OK] xformers available - using memory efficient attention when requested")
+except ImportError:
+    ops = None
+    _has_xformers = False
+    print("[WARN] xformers not available - falling back to PyTorch scaled_dot_product_attention")
 
 from .rope import RotaryEmbedding
 from .streaming import StreamingModule
@@ -31,7 +40,10 @@ _efficient_attention_backend: str = 'torch'
 def set_efficient_attention_backend(backend: str = 'torch'):
     # Using torch by default, it seems a bit faster on older P100 GPUs (~20% faster).
     global _efficient_attention_backend
-    assert _efficient_attention_backend in ['xformers', 'torch']
+    assert backend in ['xformers', 'torch']
+    if backend == 'xformers' and not _has_xformers:
+        print("[WARN] xformers backend requested but not available - falling back to torch")
+        backend = 'torch'
     _efficient_attention_backend = backend
 
 
@@ -44,11 +56,13 @@ def _get_attention_time_dimension(memory_efficient: bool) -> int:
 
 def _is_profiled() -> bool:
     # Return true if we are currently running with a xformers profiler activated.
+    if not _has_xformers:
+        return False
     try:
         from xformers.profiler import profiler
-    except ImportError:
+        return profiler._Profiler._CURRENT_PROFILER is not None
+    except (ImportError, AttributeError):
         return False
-    return profiler._Profiler._CURRENT_PROFILER is not None
 
 
 def create_norm_fn(norm_type: str, dim: int, **kwargs) -> nn.Module:
@@ -723,32 +737,45 @@ class StreamingTransformer(StreamingModule):
 
 # special attention related function
 
+_logged_attention_notices: set = set()
+
+
+def _log_attention_notice_once(message: str) -> None:
+    """Say each attention-backend notice once per process.
+
+    The checks below run from StreamingMultiheadAttention's constructor, so
+    every layer of the model fires them again while it is being built.
+    """
+    if message in _logged_attention_notices:
+        return
+    _logged_attention_notices.add(message)
+    print(message)
+
+
 def _verify_xformers_memory_efficient_compat():
+    """Verify xformers memory efficient attention compatibility - now gracefully handles missing xformers."""
+    if not _has_xformers:
+        _log_attention_notice_once("[WARN] Memory efficient attention requested, but xformers not installed. Using PyTorch scaled_dot_product_attention.")
+        return
+
     try:
         from xformers.ops import memory_efficient_attention, LowerTriangularMask  # noqa
+        _log_attention_notice_once("[OK] xformers memory efficient attention available")
     except ImportError:
-        raise ImportError(
-            "xformers is not installed. Please install it and try again.\n"
-            "To install on AWS and Azure, run \n"
-            "FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST='8.0'\\\n"
-            "pip install -U git+https://git@github.com/fairinternal/xformers.git#egg=xformers\n"
-            "To install on FAIR Cluster, run \n"
-            "FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST='6.0;7.0'\\\n"
-            "pip install -U git+https://git@github.com/fairinternal/xformers.git#egg=xformers\n")
+        _log_attention_notice_once("[WARN] xformers installed but memory_efficient_attention not available - using torch fallback")
 
 
 def _verify_xformers_internal_compat():
+    """Verify xformers internal checkpointing compatibility - now gracefully handles missing xformers."""
+    if not _has_xformers:
+        _log_attention_notice_once("[WARN] xformers checkpointing requested, but xformers not installed. Using PyTorch checkpointing.")
+        return
+
     try:
         from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy  # noqa
+        _log_attention_notice_once("[OK] xformers fairinternal checkpointing available")
     except ImportError:
-        raise ImportError(
-            "Francisco's fairinternal xformers is not installed. Please install it and try again.\n"
-            "To install on AWS and Azure, run \n"
-            "FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST='8.0'\\\n"
-            "pip install -U git+https://git@github.com/fairinternal/xformers.git#egg=xformers\n"
-            "To install on FAIR Cluster, run \n"
-            "FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST='6.0;7.0'\\\n"
-            "pip install -U git+https://git@github.com/fairinternal/xformers.git#egg=xformers\n")
+        _log_attention_notice_once("[WARN] xformers installed but fairinternal checkpointing not available - using torch fallback")
 
 
 def _is_custom(custom: bool, memory_efficient: bool):
