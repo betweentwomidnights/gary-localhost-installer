@@ -24,15 +24,24 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
-## v0.2.1
+## v0.3.0
 
-bugfix for ace-step lora training. the base/xl-base selector was sending names that didn't resolve to real model folders, if you had every model downloaded you never saw this. 
+gary4local can finally keep its big stuff somewhere other than `C:\`. fresh
+installs put the runtime beside the app, so choosing another install drive also
+keeps the Python environments, models, caches, logs, and Gary-trained LoRAs
+there.
 
-'use seed' toggle added for melodyflow (terry), and it no longer converts to 32k before performing the edit. tradeoff: it hears more detail in your input audio but is capped at 30 seconds instead of 45 (like it was always supposed to be)
+existing users should see everything continue exactly where it already lives.
+the storage panel can switch the runtime later, copy the LoRAs Gary knows how
+to manage, show what is using the space, and clean up old environments, models,
+or caches when you are ready. nothing gets silently moved or deleted during the
+update.
 
-sa3 lora trainer now defaults to 168 layers instead of the full 228 just like the underfit repo. it trains faster and you honestly won't hear a difference in practice. there's also a drop down now to select the 4B ace-step captioner if you have the GPU and really want to for auto-labelling.
+gary's backend also accepts the seed and advanced controls added in gary4juce
+v4.0.13, with a less fragile fallback when its fastest attention path isn't
+available.
 
-compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
+compatible with [gary4juce v4.0.13](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.13).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

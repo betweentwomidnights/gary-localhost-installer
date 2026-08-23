@@ -4,6 +4,60 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.3.0
+
+### custom runtime storage
+
+gary4local no longer assumes all of its mutable data belongs in
+`%APPDATA%\Gary4JUCE`. fresh installs put service environments, models, caches,
+logs, and Gary-trained LoRAs in `gary4local-data` beside the installed app. if
+you choose an install folder on another drive, the large runtime follows it.
+
+existing installs keep using `%APPDATA%\Gary4JUCE` when Gary data is already
+there. legacy mode also leaves the Hugging Face cache variables alone, so an
+existing `~/.cache/huggingface` remains visible and models don't need to be
+downloaded again just because gary4local updated.
+
+the storage panel can choose a different runtime for the next restart. the
+saved Hugging Face token and app settings follow automatically. Gary-trained
+SA3 and Carey LoRAs can be copied after the move; external LoRAs are left alone
+and can be registered again from their original files. copying is deliberately
+not moving: the source LoRAs stay where they were until you decide what to do
+with them.
+
+old-storage cleanup only unlocks after the app has restarted somewhere else.
+it lists exactly which old environments, managed models, and rebuildable caches
+it found before anything is removed. it doesn't quietly delete the LoRAs left
+behind in the old profile.
+
+### storage maintenance
+
+the storage panel can clear uv's package cache and remove individual service
+environments. every model panel can remove models it owns, including
+MelodyFlow's model, Carey components, Jerry finetunes, and Foundation-1. model
+and environment sizes are shown before cleanup so the large number in Explorer
+isn't just a mystery.
+
+Hugging Face snapshots often point at the same blobs, and older Gary installs
+could leave both a snapshot copy and its blob behind. size reporting avoids
+counting links twice, while cleanup can reclaim a duplicate blob without
+removing the surviving model file. the larger scans run away from the UI thread
+so opening the storage panel doesn't make the whole app look frozen.
+
+### gary (MusicGen)
+
+gary's generation routes accept a seed now, matching the advanced controls in
+gary4juce v4.0.13. the optional fast-generation path can be turned off from the
+control center, and its xFormers fallback now reaches generation on machines
+where xFormers isn't installed.
+
+startup imports are lighter, audio no longer gets routed through TorchCodec,
+and `hf_xet` is installed for model repositories that use Hugging Face's Xet
+storage. `pesq`, which gary doesn't use for inference, is no longer part of the
+environment.
+
+compatible with gary4juce v4.0.13.
+
 ## v0.2.1
 
 ### carey (ACE-Step) LoRA trainer
