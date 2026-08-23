@@ -1,6 +1,6 @@
 LangString MUI_TEXT_WELCOME_INFO_TITLE ${LANG_ENGLISH} "welcome to $(^NameDA) setup"
-LangString MUI_TEXT_DIRECTORY_TITLE ${LANG_ENGLISH} "choose install location"
-LangString MUI_TEXT_DIRECTORY_SUBTITLE ${LANG_ENGLISH} "choose the folder in which to install $(^NameDA)."
+LangString MUI_TEXT_DIRECTORY_TITLE ${LANG_ENGLISH} "choose app install location"
+LangString MUI_TEXT_DIRECTORY_SUBTITLE ${LANG_ENGLISH} "choose the folder for $(^NameDA) app files."
 LangString MUI_TEXT_INSTALLING_TITLE ${LANG_ENGLISH} "installing"
 LangString MUI_TEXT_INSTALLING_SUBTITLE ${LANG_ENGLISH} "please wait while $(^NameDA) is being installed."
 LangString MUI_TEXT_FINISH_TITLE ${LANG_ENGLISH} "installation complete"

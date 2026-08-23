@@ -17,6 +17,7 @@
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
+  import StorageSettingsModal from "./lib/StorageSettingsModal.svelte";
 
   interface BuildStatus {
     building: boolean;
@@ -75,6 +76,82 @@
     notes: string[];
   }
 
+  interface RuntimeStorageInfo {
+    activeRoot: string;
+    configuredRoot: string | null;
+    startupRoot: string;
+    defaultRoot: string;
+    legacyRoot: string;
+    configPath: string;
+    pendingRestart: boolean;
+    usingLegacyDefault: boolean;
+    defaultRootIsLegacy: boolean;
+  }
+
+  interface LegacyStorageCleanupItem {
+    id: string;
+    label: string;
+    path: string;
+    bytes: number;
+  }
+
+  interface LegacyLoraMigrationCandidate {
+    service: string;
+    name: string;
+    sourcePath: string;
+    targetPath: string;
+    bytes: number;
+  }
+
+  interface LegacyStorageMaintenanceInfo {
+    activeRoot: string;
+    pendingRoot: string;
+    legacyRoot: string;
+    defaultHfCacheRoot: string;
+    cleanupItems: LegacyStorageCleanupItem[];
+    loraCandidates: LegacyLoraMigrationCandidate[];
+    storageMoveLoraCandidates: LegacyLoraMigrationCandidate[];
+    totalCleanupBytes: number;
+    totalLoraBytes: number;
+    totalStorageMoveLoraBytes: number;
+    canCleanup: boolean;
+    canMigrateLoras: boolean;
+    canMigrateStorageLoras: boolean;
+  }
+
+  interface LegacyStorageMaintenanceResult {
+    info: LegacyStorageMaintenanceInfo;
+    migratedLoras: number;
+    cleanedItems: number;
+    warnings: string[];
+    errors: string[];
+  }
+
+  interface RuntimeCacheInfo {
+    uvCachePath: string;
+    uvCacheBytes: number;
+  }
+
+  interface RuntimeCacheClearResult {
+    info: RuntimeCacheInfo;
+    clearedBytes: number;
+  }
+
+  interface ServiceEnvInfo {
+    serviceId: string;
+    displayName: string;
+    envPath: string;
+    envBytes: number;
+    present: boolean;
+    blockedReason: string | null;
+  }
+
+  interface ServiceEnvRemovalResult {
+    serviceId: string;
+    removedBytes: number;
+    environments: ServiceEnvInfo[];
+  }
+
   const showMelodyflowFlashBanner =
     import.meta.env.VITE_ENABLE_MELODYFLOW_FA2_TOGGLE !== "0";
   const showAppUpdater = import.meta.env.VITE_ENABLE_APP_UPDATER !== "0";
@@ -111,6 +188,26 @@
   let updateResult: AppUpdateCheck | null = $state(null);
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
+  let storageModalOpen = $state(false);
+  let storageInfo: RuntimeStorageInfo | null = $state(null);
+  let storageBusy = $state(false);
+  let storageError: string | null = $state(null);
+  let storageMaintenanceInfo: LegacyStorageMaintenanceInfo | null = $state(null);
+  let storageMaintenanceBusy = $state(false);
+  let storageMaintenanceError: string | null = $state(null);
+  let storageMaintenanceWarning: string | null = $state(null);
+  let storageMaintenanceMessage: string | null = $state(null);
+  let runtimeCacheInfo: RuntimeCacheInfo | null = $state(null);
+  let runtimeCacheBusy = $state(false);
+  let runtimeCacheError: string | null = $state(null);
+  let runtimeCacheMessage: string | null = $state(null);
+  let serviceEnvs: ServiceEnvInfo[] | null = $state(null);
+  let blobReclaimBusy = $state(false);
+  let blobReclaimMessage: string | null = $state(null);
+  let serviceEnvBusy: string | null = $state(null);
+  let serviceEnvError: string | null = $state(null);
+  let serviceEnvMessage: string | null = $state(null);
+  let storageRestarting = $state(false);
   let careyLoraModalOpen = $state(false);
   let careyAceTrainingModalOpen = $state(false);
   let sa3LoraModalOpen = $state(false);
@@ -224,8 +321,52 @@
     return appSettings;
   }
 
+  async function loadRuntimeStorageInfo() {
+    try {
+      storageInfo = await invoke<RuntimeStorageInfo>("get_runtime_storage_info");
+      storageError = null;
+    } catch (e) {
+      storageError = formatError(e);
+    }
+    return storageInfo;
+  }
+
+  async function loadStorageMaintenanceInfo() {
+    try {
+      storageMaintenanceInfo = await invoke<LegacyStorageMaintenanceInfo>(
+        "get_legacy_storage_maintenance_info",
+      );
+      storageMaintenanceError = null;
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    }
+    return storageMaintenanceInfo;
+  }
+
+  async function loadRuntimeCacheInfo() {
+    try {
+      runtimeCacheInfo = await invoke<RuntimeCacheInfo>("get_runtime_cache_info");
+      runtimeCacheError = null;
+    } catch (e) {
+      runtimeCacheError = formatError(e);
+    }
+    return runtimeCacheInfo;
+  }
+
   function formatError(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  function formatByteCount(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
   }
 
   async function runUpdateCheck(options: {
@@ -348,6 +489,226 @@
     }
   }
 
+  async function openStorageSettings() {
+    storageModalOpen = true;
+    await Promise.all([
+      loadRuntimeStorageInfo(),
+      loadStorageMaintenanceInfo(),
+      loadRuntimeCacheInfo(),
+      loadServiceEnvs(),
+    ]);
+  }
+
+  function closeStorageSettings() {
+    storageModalOpen = false;
+    storageError = null;
+    storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
+    storageMaintenanceMessage = null;
+    runtimeCacheError = null;
+    runtimeCacheMessage = null;
+    serviceEnvError = null;
+    serviceEnvMessage = null;
+    blobReclaimMessage = null;
+    // serviceEnvs is kept so reopening shows the last known sizes straight
+    // away while the rescan runs behind it.
+  }
+
+  async function clearRuntimeUvCache() {
+    runtimeCacheBusy = true;
+    runtimeCacheError = null;
+    runtimeCacheMessage = null;
+    try {
+      const result = await invoke<RuntimeCacheClearResult>("clear_uv_cache");
+      runtimeCacheInfo = result.info;
+      runtimeCacheMessage = result.clearedBytes > 0
+        ? `cleared ${formatByteCount(result.clearedBytes)} from the UV cache`
+        : "the UV cache was already empty";
+    } catch (e) {
+      runtimeCacheError = formatError(e);
+    } finally {
+      runtimeCacheBusy = false;
+    }
+  }
+
+  async function loadServiceEnvs() {
+    try {
+      serviceEnvs = await invoke<ServiceEnvInfo[]>("get_service_envs");
+      serviceEnvError = null;
+    } catch (e) {
+      serviceEnvError = formatError(e);
+    }
+    return serviceEnvs;
+  }
+
+  async function removeServiceEnv(serviceId: string) {
+    serviceEnvBusy = serviceId;
+    serviceEnvError = null;
+    serviceEnvMessage = null;
+    try {
+      const result = await invoke<ServiceEnvRemovalResult>("remove_service_env", { serviceId });
+      serviceEnvs = result.environments;
+      const label = result.serviceId;
+      serviceEnvMessage = result.removedBytes > 0
+        ? `removed ${label}'s environment (${formatByteCount(result.removedBytes)}) - rebuild it when you next need that model`
+        : `${label} had no environment installed`;
+    } catch (e) {
+      serviceEnvError = formatError(e);
+    } finally {
+      serviceEnvBusy = null;
+    }
+  }
+
+  async function reclaimDuplicateBlobs() {
+    blobReclaimBusy = true;
+    blobReclaimMessage = null;
+    serviceEnvError = null;
+    try {
+      const freed = await invoke<number>("reclaim_duplicate_blobs");
+      blobReclaimMessage = freed > 0
+        ? `freed ${formatByteCount(freed)} of duplicated copies`
+        : "no duplicates found - nothing to clean up";
+    } catch (e) {
+      serviceEnvError = formatError(e);
+    } finally {
+      blobReclaimBusy = false;
+    }
+  }
+
+  async function saveRuntimeStorageRoot(path: string) {
+    storageBusy = true;
+    storageError = null;
+    try {
+      storageInfo = await invoke<RuntimeStorageInfo>("save_runtime_storage_root", { path });
+      await loadStorageMaintenanceInfo();
+    } catch (e) {
+      storageError = formatError(e);
+    } finally {
+      storageBusy = false;
+    }
+  }
+
+  async function resetRuntimeStorageRoot() {
+    storageBusy = true;
+    storageError = null;
+    try {
+      storageInfo = await invoke<RuntimeStorageInfo>("reset_runtime_storage_root");
+      await loadStorageMaintenanceInfo();
+    } catch (e) {
+      storageError = formatError(e);
+    } finally {
+      storageBusy = false;
+    }
+  }
+
+  async function refreshStorageMaintenance() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
+    storageMaintenanceMessage = null;
+    try {
+      await loadStorageMaintenanceInfo();
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
+  async function migrateLegacyLoras() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
+    storageMaintenanceMessage = null;
+    try {
+      const result = await invoke<LegacyStorageMaintenanceResult>("migrate_legacy_loras");
+      storageMaintenanceInfo = result.info;
+      storageMaintenanceMessage =
+        result.migratedLoras > 0
+          ? `copied ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"}`
+          : "no LoRAs needed copying";
+      if (result.errors.length > 0) {
+        storageMaintenanceError = result.errors.join("\n");
+      }
+      if (result.warnings.length > 0) {
+        storageMaintenanceWarning = result.warnings.join("\n");
+      }
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
+  async function migrateStorageLorasToPendingRoot() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
+    storageMaintenanceMessage = null;
+    try {
+      const result = await invoke<LegacyStorageMaintenanceResult>(
+        "migrate_storage_loras_to_pending_root",
+      );
+      storageMaintenanceInfo = result.info;
+      storageMaintenanceMessage =
+        result.migratedLoras > 0
+          ? `copied ${result.migratedLoras} LoRA${result.migratedLoras === 1 ? "" : "s"} to next storage`
+          : "no LoRAs needed copying";
+      if (result.errors.length > 0) {
+        storageMaintenanceError = result.errors.join("\n");
+      }
+      if (result.warnings.length > 0) {
+        storageMaintenanceWarning = result.warnings.join("\n");
+      }
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
+  async function cleanupLegacyStorage() {
+    storageMaintenanceBusy = true;
+    storageMaintenanceError = null;
+    storageMaintenanceWarning = null;
+    storageMaintenanceMessage = null;
+    try {
+      const result = await invoke<LegacyStorageMaintenanceResult>("cleanup_legacy_storage");
+      storageMaintenanceInfo = result.info;
+      storageMaintenanceMessage =
+        result.cleanedItems > 0
+          ? `cleaned ${result.cleanedItems} old item${result.cleanedItems === 1 ? "" : "s"}`
+          : "nothing old needed cleanup";
+      if (result.errors.length > 0) {
+        storageMaintenanceError = result.errors.join("\n");
+      }
+      if (result.warnings.length > 0) {
+        storageMaintenanceWarning = result.warnings.join("\n");
+      }
+    } catch (e) {
+      storageMaintenanceError = formatError(e);
+    } finally {
+      storageMaintenanceBusy = false;
+    }
+  }
+
+  async function restartApplication() {
+    storageRestarting = true;
+    storageError = null;
+    try {
+      await invoke("restart_application");
+    } catch (e) {
+      storageRestarting = false;
+      storageError = formatError(e);
+    }
+  }
+
+  async function revealStoragePath(path: string) {
+    try {
+      await invoke("reveal_path", { path });
+    } catch (e) {
+      storageError = formatError(e);
+    }
+  }
+
   function onTokenChange(configured: boolean) {
     hfTokenConfigured = configured;
   }
@@ -408,6 +769,7 @@
     void (async () => {
       loadServices();
       checkToken();
+      loadRuntimeStorageInfo();
       const settings = await loadAppSettings();
 
       if (!disposed && showAppUpdater && settings.autoCheckUpdates) {
@@ -473,6 +835,14 @@
           {/if}
         </button>
       {/if}
+      <button
+        class:accent={storageInfo?.pendingRestart}
+        onclick={openStorageSettings}
+        disabled={storageBusy}
+        title={storageInfo?.activeRoot ?? "runtime storage"}
+      >
+        storage
+      </button>
       <span class="status-summary">
         {#if totalCount > 0}
           {runningCount}/{totalCount} running
@@ -564,6 +934,40 @@
     onResumeReminders={resumeUpdateReminders}
     onAutoCheckChange={setAutoCheckUpdates}
   />
+  <StorageSettingsModal
+    open={storageModalOpen}
+    info={storageInfo}
+    busy={storageBusy}
+    error={storageError}
+    maintenanceInfo={storageMaintenanceInfo}
+    maintenanceBusy={storageMaintenanceBusy}
+    maintenanceError={storageMaintenanceError}
+    maintenanceWarning={storageMaintenanceWarning}
+    maintenanceMessage={storageMaintenanceMessage}
+    cacheInfo={runtimeCacheInfo}
+    cacheBusy={runtimeCacheBusy}
+    cacheError={runtimeCacheError}
+    cacheMessage={runtimeCacheMessage}
+    serviceEnvs={serviceEnvs}
+    serviceEnvBusy={serviceEnvBusy}
+    serviceEnvError={serviceEnvError}
+    serviceEnvMessage={serviceEnvMessage}
+    onRemoveServiceEnv={removeServiceEnv}
+    blobReclaimBusy={blobReclaimBusy}
+    blobReclaimMessage={blobReclaimMessage}
+    onReclaimBlobs={reclaimDuplicateBlobs}
+    restarting={storageRestarting}
+    onChoose={saveRuntimeStorageRoot}
+    onReset={resetRuntimeStorageRoot}
+    onReveal={revealStoragePath}
+    onRefreshMaintenance={refreshStorageMaintenance}
+    onMigrateLoras={migrateLegacyLoras}
+    onMigrateStorageLoras={migrateStorageLorasToPendingRoot}
+    onCleanupLegacy={cleanupLegacyStorage}
+    onClearUvCache={clearRuntimeUvCache}
+    onRestart={restartApplication}
+    onClose={closeStorageSettings}
+  />
   <CareyLoraModal
     open={careyLoraModalOpen}
     serviceStatus={careyService?.status ?? "stopped"}
@@ -576,7 +980,12 @@
     serviceStatus={careyService?.status ?? "stopped"}
     serviceEnvExists={careyService?.env_exists ?? false}
     onClose={closeCareyAceTraining}
-    onShowModels={() => showModels("carey")}
+    onShowModels={() => {
+      // The models panel lives in the main window behind this modal, so
+      // sending someone there without closing it looks like nothing happened.
+      closeCareyAceTraining();
+      showModels("carey");
+    }}
   />
   <Sa3LoraModal
     open={sa3LoraModalOpen}

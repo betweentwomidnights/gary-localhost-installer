@@ -104,6 +104,15 @@
   let nameNotice = $state<string | null>(null);
   let datasetPath = $state("");
   let model = $state<"acestep-v15-base" | "acestep-v15-xl-base">("acestep-v15-base");
+  // Captioning needs this model, not just the LM: the DiT tokenizes the VAE's
+  // latents into the audio codes understand_music reads. So only offer the ones
+  // that are actually on disk.
+  const TRAINING_MODELS = [
+    { id: "acestep-v15-base", label: "ace-step-v15-base" },
+    { id: "acestep-v15-xl-base", label: "ace-step-v15-xl-base" },
+  ] as const;
+  let downloadedModels = $state<string[]>([]);
+  let modelsLoaded = $state(false);
   let adapterType = $state<"lora" | "dora">("dora");
   let moduleProfile = $state<"attention" | "balanced">("balanced");
   let trigger = $state("");
@@ -385,11 +394,39 @@
       Number.isFinite(snrGamma) &&
       snrGamma > 0
   );
-  let canPrepare = $derived(commonValid);
-  let canTrain = $derived(commonValid);
+  let availableModels = $derived(
+    TRAINING_MODELS.filter((entry) => downloadedModels.includes(entry.id))
+  );
+  let hasModel = $derived(availableModels.some((entry) => entry.id === model));
+  let canPrepare = $derived(commonValid && hasModel);
+  let canTrain = $derived(commonValid && hasModel);
+
+  async function loadDownloadedModels() {
+    try {
+      const models = await invoke<{ id: string; status: string }[]>("get_models");
+      downloadedModels = models
+        .filter((entry) => entry.status === "downloaded")
+        .map((entry) => entry.id.replace(/^carey::/, ""));
+    } catch (e) {
+      console.error("Failed to read carey model status:", e);
+    } finally {
+      modelsLoaded = true;
+    }
+  }
+
+  // A model can be removed while this modal is closed, which leaves the saved
+  // selection pointing at something that is gone. Fall back to one we have
+  // rather than showing a select with no matching option.
+  $effect(() => {
+    if (!modelsLoaded || availableModels.length === 0) return;
+    if (!availableModels.some((entry) => entry.id === model)) {
+      model = availableModels[0].id;
+    }
+  });
 
   $effect(() => {
     if (!open) return;
+    void loadDownloadedModels();
     void loadTrainingState();
     const timer = window.setInterval(() => {
       void loadTrainingState();
@@ -499,12 +536,25 @@
       <div class="settings-grid">
         <label class="field">
           <span>preparation + training model</span>
-          <select bind:value={model}>
-            <option value="acestep-v15-base">ace-step-v15-base</option>
-            <option value="acestep-v15-xl-base">ace-step-v15-xl-base</option>
+          <select bind:value={model} disabled={availableModels.length === 0}>
+            {#each availableModels as entry (entry.id)}
+              <option value={entry.id}>{entry.label}</option>
+            {/each}
           </select>
         </label>
       </div>
+      {#if modelsLoaded && availableModels.length === 0}
+        <div class="warning">
+          no base model downloaded yet. caption/prepare and training both load
+          this model, so grab ace-step-v15-base or ace-step-v15-xl-base first.
+        </div>
+        <button type="button" class="path-link" onclick={onShowModels}>open the models panel</button>
+      {:else if availableModels.length === 1}
+        <div class="note">
+          only {availableModels[0].label} is downloaded, so that's what
+          caption/prepare and training will use.
+        </div>
+      {/if}
 
       <div class="section-label">captioner</div>
       <div class="settings-grid">
@@ -534,7 +584,7 @@
       <div class="captioner-prepare">
         <div>
           <strong>caption and prepare dataset</strong>
-          <small>captions missing sidecars with understand_music, applies optional BPM/key checks, then writes editable dataset metadata for review.</small>
+          <small>captions missing sidecars with understand_music, applies optional BPM/key checks, then writes editable dataset metadata for review. this loads the model selected above as well as the captioner — understand_music reads audio codes, and that model is what turns your audio into them.</small>
         </div>
         <button type="button" class="accent" onclick={() => void startJob(true)} disabled={!canPrepare}>
           {starting ? "launching..." : "caption / prepare"}

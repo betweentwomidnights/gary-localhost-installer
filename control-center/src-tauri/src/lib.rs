@@ -1,14 +1,14 @@
 mod manifest;
 mod model_manager;
 mod service_manager;
+mod storage;
 mod update;
 mod workload_job;
 
-use model_manager::ModelManager;
+use model_manager::{carey_component_required_files, ModelManager};
 use serde::{Deserialize, Serialize};
 use service_manager::ServiceManager;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::image::Image;
@@ -132,7 +132,6 @@ impl Default for AppSettings {
 fn default_auto_check_updates() -> bool {
     true
 }
-
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -430,6 +429,94 @@ struct Sa3PromptsBuildResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct LegacyStorageCleanupItem {
+    id: String,
+    label: String,
+    path: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyLoraMigrationCandidate {
+    service: String,
+    name: String,
+    source_path: String,
+    target_path: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyStorageMaintenanceInfo {
+    active_root: String,
+    pending_root: String,
+    legacy_root: String,
+    default_hf_cache_root: String,
+    cleanup_items: Vec<LegacyStorageCleanupItem>,
+    lora_candidates: Vec<LegacyLoraMigrationCandidate>,
+    storage_move_lora_candidates: Vec<LegacyLoraMigrationCandidate>,
+    total_cleanup_bytes: u64,
+    total_lora_bytes: u64,
+    total_storage_move_lora_bytes: u64,
+    can_cleanup: bool,
+    can_migrate_loras: bool,
+    can_migrate_storage_loras: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyStorageMaintenanceResult {
+    info: LegacyStorageMaintenanceInfo,
+    migrated_loras: usize,
+    cleaned_items: usize,
+    warnings: Vec<String>,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeCacheInfo {
+    uv_cache_path: String,
+    uv_cache_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceEnvInfo {
+    service_id: String,
+    display_name: String,
+    env_path: String,
+    env_bytes: u64,
+    present: bool,
+    /// None when the environment can be removed right now, otherwise why not.
+    blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceEnvRemovalResult {
+    service_id: String,
+    removed_bytes: u64,
+    environments: Vec<ServiceEnvInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeCacheClearResult {
+    info: RuntimeCacheInfo,
+    cleared_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelRemovalResult {
+    model_id: String,
+    removed_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Sa3DatasetSidecarEntry {
     audio_path: String,
     relative_path: String,
@@ -569,33 +656,27 @@ fn default_lora_model_family() -> String {
 
 /// Get the path to the stored HF token file.
 fn hf_token_path() -> std::path::PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Roaming", home)
-    });
-    std::path::PathBuf::from(appdata)
-        .join("Gary4JUCE")
-        .join("hf_token.txt")
+    gary4juce_runtime_root().join("hf_token.txt")
+}
+
+fn legacy_hf_token_path() -> std::path::PathBuf {
+    storage::legacy_runtime_root().join("hf_token.txt")
 }
 
 fn app_settings_path() -> std::path::PathBuf {
     gary4juce_runtime_root().join("app_settings.json")
 }
 
+fn legacy_app_settings_path() -> std::path::PathBuf {
+    storage::legacy_runtime_root().join("app_settings.json")
+}
+
 fn gary4juce_runtime_root() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Roaming", home)
-    });
-    PathBuf::from(appdata).join("Gary4JUCE")
+    storage::active_runtime_root()
 }
 
 fn gary4local_local_data_root() -> PathBuf {
-    let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Local", home)
-    });
-    PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+    storage::local_data_root()
 }
 
 fn startup_diagnostic_log_path() -> PathBuf {
@@ -787,14 +868,14 @@ fn bundled_default_captions_path(runtime_root: &Path) -> PathBuf {
 }
 
 fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf, String> {
-    let direct_root = resource_dir.to_path_buf();
-    if direct_root.join("services").is_dir() {
-        return Ok(direct_root);
-    }
-
     let nested_root = resource_dir.join("resources");
     if nested_root.join("services").is_dir() {
         return Ok(nested_root);
+    }
+
+    let direct_root = resource_dir.to_path_buf();
+    if direct_root.join("services").is_dir() {
+        return Ok(direct_root);
     }
 
     Err(format!(
@@ -804,10 +885,54 @@ fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf,
     ))
 }
 
+#[cfg(test)]
+mod bundle_root_tests {
+    use super::resolve_bundle_root_from_resource_dir;
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("gary4local-{label}-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn bundled_resources_win_when_runtime_services_share_the_install_dir() {
+        let root = temp_root("nested-bundle-root-test");
+        let runtime_services = root.join("services");
+        let bundled_services = root.join("resources").join("services");
+        std::fs::create_dir_all(&runtime_services).unwrap();
+        std::fs::create_dir_all(&bundled_services).unwrap();
+
+        let resolved = resolve_bundle_root_from_resource_dir(&root).unwrap();
+
+        assert_eq!(resolved, root.join("resources"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_resource_root_remains_supported() {
+        let root = temp_root("direct-bundle-root-test");
+        std::fs::create_dir_all(root.join("services")).unwrap();
+
+        let resolved = resolve_bundle_root_from_resource_dir(&root).unwrap();
+
+        assert_eq!(resolved, root);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn apply_runtime_env(cmd: &mut tokio::process::Command, runtime_root: &Path) {
+    for (key, value) in storage::runtime_env_vars(runtime_root) {
+        cmd.env(key, value);
     }
 }
 
@@ -838,31 +963,7 @@ fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(entries)
 }
 
-fn hash_dir_recursive(dir: &Path, base: &Path, hasher: &mut impl Hasher) -> Result<(), String> {
-    for entry in read_dir_sorted(dir)? {
-        let relative = entry
-            .strip_prefix(base)
-            .map_err(|e| format!("Cannot relativize {}: {}", entry.display(), e))?;
-        relative.to_string_lossy().hash(hasher);
-
-        if entry.is_dir() {
-            "dir".hash(hasher);
-            hash_dir_recursive(&entry, base, hasher)?;
-        } else if entry.is_file() {
-            "file".hash(hasher);
-            let bytes = std::fs::read(&entry)
-                .map_err(|e| format!("Cannot read {}: {}", entry.display(), e))?;
-            bytes.hash(hasher);
-        }
-    }
-
-    Ok(())
-}
-
 fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut hasher);
-
     let services_dir = bundle_root.join("services");
     if !services_dir.is_dir() {
         return Err(format!(
@@ -871,30 +972,9 @@ fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
         ));
     }
 
-    hash_dir_recursive(&services_dir, &services_dir, &mut hasher)?;
-
-    let icon_path = bundle_root.join("icon.png");
-    if icon_path.is_file() {
-        "icon.png".hash(&mut hasher);
-        match std::fs::read(&icon_path) {
-            Ok(icon_bytes) => icon_bytes.hash(&mut hasher),
-            Err(error) => {
-                let message = format!(
-                    "Skipping bundled icon hash because {} could not be read: {}",
-                    icon_path.display(),
-                    error
-                );
-                log::warn!("{}", message);
-                append_startup_diagnostic(&message);
-            }
-        }
-    }
-
-    Ok(format!(
-        "{}-{:016x}",
-        env!("CARGO_PKG_VERSION"),
-        hasher.finish()
-    ))
+    // Bundled resources are immutable within a released app version. Avoid
+    // synchronously reading hundreds of files before the window can respond.
+    Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
 fn remove_path(path: &Path) -> Result<(), String> {
@@ -1041,21 +1121,6 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
         }
     }
 
-    let bundle_icon = bundle_root.join("icon.png");
-    let runtime_icon = runtime_root.join("icon.png");
-    if bundle_icon.is_file() {
-        if let Err(error) = std::fs::copy(&bundle_icon, &runtime_icon) {
-            let message = format!(
-                "Cannot copy {} to {}: {}",
-                bundle_icon.display(),
-                runtime_icon.display(),
-                error
-            );
-            log::warn!("Non-fatal runtime icon sync warning: {}", message);
-            append_startup_diagnostic(&format!("Non-fatal runtime icon sync warning: {}", message));
-        }
-    }
-
     std::fs::write(&stamp_path, desired_stamp)
         .map_err(|e| format!("Cannot write {}: {}", stamp_path.display(), e))?;
 
@@ -1064,12 +1129,14 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
 
 /// Read the HF token from our stored file, falling back to system env.
 fn read_hf_token() -> Option<String> {
-    // Try our stored file first
-    let path = hf_token_path();
-    if let Ok(token) = std::fs::read_to_string(&path) {
-        let trimmed = token.trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(trimmed);
+    // Try the active runtime root first, then the legacy AppData root so
+    // upgrades and storage moves do not strand an already-saved token.
+    for path in [hf_token_path(), legacy_hf_token_path()] {
+        if let Ok(token) = std::fs::read_to_string(&path) {
+            let trimmed = token.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
         }
     }
     // Fall back to system environment variables
@@ -1084,13 +1151,13 @@ fn read_hf_token() -> Option<String> {
 }
 
 fn read_app_settings() -> AppSettings {
-    let path = app_settings_path();
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(_) => return AppSettings::default(),
-    };
+    for path in [app_settings_path(), legacy_app_settings_path()] {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            return serde_json::from_str::<AppSettings>(&raw).unwrap_or_default();
+        }
+    }
 
-    serde_json::from_str::<AppSettings>(&raw).unwrap_or_default()
+    AppSettings::default()
 }
 
 fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
@@ -1863,10 +1930,7 @@ fn carey_training_checkpoints_in(output_dir: &Path) -> Vec<CareyTrainingCheckpoi
     checkpoints
 }
 
-fn infer_carey_training_metadata(
-    entry: &mut CareyLoraCatalogEntry,
-    training_jobs_root: &Path,
-) {
+fn infer_carey_training_metadata(entry: &mut CareyLoraCatalogEntry, training_jobs_root: &Path) {
     if entry.training_job_id.is_some() || entry.path.is_empty() {
         return;
     }
@@ -1905,13 +1969,14 @@ fn infer_carey_training_metadata(
     entry.selected_training_checkpoint = selected;
 }
 
-fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
-    let path = carey_lora_catalog_path();
+fn read_carey_lora_catalog_from(
+    path: &Path,
+) -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
 
-    let raw = std::fs::read_to_string(&path)
+    let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
     let mut parsed: BTreeMap<String, CareyLoraCatalogEntry> =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid LoRA catalog JSON: {}", e))?;
@@ -1941,24 +2006,36 @@ fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, 
             .take()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        infer_carey_training_metadata(entry, &carey_training_jobs_dir());
+        if let Some(carey_root) = path.parent() {
+            infer_carey_training_metadata(entry, &carey_root.join("training").join("jobs"));
+        }
     }
 
     Ok(parsed)
 }
 
-fn save_carey_lora_catalog(
+fn read_carey_lora_catalog() -> Result<BTreeMap<String, CareyLoraCatalogEntry>, String> {
+    read_carey_lora_catalog_from(&carey_lora_catalog_path())
+}
+
+fn save_carey_lora_catalog_to(
+    path: &Path,
     catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
 ) -> Result<(), String> {
-    let path = carey_lora_catalog_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
     }
     let json = serde_json::to_string_pretty(catalog)
         .map_err(|e| format!("Cannot serialize LoRA catalog: {}", e))?;
-    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
+    std::fs::write(path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
     Ok(())
+}
+
+fn save_carey_lora_catalog(
+    catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
+) -> Result<(), String> {
+    save_carey_lora_catalog_to(&carey_lora_catalog_path(), catalog)
 }
 
 fn resolve_carey_captions_source(entry: &CareyLoraCatalogEntry) -> Option<PathBuf> {
@@ -2226,13 +2303,14 @@ fn sa3_prompt_file_path(name: &str) -> PathBuf {
     sa3_prompts_dir().join(format!("{}.json", name))
 }
 
-fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
-    let path = sa3_lora_catalog_path();
+fn read_sa3_lora_catalog_from(
+    path: &Path,
+) -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
 
-    let raw = std::fs::read_to_string(&path)
+    let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
     let mut parsed: BTreeMap<String, Sa3LoraCatalogEntry> =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid SA3 LoRA catalog JSON: {}", e))?;
@@ -2266,8 +2344,14 @@ fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, Stri
     Ok(parsed)
 }
 
-fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Result<(), String> {
-    let path = sa3_lora_catalog_path();
+fn read_sa3_lora_catalog() -> Result<BTreeMap<String, Sa3LoraCatalogEntry>, String> {
+    read_sa3_lora_catalog_from(&sa3_lora_catalog_path())
+}
+
+fn save_sa3_lora_catalog_to(
+    path: &Path,
+    catalog: &BTreeMap<String, Sa3LoraCatalogEntry>,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
@@ -2276,6 +2360,10 @@ fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Res
         .map_err(|e| format!("Cannot serialize SA3 LoRA catalog: {}", e))?;
     std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
     Ok(())
+}
+
+fn save_sa3_lora_catalog(catalog: &BTreeMap<String, Sa3LoraCatalogEntry>) -> Result<(), String> {
+    save_sa3_lora_catalog_to(&sa3_lora_catalog_path(), catalog)
 }
 
 fn resolve_sa3_prompts_source(entry: &Sa3LoraCatalogEntry) -> Option<PathBuf> {
@@ -2465,6 +2553,1002 @@ fn build_sa3_lora_state(runtime_root: &Path) -> Result<Sa3LoraState, String> {
         registry_path: sa3_lora_registry_path().to_string_lossy().to_string(),
         prompts_dir: sa3_prompts_dir().to_string_lossy().to_string(),
     })
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn default_hf_cache_root() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".cache").join("huggingface")
+}
+
+fn known_legacy_hf_repos() -> &'static [&'static str] {
+    &[
+        "thepatch/vanya_ai_dnb_0.1",
+        "thepatch/gary_orchestra_2",
+        "thepatch/keygen-gary-v2-small-8",
+        "thepatch/keygen-gary-v2-small-12",
+        "thepatch/bleeps-medium",
+        "thepatch/keygen-gary-medium-12",
+        "thepatch/hoenn_lofi",
+        "thepatch/bleeps-large-6",
+        "thepatch/bleeps-large-8",
+        "thepatch/bleeps-large-10",
+        "thepatch/bleeps-large-14",
+        "thepatch/bleeps-large-20",
+        "thepatch/keygen-gary-v2-large-12",
+        "thepatch/keygen-gary-v2-large-16",
+        model_manager::MELODYFLOW_MODEL_ID,
+        "stabilityai/stable-audio-open-small",
+        "stabilityai/stable-audio-3-medium",
+        "stabilityai/stable-audio-3-medium-base",
+    ]
+}
+
+fn legacy_hf_cache_folder(hf_root: &Path, repo: &str) -> PathBuf {
+    hf_root
+        .join("hub")
+        .join(format!("models--{}", repo.replace('/', "--")))
+}
+
+fn path_size(path: &Path) -> u64 {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+
+    if metadata.is_file() {
+        return metadata.len();
+    }
+    if !metadata.is_dir() {
+        return 0;
+    }
+
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| path_size(&entry.path()))
+        .sum()
+}
+
+fn add_cleanup_item(
+    items: &mut Vec<LegacyStorageCleanupItem>,
+    active_root: &Path,
+    id: String,
+    label: String,
+    path: PathBuf,
+) {
+    if !path.exists() {
+        return;
+    }
+    if path_is_inside(&path, active_root) || path_is_inside(active_root, &path) {
+        return;
+    }
+
+    items.push(LegacyStorageCleanupItem {
+        id,
+        label,
+        bytes: path_size(&path),
+        path: display_path(&path),
+    });
+}
+
+fn build_legacy_cleanup_items(
+    active_root: &Path,
+    legacy_root: &Path,
+    default_hf_root: &Path,
+) -> Vec<LegacyStorageCleanupItem> {
+    let mut items = Vec::new();
+    if storage::paths_equivalent(active_root, legacy_root) {
+        return items;
+    }
+
+    for service_id in [
+        "gary",
+        "melodyflow",
+        "stable-audio",
+        "sa3",
+        "carey",
+        "foundation",
+    ] {
+        let service_dir = legacy_root.join("services").join(service_id);
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("{service_id}-env"),
+            format!("{service_id} Python environment"),
+            service_dir.join("env"),
+        );
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("{service_id}-venv"),
+            format!("{service_id} virtual environment"),
+            service_dir.join(".venv"),
+        );
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("{service_id}-cache"),
+            format!("{service_id} service cache"),
+            service_dir.join(".cache"),
+        );
+    }
+
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "legacy-cache".to_string(),
+        "legacy runtime cache".to_string(),
+        legacy_root.join("cache"),
+    );
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "legacy-python".to_string(),
+        "legacy managed Python installs".to_string(),
+        legacy_root.join("python"),
+    );
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "legacy-models".to_string(),
+        "legacy runtime models".to_string(),
+        legacy_root.join("models"),
+    );
+    add_cleanup_item(
+        &mut items,
+        active_root,
+        "carey-checkpoints".to_string(),
+        "legacy Carey model checkpoints".to_string(),
+        legacy_root
+            .join("services")
+            .join("carey")
+            .join("checkpoints"),
+    );
+
+    for repo in known_legacy_hf_repos() {
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            format!("hf-{}", repo.replace('/', "-").replace('.', "-")),
+            format!("Hugging Face cache: {repo}"),
+            legacy_hf_cache_folder(default_hf_root, repo),
+        );
+    }
+
+    items
+}
+
+fn path_prefix_key(path: &Path) -> String {
+    let normalized = if cfg!(windows) {
+        path.to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    };
+    normalized
+        .trim_end_matches(|ch| ch == '\\' || ch == '/')
+        .to_string()
+}
+
+fn path_is_inside(path: &Path, root: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let path_key = path_prefix_key(&path);
+    let root_key = path_prefix_key(&root);
+    let separator = if cfg!(windows) { "\\" } else { "/" };
+
+    path_key == root_key || path_key.starts_with(&format!("{root_key}{separator}"))
+}
+
+fn safe_lora_storage_name(name: &str) -> String {
+    if let Some(sanitized) = sanitize_lora_name(name) {
+        return sanitized;
+    }
+
+    let mut cleaned = String::new();
+    for ch in name.trim().to_lowercase().chars() {
+        if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-' {
+            cleaned.push(ch);
+        } else if !cleaned.ends_with('-') {
+            cleaned.push('-');
+        }
+    }
+
+    let cleaned = cleaned.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        "lora".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn unique_destination_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let extension = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string())
+        .filter(|ext| !ext.is_empty());
+
+    for index in 2.. {
+        let file_name = match &extension {
+            Some(extension) => format!("{stem}-{index}.{extension}"),
+            None => format!("{stem}-{index}"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    path.to_path_buf()
+}
+
+fn copy_file_checked(source: &Path, target: &Path) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("{} has no parent folder", target.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+
+    let source_len = std::fs::metadata(source)
+        .map_err(|e| format!("Cannot inspect {}: {}", source.display(), e))?
+        .len();
+    let copied = std::fs::copy(source, target).map_err(|e| {
+        format!(
+            "Cannot copy {} to {}: {}",
+            source.display(),
+            target.display(),
+            e
+        )
+    })?;
+    if copied != source_len {
+        let _ = std::fs::remove_file(target);
+        return Err(format!(
+            "Copy from {} to {} was incomplete: copied {copied} of {source_len} bytes",
+            source.display(),
+            target.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn copy_legacy_file_if_missing(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.is_file() || target.exists() {
+        return Ok(());
+    }
+    copy_file_checked(source, target)
+}
+
+fn migrate_optional_source_dir(
+    raw_path: &Option<String>,
+    legacy_root: &Path,
+    target_base: &Path,
+) -> Result<Option<String>, String> {
+    let Some(raw_path) = raw_path else {
+        return Ok(None);
+    };
+
+    let source = PathBuf::from(raw_path);
+    if !source.is_dir() || !path_is_inside(&source, legacy_root) {
+        return Ok(Some(raw_path.clone()));
+    }
+
+    let target = unique_destination_path(target_base);
+    copy_dir_recursive(&source, &target)?;
+    Ok(Some(display_path(&target)))
+}
+
+fn merge_json_object_file_preserve_target(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.is_file() {
+        return Ok(());
+    }
+    if !target.is_file() {
+        return copy_file_checked(source, target);
+    }
+
+    let source_raw = std::fs::read_to_string(source)
+        .map_err(|e| format!("Cannot read {}: {}", source.display(), e))?;
+    let target_raw = std::fs::read_to_string(target)
+        .map_err(|e| format!("Cannot read {}: {}", target.display(), e))?;
+    let source_json = serde_json::from_str::<serde_json::Value>(&source_raw)
+        .map_err(|e| format!("Invalid JSON in {}: {}", source.display(), e))?;
+    let mut target_json = serde_json::from_str::<serde_json::Value>(&target_raw)
+        .map_err(|e| format!("Invalid JSON in {}: {}", target.display(), e))?;
+
+    let (Some(source_object), Some(target_object)) =
+        (source_json.as_object(), target_json.as_object_mut())
+    else {
+        return Ok(());
+    };
+
+    let mut changed = false;
+    for (key, value) in source_object {
+        if !target_object.contains_key(key) {
+            target_object.insert(key.clone(), value.clone());
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(());
+    }
+
+    let json = serde_json::to_string_pretty(&target_json)
+        .map_err(|e| format!("Cannot serialize {}: {}", target.display(), e))?;
+    std::fs::write(target, json).map_err(|e| format!("Cannot save {}: {}", target.display(), e))
+}
+
+fn carey_lora_catalog_path_for(root: &Path) -> PathBuf {
+    root.join("carey").join("lora_catalog.json")
+}
+
+fn sa3_lora_catalog_path_for(root: &Path) -> PathBuf {
+    root.join("sa3").join("lora_catalog.json")
+}
+
+fn sa3_lora_target_for_root(target_root: &Path, name: &str, source: &Path) -> PathBuf {
+    let safe_name = safe_lora_storage_name(name);
+    let extension = source
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or_else(|| "safetensors".to_string());
+    unique_destination_path(
+        &target_root
+            .join("sa3")
+            .join("loras")
+            .join(format!("{safe_name}.{extension}")),
+    )
+}
+
+fn carey_lora_target_for_root(target_root: &Path, name: &str) -> PathBuf {
+    unique_destination_path(
+        &target_root
+            .join("carey")
+            .join("loras")
+            .join(safe_lora_storage_name(name)),
+    )
+}
+
+fn active_sa3_catalog_entry_is_valid(entry: &Sa3LoraCatalogEntry) -> bool {
+    looks_like_sa3_lora_checkpoint(&PathBuf::from(&entry.path))
+}
+
+fn active_carey_catalog_entry_is_valid(entry: &CareyLoraCatalogEntry) -> bool {
+    looks_like_lora_checkpoint_dir(&PathBuf::from(&entry.path))
+}
+
+fn write_sa3_lora_registry_for_root(
+    root: &Path,
+    catalog: &BTreeMap<String, Sa3LoraCatalogEntry>,
+) -> Result<(), String> {
+    let path = root.join("sa3").join("lora_registry.json");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = BTreeMap::<String, serde_json::Value>::new();
+    for (name, entry) in catalog {
+        if looks_like_sa3_lora_checkpoint(&PathBuf::from(&entry.path)) {
+            payload.insert(
+                name.clone(),
+                serde_json::json!({
+                    "path": entry.path,
+                    "strength": entry.strength,
+                }),
+            );
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize SA3 LoRA registry: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))
+}
+
+fn write_carey_lora_registry_for_root(
+    root: &Path,
+    catalog: &BTreeMap<String, CareyLoraCatalogEntry>,
+) -> Result<(), String> {
+    let path = root.join("carey").join("lora_registry.json");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let mut payload = BTreeMap::<String, serde_json::Value>::new();
+    for (name, entry) in catalog {
+        if looks_like_lora_checkpoint_dir(&PathBuf::from(&entry.path)) {
+            payload.insert(
+                name.clone(),
+                serde_json::json!({
+                    "path": entry.path,
+                    "scale": entry.scale,
+                    "backends": sanitize_backend_list(entry.backends.clone()),
+                    "model_family": normalize_lora_model_family(&entry.model_family),
+                }),
+            );
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Cannot serialize LoRA registry: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))
+}
+
+fn collect_lora_migration_candidates(
+    source_root: &Path,
+    target_root: &Path,
+) -> Result<Vec<LegacyLoraMigrationCandidate>, String> {
+    let mut candidates = Vec::new();
+    if storage::paths_equivalent(source_root, target_root) {
+        return Ok(candidates);
+    }
+
+    let target_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(target_root))?;
+    let source_sa3 = read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(source_root))?;
+    for (name, entry) in source_sa3 {
+        if target_sa3
+            .get(&name)
+            .map(active_sa3_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, source_root) || !looks_like_sa3_lora_checkpoint(&source) {
+            continue;
+        }
+        let target = sa3_lora_target_for_root(target_root, &name, &source);
+        candidates.push(LegacyLoraMigrationCandidate {
+            service: "sa3".to_string(),
+            name,
+            source_path: display_path(&source),
+            target_path: display_path(&target),
+            bytes: path_size(&source),
+        });
+    }
+
+    let target_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(target_root))?;
+    let source_carey = read_carey_lora_catalog_from(&carey_lora_catalog_path_for(source_root))?;
+    for (name, entry) in source_carey {
+        if target_carey
+            .get(&name)
+            .map(active_carey_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, source_root) || !looks_like_lora_checkpoint_dir(&source) {
+            continue;
+        }
+        let target = carey_lora_target_for_root(target_root, &name);
+        candidates.push(LegacyLoraMigrationCandidate {
+            service: "carey".to_string(),
+            name,
+            source_path: display_path(&source),
+            target_path: display_path(&target),
+            bytes: path_size(&source),
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn build_legacy_storage_maintenance_info(
+    active_root: &Path,
+) -> Result<LegacyStorageMaintenanceInfo, String> {
+    let legacy_root = storage::legacy_runtime_root();
+    let pending_root = storage::resolve_startup_runtime_root();
+    let default_hf_root = default_hf_cache_root();
+    let cleanup_items = build_legacy_cleanup_items(active_root, &legacy_root, &default_hf_root);
+    let lora_candidates = collect_lora_migration_candidates(&legacy_root, active_root)?;
+    let storage_move_lora_candidates = if storage::paths_equivalent(active_root, &pending_root) {
+        Vec::new()
+    } else {
+        collect_lora_migration_candidates(active_root, &pending_root)?
+    };
+    let total_cleanup_bytes = cleanup_items.iter().map(|item| item.bytes).sum();
+    let total_lora_bytes = lora_candidates.iter().map(|item| item.bytes).sum();
+    let total_storage_move_lora_bytes = storage_move_lora_candidates
+        .iter()
+        .map(|item| item.bytes)
+        .sum();
+    let legacy_is_active = storage::paths_equivalent(active_root, &legacy_root);
+    let pending_is_active = storage::paths_equivalent(active_root, &pending_root);
+    let pending_is_legacy = storage::paths_equivalent(&pending_root, &legacy_root);
+
+    Ok(LegacyStorageMaintenanceInfo {
+        active_root: display_path(active_root),
+        pending_root: display_path(&pending_root),
+        legacy_root: display_path(&legacy_root),
+        default_hf_cache_root: display_path(&default_hf_root),
+        can_cleanup: !legacy_is_active && !pending_is_legacy && !cleanup_items.is_empty(),
+        can_migrate_loras: pending_is_active && !legacy_is_active && !lora_candidates.is_empty(),
+        can_migrate_storage_loras: !pending_is_active && !storage_move_lora_candidates.is_empty(),
+        cleanup_items,
+        lora_candidates,
+        storage_move_lora_candidates,
+        total_cleanup_bytes,
+        total_lora_bytes,
+        total_storage_move_lora_bytes,
+    })
+}
+
+fn migrate_sa3_catalog_entry(
+    name: &str,
+    entry: &Sa3LoraCatalogEntry,
+    target_root: &Path,
+    source_root: &Path,
+) -> Result<Sa3LoraCatalogEntry, String> {
+    let source = PathBuf::from(&entry.path);
+    if !path_is_inside(&source, source_root) || !looks_like_sa3_lora_checkpoint(&source) {
+        return Err(format!(
+            "{} is not a managed SA3 LoRA file in the source storage",
+            source.display()
+        ));
+    }
+
+    let target = sa3_lora_target_for_root(target_root, name, &source);
+    copy_file_checked(&source, &target)?;
+
+    let safe_name = safe_lora_storage_name(name);
+    let mut migrated = entry.clone();
+    migrated.path = display_path(&target);
+    migrated.prompts_path = migrate_optional_source_dir(
+        &entry.prompts_path,
+        source_root,
+        &target_root
+            .join("sa3")
+            .join("lora-sources")
+            .join(&safe_name)
+            .join("prompts"),
+    )?;
+
+    let mut migrated_checkpoints = Vec::new();
+    for checkpoint in &entry.training_checkpoints {
+        let source = PathBuf::from(&checkpoint.path);
+        if source.is_file() && path_is_inside(&source, source_root) {
+            let file_name = source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let target = unique_destination_path(
+                &target_root
+                    .join("sa3")
+                    .join("training")
+                    .join("migrated")
+                    .join(&safe_name)
+                    .join(file_name),
+            );
+            copy_file_checked(&source, &target)?;
+            let mut migrated_checkpoint = checkpoint.clone();
+            migrated_checkpoint.path = display_path(&target);
+            migrated_checkpoints.push(migrated_checkpoint);
+        } else if !path_is_inside(&source, source_root) {
+            migrated_checkpoints.push(checkpoint.clone());
+        }
+    }
+    migrated.training_checkpoints = migrated_checkpoints;
+    if let Some(step) = migrated.selected_training_step {
+        if !migrated
+            .training_checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.step == step)
+        {
+            migrated.selected_training_step = None;
+        }
+    }
+
+    copy_legacy_file_if_missing(
+        &source_root
+            .join("sa3")
+            .join("prompts")
+            .join(format!("{name}.json")),
+        &target_root
+            .join("sa3")
+            .join("prompts")
+            .join(format!("{name}.json")),
+    )?;
+
+    Ok(migrated)
+}
+
+fn migrate_carey_catalog_entry(
+    name: &str,
+    entry: &CareyLoraCatalogEntry,
+    target_root: &Path,
+    source_root: &Path,
+) -> Result<CareyLoraCatalogEntry, String> {
+    let source = PathBuf::from(&entry.path);
+    if !path_is_inside(&source, source_root) || !looks_like_lora_checkpoint_dir(&source) {
+        return Err(format!(
+            "{} is not a managed Carey LoRA folder in the source storage",
+            source.display()
+        ));
+    }
+
+    let safe_name = safe_lora_storage_name(name);
+    let target = carey_lora_target_for_root(target_root, name);
+    copy_dir_recursive(&source, &target)?;
+
+    let mut migrated = entry.clone();
+    migrated.path = display_path(&target);
+    migrated.captions_path = migrate_optional_source_dir(
+        &entry.captions_path,
+        source_root,
+        &target_root
+            .join("carey")
+            .join("lora-sources")
+            .join(&safe_name)
+            .join("captions"),
+    )?;
+
+    let mut migrated_checkpoints = Vec::new();
+    for checkpoint in &entry.training_checkpoints {
+        let source = PathBuf::from(&checkpoint.path);
+        if source.is_dir() && path_is_inside(&source, source_root) {
+            let target = target_root
+                .join("carey")
+                .join("training")
+                .join("migrated")
+                .join(&safe_name)
+                .join(safe_lora_storage_name(&checkpoint.id));
+            copy_dir_recursive(&source, &target)?;
+            let mut migrated_checkpoint = checkpoint.clone();
+            migrated_checkpoint.path = display_path(&target);
+            migrated_checkpoints.push(migrated_checkpoint);
+        }
+    }
+    migrated.training_checkpoints = migrated_checkpoints;
+    if migrated
+        .selected_training_checkpoint
+        .as_ref()
+        .is_some_and(|selected| {
+            !migrated
+                .training_checkpoints
+                .iter()
+                .any(|checkpoint| &checkpoint.id == selected)
+        })
+    {
+        migrated.selected_training_checkpoint = None;
+    }
+
+    Ok(migrated)
+}
+
+fn migrate_sa3_loras_between_roots(
+    source_root: &Path,
+    target_root: &Path,
+    errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> usize {
+    let source_catalog = match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(source_root)) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            errors.push(error);
+            return 0;
+        }
+    };
+    let mut target_catalog =
+        match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(target_root)) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                errors.push(error);
+                return 0;
+            }
+        };
+
+    let mut prepared = 0;
+    for (name, entry) in source_catalog {
+        if target_catalog
+            .get(&name)
+            .map(active_sa3_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, source_root) {
+            warnings.push(format!(
+                "SA3 LoRA '{}' is a manual/external LoRA, so Gary cannot copy it automatically. Add it again from Jerry > sa3 > add LoRAs if you still want it in this storage profile.",
+                name
+            ));
+            continue;
+        }
+        match migrate_sa3_catalog_entry(&name, &entry, target_root, source_root) {
+            Ok(migrated) => {
+                target_catalog.insert(name, migrated);
+                prepared += 1;
+            }
+            Err(error) => errors.push(format!("SA3 LoRA '{}': {}", name, error)),
+        }
+    }
+
+    if prepared == 0 {
+        return 0;
+    }
+
+    if let Err(error) =
+        save_sa3_lora_catalog_to(&sa3_lora_catalog_path_for(target_root), &target_catalog)
+    {
+        errors.push(error);
+        return 0;
+    }
+    if let Err(error) = write_sa3_lora_registry_for_root(target_root, &target_catalog) {
+        errors.push(error);
+    }
+
+    prepared
+}
+
+fn migrate_carey_loras_between_roots(
+    source_root: &Path,
+    target_root: &Path,
+    errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> usize {
+    let legacy_catalog =
+        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(source_root)) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                errors.push(error);
+                return 0;
+            }
+        };
+    let mut active_catalog =
+        match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(target_root)) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                errors.push(error);
+                return 0;
+            }
+        };
+
+    let mut prepared = 0;
+    for (name, entry) in legacy_catalog {
+        if active_catalog
+            .get(&name)
+            .map(active_carey_catalog_entry_is_valid)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = PathBuf::from(&entry.path);
+        if !path_is_inside(&source, source_root) {
+            warnings.push(format!(
+                "Carey LoRA '{}' is a manual/external LoRA, so Gary cannot copy it automatically. Add it again from Carey > add LoRAs if you still want it in this storage profile.",
+                name
+            ));
+            continue;
+        }
+        match migrate_carey_catalog_entry(&name, &entry, target_root, source_root) {
+            Ok(migrated) => {
+                active_catalog.insert(name, migrated);
+                prepared += 1;
+            }
+            Err(error) => errors.push(format!("Carey LoRA '{}': {}", name, error)),
+        }
+    }
+
+    if prepared == 0 {
+        return 0;
+    }
+
+    if let Err(error) = merge_json_object_file_preserve_target(
+        &source_root.join("carey").join("captions.json"),
+        &target_root.join("carey").join("captions.json"),
+    ) {
+        errors.push(error);
+    }
+    if let Err(error) =
+        save_carey_lora_catalog_to(&carey_lora_catalog_path_for(target_root), &active_catalog)
+    {
+        errors.push(error);
+        return 0;
+    }
+    if let Err(error) = write_carey_lora_registry_for_root(target_root, &active_catalog) {
+        errors.push(error);
+    }
+
+    prepared
+}
+
+fn migrate_legacy_loras_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
+    let legacy_root = storage::legacy_runtime_root();
+    let pending_root = storage::resolve_startup_runtime_root();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let mut migrated_loras = 0;
+
+    if storage::paths_equivalent(active_root, &legacy_root) {
+        errors.push("Active storage is still the legacy AppData folder.".to_string());
+    } else if !storage::paths_equivalent(active_root, &pending_root) {
+        errors.push(
+            "Restart the app before copying legacy LoRAs; storage is currently changing."
+                .to_string(),
+        );
+    } else {
+        migrated_loras +=
+            migrate_sa3_loras_between_roots(&legacy_root, active_root, &mut errors, &mut warnings);
+        migrated_loras += migrate_carey_loras_between_roots(
+            &legacy_root,
+            active_root,
+            &mut errors,
+            &mut warnings,
+        );
+    }
+
+    let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
+        errors.push(error);
+        LegacyStorageMaintenanceInfo {
+            active_root: display_path(active_root),
+            pending_root: display_path(&pending_root),
+            legacy_root: display_path(&legacy_root),
+            default_hf_cache_root: display_path(&default_hf_cache_root()),
+            cleanup_items: Vec::new(),
+            lora_candidates: Vec::new(),
+            storage_move_lora_candidates: Vec::new(),
+            total_cleanup_bytes: 0,
+            total_lora_bytes: 0,
+            total_storage_move_lora_bytes: 0,
+            can_cleanup: false,
+            can_migrate_loras: false,
+            can_migrate_storage_loras: false,
+        }
+    });
+
+    LegacyStorageMaintenanceResult {
+        info,
+        migrated_loras,
+        cleaned_items: 0,
+        warnings,
+        errors,
+    }
+}
+
+fn migrate_storage_loras_to_pending_root_impl(
+    active_root: &Path,
+) -> LegacyStorageMaintenanceResult {
+    let pending_root = storage::resolve_startup_runtime_root();
+    let legacy_root = storage::legacy_runtime_root();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let mut migrated_loras = 0;
+
+    if storage::paths_equivalent(active_root, &pending_root) {
+        warnings.push("Active storage and next restart storage are already the same.".to_string());
+    } else {
+        migrated_loras +=
+            migrate_sa3_loras_between_roots(active_root, &pending_root, &mut errors, &mut warnings);
+        migrated_loras += migrate_carey_loras_between_roots(
+            active_root,
+            &pending_root,
+            &mut errors,
+            &mut warnings,
+        );
+    }
+
+    let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
+        errors.push(error);
+        LegacyStorageMaintenanceInfo {
+            active_root: display_path(active_root),
+            pending_root: display_path(&pending_root),
+            legacy_root: display_path(&legacy_root),
+            default_hf_cache_root: display_path(&default_hf_cache_root()),
+            cleanup_items: Vec::new(),
+            lora_candidates: Vec::new(),
+            storage_move_lora_candidates: Vec::new(),
+            total_cleanup_bytes: 0,
+            total_lora_bytes: 0,
+            total_storage_move_lora_bytes: 0,
+            can_cleanup: false,
+            can_migrate_loras: false,
+            can_migrate_storage_loras: false,
+        }
+    });
+
+    LegacyStorageMaintenanceResult {
+        info,
+        migrated_loras,
+        cleaned_items: 0,
+        warnings,
+        errors,
+    }
+}
+
+fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceResult {
+    let legacy_root = storage::legacy_runtime_root();
+    let pending_root = storage::resolve_startup_runtime_root();
+    let mut errors = Vec::new();
+    let mut cleaned_items = 0;
+
+    let before = match build_legacy_storage_maintenance_info(active_root) {
+        Ok(info) => info,
+        Err(error) => {
+            errors.push(error);
+            LegacyStorageMaintenanceInfo {
+                active_root: display_path(active_root),
+                pending_root: display_path(&pending_root),
+                legacy_root: display_path(&legacy_root),
+                default_hf_cache_root: display_path(&default_hf_cache_root()),
+                cleanup_items: Vec::new(),
+                lora_candidates: Vec::new(),
+                storage_move_lora_candidates: Vec::new(),
+                total_cleanup_bytes: 0,
+                total_lora_bytes: 0,
+                total_storage_move_lora_bytes: 0,
+                can_cleanup: false,
+                can_migrate_loras: false,
+                can_migrate_storage_loras: false,
+            }
+        }
+    };
+
+    if storage::paths_equivalent(active_root, &legacy_root) {
+        errors.push("Active storage is still the legacy AppData folder.".to_string());
+    } else if storage::paths_equivalent(&pending_root, &legacy_root) {
+        errors.push(
+            "Next restart storage is the legacy AppData folder. Choose a non-legacy storage folder and restart before cleaning old envs, models, and caches."
+                .to_string(),
+        );
+    } else {
+        for item in before.cleanup_items {
+            let path = PathBuf::from(&item.path);
+            if path.exists() {
+                match remove_path(&path) {
+                    Ok(()) => cleaned_items += 1,
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+    }
+
+    let info = build_legacy_storage_maintenance_info(active_root).unwrap_or_else(|error| {
+        errors.push(error);
+        LegacyStorageMaintenanceInfo {
+            active_root: display_path(active_root),
+            pending_root: display_path(&pending_root),
+            legacy_root: display_path(&legacy_root),
+            default_hf_cache_root: display_path(&default_hf_cache_root()),
+            cleanup_items: Vec::new(),
+            lora_candidates: Vec::new(),
+            storage_move_lora_candidates: Vec::new(),
+            total_cleanup_bytes: 0,
+            total_lora_bytes: 0,
+            total_storage_move_lora_bytes: 0,
+            can_cleanup: false,
+            can_migrate_loras: false,
+            can_migrate_storage_loras: false,
+        }
+    });
+
+    LegacyStorageMaintenanceResult {
+        info,
+        migrated_loras: 0,
+        cleaned_items,
+        warnings: Vec::new(),
+        errors,
+    }
 }
 
 fn read_text_tail(path: &Path, max_bytes: usize) -> String {
@@ -2934,49 +4018,19 @@ fn carey_training_required_checkpoint_files(
     model_folder: &str,
     caption_lm_model: Option<&str>,
 ) -> Result<Vec<PathBuf>, String> {
-    let model_dir = checkpoint_dir.join(model_folder);
-    let mut required = vec![model_dir.join("config.json")];
-    if model_folder.starts_with("acestep-v15-xl-") {
-        required.push(model_dir.join("model.safetensors.index.json"));
-        for shard in 1..=4 {
-            required.push(model_dir.join(format!(
-                "model-{shard:05}-of-00004.safetensors"
-            )));
-        }
-    } else {
-        required.push(model_dir.join("model.safetensors"));
-    }
-    required.extend([
-        model_dir.join("silence_latent.pt"),
-        checkpoint_dir.join("vae").join("config.json"),
-        checkpoint_dir
-            .join("vae")
-            .join("diffusion_pytorch_model.safetensors"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("config.json"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("model.safetensors"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("tokenizer.json"),
-        checkpoint_dir
-            .join("Qwen3-Embedding-0.6B")
-            .join("tokenizer_config.json"),
-    ]);
-    if let Some(lm_model) = caption_lm_model {
-        let lm_dir = checkpoint_dir.join(lm_model);
-        required.push(lm_dir.join("config.json"));
-        required.push(lm_dir.join("tokenizer.json"));
-        required.push(lm_dir.join("tokenizer_config.json"));
-        if lm_model == "acestep-5Hz-lm-4B" {
-            required.push(lm_dir.join("model.safetensors.index.json"));
-            required.push(lm_dir.join("model-00001-of-00002.safetensors"));
-            required.push(lm_dir.join("model-00002-of-00002.safetensors"));
-        } else {
-            required.push(lm_dir.join("model.safetensors"));
-        }
+    let components = [
+        Some(model_folder),
+        Some("vae"),
+        Some("Qwen3-Embedding-0.6B"),
+        caption_lm_model,
+    ];
+    let mut required = Vec::new();
+    for component in components.into_iter().flatten() {
+        required.extend(
+            carey_component_required_files(component)?
+                .iter()
+                .map(|relative| checkpoint_dir.join(relative)),
+        );
     }
     Ok(required)
 }
@@ -3756,31 +4810,6 @@ pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Load a PNG file and decode it to RGBA for Tauri Image
-fn load_png_as_image(path: &std::path::Path) -> Option<Image<'static>> {
-    let file = std::fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    buf.truncate(info.buffer_size());
-
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => {
-            let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
-            for chunk in buf.chunks(3) {
-                rgba.extend_from_slice(chunk);
-                rgba.push(255);
-            }
-            rgba
-        }
-        _ => return None,
-    };
-
-    Some(Image::new_owned(rgba, info.width, info.height))
-}
-
 /// Generate a small colored circle image (16x16 RGBA) for tray menu icons.
 fn make_dot_icon(r: u8, g: u8, b: u8) -> Image<'static> {
     const SIZE: u32 = 16;
@@ -3918,8 +4947,9 @@ pub fn run() {
 
             // --- Resolve runtime root ---
             // In dev, run directly from the repo.
-            // In production, sync bundled services into %APPDATA%\Gary4JUCE
-            // and run from there so logs/envs/source live in a writable location.
+            // In production, sync bundled services into the selected runtime
+            // storage root and run from there so logs/envs/source live in a
+            // writable location that can be moved off the system drive.
             let bundle_root = if cfg!(debug_assertions) {
                 let exe_dir = std::env::current_exe()
                     .ok()
@@ -3938,7 +4968,7 @@ pub fn run() {
             let runtime_root = if cfg!(debug_assertions) {
                 bundle_root.clone()
             } else {
-                let runtime_root = gary4juce_runtime_root();
+                let runtime_root = storage::resolve_startup_runtime_root();
                 if let Err(error) = sync_bundled_services_to_runtime(&bundle_root, &runtime_root) {
                     let message = format!("Runtime service sync failed: {}", error);
                     log::error!("{}", message);
@@ -3954,6 +4984,7 @@ pub fn run() {
                 }
                 runtime_root
             };
+            storage::set_active_runtime_root(&runtime_root);
 
             let manifest_path = runtime_root
                 .join("services")
@@ -3985,21 +5016,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let tray_manager = manager.clone();
 
-            let icon_path = runtime_root.join("icon.png");
-            let tray_icon = if icon_path.exists() {
-                let icon = load_png_as_image(&icon_path);
-                if icon.is_none() {
-                    let message = format!(
-                        "Runtime tray icon could not be loaded from {}; continuing without a tray icon",
-                        icon_path.display()
-                    );
-                    log::warn!("{}", message);
-                    append_startup_diagnostic(&message);
-                }
-                icon
-            } else {
-                None
-            };
+            // Reuse Tauri's compile-time validated icon. Decoding a mutable
+            // runtime PNG here previously made Windows tray startup fragile.
+            let tray_icon = app.default_window_icon().cloned();
 
             // Build tray menu with per-service items
             let show_item = MenuItemBuilder::with_id("show", "show control center").build(app)?;
@@ -4191,6 +5210,7 @@ pub fn run() {
             get_service_log,
             get_models,
             download_model,
+            remove_model,
             get_download_progress,
             fetch_jerry_checkpoints,
             get_carey_lora_state,
@@ -4227,6 +5247,19 @@ pub fn run() {
             get_hf_token,
             save_hf_token,
             delete_hf_token,
+            get_runtime_storage_info,
+            get_runtime_cache_info,
+            clear_uv_cache,
+            get_service_envs,
+            reclaim_duplicate_blobs,
+            remove_service_env,
+            save_runtime_storage_root,
+            reset_runtime_storage_root,
+            get_legacy_storage_maintenance_info,
+            migrate_legacy_loras,
+            migrate_storage_loras_to_pending_root,
+            cleanup_legacy_storage,
+            restart_application,
             get_app_settings,
             save_app_settings,
             check_for_app_update,
@@ -4408,6 +5441,7 @@ async fn ensure_uv(
     service_id: &str,
     manager: &Arc<Mutex<ServiceManager>>,
     handle: &tauri::AppHandle,
+    runtime_root: &Path,
 ) -> Result<String, String> {
     {
         let mut mgr = manager.lock().await;
@@ -4419,6 +5453,7 @@ async fn ensure_uv(
     // Check if uv is already on PATH
     let mut check_cmd = tokio::process::Command::new("uv");
     check_cmd.arg("--version");
+    apply_runtime_env(&mut check_cmd, runtime_root);
     hide_console_window(&mut check_cmd);
     let check = check_cmd.output().await;
 
@@ -4442,6 +5477,7 @@ async fn ensure_uv(
         if std::path::Path::new(path).exists() {
             let mut check_cmd = tokio::process::Command::new(path);
             check_cmd.arg("--version");
+            apply_runtime_env(&mut check_cmd, runtime_root);
             hide_console_window(&mut check_cmd);
             let check = check_cmd.output().await;
             if let Ok(output) = check {
@@ -4479,6 +5515,7 @@ async fn ensure_uv(
         "-Command",
         "irm https://astral.sh/uv/install.ps1 | iex",
     ]);
+    apply_runtime_env(&mut install_cmd, runtime_root);
     hide_console_window(&mut install_cmd);
     let install = install_cmd
         .output()
@@ -4517,6 +5554,7 @@ async fn ensure_uv(
     // Try PATH again (installer may have updated it)
     let mut recheck_cmd = tokio::process::Command::new("uv");
     recheck_cmd.arg("--version");
+    apply_runtime_env(&mut recheck_cmd, runtime_root);
     hide_console_window(&mut recheck_cmd);
     let recheck = recheck_cmd.output().await;
     if let Ok(output) = recheck {
@@ -4539,7 +5577,8 @@ async fn run_build(
     let env_dir = &build_info.env_dir;
 
     // Step 0: Ensure uv is available
-    let uv = ensure_uv(&service_id, &manager, &handle).await?;
+    let runtime_root = &build_info.runtime_root;
+    let uv = ensure_uv(&service_id, &manager, &handle, runtime_root).await?;
 
     // Step 1: Create venv with uv (using Python 3.11)
     if !env_dir.exists() {
@@ -4561,6 +5600,7 @@ async fn run_build(
             work_dir,
             &service_id,
             &manager,
+            runtime_root,
         )
         .await;
 
@@ -4584,6 +5624,7 @@ async fn run_build(
         venv_cmd
             .args(["venv", "--python", "3.11", "--seed", "env"])
             .current_dir(work_dir);
+        apply_runtime_env(&mut venv_cmd, runtime_root);
         hide_console_window(&mut venv_cmd);
         let venv_output = venv_cmd
             .output()
@@ -4704,6 +5745,7 @@ async fn run_build(
             .env("PYTHONIOENCODING", "utf-8")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        apply_runtime_env(&mut child_cmd, runtime_root);
         hide_console_window(&mut child_cmd);
         let mut child = child_cmd
             .spawn()
@@ -4811,9 +5853,11 @@ async fn run_command_streamed(
     work_dir: &std::path::Path,
     service_id: &str,
     manager: &Arc<Mutex<ServiceManager>>,
+    runtime_root: &Path,
 ) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).current_dir(work_dir);
+    apply_runtime_env(&mut cmd, runtime_root);
     hide_console_window(&mut cmd);
     let output = cmd
         .output()
@@ -4869,6 +5913,7 @@ async fn get_models(
 ) -> Result<Vec<model_manager::ModelEntry>, String> {
     let mgr = model_mgr.lock().await;
     let mut models = mgr.get_gary_models();
+    models.extend(mgr.get_melodyflow_models());
     models.extend(mgr.get_jerry_models());
     models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
@@ -4888,6 +5933,7 @@ async fn download_model(
     // Pick the Python env based on which service the model belongs to.
     let svc = service_id.as_deref().unwrap_or("gary");
     let env_dir = match svc {
+        "melodyflow" => "melodyflow",
         "stable-audio" => "stable-audio",
         "sa3" => "sa3",
         "carey" => "carey",
@@ -4903,6 +5949,7 @@ async fn download_model(
 
     if !python_exe.exists() {
         let label = match env_dir {
+            "melodyflow" => "Terry (MelodyFlow)",
             "stable-audio" => "Jerry (Stable Audio)",
             "sa3" => "SA3 (Stable Audio 3)",
             "carey" => "Carey (ACE-Step)",
@@ -4927,10 +5974,12 @@ async fn download_model(
     // Carey models download to checkpoints/ dir, not HF cache
     if model_id.starts_with("carey::") {
         let checkpoint_dir = root.join("services").join("carey").join("checkpoints");
+        let runtime_root = root.clone();
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_carey_model(
                 model_id,
                 python_exe,
+                runtime_root,
                 checkpoint_dir,
                 mgr_clone,
                 handle,
@@ -4938,18 +5987,16 @@ async fn download_model(
             .await;
         });
     } else if model_id.starts_with("foundation::") {
-        // Foundation models go to %APPDATA%/Gary4JUCE/models/foundation-1/
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-            format!("{}\\AppData\\Roaming", home)
-        });
-        let model_dir = std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE")
-            .join("models")
-            .join("foundation-1");
+        let runtime_root = root.clone();
+        let model_dir = storage::models_dir(&root).join("foundation-1");
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_foundation_model(
-                model_id, python_exe, model_dir, mgr_clone, handle,
+                model_id,
+                python_exe,
+                runtime_root,
+                model_dir,
+                mgr_clone,
+                handle,
             )
             .await;
         });
@@ -4960,6 +6007,117 @@ async fn download_model(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+async fn remove_model(
+    model_id: String,
+    service_id: String,
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+    app_handle: tauri::AppHandle,
+) -> Result<ModelRemovalResult, String> {
+    let is_carey_model = service_id == "carey" && model_id.starts_with("carey::");
+    let is_foundation_model =
+        service_id == "foundation" && model_id == model_manager::FOUNDATION_MODEL_ID;
+    // Everything else we manage is a whole Hugging Face repo in the shared hub
+    // cache, so one path handles Terry, Gary, Jerry, and SA3 alike.
+    let is_hf_cache_model = matches!(
+        service_id.as_str(),
+        "melodyflow" | "gary" | "stable-audio" | "sa3"
+    ) && !model_id.contains("::");
+    // Jerry's finetunes are "repo::filename" -- one checkpoint inside a repo
+    // whose other files we must keep, so they need file-level removal.
+    let finetune = (service_id == "stable-audio")
+        .then(|| model_id.split_once("::"))
+        .flatten()
+        .map(|(repo, filename)| (repo.to_string(), filename.to_string()));
+    if !is_carey_model && !is_foundation_model && !is_hf_cache_model && finetune.is_none() {
+        return Err("This model is not available for managed removal.".to_string());
+    }
+
+    let service_label = match service_id.as_str() {
+        "carey" => "Carey",
+        "melodyflow" => "Terry",
+        "gary" => "Gary",
+        "stable-audio" => "Jerry",
+        "sa3" => "SA3",
+        "foundation" => "Foundation-1",
+        other => other,
+    };
+
+    {
+        let mgr = svc_mgr.lock().await;
+        if mgr.is_running(&service_id) {
+            return Err(format!("Stop {service_label} before removing its model."));
+        }
+        if mgr.is_building(&service_id) {
+            return Err(format!(
+                "Wait for the {service_label} environment build to finish first."
+            ));
+        }
+    }
+
+    if is_carey_model {
+        let training = read_carey_ace_lora_training_state();
+        if matches!(training.status.as_str(), "starting" | "running") {
+            return Err("Wait for Carey LoRA training to finish or cancel it first.".to_string());
+        }
+        let autolabel = read_sa3_autolabel_state();
+        if matches!(autolabel.status.as_str(), "starting" | "running") {
+            return Err("Wait for SA3 auto-labelling to finish or cancel it first.".to_string());
+        }
+    }
+
+    {
+        let mgr = model_mgr.lock().await;
+        if mgr.is_downloading(&model_id) {
+            return Err("Wait for this model download to finish first.".to_string());
+        }
+    }
+
+    let (managed_root, model_path) = if is_carey_model {
+        let root = repo_root.join("services").join("carey").join("checkpoints");
+        let path = model_manager::carey_component_path(&root, &model_id)?;
+        (root, path)
+    } else if is_foundation_model {
+        // Foundation-1 is a plain directory of weights under the runtime models
+        // dir rather than a Hugging Face repo, so it needs its own root.
+        let root = {
+            let mgr = model_mgr.lock().await;
+            mgr.foundation_models_dir()
+        };
+        let path = root.join("foundation-1");
+        (root, path)
+    } else {
+        let root = {
+            let mgr = model_mgr.lock().await;
+            mgr.hf_hub_cache_dir()
+        };
+        let path = root.join(format!("models--{}", model_id.replace('/', "--")));
+        (root, path)
+    };
+    let removed_bytes = if let Some((repo, filename)) = &finetune {
+        // Keep the rest of the repo; drop just this checkpoint.
+        let repo_dir = managed_root.join(format!("models--{}", repo.replace('/', "--")));
+        remove_hf_cached_file(&repo_dir, filename, &managed_root)?
+    } else {
+        let removed = path_size(&model_path);
+        remove_managed_path(&model_path, &managed_root)?;
+        removed
+    };
+
+    {
+        let mut mgr = model_mgr.lock().await;
+        mgr.forget_model_status(&model_id);
+    }
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+
+    Ok(ModelRemovalResult {
+        model_id,
+        removed_bytes,
+    })
 }
 
 #[tauri::command]
@@ -5404,9 +6562,7 @@ fn carey_lora_name_availability(name: &str) -> Result<LoraNameAvailability, Stri
 }
 
 #[tauri::command]
-fn get_carey_ace_lora_name_availability(
-    name: String,
-) -> Result<LoraNameAvailability, String> {
+fn get_carey_ace_lora_name_availability(name: String) -> Result<LoraNameAvailability, String> {
     carey_lora_name_availability(&name)
 }
 
@@ -6118,6 +7274,155 @@ fn resolve_managed_path(path: &Path, managed_root: &Path) -> Result<Option<PathB
     Ok(Some(canonical_path))
 }
 
+/// Collect every regular file under `dir`, skipping symlinks, as (size, path).
+fn collect_files_skipping_links(dir: &Path, out: &mut Vec<(u64, std::path::PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            collect_files_skipping_links(&path, out);
+        } else if meta.is_file() {
+            out.push((meta.len(), path));
+        }
+    }
+}
+
+/// Drop blob copies that Windows duplicated during download.
+///
+/// Without developer mode the hub cannot create symlinks, so it writes every
+/// file twice: once as blobs/{etag} and again as snapshots/{rev}/{name}. The
+/// snapshot copy is the one that gets used -- file_download checks the pointer
+/// path before it looks for a blob -- so the blob is dead weight costing as
+/// much as the model itself.
+///
+/// A symlinked snapshot is the opposite case: there the blob IS the file and
+/// the snapshot merely points at it. Deleting it would leave a broken link,
+/// which os.path.exists reports as missing and the hub answers by downloading
+/// again. Symlinks are skipped entirely, so this is a no-op once a user turns
+/// developer mode on.
+///
+/// Blobs are named by content hash, so a blob is matched to its snapshot twin
+/// by size. A size is only reclaimed when the snapshots hold at least as many
+/// real files of that size as there are blobs, which means every blob being
+/// dropped is accounted for by a copy that survives.
+fn reclaim_duplicate_hf_blobs(repo_dir: &Path) -> u64 {
+    let mut snapshot_files = Vec::new();
+    collect_files_skipping_links(&repo_dir.join("snapshots"), &mut snapshot_files);
+    if snapshot_files.is_empty() {
+        return 0;
+    }
+
+    let mut snapshot_counts: std::collections::HashMap<u64, usize> =
+        std::collections::HashMap::new();
+    for (size, _) in &snapshot_files {
+        *snapshot_counts.entry(*size).or_default() += 1;
+    }
+
+    let mut blobs_by_size: std::collections::HashMap<u64, Vec<std::path::PathBuf>> =
+        std::collections::HashMap::new();
+    let blobs_dir = repo_dir.join("blobs");
+    if let Ok(entries) = std::fs::read_dir(&blobs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // A partial download is still in flight; leave it alone.
+            if path.extension().is_some_and(|ext| ext == "incomplete") {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                continue;
+            }
+            blobs_by_size.entry(meta.len()).or_default().push(path);
+        }
+    }
+
+    let mut reclaimed = 0;
+    for (size, blobs) in blobs_by_size {
+        if snapshot_counts.get(&size).copied().unwrap_or(0) < blobs.len() {
+            continue;
+        }
+        for blob in blobs {
+            if remove_managed_path(&blob, &blobs_dir).unwrap_or(false) {
+                reclaimed += size;
+            }
+        }
+    }
+    reclaimed
+}
+
+/// Remove one file from a Hugging Face repo cache, blob copy included.
+///
+/// Windows cannot symlink without developer mode, so the hub stores each file
+/// twice: once under blobs/ and again under snapshots/. Deleting the snapshot
+/// entry alone leaves the larger half behind, and the blob is named by content
+/// hash so it cannot be found by name. Blobs are matched by size instead, and
+/// only dropped when no remaining snapshot entry wants a file that size.
+fn remove_hf_cached_file(
+    repo_dir: &Path,
+    filename: &str,
+    managed_root: &Path,
+) -> Result<u64, String> {
+    let size_before = path_size(repo_dir);
+    let snapshots_dir = repo_dir.join("snapshots");
+
+    let mut removed_sizes: Vec<u64> = Vec::new();
+    if let Ok(revisions) = std::fs::read_dir(&snapshots_dir) {
+        for revision in revisions.flatten() {
+            let candidate = revision.path().join(filename);
+            if candidate.is_file() {
+                removed_sizes.push(std::fs::metadata(&candidate).map(|m| m.len()).unwrap_or(0));
+                remove_managed_path(&candidate, managed_root)?;
+            }
+        }
+    }
+
+    if removed_sizes.is_empty() {
+        return Ok(0);
+    }
+
+    // What the snapshots still reference, so a shared blob is never dropped.
+    let mut surviving_sizes: Vec<u64> = Vec::new();
+    if let Ok(revisions) = std::fs::read_dir(&snapshots_dir) {
+        for revision in revisions.flatten() {
+            if let Ok(files) = std::fs::read_dir(revision.path()) {
+                for file in files.flatten() {
+                    if let Ok(meta) = file.metadata() {
+                        if meta.is_file() {
+                            surviving_sizes.push(meta.len());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let blobs_dir = repo_dir.join("blobs");
+    if let Ok(blobs) = std::fs::read_dir(&blobs_dir) {
+        for blob in blobs.flatten() {
+            let Ok(meta) = blob.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let size = meta.len();
+            if removed_sizes.contains(&size) && !surviving_sizes.contains(&size) {
+                remove_managed_path(&blob.path(), managed_root)?;
+            }
+        }
+    }
+
+    Ok(size_before.saturating_sub(path_size(repo_dir)))
+}
+
 fn remove_managed_path(path: &Path, managed_root: &Path) -> Result<bool, String> {
     let Some(canonical_path) = resolve_managed_path(path, managed_root)? else {
         return Ok(false);
@@ -6187,7 +7492,10 @@ mod carey_lora_catalog_tests {
         infer_carey_training_metadata(&mut manual, &jobs_root);
 
         assert_eq!(trained.training_job_id.as_deref(), Some("my-job"));
-        assert_eq!(trained.selected_training_checkpoint.as_deref(), Some("best"));
+        assert_eq!(
+            trained.selected_training_checkpoint.as_deref(),
+            Some("best")
+        );
         assert_eq!(trained.training_checkpoints.len(), 3);
         assert!(manual.training_job_id.is_none());
         assert!(manual.training_checkpoints.is_empty());
@@ -7364,6 +8672,480 @@ fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> 
     let merged = merge_app_settings(settings);
     save_app_settings_file(&merged)?;
     Ok(merged)
+}
+
+#[tauri::command]
+fn get_runtime_storage_info(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    Ok(storage::storage_info(repo_root.inner()))
+}
+
+fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {
+    let uv_cache_path = storage::uv_cache_dir(active_root);
+    RuntimeCacheInfo {
+        uv_cache_path: uv_cache_path.to_string_lossy().to_string(),
+        uv_cache_bytes: path_size(&uv_cache_path),
+    }
+}
+
+fn clear_runtime_uv_cache_at(active_root: &Path) -> Result<u64, String> {
+    let cache_root = storage::cache_dir(active_root);
+    let uv_cache_path = storage::uv_cache_dir(active_root);
+    let cleared_bytes = path_size(&uv_cache_path);
+    if uv_cache_path.exists() {
+        if !cache_root.exists() {
+            return Err(format!(
+                "Runtime cache root is missing at {}",
+                cache_root.display()
+            ));
+        }
+        remove_managed_path(&uv_cache_path, &cache_root)?;
+    }
+    std::fs::create_dir_all(&uv_cache_path)
+        .map_err(|e| format!("Cannot recreate {}: {}", uv_cache_path.display(), e))?;
+    Ok(cleared_bytes)
+}
+
+#[tauri::command]
+async fn get_runtime_cache_info(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<RuntimeCacheInfo, String> {
+    // The UV cache reaches tens of thousands of files. A sync command would
+    // size it on the main thread, which freezes the window itself -- the
+    // scrollbar stops moving -- rather than merely delaying the number.
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || build_runtime_cache_info(&root))
+        .await
+        .map_err(|e| format!("Cache scan failed: {e}"))
+}
+
+/// Describe every service environment so the storage UI can show what each one
+/// costs and whether it is safe to remove right now.
+async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
+    // Take what the manager knows and let the lock go before measuring. Sizing
+    // six environments walks tens of GB, and every other command -- including
+    // the status poll that keeps the UI alive -- waits on this same mutex.
+    let pending: Vec<(String, String, Option<std::path::PathBuf>, Option<String>)> = {
+        let mgr = svc_mgr.lock().await;
+        mgr.get_service_info()
+            .into_iter()
+            .map(|info| {
+                let env_path = mgr.env_dir_for(&info.id);
+                let blocked = if mgr.is_running(&info.id) {
+                    Some(format!("stop {} first", info.display_name))
+                } else if mgr.is_building(&info.id) {
+                    Some(format!("{} is building its environment", info.display_name))
+                } else {
+                    None
+                };
+                (info.id, info.display_name, env_path, blocked)
+            })
+            .collect()
+    };
+
+    // And keep the walk off the async runtime, which is single threaded here.
+    tauri::async_runtime::spawn_blocking(move || {
+        pending
+            .into_iter()
+            .map(|(service_id, display_name, env_path, blocked)| {
+                let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
+                let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
+                let blocked_reason =
+                    blocked.or_else(|| (!present).then(|| "no environment installed".to_string()));
+                ServiceEnvInfo {
+                    service_id,
+                    display_name,
+                    env_path: env_path
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    env_bytes,
+                    present,
+                    blocked_reason,
+                }
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Sweep every cached repo for blob copies Windows duplicated. Downloads do
+/// this for themselves now, so this is for models already on disk.
+#[tauri::command]
+async fn reclaim_duplicate_blobs(
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<u64, String> {
+    {
+        let mgr = model_mgr.lock().await;
+        if mgr.any_downloading() {
+            return Err("Wait for downloads to finish before reclaiming space.".to_string());
+        }
+    }
+    {
+        let mgr = svc_mgr.lock().await;
+        if mgr.any_building() {
+            return Err("Wait for environment builds to finish first.".to_string());
+        }
+    }
+
+    let hub_dir = {
+        let mgr = model_mgr.lock().await;
+        mgr.hf_hub_cache_dir()
+    };
+
+    // Sweeping the cache is all filesystem work, so keep it off the runtime.
+    let reclaimed = tauri::async_runtime::spawn_blocking(move || {
+        let mut reclaimed = 0;
+        if let Ok(entries) = std::fs::read_dir(&hub_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("models--"))
+                {
+                    reclaimed += reclaim_duplicate_hf_blobs(&path);
+                }
+            }
+        }
+        reclaimed
+    })
+    .await
+    .map_err(|e| format!("Reclaim task failed: {e}"))?;
+
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    Ok(reclaimed)
+}
+
+#[tauri::command]
+async fn get_service_envs(
+    svc_mgr: tauri::State<'_, ManagerState>,
+) -> Result<Vec<ServiceEnvInfo>, String> {
+    Ok(collect_service_envs(svc_mgr.inner()).await)
+}
+
+/// Delete one service's Python environment. It can be rebuilt from the service
+/// manifest, so this is recoverable, but it is several GB either way.
+#[tauri::command]
+async fn remove_service_env(
+    service_id: String,
+    svc_mgr: tauri::State<'_, ManagerState>,
+) -> Result<ServiceEnvRemovalResult, String> {
+    let (env_path, managed_root) = {
+        let mgr = svc_mgr.lock().await;
+        let Some(env_path) = mgr.env_dir_for(&service_id) else {
+            return Err(format!("Unknown service: {service_id}"));
+        };
+        if mgr.is_running(&service_id) {
+            return Err("Stop this service before removing its environment.".to_string());
+        }
+        if mgr.is_building(&service_id) {
+            return Err("Wait for this environment build to finish first.".to_string());
+        }
+        (env_path, mgr.managed_services_root())
+    };
+
+    let removed_bytes = path_size(&env_path);
+    remove_managed_path(&env_path, &managed_root)?;
+
+    Ok(ServiceEnvRemovalResult {
+        service_id,
+        removed_bytes,
+        environments: collect_service_envs(svc_mgr.inner()).await,
+    })
+}
+
+#[tauri::command]
+async fn clear_uv_cache(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<RuntimeCacheClearResult, String> {
+    {
+        let mgr = manager.lock().await;
+        if mgr.any_building() {
+            return Err(
+                "Wait for all environment builds to finish before clearing the UV cache."
+                    .to_string(),
+            );
+        }
+    }
+
+    let active_root = repo_root.inner();
+    let cleared_bytes = clear_runtime_uv_cache_at(active_root)?;
+
+    Ok(RuntimeCacheClearResult {
+        info: build_runtime_cache_info(active_root),
+        cleared_bytes,
+    })
+}
+
+#[cfg(test)]
+mod runtime_cache_tests {
+    use super::clear_runtime_uv_cache_at;
+
+    #[test]
+    fn clearing_uv_cache_preserves_neighboring_runtime_data() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-runtime-cache-{}-{unique}",
+            std::process::id()
+        ));
+        let uv_file = root.join("cache").join("uv").join("archive.whl");
+        let sibling_file = root.join("cache").join("pip").join("keep.txt");
+        let model_file = root.join("models").join("keep.bin");
+        std::fs::create_dir_all(uv_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(sibling_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(model_file.parent().unwrap()).unwrap();
+        std::fs::write(&uv_file, b"uv-cache").unwrap();
+        std::fs::write(&sibling_file, b"pip-cache").unwrap();
+        std::fs::write(&model_file, b"model").unwrap();
+
+        let cleared_bytes = clear_runtime_uv_cache_at(&root).unwrap();
+
+        assert_eq!(cleared_bytes, 8);
+        assert!(root.join("cache").join("uv").is_dir());
+        assert!(!uv_file.exists());
+        assert!(sibling_file.exists());
+        assert!(model_file.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod service_env_removal_tests {
+    use super::remove_managed_path;
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gary4local-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn removing_an_env_leaves_the_rest_of_the_service_alone() {
+        let root = temp_root("service-env");
+        let services = root.join("services");
+        let env_file = services.join("melodyflow").join("env").join("python.exe");
+        // Things a storage-conscious user would be upset to lose along with a
+        // rebuildable environment.
+        let checkpoint = services.join("carey").join("checkpoints").join("keep.bin");
+        let sibling_env = services.join("sa3").join("env").join("python.exe");
+        let service_source = services.join("melodyflow").join("localhost_melodyflow.py");
+        for path in [&env_file, &checkpoint, &sibling_env, &service_source] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"data").unwrap();
+        }
+
+        let removed = remove_managed_path(env_file.parent().unwrap(), &services).unwrap();
+
+        assert!(removed);
+        assert!(!env_file.exists());
+        assert!(checkpoint.exists());
+        assert!(sibling_env.exists());
+        assert!(service_source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removing_a_finetune_drops_its_blob_copy_too() {
+        use super::remove_hf_cached_file;
+        let root = temp_root("hf-finetune");
+        let repo = root.join("models--thepatch--jerry_grunge");
+        let snapshot = repo.join("snapshots").join("rev1");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+
+        // Windows keeps two full copies of each file, so removing only the
+        // snapshot entry would leave the bigger half on disk.
+        std::fs::write(snapshot.join("wanted.ckpt"), vec![1u8; 40]).unwrap();
+        std::fs::write(blobs.join("hash-for-wanted"), vec![1u8; 40]).unwrap();
+        std::fs::write(snapshot.join("keep.ckpt"), vec![2u8; 25]).unwrap();
+        std::fs::write(blobs.join("hash-for-keep"), vec![2u8; 25]).unwrap();
+
+        let freed = remove_hf_cached_file(&repo, "wanted.ckpt", &root).unwrap();
+
+        assert_eq!(freed, 80, "both copies of the 40 byte checkpoint should go");
+        assert!(!snapshot.join("wanted.ckpt").exists());
+        assert!(!blobs.join("hash-for-wanted").exists());
+        assert!(snapshot.join("keep.ckpt").exists());
+        assert!(blobs.join("hash-for-keep").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reclaiming_drops_the_duplicate_blob_and_keeps_the_snapshot() {
+        use super::reclaim_duplicate_hf_blobs;
+        let root = temp_root("hf-reclaim");
+        let repo = root.join("models--stabilityai--stable-audio-open-small");
+        let snapshot = repo.join("snapshots").join("rev1");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(snapshot.join("model.safetensors"), vec![7u8; 64]).unwrap();
+        std::fs::write(blobs.join("etag-hash"), vec![7u8; 64]).unwrap();
+        // Mid-download files must survive.
+        std::fs::write(blobs.join("etag-two.incomplete"), vec![9u8; 64]).unwrap();
+
+        let reclaimed = reclaim_duplicate_hf_blobs(&repo);
+
+        assert_eq!(reclaimed, 64);
+        assert!(!blobs.join("etag-hash").exists());
+        assert!(snapshot.join("model.safetensors").exists());
+        assert!(blobs.join("etag-two.incomplete").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reclaiming_keeps_a_blob_with_no_snapshot_copy() {
+        use super::reclaim_duplicate_hf_blobs;
+        let root = temp_root("hf-reclaim-orphan");
+        let repo = root.join("models--org--repo");
+        let snapshot = repo.join("snapshots").join("rev1");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::write(snapshot.join("small.json"), vec![1u8; 10]).unwrap();
+        std::fs::write(blobs.join("etag-small"), vec![1u8; 10]).unwrap();
+        // Two blobs of one size but only one snapshot copy: dropping both would
+        // lose a file that nothing else holds.
+        std::fs::write(blobs.join("etag-orphan"), vec![2u8; 10]).unwrap();
+
+        reclaim_duplicate_hf_blobs(&repo);
+
+        assert!(blobs.join("etag-small").exists());
+        assert!(blobs.join("etag-orphan").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_blob_shared_with_another_snapshot_survives() {
+        use super::remove_hf_cached_file;
+        let root = temp_root("hf-shared-blob");
+        let repo = root.join("models--thepatch--jerry_grunge");
+        let rev1 = repo.join("snapshots").join("rev1");
+        let rev2 = repo.join("snapshots").join("rev2");
+        let blobs = repo.join("blobs");
+        for dir in [&rev1, &rev2, &blobs] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(rev1.join("shared.ckpt"), vec![3u8; 30]).unwrap();
+        std::fs::write(rev2.join("other.ckpt"), vec![3u8; 30]).unwrap();
+        std::fs::write(blobs.join("hash-shared"), vec![3u8; 30]).unwrap();
+
+        remove_hf_cached_file(&repo, "shared.ckpt", &root).unwrap();
+
+        assert!(!rev1.join("shared.ckpt").exists());
+        assert!(
+            blobs.join("hash-shared").exists(),
+            "another snapshot still wants a file this size"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_outside_the_services_root() {
+        let root = temp_root("service-env-escape");
+        let services = root.join("services");
+        let outsider = root.join("models").join("foundation-1").join("weights.bin");
+        std::fs::create_dir_all(services.join("melodyflow")).unwrap();
+        std::fs::create_dir_all(outsider.parent().unwrap()).unwrap();
+        std::fs::write(&outsider, b"weights").unwrap();
+
+        let result = remove_managed_path(outsider.parent().unwrap(), &services);
+
+        assert!(
+            !matches!(result, Ok(true)),
+            "a path outside the services root must not be deleted"
+        );
+        assert!(outsider.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tauri::command]
+fn save_runtime_storage_root(
+    path: String,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    storage::save_runtime_root_config(&path, repo_root.inner())
+}
+
+#[tauri::command]
+fn reset_runtime_storage_root(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    storage::reset_runtime_root_config(repo_root.inner())
+}
+
+#[tauri::command]
+async fn get_legacy_storage_maintenance_info(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceInfo, String> {
+    // Sizes legacy roots and LoRA candidates, so it is off the main thread for
+    // the same reason as the cache scan above.
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || build_legacy_storage_maintenance_info(&root))
+        .await
+        .map_err(|e| format!("Storage maintenance scan failed: {e}"))?
+}
+
+#[tauri::command]
+fn migrate_legacy_loras(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceResult, String> {
+    Ok(migrate_legacy_loras_impl(repo_root.inner()))
+}
+
+#[tauri::command]
+fn migrate_storage_loras_to_pending_root(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceResult, String> {
+    Ok(migrate_storage_loras_to_pending_root_impl(
+        repo_root.inner(),
+    ))
+}
+
+#[tauri::command]
+fn cleanup_legacy_storage(
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<LegacyStorageMaintenanceResult, String> {
+    Ok(cleanup_legacy_storage_impl(repo_root.inner()))
+}
+
+#[tauri::command]
+async fn restart_application(
+    app_handle: tauri::AppHandle,
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<(), String> {
+    if let Err(error) = cancel_carey_ace_lora_training() {
+        log::warn!("Could not cancel ACE-Step training during app restart: {error}");
+    }
+    if let Err(error) = cancel_sa3_lora_training() {
+        log::warn!("Could not cancel SA3 LoRA training during app restart: {error}");
+    }
+    if let Err(error) = cancel_sa3_autolabel() {
+        log::warn!("Could not cancel SA3 auto-label during app restart: {error}");
+    }
+
+    let mut mgr = manager.lock().await;
+    mgr.stop_all();
+    drop(mgr);
+
+    app_handle.request_restart();
+    Ok(())
 }
 
 #[tauri::command]

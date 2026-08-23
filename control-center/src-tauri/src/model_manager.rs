@@ -6,11 +6,46 @@ use tokio::sync::Mutex;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub const MELODYFLOW_MODEL_ID: &str = "facebook/melodyflow-t24-30secs";
+/// Foundation-1 is a directory of weights rather than a Hugging Face repo, so
+/// it carries a synthetic id.
+pub const FOUNDATION_MODEL_ID: &str = "foundation::foundation-1";
 
 fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn apply_runtime_env(cmd: &mut tokio::process::Command, runtime_root: &Path) {
+    for (key, value) in crate::storage::runtime_env_vars(runtime_root) {
+        cmd.env(key, value);
+    }
+}
+
+fn regular_file_nonempty(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+fn known_hf_required_files(model_id: &str) -> Option<&'static [&'static str]> {
+    if model_id.starts_with("thepatch/") {
+        return Some(&["state_dict.bin", "compression_state_dict.bin"]);
+    }
+    match model_id {
+        MELODYFLOW_MODEL_ID => Some(&["state_dict.bin", "compression_state_dict.bin"]),
+        "stabilityai/stable-audio-open-small" => Some(&["model_config.json", "model.safetensors"]),
+        "stabilityai/stable-audio-3-medium" | "stabilityai/stable-audio-3-medium-base" => Some(&[
+            "model_config.json",
+            "model.safetensors",
+            "t5gemma-b-b-ul2/config.json",
+            "t5gemma-b-b-ul2/model.safetensors",
+            "t5gemma-b-b-ul2/tokenizer.json",
+            "t5gemma-b-b-ul2/tokenizer_config.json",
+        ]),
+        _ => None,
     }
 }
 
@@ -46,8 +81,7 @@ fn hf_repo_downloaded_size(hub_dir: &Path, model_id: &str) -> Option<u64> {
         return Some(blob_bytes);
     }
 
-    let snapshots_dir = repo_dir.join("snapshots");
-    let largest_snapshot = std::fs::read_dir(snapshots_dir)
+    let largest_snapshot = std::fs::read_dir(repo_dir.join("snapshots"))
         .ok()?
         .flatten()
         .map(|entry| path_size(&entry.path()))
@@ -102,7 +136,7 @@ pub struct ModelManager {
     model_cache: HashMap<String, ModelStatus>,
     /// Dynamically fetched finetune checkpoints (repo → list of checkpoint entries)
     finetune_checkpoints: HashMap<String, Vec<CheckpointEntry>>,
-    /// Root of the backend-installer repo (for finding service checkpoint dirs)
+    /// Root of gary4local's writable runtime storage.
     repo_root: PathBuf,
 }
 
@@ -116,34 +150,28 @@ impl ModelManager {
         }
     }
 
-    /// Get the HuggingFace cache directory — uses the standard default location.
-    /// This matches what huggingface_hub uses when no HF_HOME is set:
-    /// Windows: C:\Users\<user>\.cache\huggingface
-    /// Linux/Mac: ~/.cache/huggingface
-    pub fn hf_cache_dir() -> PathBuf {
-        if let Ok(hf_home) = std::env::var("HF_HOME") {
-            PathBuf::from(hf_home)
-        } else {
-            PathBuf::from(
-                std::env::var("USERPROFILE")
-                    .or_else(|_| std::env::var("HOME"))
-                    .unwrap_or_default(),
-            )
-            .join(".cache")
-            .join("huggingface")
-        }
+    /// Get the selected writable runtime root.
+    pub fn runtime_root(&self) -> PathBuf {
+        self.repo_root.clone()
     }
 
-    fn hf_hub_cache_dir() -> PathBuf {
-        Self::hf_cache_dir().join("hub")
+    /// Get the effective Hugging Face home for this storage profile.
+    pub fn hf_cache_dir(&self) -> PathBuf {
+        crate::storage::effective_hf_home_dir(&self.repo_root)
     }
 
-    fn hf_model_downloaded_size(model_id: &str) -> Option<u64> {
-        hf_repo_downloaded_size(&Self::hf_hub_cache_dir(), model_id)
+    /// Get the hub cache used by service processes for this storage profile.
+    pub fn hf_hub_cache_dir(&self) -> PathBuf {
+        crate::storage::effective_hf_hub_cache_dir(&self.repo_root)
     }
 
-    fn finetune_file_downloaded_size(repo: &str, filename: &str) -> Option<u64> {
-        let snapshots_dir = Self::hf_hub_cache_dir()
+    fn hf_model_downloaded_size(&self, model_id: &str) -> Option<u64> {
+        hf_repo_downloaded_size(&self.hf_hub_cache_dir(), model_id)
+    }
+
+    fn finetune_file_downloaded_size(&self, repo: &str, filename: &str) -> Option<u64> {
+        let snapshots_dir = self
+            .hf_hub_cache_dir()
             .join(format!("models--{}", repo.replace('/', "--")))
             .join("snapshots");
 
@@ -207,9 +235,12 @@ impl ModelManager {
                     (None, None)
                 };
 
-                let status = self.get_model_status(model_path);
+                let status = self.get_model_status_with_required_files(
+                    model_path,
+                    known_hf_required_files(model_path).unwrap(),
+                );
                 let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
-                    .then(|| Self::hf_model_downloaded_size(model_path))
+                    .then(|| self.hf_model_downloaded_size(model_path))
                     .flatten();
 
                 entries.push(ModelEntry {
@@ -228,15 +259,39 @@ impl ModelManager {
         entries
     }
 
+    /// Get Terry's single MelodyFlow checkpoint.
+    pub fn get_melodyflow_models(&self) -> Vec<ModelEntry> {
+        let status = self.get_model_status_with_required_files(
+            MELODYFLOW_MODEL_ID,
+            known_hf_required_files(MELODYFLOW_MODEL_ID).unwrap(),
+        );
+        let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
+            .then(|| self.hf_model_downloaded_size(MELODYFLOW_MODEL_ID))
+            .flatten();
+        vec![ModelEntry {
+            id: MELODYFLOW_MODEL_ID.to_string(),
+            display_name: "MelodyFlow 30 seconds".to_string(),
+            service: "melodyflow".to_string(),
+            size_category: Some("model".to_string()),
+            group: None,
+            epoch: None,
+            status,
+            downloaded_bytes,
+        }]
+    }
+
     /// Get Jerry (Stable Audio) base model + any fetched finetune checkpoints
     pub fn get_jerry_models(&self) -> Vec<ModelEntry> {
         let mut entries = Vec::new();
 
         // Base model
         let base_id = "stabilityai/stable-audio-open-small";
-        let base_status = self.get_model_status(base_id);
+        let base_status = self.get_model_status_with_required_files(
+            base_id,
+            known_hf_required_files(base_id).unwrap(),
+        );
         let base_downloaded_bytes = matches!(&base_status, ModelStatus::Downloaded)
-            .then(|| Self::hf_model_downloaded_size(base_id))
+            .then(|| self.hf_model_downloaded_size(base_id))
             .flatten();
         entries.push(ModelEntry {
             id: base_id.to_string(),
@@ -256,7 +311,7 @@ impl ModelManager {
                 let composite_id = format!("{}::{}", repo, ckpt.filename);
                 let status = self.get_model_status(&composite_id);
                 let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
-                    .then(|| Self::finetune_file_downloaded_size(repo, &ckpt.filename))
+                    .then(|| self.finetune_file_downloaded_size(repo, &ckpt.filename))
                     .flatten();
                 entries.push(ModelEntry {
                     id: composite_id,
@@ -279,14 +334,6 @@ impl ModelManager {
     /// These use the normal Hugging Face cache. A saved token is reused, but
     /// the user still needs to accept access on each gated model page.
     pub fn get_sa3_models(&self) -> Vec<ModelEntry> {
-        let required_files = [
-            "model_config.json",
-            "model.safetensors",
-            "t5gemma-b-b-ul2/config.json",
-            "t5gemma-b-b-ul2/model.safetensors",
-            "t5gemma-b-b-ul2/tokenizer.json",
-            "t5gemma-b-b-ul2/tokenizer_config.json",
-        ];
         let components: Vec<(&str, &str, &str)> = vec![
             (
                 "stabilityai/stable-audio-3-medium",
@@ -303,9 +350,10 @@ impl ModelManager {
         components
             .iter()
             .map(|(id, display_name, category)| {
-                let status = self.get_model_status_with_required_files(id, &required_files);
+                let status = self
+                    .get_model_status_with_required_files(id, known_hf_required_files(id).unwrap());
                 let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
-                    .then(|| Self::hf_model_downloaded_size(id))
+                    .then(|| self.hf_model_downloaded_size(id))
                     .flatten();
                 ModelEntry {
                     id: id.to_string(),
@@ -364,7 +412,11 @@ impl ModelManager {
                 "dit",
                 &[
                     "acestep-v15-xl-base/config.json",
-                    "acestep-v15-xl-base/model.safetensors",
+                    "acestep-v15-xl-base/model.safetensors.index.json",
+                    "acestep-v15-xl-base/model-00001-of-00004.safetensors",
+                    "acestep-v15-xl-base/model-00002-of-00004.safetensors",
+                    "acestep-v15-xl-base/model-00003-of-00004.safetensors",
+                    "acestep-v15-xl-base/model-00004-of-00004.safetensors",
                 ],
             ),
             (
@@ -373,7 +425,11 @@ impl ModelManager {
                 "dit",
                 &[
                     "acestep-v15-xl-sft/config.json",
-                    "acestep-v15-xl-sft/model.safetensors",
+                    "acestep-v15-xl-sft/model.safetensors.index.json",
+                    "acestep-v15-xl-sft/model-00001-of-00004.safetensors",
+                    "acestep-v15-xl-sft/model-00002-of-00004.safetensors",
+                    "acestep-v15-xl-sft/model-00003-of-00004.safetensors",
+                    "acestep-v15-xl-sft/model-00004-of-00004.safetensors",
                 ],
             ),
             (
@@ -382,7 +438,11 @@ impl ModelManager {
                 "dit",
                 &[
                     "acestep-v15-xl-turbo/config.json",
-                    "acestep-v15-xl-turbo/model.safetensors",
+                    "acestep-v15-xl-turbo/model.safetensors.index.json",
+                    "acestep-v15-xl-turbo/model-00001-of-00004.safetensors",
+                    "acestep-v15-xl-turbo/model-00002-of-00004.safetensors",
+                    "acestep-v15-xl-turbo/model-00003-of-00004.safetensors",
+                    "acestep-v15-xl-turbo/model-00004-of-00004.safetensors",
                 ],
             ),
             (
@@ -406,7 +466,9 @@ impl ModelManager {
                 "shared",
                 &[
                     "Qwen3-Embedding-0.6B/config.json",
+                    "Qwen3-Embedding-0.6B/model.safetensors",
                     "Qwen3-Embedding-0.6B/tokenizer.json",
+                    "Qwen3-Embedding-0.6B/tokenizer_config.json",
                 ],
             ),
             (
@@ -416,6 +478,8 @@ impl ModelManager {
                 &[
                     "acestep-5Hz-lm-0.6B/config.json",
                     "acestep-5Hz-lm-0.6B/model.safetensors",
+                    "acestep-5Hz-lm-0.6B/tokenizer.json",
+                    "acestep-5Hz-lm-0.6B/tokenizer_config.json",
                 ],
             ),
             (
@@ -425,6 +489,8 @@ impl ModelManager {
                 &[
                     "acestep-5Hz-lm-1.7B/config.json",
                     "acestep-5Hz-lm-1.7B/model.safetensors",
+                    "acestep-5Hz-lm-1.7B/tokenizer.json",
+                    "acestep-5Hz-lm-1.7B/tokenizer_config.json",
                 ],
             ),
             (
@@ -433,7 +499,11 @@ impl ModelManager {
                 "lm",
                 &[
                     "acestep-5Hz-lm-4B/config.json",
-                    "acestep-5Hz-lm-4B/model.safetensors",
+                    "acestep-5Hz-lm-4B/model.safetensors.index.json",
+                    "acestep-5Hz-lm-4B/model-00001-of-00002.safetensors",
+                    "acestep-5Hz-lm-4B/model-00002-of-00002.safetensors",
+                    "acestep-5Hz-lm-4B/tokenizer.json",
+                    "acestep-5Hz-lm-4B/tokenizer_config.json",
                 ],
             ),
         ];
@@ -476,11 +546,10 @@ impl ModelManager {
         if let Some(dl) = self.downloads.get(id) {
             return dl.status.clone();
         }
-        if let Some(status) = self.model_cache.get(id) {
-            return status.clone();
-        }
         // Check if the required files exist on disk
-        let all_present = check_files.iter().all(|f| checkpoint_dir.join(f).exists());
+        let all_present = check_files
+            .iter()
+            .all(|f| regular_file_nonempty(&checkpoint_dir.join(f)));
         if all_present {
             ModelStatus::Downloaded
         } else {
@@ -488,13 +557,12 @@ impl ModelManager {
         }
     }
 
-    /// Get Foundation-1 model — single model with 2 files.
-    /// Foundation stores models in %APPDATA%/Gary4JUCE/models/foundation-1/
+    /// Get Foundation-1 model status from the selected runtime root.
     pub fn get_foundation_models(&self) -> Vec<ModelEntry> {
-        let models_dir = Self::foundation_models_dir();
+        let models_dir = self.foundation_models_dir();
         let model_dir = models_dir.join("foundation-1");
 
-        let id = "foundation::foundation-1";
+        let id = FOUNDATION_MODEL_ID;
         let status = self.get_foundation_status(id, &model_dir);
         let downloaded_bytes = matches!(&status, ModelStatus::Downloaded)
             .then(|| path_size(&model_dir))
@@ -512,15 +580,9 @@ impl ModelManager {
         }]
     }
 
-    /// Get the Foundation models directory (%APPDATA%/Gary4JUCE/models)
-    fn foundation_models_dir() -> std::path::PathBuf {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-            format!("{}\\AppData\\Roaming", home)
-        });
-        std::path::PathBuf::from(appdata)
-            .join("Gary4JUCE")
-            .join("models")
+    /// Get the Foundation models directory under the selected runtime root.
+    pub fn foundation_models_dir(&self) -> std::path::PathBuf {
+        crate::storage::models_dir(&self.repo_root)
     }
 
     /// Check if Foundation-1 model files are present
@@ -528,13 +590,9 @@ impl ModelManager {
         if let Some(dl) = self.downloads.get(id) {
             return dl.status.clone();
         }
-        if let Some(status) = self.model_cache.get(id) {
-            return status.clone();
-        }
-
         let ckpt = model_dir.join("Foundation_1.safetensors");
         let config = model_dir.join("model_config.json");
-        if ckpt.exists() && config.exists() {
+        if regular_file_nonempty(&ckpt) && regular_file_nonempty(&config) {
             ModelStatus::Downloaded
         } else {
             ModelStatus::Available
@@ -546,7 +604,7 @@ impl ModelManager {
         let entries: Vec<CheckpointEntry> = filenames
             .into_iter()
             .map(|f| {
-                let cached = Self::is_finetune_file_cached(repo, &f);
+                let cached = self.is_finetune_file_cached(repo, &f);
                 CheckpointEntry {
                     repo: repo.to_string(),
                     filename: f,
@@ -558,9 +616,8 @@ impl ModelManager {
     }
 
     /// Check if a specific file from a finetune repo is cached
-    fn is_finetune_file_cached(repo: &str, filename: &str) -> bool {
-        let cache_dir = Self::hf_cache_dir();
-        let hub_dir = cache_dir.join("hub");
+    fn is_finetune_file_cached(&self, repo: &str, filename: &str) -> bool {
+        let hub_dir = self.hf_hub_cache_dir();
         let folder_name = format!("models--{}", repo.replace('/', "--"));
         let snapshots_dir = hub_dir.join(&folder_name).join("snapshots");
 
@@ -571,7 +628,7 @@ impl ModelManager {
         // Check all snapshot directories for this file
         if let Ok(entries) = std::fs::read_dir(&snapshots_dir) {
             for entry in entries.flatten() {
-                if entry.path().join(filename).exists() {
+                if regular_file_nonempty(&entry.path().join(filename)) {
                     return true;
                 }
             }
@@ -587,19 +644,14 @@ impl ModelManager {
             return dl.status.clone();
         }
 
-        // Check our cache
-        if let Some(status) = self.model_cache.get(model_id) {
-            return status.clone();
-        }
-
         // Check the HF cache on disk
         if model_id.contains("::") {
             // Composite ID: "repo::filename"
             let parts: Vec<&str> = model_id.splitn(2, "::").collect();
-            if parts.len() == 2 && Self::is_finetune_file_cached(parts[0], parts[1]) {
+            if parts.len() == 2 && self.is_finetune_file_cached(parts[0], parts[1]) {
                 return ModelStatus::Downloaded;
             }
-        } else if Self::is_model_cached(model_id) {
+        } else if self.is_model_cached(model_id) {
             return ModelStatus::Downloaded;
         }
 
@@ -615,23 +667,16 @@ impl ModelManager {
             return dl.status.clone();
         }
 
-        if let Some(status) = self.model_cache.get(model_id) {
-            return status.clone();
-        }
-
-        if Self::is_model_snapshot_complete(model_id, required_files) {
+        if self.is_model_snapshot_complete(model_id, required_files) {
             ModelStatus::Downloaded
         } else {
             ModelStatus::Available
         }
     }
 
-    fn is_model_snapshot_complete(model_id: &str, required_files: &[&str]) -> bool {
+    fn is_model_snapshot_complete(&self, model_id: &str, required_files: &[&str]) -> bool {
         let folder_name = format!("models--{}", model_id.replace('/', "--"));
-        let snapshots_dir = Self::hf_cache_dir()
-            .join("hub")
-            .join(folder_name)
-            .join("snapshots");
+        let snapshots_dir = self.hf_hub_cache_dir().join(folder_name).join("snapshots");
 
         let Ok(entries) = std::fs::read_dir(snapshots_dir) else {
             return false;
@@ -642,14 +687,13 @@ impl ModelManager {
             snapshot.is_dir()
                 && required_files
                     .iter()
-                    .all(|filename| snapshot.join(filename).is_file())
+                    .all(|filename| regular_file_nonempty(&snapshot.join(filename)))
         })
     }
 
     /// Check if a model exists in the HuggingFace cache
-    fn is_model_cached(model_id: &str) -> bool {
-        let cache_dir = Self::hf_cache_dir();
-        let hub_dir = cache_dir.join("hub");
+    fn is_model_cached(&self, model_id: &str) -> bool {
+        let hub_dir = self.hf_hub_cache_dir();
 
         // HF cache uses format: models--org--name
         let folder_name = format!("models--{}", model_id.replace('/', "--"));
@@ -668,6 +712,15 @@ impl ModelManager {
         }
 
         false
+    }
+
+    fn downloaded_model_files_present(&self, model_id: &str) -> bool {
+        if let Some((repo, filename)) = model_id.split_once("::") {
+            return self.is_finetune_file_cached(repo, filename);
+        }
+        known_hf_required_files(model_id)
+            .map(|required| self.is_model_snapshot_complete(model_id, required))
+            .unwrap_or_else(|| self.is_model_cached(model_id))
     }
 
     /// Mark a download as started
@@ -716,6 +769,155 @@ impl ModelManager {
     pub fn get_download_progress(&self) -> Vec<DownloadProgress> {
         self.downloads.values().cloned().collect()
     }
+
+    pub fn is_downloading(&self, model_id: &str) -> bool {
+        self.downloads
+            .get(model_id)
+            .is_some_and(|download| matches!(download.status, ModelStatus::Downloading))
+    }
+
+    /// True while any download is in flight, so storage cleanup can wait for a
+    /// quiet moment rather than pulling files out from under one.
+    pub fn any_downloading(&self) -> bool {
+        self.downloads
+            .values()
+            .any(|download| matches!(download.status, ModelStatus::Downloading))
+    }
+
+    pub fn forget_model_status(&mut self, model_id: &str) {
+        self.downloads.remove(model_id);
+        self.model_cache.remove(model_id);
+    }
+}
+
+pub fn carey_component_path(checkpoint_dir: &Path, model_id: &str) -> Result<PathBuf, String> {
+    let component = model_id
+        .strip_prefix("carey::")
+        .ok_or_else(|| format!("'{}' is not a Carey model", model_id))?;
+    let known = matches!(
+        component,
+        "acestep-v15-base"
+            | "acestep-v15-sft"
+            | "acestep-v15-turbo"
+            | "acestep-v15-xl-base"
+            | "acestep-v15-xl-sft"
+            | "acestep-v15-xl-turbo"
+            | "vae"
+            | "scrag-vae"
+            | "Qwen3-Embedding-0.6B"
+            | "acestep-5Hz-lm-0.6B"
+            | "acestep-5Hz-lm-1.7B"
+            | "acestep-5Hz-lm-4B"
+    );
+    if !known {
+        return Err(format!("Unknown Carey component: {}", component));
+    }
+    Ok(checkpoint_dir.join(component))
+}
+
+pub(crate) fn carey_component_required_files(
+    component: &str,
+) -> Result<&'static [&'static str], String> {
+    match component {
+        "acestep-v15-base" => Ok(&[
+            "acestep-v15-base/config.json",
+            "acestep-v15-base/model.safetensors",
+            "acestep-v15-base/silence_latent.pt",
+        ]),
+        "acestep-v15-sft" => Ok(&[
+            "acestep-v15-sft/config.json",
+            "acestep-v15-sft/model.safetensors",
+            "acestep-v15-sft/silence_latent.pt",
+        ]),
+        "acestep-v15-turbo" => Ok(&[
+            "acestep-v15-turbo/config.json",
+            "acestep-v15-turbo/model.safetensors",
+            "acestep-v15-turbo/silence_latent.pt",
+        ]),
+        "acestep-v15-xl-base" => Ok(&[
+            "acestep-v15-xl-base/config.json",
+            "acestep-v15-xl-base/model.safetensors.index.json",
+            "acestep-v15-xl-base/model-00001-of-00004.safetensors",
+            "acestep-v15-xl-base/model-00002-of-00004.safetensors",
+            "acestep-v15-xl-base/model-00003-of-00004.safetensors",
+            "acestep-v15-xl-base/model-00004-of-00004.safetensors",
+            "acestep-v15-xl-base/silence_latent.pt",
+        ]),
+        "acestep-v15-xl-sft" => Ok(&[
+            "acestep-v15-xl-sft/config.json",
+            "acestep-v15-xl-sft/model.safetensors.index.json",
+            "acestep-v15-xl-sft/model-00001-of-00004.safetensors",
+            "acestep-v15-xl-sft/model-00002-of-00004.safetensors",
+            "acestep-v15-xl-sft/model-00003-of-00004.safetensors",
+            "acestep-v15-xl-sft/model-00004-of-00004.safetensors",
+            "acestep-v15-xl-sft/silence_latent.pt",
+        ]),
+        "acestep-v15-xl-turbo" => Ok(&[
+            "acestep-v15-xl-turbo/config.json",
+            "acestep-v15-xl-turbo/model.safetensors.index.json",
+            "acestep-v15-xl-turbo/model-00001-of-00004.safetensors",
+            "acestep-v15-xl-turbo/model-00002-of-00004.safetensors",
+            "acestep-v15-xl-turbo/model-00003-of-00004.safetensors",
+            "acestep-v15-xl-turbo/model-00004-of-00004.safetensors",
+            "acestep-v15-xl-turbo/silence_latent.pt",
+        ]),
+        "vae" => Ok(&["vae/config.json", "vae/diffusion_pytorch_model.safetensors"]),
+        "scrag-vae" => Ok(&[
+            "scrag-vae/config.json",
+            "scrag-vae/diffusion_pytorch_model.safetensors",
+        ]),
+        "Qwen3-Embedding-0.6B" => Ok(&[
+            "Qwen3-Embedding-0.6B/config.json",
+            "Qwen3-Embedding-0.6B/model.safetensors",
+            "Qwen3-Embedding-0.6B/tokenizer.json",
+            "Qwen3-Embedding-0.6B/tokenizer_config.json",
+        ]),
+        "acestep-5Hz-lm-0.6B" => Ok(&[
+            "acestep-5Hz-lm-0.6B/config.json",
+            "acestep-5Hz-lm-0.6B/model.safetensors",
+            "acestep-5Hz-lm-0.6B/tokenizer.json",
+            "acestep-5Hz-lm-0.6B/tokenizer_config.json",
+        ]),
+        "acestep-5Hz-lm-1.7B" => Ok(&[
+            "acestep-5Hz-lm-1.7B/config.json",
+            "acestep-5Hz-lm-1.7B/model.safetensors",
+            "acestep-5Hz-lm-1.7B/tokenizer.json",
+            "acestep-5Hz-lm-1.7B/tokenizer_config.json",
+        ]),
+        "acestep-5Hz-lm-4B" => Ok(&[
+            "acestep-5Hz-lm-4B/config.json",
+            "acestep-5Hz-lm-4B/model.safetensors.index.json",
+            "acestep-5Hz-lm-4B/model-00001-of-00002.safetensors",
+            "acestep-5Hz-lm-4B/model-00002-of-00002.safetensors",
+            "acestep-5Hz-lm-4B/tokenizer.json",
+            "acestep-5Hz-lm-4B/tokenizer_config.json",
+        ]),
+        other => Err(format!("Unknown Carey component: {}", other)),
+    }
+}
+
+fn carey_download_source(
+    component: &str,
+) -> Result<(&'static str, &'static str, &'static [&'static str]), String> {
+    match component {
+        "acestep-v15-base" => Ok(("ACE-Step/acestep-v15-base", "", &[])),
+        "acestep-v15-sft" => Ok(("ACE-Step/acestep-v15-sft", "", &[])),
+        "acestep-v15-turbo" => Ok(("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**", &[])),
+        "acestep-v15-xl-base" => Ok(("ACE-Step/acestep-v15-xl-base", "", &[])),
+        "acestep-v15-xl-sft" => Ok(("ACE-Step/acestep-v15-xl-sft", "", &[])),
+        "acestep-v15-xl-turbo" => Ok(("ACE-Step/acestep-v15-xl-turbo", "", &[])),
+        "vae" => Ok(("ACE-Step/Ace-Step1.5", "vae/**", &[])),
+        "scrag-vae" => Ok((
+            "scragnog/Ace-Step-1.5-ScragVAE",
+            "",
+            &["config.json", "diffusion_pytorch_model.safetensors"],
+        )),
+        "Qwen3-Embedding-0.6B" => Ok(("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**", &[])),
+        "acestep-5Hz-lm-0.6B" => Ok(("ACE-Step/acestep-5Hz-lm-0.6B", "", &[])),
+        "acestep-5Hz-lm-1.7B" => Ok(("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**", &[])),
+        "acestep-5Hz-lm-4B" => Ok(("ACE-Step/acestep-5Hz-lm-4B", "", &[])),
+        other => Err(format!("Unknown Carey component: {}", other)),
+    }
 }
 
 fn friendly_hf_download_error(raw_detail: &str) -> String {
@@ -763,7 +965,10 @@ pub async fn download_model(
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let cache_dir = ModelManager::hf_cache_dir();
+    let (cache_dir, runtime_root) = {
+        let mgr = manager.lock().await;
+        (mgr.hf_cache_dir(), mgr.runtime_root())
+    };
 
     if let Err(error) = std::fs::create_dir_all(&cache_dir) {
         let msg = format!("Cannot create cache dir: {}", error);
@@ -1015,6 +1220,7 @@ except Exception as e:
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    apply_runtime_env(&mut cmd, &runtime_root);
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
@@ -1102,6 +1308,34 @@ except Exception as e:
     };
 
     if exit_status.success() {
+        let complete = {
+            let mgr = manager.lock().await;
+            mgr.downloaded_model_files_present(&model_id)
+        };
+        if !complete {
+            let msg = format!(
+                "Download finished but {} is incomplete; required model files are missing",
+                model_id
+            );
+            let mut mgr = manager.lock().await;
+            mgr.set_download_done(&model_id, Some(msg.clone()));
+            drop(mgr);
+            emit_model_status(&manager, &handle).await;
+            return Err(msg);
+        }
+        // Windows keeps a second full copy of everything it just downloaded,
+        // because the hub cannot symlink without developer mode. Only do this
+        // once the files are confirmed present, so a failed download is never
+        // left with the snapshot gone and the blob reclaimed.
+        let repo_dir = cache_dir.join(format!("models--{}", repo_id.replace('/', "--")));
+        let reclaimed = crate::reclaim_duplicate_hf_blobs(&repo_dir);
+        if reclaimed > 0 {
+            log::info!(
+                "Reclaimed {} bytes of duplicated blobs for {}",
+                reclaimed,
+                repo_id
+            );
+        }
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, None);
         drop(mgr);
@@ -1167,6 +1401,7 @@ pub async fn fetch_checkpoints(repo: String, service_port: u16) -> Result<Vec<St
 pub async fn download_carey_model(
     model_id: String,
     python_exe: PathBuf,
+    runtime_root: PathBuf,
     checkpoint_dir: PathBuf,
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
@@ -1178,25 +1413,7 @@ pub async fn download_carey_model(
     let component = model_id.strip_prefix("carey::").unwrap_or(&model_id);
 
     // Map component to HF repo, optional subfolder filters, and optional root allow-lists.
-    let (repo_id, allow_pattern, root_allow_files): (&str, &str, &[&str]) = match component {
-        "acestep-v15-base" => ("ACE-Step/acestep-v15-base", "", &[]),
-        "acestep-v15-sft" => ("ACE-Step/acestep-v15-sft", "", &[]),
-        "acestep-v15-turbo" => ("ACE-Step/Ace-Step1.5", "acestep-v15-turbo/**", &[]),
-        "acestep-v15-xl-base" => ("ACE-Step/acestep-v15-xl-base", "", &[]),
-        "acestep-v15-xl-sft" => ("ACE-Step/acestep-v15-xl-sft", "", &[]),
-        "acestep-v15-xl-turbo" => ("ACE-Step/acestep-v15-xl-turbo", "", &[]),
-        "vae" => ("ACE-Step/Ace-Step1.5", "vae/**", &[]),
-        "scrag-vae" => (
-            "scragnog/Ace-Step-1.5-ScragVAE",
-            "",
-            &["config.json", "diffusion_pytorch_model.safetensors"],
-        ),
-        "Qwen3-Embedding-0.6B" => ("ACE-Step/Ace-Step1.5", "Qwen3-Embedding-0.6B/**", &[]),
-        "acestep-5Hz-lm-0.6B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-0.6B/**", &[]),
-        "acestep-5Hz-lm-1.7B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-1.7B/**", &[]),
-        "acestep-5Hz-lm-4B" => ("ACE-Step/Ace-Step1.5", "acestep-5Hz-lm-4B/**", &[]),
-        other => return Err(format!("Unknown Carey component: {}", other)),
-    };
+    let (repo_id, allow_pattern, root_allow_files) = carey_download_source(component)?;
 
     let ckpt_str = checkpoint_dir.to_string_lossy().to_string();
     let root_allow_files_json =
@@ -1257,9 +1474,7 @@ try:
     completed_bytes = 0
 
     if not file_entries:
-        report(1.0, "No files to download")
-        print(json.dumps({{"status": "done"}}), flush=True)
-        sys.exit(0)
+        raise RuntimeError(f"No files matched {{component}} in {{repo_id}}")
 
     report(0.0, f"Downloading {{len(file_entries)}} files ({{fmt_size(total_bytes)}})")
 
@@ -1287,6 +1502,10 @@ try:
             url = f"https://huggingface.co/{{repo_id}}/resolve/main/{{filename}}"
             resp = requests.get(url, headers=headers, allow_redirects=True)
             resp.raise_for_status()
+            if file_size > 0 and len(resp.content) != file_size:
+                raise RuntimeError(
+                    f"Incomplete download for {{filename}}: received {{len(resp.content)}} of {{file_size}} bytes"
+                )
             with open(out_path, "wb") as f:
                 f.write(resp.content)
             completed_bytes += file_size
@@ -1309,6 +1528,11 @@ try:
                 if pct != last_pct:
                     report(current_total / max(total_bytes, 1), f"{{short}} {{fmt_size(current_total)}}/{{fmt_size(total_bytes)}}")
                     last_pct = pct
+
+        if file_size > 0 and received != file_size:
+            raise RuntimeError(
+                f"Incomplete download for {{filename}}: received {{received}} of {{file_size}} bytes"
+            )
 
         completed_bytes += file_size
         report(completed_bytes / max(total_bytes, 1), f"{{short}} done ({{i+1}}/{{len(file_entries)}})")
@@ -1333,6 +1557,7 @@ except Exception as e:
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    apply_runtime_env(&mut cmd, &runtime_root);
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
@@ -1394,6 +1619,23 @@ except Exception as e:
         .map_err(|e| format!("Download process error: {}", e))?;
 
     if exit_status.success() {
+        let missing_files = carey_component_required_files(component)?
+            .iter()
+            .filter(|relative| !regular_file_nonempty(&checkpoint_dir.join(relative)))
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing_files.is_empty() {
+            let msg = format!(
+                "Download finished but {} is incomplete; missing: {}",
+                model_id,
+                missing_files.join(", ")
+            );
+            let mut mgr = manager.lock().await;
+            mgr.set_download_done(&model_id, Some(msg.clone()));
+            drop(mgr);
+            emit_model_status(&manager, &handle).await;
+            return Err(msg);
+        }
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, None);
         drop(mgr);
@@ -1409,13 +1651,14 @@ except Exception as e:
     }
 }
 
-/// Download Foundation-1 model files to %APPDATA%/Gary4JUCE/models/foundation-1/
+/// Download Foundation-1 model files to the selected runtime models directory.
 ///
 /// Uses streaming requests with byte-level progress (same approach as Gary/Carey).
 /// Downloads Foundation_1.safetensors and model_config.json from RoyalCities/Foundation-1.
 pub async fn download_foundation_model(
     model_id: String,
     python_exe: PathBuf,
+    runtime_root: PathBuf,
     model_dir: PathBuf,
     manager: Arc<Mutex<ModelManager>>,
     handle: tauri::AppHandle,
@@ -1473,8 +1716,8 @@ try:
         out_path = os.path.join(model_dir, filename)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-        # Skip if already exists
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        # Skip only a complete file. A previous interrupted transfer must be replaced.
+        if file_size > 0 and os.path.exists(out_path) and os.path.getsize(out_path) == file_size:
             completed_bytes += file_size
             report(completed_bytes / max(total_bytes, 1), f"{{filename}} (cached)")
             continue
@@ -1485,6 +1728,10 @@ try:
             url = f"https://huggingface.co/{{repo_id}}/resolve/main/{{filename}}"
             resp = requests.get(url, headers=headers, allow_redirects=True)
             resp.raise_for_status()
+            if file_size > 0 and len(resp.content) != file_size:
+                raise RuntimeError(
+                    f"Incomplete download for {{filename}}: received {{len(resp.content)}} of {{file_size}} bytes"
+                )
             with open(out_path, "wb") as f:
                 f.write(resp.content)
             completed_bytes += file_size
@@ -1508,6 +1755,11 @@ try:
                     report(current_total / max(total_bytes, 1), f"{{filename}} {{fmt_size(current_total)}}/{{fmt_size(total_bytes)}}")
                     last_pct = pct
 
+        if file_size > 0 and received != file_size:
+            raise RuntimeError(
+                f"Incomplete download for {{filename}}: received {{received}} of {{file_size}} bytes"
+            )
+
         completed_bytes += file_size
         report(completed_bytes / max(total_bytes, 1), f"{{filename}} done ({{i+1}}/{{len(file_entries)}})")
 
@@ -1527,6 +1779,7 @@ except Exception as e:
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    apply_runtime_env(&mut cmd, &runtime_root);
     if let Some(token) = crate::read_hf_token() {
         cmd.env("HF_TOKEN", &token);
     }
@@ -1588,6 +1841,23 @@ except Exception as e:
         .map_err(|e| format!("Download process error: {}", e))?;
 
     if exit_status.success() {
+        let required = ["model_config.json", "Foundation_1.safetensors"];
+        let missing_files = required
+            .iter()
+            .filter(|relative| !regular_file_nonempty(&model_dir.join(relative)))
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing_files.is_empty() {
+            let msg = format!(
+                "Download finished but Foundation-1 is incomplete; missing: {}",
+                missing_files.join(", ")
+            );
+            let mut mgr = manager.lock().await;
+            mgr.set_download_done(&model_id, Some(msg.clone()));
+            drop(mgr);
+            emit_model_status(&manager, &handle).await;
+            return Err(msg);
+        }
         let mut mgr = manager.lock().await;
         mgr.set_download_done(&model_id, None);
         drop(mgr);
@@ -1607,6 +1877,7 @@ except Exception as e:
 pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &tauri::AppHandle) {
     let mgr = manager.lock().await;
     let mut models = mgr.get_gary_models();
+    models.extend(mgr.get_melodyflow_models());
     models.extend(mgr.get_jerry_models());
     models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
@@ -1621,7 +1892,12 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_hf_download_error, hf_repo_downloaded_size, ModelManager, ModelStatus};
+    use super::{
+        carey_component_path, carey_component_required_files, carey_download_source,
+        friendly_hf_download_error, hf_repo_downloaded_size, known_hf_required_files, ModelManager,
+        ModelStatus, MELODYFLOW_MODEL_ID,
+    };
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1674,6 +1950,168 @@ fine-grained token settings to view this repository."#;
         assert_eq!(scrag.service, "carey");
         assert_eq!(scrag.size_category.as_deref(), Some("shared"));
         assert_eq!(scrag.status, ModelStatus::Available);
+    }
+
+    #[test]
+    fn carey_component_paths_are_catalog_owned() {
+        let root = Path::new("D:\\gary4local-data\\services\\carey\\checkpoints");
+        assert_eq!(
+            carey_component_path(root, "carey::acestep-v15-base").unwrap(),
+            root.join("acestep-v15-base")
+        );
+        assert!(carey_component_path(root, "carey::..\\outside").is_err());
+        assert!(carey_component_path(root, "stabilityai/stable-audio-3-medium").is_err());
+    }
+
+    #[test]
+    fn carey_4b_captioner_uses_its_sharded_repository() {
+        let (repo, filter, _) = carey_download_source("acestep-5Hz-lm-4B").unwrap();
+        assert_eq!(repo, "ACE-Step/acestep-5Hz-lm-4B");
+        assert!(filter.is_empty());
+
+        let required = carey_component_required_files("acestep-5Hz-lm-4B").unwrap();
+        assert!(required.contains(&"acestep-5Hz-lm-4B/model.safetensors.index.json"));
+        assert!(required.contains(&"acestep-5Hz-lm-4B/model-00001-of-00002.safetensors"));
+        assert!(required.contains(&"acestep-5Hz-lm-4B/model-00002-of-00002.safetensors"));
+        assert!(!required.contains(&"acestep-5Hz-lm-4B/model.safetensors"));
+    }
+
+    #[test]
+    fn carey_status_does_not_trust_a_stale_download_cache() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-carey-model-status-{}-{unique}",
+            std::process::id()
+        ));
+        let mut manager = ModelManager::new(root);
+        manager.set_download_started("carey::acestep-5Hz-lm-4B");
+        manager.set_download_done("carey::acestep-5Hz-lm-4B", None);
+
+        let model = manager
+            .get_carey_models()
+            .into_iter()
+            .find(|model| model.id == "carey::acestep-5Hz-lm-4B")
+            .unwrap();
+        assert_eq!(model.status, ModelStatus::Available);
+    }
+
+    #[test]
+    fn all_xl_dits_require_their_four_weight_shards() {
+        for component in [
+            "acestep-v15-xl-base",
+            "acestep-v15-xl-sft",
+            "acestep-v15-xl-turbo",
+        ] {
+            let required = carey_component_required_files(component).unwrap();
+            let index = format!("{component}/model.safetensors.index.json");
+            assert!(required.contains(&index.as_str()));
+            for shard in 1..=4 {
+                let filename = format!("{component}/model-{shard:05}-of-00004.safetensors");
+                assert!(required.contains(&filename.as_str()));
+            }
+            let silence_latent = format!("{component}/silence_latent.pt");
+            assert!(required.contains(&silence_latent.as_str()));
+            let unsharded = format!("{component}/model.safetensors");
+            assert!(!required.contains(&unsharded.as_str()));
+        }
+    }
+
+    #[test]
+    fn regular_dits_require_silence_latent() {
+        for component in ["acestep-v15-base", "acestep-v15-sft", "acestep-v15-turbo"] {
+            let required = carey_component_required_files(component).unwrap();
+            let silence_latent = format!("{component}/silence_latent.pt");
+            assert!(required.contains(&silence_latent.as_str()));
+        }
+    }
+
+    #[test]
+    fn shared_embedding_requires_weights_and_tokenizer() {
+        let required = carey_component_required_files("Qwen3-Embedding-0.6B").unwrap();
+        assert!(required.contains(&"Qwen3-Embedding-0.6B/model.safetensors"));
+        assert!(required.contains(&"Qwen3-Embedding-0.6B/tokenizer.json"));
+        assert!(required.contains(&"Qwen3-Embedding-0.6B/tokenizer_config.json"));
+    }
+
+    #[test]
+    fn hf_and_foundation_statuses_do_not_trust_stale_success() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-model-status-{}-{unique}",
+            std::process::id()
+        ));
+        let mut manager = ModelManager::new(root);
+        for model_id in [
+            "thepatch/vanya_ai_dnb_0.1",
+            MELODYFLOW_MODEL_ID,
+            "stabilityai/stable-audio-open-small",
+            "stabilityai/stable-audio-3-medium",
+            "foundation::foundation-1",
+        ] {
+            manager.set_download_started(model_id);
+            manager.set_download_done(model_id, None);
+        }
+
+        assert!(manager
+            .get_gary_models()
+            .iter()
+            .all(|model| model.status == ModelStatus::Available));
+        assert_eq!(
+            manager.get_melodyflow_models()[0].status,
+            ModelStatus::Available
+        );
+        assert_eq!(manager.get_jerry_models()[0].status, ModelStatus::Available);
+        assert!(manager
+            .get_sa3_models()
+            .iter()
+            .all(|model| model.status == ModelStatus::Available));
+        assert_eq!(
+            manager.get_foundation_models()[0].status,
+            ModelStatus::Available
+        );
+
+        assert_eq!(
+            known_hf_required_files("thepatch/vanya_ai_dnb_0.1").unwrap(),
+            &["state_dict.bin", "compression_state_dict.bin"]
+        );
+        assert_eq!(
+            known_hf_required_files(MELODYFLOW_MODEL_ID).unwrap(),
+            &["state_dict.bin", "compression_state_dict.bin"]
+        );
+    }
+
+    #[test]
+    fn jerry_finetune_status_rejects_empty_checkpoint_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-jerry-finetune-status-{}-{unique}",
+            std::process::id()
+        ));
+        let manager = ModelManager::new(root);
+        let checkpoint = manager
+            .hf_hub_cache_dir()
+            .join("models--thepatch--jerry-test")
+            .join("snapshots")
+            .join("test-revision")
+            .join("jerry-test.ckpt");
+        std::fs::create_dir_all(checkpoint.parent().unwrap()).unwrap();
+        std::fs::write(&checkpoint, []).unwrap();
+
+        assert!(!manager.is_finetune_file_cached("thepatch/jerry-test", "jerry-test.ckpt"));
+
+        std::fs::write(&checkpoint, b"checkpoint").unwrap();
+        assert!(manager.is_finetune_file_cached("thepatch/jerry-test", "jerry-test.ckpt"));
+
+        let _ = std::fs::remove_dir_all(manager.hf_hub_cache_dir());
     }
 
     #[test]
