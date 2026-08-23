@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.16",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.16/gary4local-rocm_0.2.1-rocm.16_x64-setup.exe",
-    "sha256":  "38855b2d0ff90f89bbca41e4058aa3f24f697099d6b3a0640abe18388559e75b",
-    "published_at":  "2026-08-15T11:06:39.3840728Z",
+    "latest_version":  "0.2.1-rocm.20",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.20/gary4local-rocm_0.2.1-rocm.20_x64-setup.exe",
+    "sha256":  "6a14ac89c89880e2323260e84141f808897cea34d2a87872f6864205837a00f0",
+    "published_at":  "2026-08-17T18:15:59.0993572Z",
     "notes":  [
-                  "foundation-1 should now get past the torch.distributed ReduceOp error.",
-                  "just update, restart gary4local-rocm, and try foundation-1 again. no environment rebuild needed."
+                  "fingers crossed the xformers issue is fixed.",
+                  "no env rebuild needed - just send to gary again."
               ]
 }
