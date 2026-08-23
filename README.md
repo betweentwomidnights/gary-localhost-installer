@@ -15,6 +15,15 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
+## update 8/23
+
+custom runtime storage is now supported. everything should work the same for
+existing users, but now you can move the runtime to an external drive or
+wherever you please, and clean up the legacy storage afterward if you like.
+
+big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
+build while we tried very hard to break it locally.
+
 ## v0.2.1
 
 bugfix for ace-step lora training. the base/xl-base selector was sending names that didn't resolve to real model folders, if you had every model downloaded you never saw this. 
