@@ -1,12 +1,13 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.2.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1/gary4local_0.2.1_x64-setup.exe",
-    "sha256":  "1b4ca854f332a3ef46f1925bc2a5660a9172d0157ad04a28c3b8ebbbd117f853",
-    "published_at":  "2026-08-16T10:47:22.5086641Z",
+    "latest_version":  "0.3.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.0/gary4local_0.3.0_x64-setup.exe",
+    "sha256":  "5c37b5d2b0abec1339e910bda5141a498cc21e76c675d0984093d92c1f6e1b4a",
+    "published_at":  "2026-08-23T20:29:10.4430097Z",
     "notes":  [
-                  "Bugfix for ace-step lora training - the base/xl-base selector was sending names that did not resolve to real model folders.",
-                  "Terry gets a use seed toggle, and no longer converts to 32k before the edit. It hears more detail, but caps at 30 seconds instead of 45.",
-                  "SA3 lora training defaults to 168 layers instead of the full set. Trains faster, and you honestly will not hear a difference. Compatible with gary4juce v4.0.12."
+                  "Custom runtime storage lets fresh installs keep environments, models, caches, logs, and Gary-trained LoRAs beside the app or on another drive.",
+                  "Existing installs keep using their current AppData and Hugging Face storage unless you choose a new location.",
+                  "The storage panel can show disk use and clean up individual environments, models, the UV package cache, duplicated model copies, and old managed storage.",
+                  "Gary now accepts seeded advanced controls and has a safer attention fallback. Compatible with gary4juce v4.0.13."
               ]
 }

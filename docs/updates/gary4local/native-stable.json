@@ -1,11 +1,11 @@
 {
-    "version":  "0.2.1",
-    "notes":  "Bugfix for ace-step lora training - the base/xl-base selector was sending names that did not resolve to real model folders.\nTerry gets a use seed toggle, and no longer converts to 32k before the edit. It hears more detail, but caps at 30 seconds instead of 45.\nSA3 lora training defaults to 168 layers instead of the full set. Trains faster, and you honestly will not hear a difference. Compatible with gary4juce v4.0.12.",
-    "pub_date":  "2026-08-16T10:47:22.5086641Z",
+    "version":  "0.3.0",
+    "notes":  "Custom runtime storage lets fresh installs keep environments, models, caches, logs, and Gary-trained LoRAs beside the app or on another drive.\nExisting installs keep using their current AppData and Hugging Face storage unless you choose a new location.\nThe storage panel can show disk use and clean up individual environments, models, the UV package cache, duplicated model copies, and old managed storage.\nGary now accepts seeded advanced controls and has a safer attention fallback. Compatible with gary4juce v4.0.13.",
+    "pub_date":  "2026-08-23T20:29:10.4430097Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEJLK0NPd043V3MySFQzcG00cEpwKzhDUGV0MHBaVlJ1MXYyTkNNbFN0NFhibnVqWmJQYWl3anRnWGVWMVh3a1I4NFVGVDFZck52Y0QrZDhqdGlJcmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODc3MTQ2CWZpbGU6Z2FyeTRsb2NhbF8wLjIuMV94NjQtc2V0dXAuZXhlCmdXQlpyNzJScFRWUHJTMkFDVTZndW9hcGRxOGErMkNKVTlaUzFiTzVXakpRSTJkL1NIek5jeGExS0ZXL2JobEVSZTdOcXUvZkV3UnM0MjBQamFVNUNRPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1/gary4local_0.2.1_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEUvWHBSeFVlZEJDdHpBZ0Y5dkhuTitKelgyOGp0NE4rMWJsU010YktKcjA0WjJMbmh1VHYwNUZYVG11OW90dGFObS9icnU4aWQwS0kxdW9JaCtVY1FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTE2MDU3CWZpbGU6Z2FyeTRsb2NhbF8wLjMuMF94NjQtc2V0dXAuZXhlCk1iL0tkUVk1SXQyU0ZBZTduTmJWSEtZeUlxV25BeDBnQU5ITjdtSVRCM3pNL3B2TjNsQ0IrVE41WXNnSGJNakszTWFwdHlyK2MvS2FEZ2o0TGVtTkNRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.0/gary4local_0.3.0_x64-setup.exe"
                                          }
                   }
 }
