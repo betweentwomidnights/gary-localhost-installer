@@ -133,7 +133,6 @@ fn default_auto_check_updates() -> bool {
     true
 }
 
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum CloseActionOnX {
@@ -895,10 +894,7 @@ mod bundle_root_tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "gary4local-{label}-{}-{nonce}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("gary4local-{label}-{}-{nonce}", std::process::id()))
     }
 
     #[test]
@@ -1934,10 +1930,7 @@ fn carey_training_checkpoints_in(output_dir: &Path) -> Vec<CareyTrainingCheckpoi
     checkpoints
 }
 
-fn infer_carey_training_metadata(
-    entry: &mut CareyLoraCatalogEntry,
-    training_jobs_root: &Path,
-) {
+fn infer_carey_training_metadata(entry: &mut CareyLoraCatalogEntry, training_jobs_root: &Path) {
     if entry.training_job_id.is_some() || entry.path.is_empty() {
         return;
     }
@@ -6569,9 +6562,7 @@ fn carey_lora_name_availability(name: &str) -> Result<LoraNameAvailability, Stri
 }
 
 #[tauri::command]
-fn get_carey_ace_lora_name_availability(
-    name: String,
-) -> Result<LoraNameAvailability, String> {
+fn get_carey_ace_lora_name_availability(name: String) -> Result<LoraNameAvailability, String> {
     carey_lora_name_availability(&name)
 }
 
@@ -7501,7 +7492,10 @@ mod carey_lora_catalog_tests {
         infer_carey_training_metadata(&mut manual, &jobs_root);
 
         assert_eq!(trained.training_job_id.as_deref(), Some("my-job"));
-        assert_eq!(trained.selected_training_checkpoint.as_deref(), Some("best"));
+        assert_eq!(
+            trained.selected_training_checkpoint.as_deref(),
+            Some("best")
+        );
         assert_eq!(trained.training_checkpoints.len(), 3);
         assert!(manual.training_job_id.is_none());
         assert!(manual.training_checkpoints.is_empty());
@@ -8757,8 +8751,8 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             .map(|(service_id, display_name, env_path, blocked)| {
                 let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
                 let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
-                let blocked_reason = blocked
-                    .or_else(|| (!present).then(|| "no environment installed".to_string()));
+                let blocked_reason =
+                    blocked.or_else(|| (!present).then(|| "no environment installed".to_string()));
                 ServiceEnvInfo {
                     service_id,
                     display_name,
@@ -8948,9 +8942,7 @@ mod service_env_removal_tests {
         // rebuildable environment.
         let checkpoint = services.join("carey").join("checkpoints").join("keep.bin");
         let sibling_env = services.join("sa3").join("env").join("python.exe");
-        let service_source = services
-            .join("melodyflow")
-            .join("localhost_melodyflow.py");
+        let service_source = services.join("melodyflow").join("localhost_melodyflow.py");
         for path in [&env_file, &checkpoint, &sibling_env, &service_source] {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, b"data").unwrap();
