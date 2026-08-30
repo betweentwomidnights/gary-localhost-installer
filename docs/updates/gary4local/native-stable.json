@@ -1,11 +1,11 @@
 {
-    "version":  "0.3.0",
-    "notes":  "Custom runtime storage lets fresh installs keep environments, models, caches, logs, and Gary-trained LoRAs beside the app or on another drive.\nExisting installs keep using their current AppData and Hugging Face storage unless you choose a new location.\nThe storage panel can show disk use and clean up individual environments, models, the UV package cache, duplicated model copies, and old managed storage.\nGary now accepts seeded advanced controls and has a safer attention fallback. Compatible with gary4juce v4.0.13.",
-    "pub_date":  "2026-08-23T20:29:10.4430097Z",
+    "version":  "0.3.1",
+    "notes":  "Adds the optional decoder LoRA used by the remote backend to improve audio-to-audio tasks such as transform and continue.\nImproves continuation quality whether or not the decoder LoRA is enabled. Compatible with gary4juce v4.0.14.",
+    "pub_date":  "2026-08-30T10:00:33.0072800Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEUvWHBSeFVlZEJDdHpBZ0Y5dkhuTitKelgyOGp0NE4rMWJsU010YktKcjA0WjJMbmh1VHYwNUZYVG11OW90dGFObS9icnU4aWQwS0kxdW9JaCtVY1FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3NTE2MDU3CWZpbGU6Z2FyeTRsb2NhbF8wLjMuMF94NjQtc2V0dXAuZXhlCk1iL0tkUVk1SXQyU0ZBZTduTmJWSEtZeUlxV25BeDBnQU5ITjdtSVRCM3pNL3B2TjNsQ0IrVE41WXNnSGJNakszTWFwdHlyK2MvS2FEZ2o0TGVtTkNRPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.0/gary4local_0.3.0_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMENIWUN5RUlrS3cxS2libHNTeTlHYVA5eHJBUERiR1NkQkw3dGVDN1VHaG1YbFBScldmb3QyWmgzVTcyVXE1Y0VlTU5KNjNjQU02bFhaVm1mUzVRTGc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MDg0MDAxCWZpbGU6Z2FyeTRsb2NhbF8wLjMuMV94NjQtc2V0dXAuZXhlCkdDVFJiUmNmeG5vUlh2VHRlU0hlano3U2FHaUVpVmo2Y2JLY3I4ekJzVGFKb0FmaFE0WEp4Q0NmZW05UUtHb2wzMUo1UE9wWDk2VnprZ2dDelNEaENBPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.1/gary4local_0.3.1_x64-setup.exe"
                                          }
                   }
 }

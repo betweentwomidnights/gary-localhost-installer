@@ -1,13 +1,11 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.3.0",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.0/gary4local_0.3.0_x64-setup.exe",
-    "sha256":  "5c37b5d2b0abec1339e910bda5141a498cc21e76c675d0984093d92c1f6e1b4a",
-    "published_at":  "2026-08-23T20:29:10.4430097Z",
+    "latest_version":  "0.3.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.1/gary4local_0.3.1_x64-setup.exe",
+    "sha256":  "1e4716b150b62d1c3caaacbca53768764d185fb4c0c8ef1716dd25b0dab378db",
+    "published_at":  "2026-08-30T10:00:33.0072800Z",
     "notes":  [
-                  "Custom runtime storage lets fresh installs keep environments, models, caches, logs, and Gary-trained LoRAs beside the app or on another drive.",
-                  "Existing installs keep using their current AppData and Hugging Face storage unless you choose a new location.",
-                  "The storage panel can show disk use and clean up individual environments, models, the UV package cache, duplicated model copies, and old managed storage.",
-                  "Gary now accepts seeded advanced controls and has a safer attention fallback. Compatible with gary4juce v4.0.13."
+                  "Adds the optional decoder LoRA used by the remote backend to improve audio-to-audio tasks such as transform and continue.",
+                  "Improves continuation quality whether or not the decoder LoRA is enabled. Compatible with gary4juce v4.0.14."
               ]
 }
