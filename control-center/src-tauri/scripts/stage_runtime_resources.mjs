@@ -33,7 +33,7 @@ const excludedBasenames = new Set([
   'smoke.mp3',
 ]);
 
-const excludedSuffixes = ['.pyc', '.log'];
+const excludedSuffixes = ['.pyc', '.log', '.egg-info'];
 
 const careyExcludedPrefixes = [
   'acestep/docs',

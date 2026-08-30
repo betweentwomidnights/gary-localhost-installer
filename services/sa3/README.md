@@ -57,6 +57,10 @@ training wrapper, then
 copies the final `.safetensors` adapter to `%APPDATA%/Gary4JUCE/sa3/loras` and
 adds it to the existing SA3 LoRA catalog.
 
+The Underfit model registries and training templates used by preprocessing and
+training are tracked under `dashboard/models`, including the medium pack used
+by Gary's current training UI.
+
 Training uses the saved Gary4local Hugging Face token and needs access to
 `stabilityai/stable-audio-3-medium-base`. Adapters are trained against the
 **base** (pre-ARC-distillation) checkpoint and then applied to
