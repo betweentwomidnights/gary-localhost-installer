@@ -197,7 +197,11 @@
     serviceModels.filter((m) => m.size_category === "dit")
   );
   let sa3Models = $derived(
-    serviceModels.filter((m) => m.size_category === "model" || m.size_category === "text")
+    serviceModels.filter((m) =>
+      m.size_category === "model" ||
+      m.size_category === "text" ||
+      m.size_category === "decoder"
+    )
   );
 
   let filteredModels = $derived(
@@ -396,10 +400,11 @@
 
     {:else if isSa3}
       <div class="size-group">
-        <div class="size-label">required components</div>
+        <div class="size-label">models and optional components</div>
         <div class="carey-hint">
-          Download these with the same saved Hugging Face token. Accept each model's access
-          terms, and give fine-grained tokens public gated-repository read access
+          Download the inference model first. The base model is only needed for LoRA training,
+          and the decoder squeak fix is optional. Downloads reuse the saved Hugging Face token.
+          Accept gated model terms and give fine-grained tokens public gated-repository read access
           <TokenPermissionHelp />.
         </div>
         {#each sa3Models as model}

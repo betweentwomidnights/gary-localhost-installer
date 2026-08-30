@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub const MELODYFLOW_MODEL_ID: &str = "facebook/melodyflow-t24-30secs";
+pub const SA3_DECODER_LORA_MODEL_ID: &str = "thepatch/same-l-decoder-lora";
 /// Foundation-1 is a directory of weights rather than a Hugging Face repo, so
 /// it carries a synthetic id.
 pub const FOUNDATION_MODEL_ID: &str = "foundation::foundation-1";
@@ -31,6 +32,9 @@ fn regular_file_nonempty(path: &Path) -> bool {
 }
 
 fn known_hf_required_files(model_id: &str) -> Option<&'static [&'static str]> {
+    if model_id == SA3_DECODER_LORA_MODEL_ID {
+        return Some(&["squeakfix_v3.safetensors"]);
+    }
     if model_id.starts_with("thepatch/") {
         return Some(&["state_dict.bin", "compression_state_dict.bin"]);
     }
@@ -344,6 +348,11 @@ impl ModelManager {
                 "stabilityai/stable-audio-3-medium-base",
                 "Stable Audio 3 Medium Base (LoRA training)",
                 "model",
+            ),
+            (
+                SA3_DECODER_LORA_MODEL_ID,
+                "SAME-L decoder squeak fix",
+                "decoder",
             ),
         ];
 
@@ -1901,7 +1910,7 @@ mod tests {
     use super::{
         carey_component_path, carey_component_required_files, carey_download_source,
         friendly_hf_download_error, hf_repo_downloaded_size, known_hf_required_files, ModelManager,
-        ModelStatus, MELODYFLOW_MODEL_ID,
+        ModelStatus, MELODYFLOW_MODEL_ID, SA3_DECODER_LORA_MODEL_ID,
     };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1956,6 +1965,64 @@ fine-grained token settings to view this repository."#;
         assert_eq!(scrag.service, "carey");
         assert_eq!(scrag.size_category.as_deref(), Some("shared"));
         assert_eq!(scrag.status, ModelStatus::Available);
+    }
+
+    #[test]
+    fn sa3_catalog_includes_decoder_squeak_fix() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_root = std::env::temp_dir().join(format!("gary-sa3-decoder-{unique}"));
+        let manager = ModelManager::new(repo_root);
+
+        let decoder = manager
+            .get_sa3_models()
+            .into_iter()
+            .find(|model| model.id == SA3_DECODER_LORA_MODEL_ID)
+            .expect("decoder squeak fix should be listed in the SA3 catalog");
+
+        assert_eq!(decoder.display_name, "SAME-L decoder squeak fix");
+        assert_eq!(decoder.service, "sa3");
+        assert_eq!(decoder.size_category.as_deref(), Some("decoder"));
+        assert_eq!(decoder.status, ModelStatus::Available);
+        assert_eq!(
+            known_hf_required_files(SA3_DECODER_LORA_MODEL_ID).unwrap(),
+            &["squeakfix_v3.safetensors"]
+        );
+    }
+
+    #[test]
+    fn sa3_decoder_status_requires_its_safetensors_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_root = std::env::temp_dir().join(format!("gary-sa3-decoder-status-{unique}"));
+        let snapshot = repo_root
+            .join("models")
+            .join("huggingface")
+            .join("hub")
+            .join("models--thepatch--same-l-decoder-lora")
+            .join("snapshots")
+            .join("test-revision");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::write(snapshot.join("README.md"), b"not enough").unwrap();
+
+        let manager = ModelManager::new(repo_root.clone());
+        let status = || {
+            manager
+                .get_sa3_models()
+                .into_iter()
+                .find(|model| model.id == SA3_DECODER_LORA_MODEL_ID)
+                .unwrap()
+                .status
+        };
+        assert_eq!(status(), ModelStatus::Available);
+
+        std::fs::write(snapshot.join("squeakfix_v3.safetensors"), b"adapter").unwrap();
+        assert_eq!(status(), ModelStatus::Downloaded);
+        std::fs::remove_dir_all(repo_root).unwrap();
     }
 
     #[test]

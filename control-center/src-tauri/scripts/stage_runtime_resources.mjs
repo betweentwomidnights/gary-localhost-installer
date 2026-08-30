@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -9,6 +10,7 @@ const tauriDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(tauriDir, '..', '..');
 const resourcesDir = path.join(tauriDir, 'resources');
 const stagedServicesDir = path.join(resourcesDir, 'services');
+const bundleStampName = 'bundle-stamp.txt';
 
 const serviceNames = ['gary', 'melodyflow', 'stable-audio', 'sa3', 'carey', 'foundation'];
 
@@ -166,6 +168,38 @@ function copyFileIfPresent(srcPath, dstPath) {
   return true;
 }
 
+function hashTree(rootDir) {
+  const hash = crypto.createHash('sha256');
+
+  function visit(relativePath = '') {
+    const currentDir = relativePath ? path.join(rootDir, relativePath) : rootDir;
+    const entries = fs
+      .readdirSync(currentDir, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      const nextRelativePath = relativePath
+        ? path.join(relativePath, entry.name)
+        : entry.name;
+      if (normalizeRelativePath(nextRelativePath) === bundleStampName) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        visit(nextRelativePath);
+      } else if (entry.isFile()) {
+        hash.update(normalizeRelativePath(nextRelativePath));
+        hash.update('\0');
+        hash.update(fs.readFileSync(path.join(rootDir, nextRelativePath)));
+        hash.update('\0');
+      }
+    }
+  }
+
+  visit();
+  return hash.digest('hex');
+}
+
 function main() {
   log(`repo root: ${repoRoot}`);
   log(`staging into: ${stagedServicesDir}`);
@@ -187,6 +221,14 @@ function main() {
   const sessionStoreSrc = path.join(repoRoot, 'services', 'local_session_store.py');
   const sessionStoreDst = path.join(stagedServicesDir, 'local_session_store.py');
   copyFileIfPresent(sessionStoreSrc, sessionStoreDst);
+
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, 'control-center', 'package.json'), 'utf8'),
+  );
+  const contentHash = hashTree(stagedServicesDir);
+  const bundleStamp = `${packageJson.version}:${contentHash}`;
+  fs.writeFileSync(path.join(stagedServicesDir, bundleStampName), `${bundleStamp}\n`);
+  log(`service bundle stamp: ${packageJson.version}:${contentHash.slice(0, 12)}`);
 
   const repoIcon = path.join(repoRoot, 'icon.png');
   const stagedIcon = path.join(resourcesDir, 'icon.png');

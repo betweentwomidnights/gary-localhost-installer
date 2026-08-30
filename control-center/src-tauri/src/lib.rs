@@ -40,6 +40,14 @@ struct Sa3LoudnessSettings {
     latent_target_std: String,
     #[serde(default = "default_sa3_continuation_tail_pad")]
     continuation_tail_pad: String,
+    #[serde(default = "default_sa3_continuation_splice_source")]
+    continuation_splice_source: bool,
+    #[serde(default = "default_sa3_continuation_splice_xfade")]
+    continuation_splice_xfade: String,
+    #[serde(default = "default_sa3_continuation_splice_gain_match")]
+    continuation_splice_gain_match: bool,
+    #[serde(default = "default_sa3_continuation_mask_overlap")]
+    continuation_mask_overlap: String,
 }
 
 impl Default for Sa3LoudnessSettings {
@@ -51,6 +59,10 @@ impl Default for Sa3LoudnessSettings {
             latent_shift: default_sa3_latent_shift(),
             latent_target_std: String::new(),
             continuation_tail_pad: default_sa3_continuation_tail_pad(),
+            continuation_splice_source: default_sa3_continuation_splice_source(),
+            continuation_splice_xfade: default_sa3_continuation_splice_xfade(),
+            continuation_splice_gain_match: default_sa3_continuation_splice_gain_match(),
+            continuation_mask_overlap: default_sa3_continuation_mask_overlap(),
         }
     }
 }
@@ -75,6 +87,22 @@ fn default_sa3_continuation_tail_pad() -> String {
     "6".to_string()
 }
 
+fn default_sa3_continuation_splice_source() -> bool {
+    true
+}
+
+fn default_sa3_continuation_splice_xfade() -> String {
+    "0.03".to_string()
+}
+
+fn default_sa3_continuation_splice_gain_match() -> bool {
+    true
+}
+
+fn default_sa3_continuation_mask_overlap() -> String {
+    "0.2".to_string()
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoudnessSettingsPatch {
@@ -90,6 +118,14 @@ struct Sa3LoudnessSettingsPatch {
     latent_target_std: Option<String>,
     #[serde(default)]
     continuation_tail_pad: Option<String>,
+    #[serde(default)]
+    continuation_splice_source: Option<bool>,
+    #[serde(default)]
+    continuation_splice_xfade: Option<String>,
+    #[serde(default)]
+    continuation_splice_gain_match: Option<bool>,
+    #[serde(default)]
+    continuation_mask_overlap: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +139,8 @@ struct AppSettings {
     carey_use_xl_models: bool,
     #[serde(default)]
     carey_use_scrag_vae: bool,
+    #[serde(default)]
+    sa3_use_decoder_lora: bool,
     #[serde(default)]
     sa3_loudness: Sa3LoudnessSettings,
     #[serde(default)]
@@ -122,6 +160,7 @@ impl Default for AppSettings {
             gary_use_fp16: false,
             carey_use_xl_models: false,
             carey_use_scrag_vae: false,
+            sa3_use_decoder_lora: false,
             sa3_loudness: Sa3LoudnessSettings::default(),
             close_action_on_x: CloseActionOnX::Ask,
             auto_check_updates: default_auto_check_updates(),
@@ -161,6 +200,8 @@ struct AppSettingsPatch {
     carey_use_xl_models: Option<bool>,
     #[serde(default)]
     carey_use_scrag_vae: Option<bool>,
+    #[serde(default)]
+    sa3_use_decoder_lora: Option<bool>,
     #[serde(default)]
     sa3_loudness: Option<Sa3LoudnessSettingsPatch>,
     #[serde(default)]
@@ -891,7 +932,7 @@ fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf,
 
 #[cfg(test)]
 mod bundle_root_tests {
-    use super::resolve_bundle_root_from_resource_dir;
+    use super::{compute_bundle_sync_stamp, resolve_bundle_root_from_resource_dir};
 
     fn temp_root(label: &str) -> std::path::PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -926,6 +967,19 @@ mod bundle_root_tests {
         let resolved = resolve_bundle_root_from_resource_dir(&root).unwrap();
 
         assert_eq!(resolved, root);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn service_content_stamp_refreshes_same_version_bundles() {
+        let root = temp_root("bundle-content-stamp-test");
+        let services = root.join("services");
+        std::fs::create_dir_all(&services).unwrap();
+        std::fs::write(services.join("bundle-stamp.txt"), "0.3.1:content-hash\n").unwrap();
+
+        let stamp = compute_bundle_sync_stamp(&root).unwrap();
+
+        assert_eq!(stamp, "0.3.1:content-hash");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -979,8 +1033,18 @@ fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
         ));
     }
 
-    // Bundled resources are immutable within a released app version. Avoid
-    // synchronously reading hundreds of files before the window can respond.
+    // Release staging hashes service contents once at build time. Reading the
+    // tiny stamp here keeps startup fast while allowing same-version QA builds
+    // to refresh corrected service code.
+    let content_stamp_path = services_dir.join("bundle-stamp.txt");
+    if let Ok(content_stamp) = std::fs::read_to_string(&content_stamp_path) {
+        let content_stamp = content_stamp.trim();
+        if !content_stamp.is_empty() {
+            return Ok(content_stamp.to_string());
+        }
+    }
+
+    // Compatibility fallback for older development resource trees.
     Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
@@ -1202,6 +1266,18 @@ fn merge_sa3_loudness_settings(current: &mut Sa3LoudnessSettings, patch: Sa3Loud
     if let Some(value) = patch.continuation_tail_pad {
         current.continuation_tail_pad = clean_setting_value(value);
     }
+    if let Some(value) = patch.continuation_splice_source {
+        current.continuation_splice_source = value;
+    }
+    if let Some(value) = patch.continuation_splice_xfade {
+        current.continuation_splice_xfade = clean_setting_value(value);
+    }
+    if let Some(value) = patch.continuation_splice_gain_match {
+        current.continuation_splice_gain_match = value;
+    }
+    if let Some(value) = patch.continuation_mask_overlap {
+        current.continuation_mask_overlap = clean_setting_value(value);
+    }
 }
 
 fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
@@ -1221,6 +1297,10 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(carey_use_scrag_vae) = patch.carey_use_scrag_vae {
         current.carey_use_scrag_vae = carey_use_scrag_vae;
+    }
+
+    if let Some(sa3_use_decoder_lora) = patch.sa3_use_decoder_lora {
+        current.sa3_use_decoder_lora = sa3_use_decoder_lora;
     }
 
     if let Some(sa3_loudness) = patch.sa3_loudness {
@@ -2593,6 +2673,7 @@ fn known_legacy_hf_repos() -> &'static [&'static str] {
         "thepatch/keygen-gary-v2-large-12",
         "thepatch/keygen-gary-v2-large-16",
         model_manager::MELODYFLOW_MODEL_ID,
+        model_manager::SA3_DECODER_LORA_MODEL_ID,
         "stabilityai/stable-audio-open-small",
         "stabilityai/stable-audio-3-medium",
         "stabilityai/stable-audio-3-medium-base",
@@ -2733,6 +2814,60 @@ fn build_legacy_cleanup_items(
     }
 
     items
+}
+
+#[cfg(test)]
+mod legacy_hf_storage_tests {
+    use super::{build_legacy_cleanup_items, known_legacy_hf_repos, legacy_hf_cache_folder};
+    use crate::model_manager::SA3_DECODER_LORA_MODEL_ID;
+    use std::path::Path;
+
+    #[test]
+    fn decoder_lora_is_owned_by_legacy_hugging_face_cleanup() {
+        assert!(known_legacy_hf_repos().contains(&SA3_DECODER_LORA_MODEL_ID));
+        assert_eq!(
+            legacy_hf_cache_folder(
+                Path::new("C:\\Users\\gary\\.cache\\huggingface"),
+                SA3_DECODER_LORA_MODEL_ID,
+            ),
+            Path::new("C:\\Users\\gary\\.cache\\huggingface")
+                .join("hub")
+                .join("models--thepatch--same-l-decoder-lora")
+        );
+    }
+
+    #[test]
+    fn moved_storage_inventory_finds_a_legacy_decoder_snapshot() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gary4local-legacy-decoder-cleanup-{}-{unique}",
+            std::process::id()
+        ));
+        let active_root = root.join("custom-runtime");
+        let legacy_root = root.join("legacy-runtime");
+        let hf_root = root.join("user-cache").join("huggingface");
+        let checkpoint = legacy_hf_cache_folder(&hf_root, SA3_DECODER_LORA_MODEL_ID)
+            .join("snapshots")
+            .join("commit")
+            .join("squeakfix_v3.safetensors");
+        std::fs::create_dir_all(checkpoint.parent().unwrap()).unwrap();
+        std::fs::write(&checkpoint, b"decoder").unwrap();
+
+        let items = build_legacy_cleanup_items(&active_root, &legacy_root, &hf_root);
+        let decoder = items
+            .iter()
+            .find(|item| item.label.contains(SA3_DECODER_LORA_MODEL_ID))
+            .expect("decoder LoRA cache should be offered for legacy cleanup");
+        assert!(decoder
+            .path
+            .ends_with("models--thepatch--same-l-decoder-lora"));
+        assert_eq!(decoder.bytes, 7);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 fn path_prefix_key(path: &Path) -> String {
@@ -4806,6 +4941,10 @@ pub(crate) fn carey_use_scrag_vae_enabled() -> bool {
     read_app_settings().carey_use_scrag_vae
 }
 
+pub(crate) fn sa3_use_decoder_lora_enabled() -> bool {
+    read_app_settings().sa3_use_decoder_lora
+}
+
 pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
     let settings = read_app_settings().sa3_loudness;
     let tail_pad = settings.continuation_tail_pad;
@@ -4817,6 +4956,30 @@ pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
         ("SA3_LATENT_TARGET_STD", settings.latent_target_std),
         ("SA3_TAIL_PAD_SECONDS", tail_pad.clone()),
         ("SA3_CONTINUE_TAIL_PAD", tail_pad),
+        (
+            "SA3_CONTINUE_SPLICE_SOURCE",
+            if settings.continuation_splice_source {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            },
+        ),
+        (
+            "SA3_CONTINUE_SPLICE_XFADE",
+            settings.continuation_splice_xfade,
+        ),
+        (
+            "SA3_CONTINUE_SPLICE_GAIN_MATCH",
+            if settings.continuation_splice_gain_match {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            },
+        ),
+        (
+            "SA3_CONTINUE_MASK_OVERLAP",
+            settings.continuation_mask_overlap,
+        ),
     ]
 }
 

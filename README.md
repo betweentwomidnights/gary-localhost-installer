@@ -23,6 +23,18 @@ bugfix for ace-step lora training. the base/xl-base selector was sending names t
 
 sa3 lora trainer now defaults to 168 layers instead of the full 228 just like the underfit repo. it trains faster and you honestly won't hear a difference in practice. there's also a drop down now to select the 4B ace-step captioner if you have the GPU and really want to for auto-labelling.
 
+## pending ROCm sync
+
+SA3 can download and enable the optional SAME-L decoder squeak-fix LoRA. It is
+merged into the decoder when the model loads, separately from selectable style
+LoRAs.
+
+Chained SA3 continuations can restore the original source over the kept head,
+with RMS matching, a short equal-power crossfade, and a configurable in-source
+mask overlap. These stages run before peak normalization and limiting. The
+advanced output panel exposes the splice controls and keeps the existing
+continuation-tail behavior user-selectable.
+
 compatible with [gary4juce v4.0.12](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.12).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).

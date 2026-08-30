@@ -25,6 +25,20 @@ permission to the token automatically.
 The service health endpoint does not load or download the model. First load
 happens when `/load` or a generation endpoint is called.
 
+## Decoder squeak fix
+
+The control center can optionally load
+[`thepatch/same-l-decoder-lora`](https://huggingface.co/thepatch/same-l-decoder-lora)
+as a SAME-L decoder fix. Download it from SA3's model panel, then enable the
+decoder toggle. `SA3_USE_DECODER_LORA=1` is the equivalent service setting.
+
+This adapter is separate from the user LoRA registry: it targets the
+autoencoder decoder rather than the DiT. SA3 merges it into the decoder once at
+model load, then attaches registered user LoRAs with their normal indices. That
+preserves the stock per-generation decode path and allows a separately
+registered decoder LoRA to remain live. The `/health` response reports both
+`decoder_lora_enabled` and `decoder_lora_active`.
+
 ## LoRA endpoints
 
 - `GET /loras` returns configured LoRAs.
@@ -112,6 +126,10 @@ advanced "sa3 output shaping" panel:
 - `latent_target_std` / `SA3_LATENT_TARGET_STD`, default off
 - `tail_pad_seconds` / `SA3_TAIL_PAD_SECONDS`, default `6`
 - `continuation_tail_pad` / `SA3_CONTINUE_TAIL_PAD`, default `6`, compatibility alias
+- `splice_source` / `SA3_CONTINUE_SPLICE_SOURCE`, default on
+- `splice_xfade` / `SA3_CONTINUE_SPLICE_XFADE`, default `0.03`
+- `splice_gain_match` / `SA3_CONTINUE_SPLICE_GAIN_MATCH`, default on
+- `mask_overlap` / `SA3_CONTINUE_MASK_OVERLAP`, default `0.2`
 
 Use `off` for dB fields to disable that stage. A positive peak-normalize target
 is intended to be paired with the limiter.
@@ -119,3 +137,18 @@ is intended to be paired with the limiter.
 `tail_pad_seconds` applies to text generation and continuation. The service
 generates with that extra ending headroom, then trims the returned WAV to the
 requested duration. It is not used for normal audio-to-audio transform.
+
+For both continuation modes, the continuation mask starts 0.2 seconds before
+the source ends by default. This overlap gives the model room to regenerate the
+handoff instead of starting from a hard boundary. Source splicing restores the
+original input only up to that adjusted mask start, then blends its last 30 ms
+into the decoded continuation with an equal-power crossfade. The deliberately
+regenerated overlap is never pasted over.
+
+Mask overlap always retains at least 50 ms of real source. Optional RMS matching
+is applied only when both sides are non-silent and is clamped to 0.25x-4x. The
+splice runs immediately after
+decode and before peak normalization and limiting, so the complete output
+receives the same final loudness treatment. `/continue` echoes the requested
+settings, while `meta.continue` reports the applied mask overlap, mask start,
+splice end, crossfade, and gain values.
