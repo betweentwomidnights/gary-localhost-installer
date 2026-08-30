@@ -34,6 +34,12 @@ Runtime service stamps now include a build-time content hash as well as the app
 version. Corrected QA installers refresh bundled backend code even when their
 semantic version has not changed, while preserving environments and models.
 
+SA3's Underfit model registries and training templates are now tracked instead
+of being supplied by an ignored local dashboard folder, making clean Git
+checkouts and release-builder checkouts produce the same training bundle.
+Generated Python `*.egg-info` directories are also excluded from runtime
+staging so local editable installs cannot leak build metadata into a release.
+
 ## shared custom-runtime baseline
 
 ### custom runtime storage

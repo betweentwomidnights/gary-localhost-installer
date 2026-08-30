@@ -48,6 +48,8 @@ services/**/checkpoints/
 # Most service-level models/ folders are runtime assets, but a few are
 # source-code trees that define model architectures and loaders.
 services/**/models/
+!services/sa3/dashboard/models/
+!services/sa3/dashboard/models/**
 !services/carey/acestep/models/
 !services/carey/acestep/models/**
 !services/stable-audio/stable_audio_tools/models/
