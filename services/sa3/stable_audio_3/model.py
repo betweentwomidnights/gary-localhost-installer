@@ -94,6 +94,13 @@ class StableAudioModel:
     def set_lora_strength(self, strength: float, lora_index: int | None = None):
         _set_lora_strength(self.model.model, strength, lora_index=lora_index)
         _set_lora_strength(self.model.conditioner, strength, lora_index=lora_index)
+        autoencoder = getattr(
+            getattr(self.model, "pretransform", None), "model", None
+        )
+        for half in ("encoder", "decoder"):
+            module = getattr(autoencoder, half, None)
+            if module is not None:
+                _set_lora_strength(module, strength, lora_index=lora_index)
 
     @torch.inference_mode()
     def generate(

@@ -32,8 +32,11 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 try:
-    from huggingface_hub import login
+    from huggingface_hub import constants as hf_constants
+    from huggingface_hub import hf_hub_download, login
 except Exception:  # pragma: no cover - import diagnostics are surfaced at load time
+    hf_constants = None
+    hf_hub_download = None
     login = None
 
 from stable_audio_3 import StableAudioModel
@@ -44,6 +47,7 @@ from stable_audio_3.inference.distribution_shift import (
     LogSNRShift,
 )
 from stable_audio_3.inference.decode_utils import align_latents_for_decode
+from stable_audio_3.models.lora import get_lora_layers, merge_lora
 
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -79,6 +83,14 @@ LORA_REGISTRY_PATH = os.environ.get("SA3_LORA_REGISTRY") or os.path.join(
     Path(PROMPTS_DIR).resolve().parent, "lora_registry.json"
 )
 DEFAULT_LORA_NAME = os.environ.get("SA3_DEFAULT_LORA", "").strip()
+USE_DECODER_LORA = os.environ.get("SA3_USE_DECODER_LORA", "0") != "0"
+DECODER_LORA_REPO = os.environ.get(
+    "SA3_DECODER_LORA_REPO", "thepatch/same-l-decoder-lora"
+).strip()
+DECODER_LORA_FILENAME = os.environ.get(
+    "SA3_DECODER_LORA_FILENAME", "squeakfix_v3.safetensors"
+).strip()
+DECODER_LORA_PATH = os.environ.get("SA3_DECODER_LORA_PATH", "").strip()
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(PROMPTS_DIR, exist_ok=True)
 
@@ -99,6 +111,13 @@ def env_optional_float(name: str, default: float | None = None) -> float | None:
     return float(raw)
 
 
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 LATENT_DIAG = os.environ.get("SA3_LATENT_DIAG", "0") != "0"
 LATENT_RESCALE = float(os.environ.get("SA3_LATENT_RESCALE", "1.0"))
 LATENT_SHIFT = float(os.environ.get("SA3_LATENT_SHIFT", "0.0"))
@@ -110,6 +129,13 @@ LIMITER_CEILING_DB = env_optional_float("SA3_LIMITER_CEILING_DB", -0.3)
 if LIMITER_CEILING_DB is not None and LIMITER_CEILING_DB > 0.0:
     LIMITER_CEILING_DB = None
 LIMITER_KNEE = float(os.environ.get("SA3_LIMITER_KNEE", "0.8"))
+CONTINUE_SPLICE_SOURCE = env_bool("SA3_CONTINUE_SPLICE_SOURCE", True)
+CONTINUE_SPLICE_XFADE = float(os.environ.get("SA3_CONTINUE_SPLICE_XFADE", "0.03"))
+CONTINUE_SPLICE_GAIN_MATCH = env_bool("SA3_CONTINUE_SPLICE_GAIN_MATCH", True)
+CONTINUE_MASK_OVERLAP = max(
+    0.0, float(os.environ.get("SA3_CONTINUE_MASK_OVERLAP", "0.2"))
+)
+MIN_CONTINUATION_SOURCE_SECONDS = 0.05
 
 # A ceiling, not a fixed allocation: StableAudioModel adapts this down to the
 # requested duration. It prevents the upstream 120s default cap from clipping
@@ -135,6 +161,7 @@ model_sample_rate = OUTPUT_SAMPLE_RATE
 model_device: str | None = None
 lora_registry: list[tuple[str, str]] = []
 lora_name_to_index: dict[str, int] = {}
+decoder_lora_active = False
 
 
 def cuda_mem_mb() -> dict[str, float] | None:
@@ -241,6 +268,71 @@ def configured_loras() -> list[tuple[str, str]]:
     return registry_entries if registry_entries else scan_lora_dir()
 
 
+def cached_hf_snapshot_file(
+    repo_id: str,
+    filename: str,
+    cache_dir: str | Path | None = None,
+) -> str | None:
+    """Find a file in any complete commit-pinned Hugging Face snapshot."""
+    if cache_dir is None:
+        if hf_constants is None:
+            return None
+        cache_dir = hf_constants.HF_HUB_CACHE
+
+    snapshots = (
+        Path(cache_dir)
+        / f"models--{repo_id.replace('/', '--')}"
+        / "snapshots"
+    )
+    try:
+        candidates = [
+            snapshot / filename
+            for snapshot in snapshots.iterdir()
+            if snapshot.is_dir()
+            and (snapshot / filename).is_file()
+            and (snapshot / filename).stat().st_size > 0
+        ]
+        if not candidates:
+            return None
+        newest = max(candidates, key=lambda path: path.stat().st_mtime_ns)
+        return str(newest.resolve())
+    except OSError:
+        return None
+
+
+def configured_decoder_lora() -> str | None:
+    """Resolve the managed squeak-fix adapter without triggering a download."""
+    if not USE_DECODER_LORA:
+        return None
+
+    if DECODER_LORA_PATH:
+        path = Path(DECODER_LORA_PATH).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"decoder LoRA was not found at {path}")
+        return str(path)
+
+    cached_path = cached_hf_snapshot_file(
+        DECODER_LORA_REPO, DECODER_LORA_FILENAME
+    )
+    if cached_path:
+        return cached_path
+
+    if hf_hub_download is None:
+        raise RuntimeError("huggingface_hub is unavailable; rebuild the SA3 environment")
+
+    try:
+        return hf_hub_download(
+            repo_id=DECODER_LORA_REPO,
+            filename=DECODER_LORA_FILENAME,
+            local_files_only=True,
+        )
+    except Exception as exc:
+        raise FileNotFoundError(
+            "the SA3 decoder squeak fix is enabled but not downloaded. "
+            "Download it from SA3 Models, then restart SA3."
+        ) from exc
+
+
 def lora_payload(entries: list[tuple[str, str]]) -> list[dict[str, Any]]:
     return [{"index": i, "name": name, "path": path} for i, (name, path) in enumerate(entries)]
 
@@ -280,7 +372,7 @@ def friendly_load_error(error: Exception) -> str:
 def load_pipeline(force: bool = False) -> StableAudioModel:
     global pipe, model_loaded, model_loading, model_error, last_load_seconds
     global model_sample_rate, model_device
-    global lora_registry, lora_name_to_index
+    global lora_registry, lora_name_to_index, decoder_lora_active
 
     with model_lock:
         if pipe is not None and not force:
@@ -291,6 +383,7 @@ def load_pipeline(force: bool = False) -> StableAudioModel:
         if force:
             pipe = None
             model_loaded = False
+            decoder_lora_active = False
             cleanup_cuda()
 
         started = time.time()
@@ -300,12 +393,46 @@ def load_pipeline(force: bool = False) -> StableAudioModel:
             loaded = StableAudioModel.from_pretrained(MODEL_NAME, model_half=MODEL_HALF)
 
             registry = configured_loras()
+            decoder_lora_path = configured_decoder_lora()
+            if decoder_lora_path:
+                print(
+                    f"[sa3] loading managed decoder squeak fix: "
+                    f"{decoder_lora_path}"
+                )
+                loaded.load_lora([decoder_lora_path])
+
+                decoder = loaded.model.pretransform.model.decoder
+                layer_count = len(get_lora_layers(decoder))
+                if layer_count == 0:
+                    raise RuntimeError(
+                        "decoder squeak-fix checkpoint attached no LoRA layers"
+                    )
+                # Bake the adapter once at model load. The decoder then runs the
+                # same operations as stock inference, with no parametrization
+                # overhead on every render.
+                merge_lora(decoder)
+                decoder_lora_active = True
+                print(
+                    f"[sa3] merged decoder squeak fix from {decoder_lora_path} "
+                    f"({layer_count} adapted layers)"
+                )
+
+                # The managed decoder adapter is not part of the user-facing
+                # registry. Clear its loader bookkeeping before attaching user
+                # adapters so their indices still start at zero. Loading them
+                # after the merge also preserves any user-supplied decoder LoRA.
+                loaded.model.lora_names = []
+                loaded.model.use_lora = False
+
             if registry:
                 paths = [path for _, path in registry]
-                print(f"[sa3] preloading {len(paths)} LoRA(s): {[name for name, _ in registry]}")
+                print(
+                    f"[sa3] preloading {len(registry)} user LoRA(s): "
+                    f"{[name for name, _ in registry]}"
+                )
                 loaded.load_lora(paths)
             else:
-                print(f"[sa3] no LoRA files configured")
+                print("[sa3] no user LoRA files configured")
 
             lora_registry = registry
             lora_name_to_index = {name: i for i, (name, _) in enumerate(registry)}
@@ -321,6 +448,7 @@ def load_pipeline(force: bool = False) -> StableAudioModel:
             return loaded
         except Exception as exc:
             model_loaded = False
+            decoder_lora_active = False
             model_error = friendly_load_error(exc)
             print(f"[sa3] model load failed: {model_error}")
             traceback.print_exc()
@@ -330,12 +458,13 @@ def load_pipeline(force: bool = False) -> StableAudioModel:
 
 
 def unload_pipeline() -> dict[str, Any]:
-    global pipe, model_loaded, model_error
+    global pipe, model_loaded, model_error, decoder_lora_active
     with model_lock:
         before = cuda_mem_mb()
         pipe = None
         model_loaded = False
         model_error = None
+        decoder_lora_active = False
         cleanup_cuda()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -425,6 +554,21 @@ def parse_optional_float(data: dict[str, Any], key: str, default: float | None) 
     return float(raw)
 
 
+def parse_bool(data: dict[str, Any], key: str, default: bool) -> bool:
+    raw = data.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return bool(raw)
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"", "0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{key} must be a boolean")
+
+
 def parse_tail_pad(data: dict[str, Any], default: float = TAIL_PAD_SECONDS) -> float:
     for key in ("tail_pad_seconds", "tail_pad", "continuation_tail_pad"):
         raw = data.get(key)
@@ -472,6 +616,32 @@ def loudness_params(data: dict[str, Any]) -> dict[str, Any]:
             LIMITER_KNEE,
         ),
     }
+
+
+def continuation_splice_params(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "splice_source": parse_bool(
+            data, "splice_source", CONTINUE_SPLICE_SOURCE
+        ),
+        "splice_xfade": parse_float(
+            data, "splice_xfade", CONTINUE_SPLICE_XFADE
+        ),
+        "splice_gain_match": parse_bool(
+            data, "splice_gain_match", CONTINUE_SPLICE_GAIN_MATCH
+        ),
+        "mask_overlap": parse_float(
+            data, "mask_overlap", CONTINUE_MASK_OVERLAP
+        ),
+    }
+
+
+def continuation_mask_bounds(
+    source_duration: float, requested_overlap: float
+) -> tuple[float, float]:
+    """Return the in-source regeneration overlap and resulting mask start."""
+    max_overlap = max(0.0, source_duration - MIN_CONTINUATION_SOURCE_SECONDS)
+    overlap = min(max_overlap, max(0.0, requested_overlap))
+    return overlap, max(0.0, source_duration - overlap)
 
 
 def resolve_seed(data: dict[str, Any]) -> int:
@@ -543,6 +713,15 @@ def validate_common(data: dict[str, Any], require_duration: bool = True) -> list
     except (TypeError, ValueError):
         errors.append("loudness fields must be numbers, empty, or off")
 
+    try:
+        splice = continuation_splice_params(data)
+        if splice["splice_xfade"] < 0 or splice["splice_xfade"] > 1.0:
+            errors.append("splice_xfade must be in [0, 1] seconds")
+        if splice["mask_overlap"] < 0:
+            errors.append("mask_overlap must be >= 0 seconds")
+    except (TypeError, ValueError):
+        errors.append("splice fields must be valid booleans and numbers")
+
     return errors
 
 
@@ -601,6 +780,7 @@ def common_params(data: dict[str, Any], duration: float | None = None) -> dict[s
         "lora": data.get("lora"),
         "lora_strength": data.get("lora_strength"),
         **loudness_params(data),
+        **continuation_splice_params(data),
     }
 
 
@@ -637,6 +817,102 @@ def apply_target_length(audio: torch.Tensor, target_samples: int | None) -> torc
     return audio
 
 
+def splice_continuation_source(
+    audio: torch.Tensor,
+    source_audio: tuple[int, torch.Tensor] | None,
+    mask_start_seconds: float,
+    sample_rate: int,
+    xfade_seconds: float,
+    gain_match: bool,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Restore the original continuation head before output-level shaping."""
+    meta: dict[str, Any] = {
+        "splice_applied": False,
+        "splice_end_seconds": 0.0,
+        "splice_xfade_applied": 0.0,
+        "splice_gain": 1.0,
+    }
+    if source_audio is None or mask_start_seconds <= 0 or audio.shape[-1] <= 0:
+        return audio, meta
+
+    source_rate, source = source_audio
+    if source.dim() == 2:
+        source = source.unsqueeze(0)
+    if source.dim() != 3:
+        raise ValueError("continuation source must have shape [channels, samples]")
+
+    source = source.to(torch.float32)
+    if source_rate != sample_rate:
+        source = torchaudio.functional.resample(source, source_rate, sample_rate)
+
+    output_channels = audio.shape[1]
+    source_channels = source.shape[1]
+    if source_channels != output_channels:
+        if output_channels == 1:
+            source = source.mean(dim=1, keepdim=True)
+        elif source_channels == 1:
+            source = source.repeat(1, output_channels, 1)
+        else:
+            source = source.mean(dim=1, keepdim=True).repeat(1, output_channels, 1)
+
+    if source.shape[0] != audio.shape[0]:
+        if source.shape[0] != 1:
+            raise ValueError("continuation source batch does not match decoded audio")
+        source = source.repeat(audio.shape[0], 1, 1)
+    source = source.to(device=audio.device, dtype=audio.dtype)
+
+    splice_end = min(
+        round(mask_start_seconds * sample_rate),
+        source.shape[-1],
+        audio.shape[-1],
+    )
+    if splice_end <= 0:
+        return audio, meta
+
+    xfade = min(
+        max(0, round(xfade_seconds * sample_rate)),
+        splice_end // 2,
+    )
+    hard_end = splice_end - xfade
+    gain = 1.0
+    if gain_match:
+        source_rms = source[..., :splice_end].square().mean().sqrt().item()
+        model_rms = audio[..., :splice_end].square().mean().sqrt().item()
+        if source_rms > 1e-6 and model_rms > 1e-6:
+            gain = min(4.0, max(0.25, model_rms / source_rms))
+            source = source * gain
+
+    output = audio.clone()
+    if hard_end > 0:
+        output[..., :hard_end] = source[..., :hard_end]
+    if xfade == 1:
+        output[..., hard_end:splice_end] = audio[..., hard_end:splice_end]
+    elif xfade > 1:
+        phase = torch.linspace(
+            0.0,
+            math.pi / 2.0,
+            xfade,
+            device=audio.device,
+            dtype=audio.dtype,
+        ).view(1, 1, -1)
+        source_fade = torch.cos(phase)
+        model_fade = torch.sin(phase)
+        output[..., hard_end:splice_end] = (
+            source[..., hard_end:splice_end] * source_fade
+            + audio[..., hard_end:splice_end] * model_fade
+        )
+
+    meta.update(
+        {
+            "splice_applied": True,
+            "splice_end_seconds": round(splice_end / sample_rate, 6),
+            "splice_xfade_applied": round(xfade / sample_rate, 6),
+            "splice_gain": round(gain, 6),
+        }
+    )
+    return output, meta
+
+
 def loudness_meta_from_params(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "latent_rescale": params["latent_rescale"],
@@ -659,6 +935,7 @@ def loudness_meta_from_params(params: dict[str, Any]) -> dict[str, Any]:
 def should_use_loudness_latent_path(params: dict[str, Any]) -> bool:
     return (
         LATENT_DIAG
+        or (params.get("mode") == "continue" and params.get("splice_source"))
         or params["latent_rescale"] != 1.0
         or params["latent_shift"] != 0.0
         or params["latent_target_std"] is not None
@@ -724,6 +1001,26 @@ def apply_loudness_chain(
     )
     audio = pretransform.decode(latents).float()
 
+    if params.get("mode") == "continue" and params.get("splice_source"):
+        audio, splice_meta = splice_continuation_source(
+            audio,
+            params.get("inpaint_audio"),
+            float(params.get("inpaint_mask_start_seconds") or 0.0),
+            sample_rate,
+            params["splice_xfade"],
+            params["splice_gain_match"],
+        )
+        continuation = params.get("continue")
+        if isinstance(continuation, dict):
+            continuation.update(splice_meta)
+        if splice_meta["splice_applied"]:
+            print(
+                f"[{session_id}] continue splice: kept "
+                f"0-{splice_meta['splice_end_seconds']:.3f}s "
+                f"xfade {splice_meta['splice_xfade_applied'] * 1000:.0f}ms "
+                f"gain {splice_meta['splice_gain']:.3f}"
+            )
+
     if not params.get("target_samples"):
         keep = int(params["duration"] * sample_rate)
         if audio.shape[-1] > keep:
@@ -787,7 +1084,7 @@ def generation_worker(session_id: str, params: dict[str, Any]) -> None:
                     "lora_strength": params.get("lora_strength"),
                 }
             )
-            loaded_lora_count = len(getattr(local_pipe.model, "lora_names", []))
+            loaded_lora_count = len(lora_registry)
             requested_loras = {config["lora_index"]: config for config in loras}
             for idx in range(loaded_lora_count):
                 strength = requested_loras.get(idx, {}).get("strength", 0.0)
@@ -844,7 +1141,7 @@ def generation_worker(session_id: str, params: dict[str, Any]) -> None:
                     audio_sample_size,
                     None,
                 )
-                prefix_samples = round(cont["source_duration"] * sr)
+                prefix_samples = round(cont["mask_start_seconds"] * sr)
                 prefix_tokens = min(
                     latent_len,
                     max(1, round(prefix_samples / downsampling_ratio)),
@@ -938,6 +1235,8 @@ def health():
             "model_loading": model_loading,
             "model_error": model_error,
             "last_load_seconds": last_load_seconds,
+            "decoder_lora_enabled": USE_DECODER_LORA,
+            "decoder_lora_active": decoder_lora_active,
             "loras": lora_payload(lora_registry if model_loaded else configured_loras()),
             "hf_token_configured": hf_token_configured(),
             "gate_links": SA3_MODEL_LINKS,
@@ -957,6 +1256,10 @@ def health():
                 "tail_pad_seconds": TAIL_PAD_SECONDS,
                 "continuation_tail_mode": CONTINUE_TAIL_MODE,
                 "continuation_tail_pad": CONTINUE_TAIL_PAD,
+                "continuation_splice_source": CONTINUE_SPLICE_SOURCE,
+                "continuation_splice_xfade": CONTINUE_SPLICE_XFADE,
+                "continuation_splice_gain_match": CONTINUE_SPLICE_GAIN_MATCH,
+                "continuation_mask_overlap": CONTINUE_MASK_OVERLAP,
             },
         }
     )
@@ -1297,6 +1600,9 @@ def continue_audio():
 
     target_samples = round(total_duration * OUTPUT_SAMPLE_RATE)
     params = common_params(data, duration=gen_duration)
+    mask_overlap, mask_start = continuation_mask_bounds(
+        source_duration, params["mask_overlap"]
+    )
     requested_sampler_type = None
     if mode == "latent_prefix" and params["sampler_type"] != "pingpong":
         requested_sampler_type = params["sampler_type"]
@@ -1304,7 +1610,7 @@ def continue_audio():
     params["mode"] = "continue"
     params["target_samples"] = target_samples
     params["inpaint_audio"] = (input_sr, waveform)
-    params["inpaint_mask_start_seconds"] = source_duration
+    params["inpaint_mask_start_seconds"] = mask_start
     params["inpaint_mask_end_seconds"] = mask_end
     params["continue"] = {
         "mode": mode,
@@ -1314,13 +1620,22 @@ def continue_audio():
         "tail_mode": CONTINUE_TAIL_MODE,
         "tail_pad": round(tail_pad, 6),
         "gen_duration": round(gen_duration, 6),
-        "mask_start_seconds": round(source_duration, 6),
+        "mask_overlap": round(mask_overlap, 6),
+        "requested_mask_overlap": round(params["mask_overlap"], 6),
+        "mask_start_seconds": round(mask_start, 6),
         "mask_end_seconds": round(mask_end, 6),
         "sampler_type": params["sampler_type"],
         "requested_sampler_type": requested_sampler_type,
         "input_sr": input_sr,
         "input_channels": int(waveform.shape[0]),
         "target_samples": target_samples,
+        "splice_source": params["splice_source"],
+        "splice_xfade": round(params["splice_xfade"], 6),
+        "splice_gain_match": params["splice_gain_match"],
+        "splice_applied": False,
+        "splice_end_seconds": 0.0,
+        "splice_xfade_applied": 0.0,
+        "splice_gain": 1.0,
     }
 
     session_id = create_session({"mode": "continue", "prompt": params["prompt"], "steps": params["steps"], "duration": total_duration})

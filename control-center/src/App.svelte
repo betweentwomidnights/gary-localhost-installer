@@ -10,6 +10,7 @@
   import GaryFp16Banner from "./lib/GaryFp16Banner.svelte";
   import CareyXlBanner from "./lib/CareyXlBanner.svelte";
   import CareyScragVaeBanner from "./lib/CareyScragVaeBanner.svelte";
+  import Sa3DecoderLoraBanner from "./lib/Sa3DecoderLoraBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
@@ -47,6 +48,10 @@
     latentShift: string;
     latentTargetStd: string;
     continuationTailPad: string;
+    continuationSpliceSource: boolean;
+    continuationSpliceXfade: string;
+    continuationSpliceGainMatch: boolean;
+    continuationMaskOverlap: string;
   }
 
   interface AppSettings {
@@ -54,6 +59,7 @@
     garyUseFp16: boolean;
     careyUseXlModels: boolean;
     careyUseScragVae: boolean;
+    sa3UseDecoderLora: boolean;
     sa3Loudness: Sa3LoudnessSettings;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
@@ -166,6 +172,7 @@
     garyUseFp16: false,
     careyUseXlModels: false,
     careyUseScragVae: false,
+    sa3UseDecoderLora: false,
     sa3Loudness: {
       peakNormalizeDb: "2.0",
       limiterCeilingDb: "-0.3",
@@ -173,6 +180,10 @@
       latentShift: "0.0",
       latentTargetStd: "",
       continuationTailPad: "6",
+      continuationSpliceSource: true,
+      continuationSpliceXfade: "0.03",
+      continuationSpliceGainMatch: true,
+      continuationMaskOverlap: "0.2",
     },
     closeActionOnX: "ask",
     autoCheckUpdates: true,
@@ -729,6 +740,10 @@
     appSettings = { ...appSettings, careyUseScragVae: enabled };
   }
 
+  function onSa3DecoderLoraSettingUpdated(enabled: boolean) {
+    appSettings = { ...appSettings, sa3UseDecoderLora: enabled };
+  }
+
   function onSa3LoudnessSettingUpdated(settings: Sa3LoudnessSettings) {
     appSettings = { ...appSettings, sa3Loudness: settings };
   }
@@ -872,6 +887,12 @@
         {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
           <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />
           {#if selectedServiceId === "sa3"}
+            <Sa3DecoderLoraBanner
+              enabled={appSettings.sa3UseDecoderLora}
+              serviceStatus={selectedService?.status ?? "stopped"}
+              onUpdated={onSa3DecoderLoraSettingUpdated}
+              onShowModels={() => showModels("sa3")}
+            />
             <Sa3OutputPanel
               settings={appSettings.sa3Loudness}
               serviceStatus={selectedService?.status ?? "stopped"}

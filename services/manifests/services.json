@@ -154,6 +154,10 @@
         "SA3_TAIL_PAD_SECONDS": "6",
         "SA3_CONTINUE_TAIL_MODE": "regen_past",
         "SA3_CONTINUE_TAIL_PAD": "6",
+        "SA3_CONTINUE_SPLICE_SOURCE": "1",
+        "SA3_CONTINUE_SPLICE_XFADE": "0.03",
+        "SA3_CONTINUE_SPLICE_GAIN_MATCH": "1",
+        "SA3_CONTINUE_MASK_OVERLAP": "0.2",
         "SA3_LATENT_DIAG": "0",
         "OUTPUT_DIR": "${GARY_RUNTIME}/sa3/outputs"
       },

@@ -340,6 +340,16 @@ def _matches_any(name, patterns):
 
 # --- core LoRA application ---
 
+def _is_parametrizable(module, attr_name):
+    """Whether register_parametrization can accept this module attribute."""
+    if attr_name in getattr(module, "_parameters", {}):
+        return True
+    if attr_name in getattr(module, "_buffers", {}):
+        return True
+    existing = getattr(module, "parametrizations", None)
+    return existing is not None and attr_name in existing
+
+
 def _match_layer_type(layer, lora_config):
     """Find the matching lora_config key for a layer, using isinstance to handle ParametrizedLinear etc."""
     for layer_type in lora_config:
@@ -354,10 +364,12 @@ def apply_lora(layer, register=True, merge=False, lora_config=default_lora_confi
         matched_type = _match_layer_type(layer, lora_config)
         if matched_type is not None:
             for attr_name, parametrization in lora_config[matched_type].items():
+                if not _is_parametrizable(layer, attr_name):
+                    continue
                 parametrize.register_parametrization(layer, attr_name, parametrization(layer), unsafe=True)
     else:  # this will remove all parametrizations, use with caution
         if hasattr(layer, "parametrizations"):
-            for attr_name in layer.parametrizations.keys():
+            for attr_name in list(layer.parametrizations.keys()):
                 parametrize.remove_parametrizations(layer, attr_name, leave_parametrized=merge)
 
 
@@ -392,6 +404,15 @@ def add_lora(model, lora_config=default_lora_config, include=None, exclude=None,
                 continue
 
             for attr_name, parametrization_fn in lora_config[matched_type].items():
+                if not _is_parametrizable(module, attr_name):
+                    # Deprecated weight_norm exposes weight as a hook product,
+                    # not a Parameter. SAME contains such layers; they cannot
+                    # carry a torch parametrization and must be skipped.
+                    vprint(
+                        f"  skipping {name}.{attr_name} (not parametrizable, "
+                        f"likely weight_norm'd {type(module).__name__})"
+                    )
+                    continue
                 layer_bases = None
                 if svd_bases is not None:
                     bases_key = f"{name}.{attr_name}"

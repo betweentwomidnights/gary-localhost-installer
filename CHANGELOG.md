@@ -4,6 +4,36 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.3.1
+
+### sa3 decoder squeak fix
+
+SA3 can download and enable the SAME-L decoder LoRA as an optional squeak fix.
+It is kept separate from user style LoRAs, then merged into the autoencoder
+decoder when the model loads so style-LoRA selection remains unchanged and the
+render path has no live LoRA parametrization overhead.
+
+Commit-pinned Hugging Face snapshots are resolved directly, so the downloaded
+decoder checkpoint remains loadable offline even when the cache has no
+`refs/main` entry. Existing legacy-storage users continue resolving it from
+their normal Hugging Face cache, and the old-storage cleanup inventory includes
+that managed decoder repository after they move to custom storage.
+
+### sa3 continuation splice
+
+SA3 continuations now regenerate the final 0.2 seconds of the source by default,
+then restore the original source over the earlier kept head and use a short
+equal-power crossfade into the newly decoded audio. The splice happens before
+peak normalization and limiting so chained continuations keep a seamless
+boundary without bypassing output shaping. Advanced controls expose the mask
+overlap, crossfade, RMS gain matching, and an off switch for source restoration.
+Overlap is defensively clamped to retain at least 50 ms of source, and a silent
+generated head no longer causes RMS matching to attenuate the restored source.
+
+Runtime service stamps now include a build-time content hash as well as the app
+version. Corrected QA installers refresh bundled backend code even when their
+semantic version has not changed, while preserving environments and models.
+
 ## v0.3.0
 
 ### custom runtime storage

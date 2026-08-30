@@ -411,6 +411,11 @@ impl ServiceManager {
                     cmd.env(key, trimmed);
                 }
             }
+            let use_decoder_lora = crate::sa3_use_decoder_lora_enabled();
+            cmd.env(
+                "SA3_USE_DECODER_LORA",
+                if use_decoder_lora { "1" } else { "0" },
+            );
         }
 
         if svc.id == "gary" {

@@ -8,6 +8,10 @@
     latentShift: string;
     latentTargetStd: string;
     continuationTailPad: string;
+    continuationSpliceSource: boolean;
+    continuationSpliceXfade: string;
+    continuationSpliceGainMatch: boolean;
+    continuationMaskOverlap: string;
   }
 
   let {
@@ -27,9 +31,13 @@
     latentShift: "0.0",
     latentTargetStd: "",
     continuationTailPad: "6",
+    continuationSpliceSource: true,
+    continuationSpliceXfade: "0.03",
+    continuationSpliceGainMatch: true,
+    continuationMaskOverlap: "0.2",
   };
 
-  let tab: "level" | "latent" | "tail" = $state("level");
+  let tab: "level" | "latent" | "tail" | "splice" = $state("level");
   let draft: Sa3LoudnessSettings = $state({ ...defaults });
   let saving = $state(false);
   let message: string | null = $state(null);
@@ -46,6 +54,10 @@
       latentShift: draft.latentShift.trim(),
       latentTargetStd: draft.latentTargetStd.trim(),
       continuationTailPad: draft.continuationTailPad.trim(),
+      continuationSpliceSource: draft.continuationSpliceSource,
+      continuationSpliceXfade: draft.continuationSpliceXfade.trim(),
+      continuationSpliceGainMatch: draft.continuationSpliceGainMatch,
+      continuationMaskOverlap: draft.continuationMaskOverlap.trim(),
     };
   }
 
@@ -59,8 +71,19 @@
     message = null;
 
     try {
+      const cleaned = cleanDraft();
+      const spliceXfade = Number(cleaned.continuationSpliceXfade);
+      if (!cleaned.continuationSpliceXfade || !Number.isFinite(spliceXfade) || spliceXfade < 0 || spliceXfade > 1) {
+        message = "Crossfade must be a number from 0 to 1 second.";
+        return;
+      }
+      const maskOverlap = Number(cleaned.continuationMaskOverlap);
+      if (!cleaned.continuationMaskOverlap || !Number.isFinite(maskOverlap) || maskOverlap < 0) {
+        message = "Mask overlap must be zero or a positive number of seconds.";
+        return;
+      }
       const updated = await invoke<{ sa3Loudness: Sa3LoudnessSettings }>("save_app_settings", {
-        settings: { sa3Loudness: cleanDraft() },
+        settings: { sa3Loudness: cleaned },
       });
       onUpdated(updated.sa3Loudness);
 
@@ -88,6 +111,7 @@
       <button class:active={tab === "level"} onclick={() => tab = "level"}>level</button>
       <button class:active={tab === "latent"} onclick={() => tab = "latent"}>latent</button>
       <button class:active={tab === "tail"} onclick={() => tab = "tail"}>tail</button>
+      <button class:active={tab === "splice"} onclick={() => tab = "splice"}>splice</button>
     </div>
   </div>
 
@@ -122,12 +146,39 @@
         <small>Optional adaptive attenuation for hot LoRAs. Empty or off disables; try 0.9.</small>
       </label>
     </div>
-  {:else}
+  {:else if tab === "tail"}
     <div class="field-grid">
       <label class="field wide">
         <span>tail pad seconds</span>
         <input bind:value={draft.continuationTailPad} placeholder="6" />
         <small>For generate and continue: adds ending headroom, then trims to the requested length.</small>
+      </label>
+    </div>
+  {:else}
+    <div class="field-grid">
+      <label class="check-field">
+        <input type="checkbox" bind:checked={draft.continuationSpliceSource} />
+        <span>
+          <strong>restore original source</strong>
+          <small>Restore the source waveform over the kept continuation head before loudness shaping.</small>
+        </span>
+      </label>
+      <label class="check-field">
+        <input type="checkbox" bind:checked={draft.continuationSpliceGainMatch} />
+        <span>
+          <strong>RMS gain match</strong>
+          <small>Match source level to the model re-render before blending. Recommended.</small>
+        </span>
+      </label>
+      <label class="field wide">
+        <span>crossfade seconds</span>
+        <input bind:value={draft.continuationSpliceXfade} placeholder="0.03" />
+        <small>Equal-power blend at the seam. 0.03 is recommended; very long fades can sound phasey.</small>
+      </label>
+      <label class="field wide">
+        <span>mask overlap seconds</span>
+        <input bind:value={draft.continuationMaskOverlap} placeholder="0.2" />
+        <small>Regenerates the final part of the source before continuing. 0.2 matches the remote backend; 0 disables it.</small>
       </label>
     </div>
   {/if}
@@ -241,6 +292,38 @@
   }
 
   .field small {
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .check-field {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: 10px;
+  }
+
+  .check-field input {
+    margin-top: 2px;
+    accent-color: var(--accent);
+  }
+
+  .check-field span {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .check-field strong {
+    color: var(--text-secondary);
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .check-field small {
     color: var(--text-muted);
     font-size: 10px;
     line-height: 1.35;

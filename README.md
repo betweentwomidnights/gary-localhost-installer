@@ -24,6 +24,18 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
+## v0.3.1
+
+SA3 can download and enable the optional SAME-L decoder squeak-fix LoRA. It is
+merged into the decoder when the model loads, separately from selectable style
+LoRAs.
+
+Chained SA3 continuations can restore the original source over the kept head,
+with RMS matching, a short equal-power crossfade, and a configurable in-source
+mask overlap. These stages run before peak normalization and limiting. The
+advanced output panel exposes the splice controls and keeps the existing
+continuation-tail behavior user-selectable.
+
 ## v0.3.0
 
 gary4local can finally keep its big stuff somewhere other than `C:\`. fresh
