@@ -40,6 +40,8 @@ checkouts and release-builder checkouts produce the same training bundle.
 Generated Python `*.egg-info` directories are also excluded from runtime
 staging so local editable installs cannot leak build metadata into a release.
 
+compatible with gary4juce v4.0.14.
+
 ## v0.3.0
 
 ### custom runtime storage

@@ -26,34 +26,14 @@ build while we tried very hard to break it locally.
 
 ## v0.3.1
 
-SA3 can download and enable the optional SAME-L decoder squeak-fix LoRA. It is
-merged into the decoder when the model loads, separately from selectable style
-LoRAs.
+this release includes the optional decoder LoRA we've been using on the remote
+backend. it improves audio-to-audio tasks like transform and continue:
+[thepatch/same-l-decoder-lora](https://huggingface.co/thepatch/same-l-decoder-lora).
 
-Chained SA3 continuations can restore the original source over the kept head,
-with RMS matching, a short equal-power crossfade, and a configurable in-source
-mask overlap. These stages run before peak normalization and limiting. The
-advanced output panel exposes the splice controls and keeps the existing
-continuation-tail behavior user-selectable.
+we also pushed some changes to continuations to improve the quality of outputs
+whether you use the decoder LoRA or not.
 
-## v0.3.0
-
-gary4local can finally keep its big stuff somewhere other than `C:\`. fresh
-installs put the runtime beside the app, so choosing another install drive also
-keeps the Python environments, models, caches, logs, and Gary-trained LoRAs
-there.
-
-existing users should see everything continue exactly where it already lives.
-the storage panel can switch the runtime later, copy the LoRAs Gary knows how
-to manage, show what is using the space, and clean up old environments, models,
-or caches when you are ready. nothing gets silently moved or deleted during the
-update.
-
-gary's backend also accepts the seed and advanced controls added in gary4juce
-v4.0.13, with a less fragile fallback when its fastest attention path isn't
-available.
-
-compatible with [gary4juce v4.0.13](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.13).
+compatible with [gary4juce v4.0.14](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.14).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
