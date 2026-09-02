@@ -1,11 +1,12 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.2.1-rocm.20",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1-rocm.20/gary4local-rocm_0.2.1-rocm.20_x64-setup.exe",
-    "sha256":  "6a14ac89c89880e2323260e84141f808897cea34d2a87872f6864205837a00f0",
-    "published_at":  "2026-08-17T18:15:59.0993572Z",
+    "latest_version":  "0.3.1-rocm.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.1-rocm.1/gary4local-rocm_0.3.1-rocm.1_x64-setup.exe",
+    "sha256":  "27e3ccf66da193f78df76cbbf11694fed1776af3f96bf3d7c39479ee83d047d7",
+    "published_at":  "2026-09-02T02:27:41.5950548Z",
     "notes":  [
-                  "fingers crossed the xformers issue is fixed.",
-                  "no env rebuild needed - just send to gary again."
+                  "This ROCm preview includes the optional decoder LoRA for improved transform and continue results.",
+                  "Continuations now use improved splice behavior whether the decoder LoRA is enabled or not.",
+                  "Compatible with gary4juce v4.0.14."
               ]
 }
