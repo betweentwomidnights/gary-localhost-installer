@@ -32,11 +32,10 @@ from flask_cors import CORS
 
 try:
     from huggingface_hub import constants as hf_constants
-    from huggingface_hub import hf_hub_download, login
+    from huggingface_hub import hf_hub_download
 except Exception:  # pragma: no cover - import diagnostics are surfaced at load time
     hf_constants = None
     hf_hub_download = None
-    login = None
 
 from stable_audio_3 import StableAudioModel
 from stable_audio_3.inference.distribution_shift import (
@@ -289,16 +288,18 @@ def hf_token_configured() -> bool:
 
 
 def configure_hf_auth() -> None:
+    """Expose a configured token to Hub clients without contacting the Hub.
+
+    Do not call ``huggingface_hub.login`` here: it validates the token with a
+    network request, which prevents fully cached models from loading offline.
+    """
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if not token:
         return
-    os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)
-    if login is None:
-        return
-    try:
-        login(token=token, add_to_git_credential=False)
-    except TypeError:
-        login(token=token)
+    if not os.environ.get("HF_TOKEN"):
+        os.environ["HF_TOKEN"] = token
+    if not os.environ.get("HUGGING_FACE_HUB_TOKEN"):
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = token
 
 
 def normalize_lora_name(raw: str) -> str:
