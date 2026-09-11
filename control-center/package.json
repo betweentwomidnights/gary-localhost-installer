@@ -1,6 +1,6 @@
 {
   "name": "gary4local-rocm",
-  "version": "0.3.1-rocm.1",
+  "version": "0.3.2-rocm.1",
   "private": true,
   "type": "module",
   "scripts": {
