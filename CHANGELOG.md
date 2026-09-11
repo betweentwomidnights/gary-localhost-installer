@@ -4,6 +4,30 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.3.2
+
+### foundation-1 inference profiles
+
+Foundation-1 generation and audio-to-audio routes now resolve named sampler
+profiles before applying explicit request overrides. `gary_fallback` preserves
+the sampler defaults used by existing local generations, while `royalcities`
+matches the sampler and sigma range passed by RoyalCities' Gradio UI.
+
+Both routes report the resolved profile, sampler, sigma range, rho, steps, and
+guidance in their accepted and completed metadata. Audio-to-audio also keeps
+the configured sigma maximum visible while reporting the effective variation
+maximum actually passed to the sampler.
+
+### sa3 offline startup
+
+SA3 no longer calls Hugging Face's login helper during service startup. A saved
+token is normalized into the environment without a validation request, so a
+fully cached model can load and generate while the machine is offline. Missing
+model files still use the normal authenticated download path when networking is
+available.
+
+compatible with gary4juce v4.0.14.
+
 ## v0.3.1
 
 ### sa3 decoder squeak fix

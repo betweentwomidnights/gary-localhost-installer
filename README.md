@@ -24,14 +24,15 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
-## v0.3.1
+## v0.3.2
 
-this release includes the optional decoder LoRA we've been using on the remote
-backend. it improves audio-to-audio tasks like transform and continue:
-[thepatch/same-l-decoder-lora](https://huggingface.co/thepatch/same-l-decoder-lora).
+Foundation-1 now has two explicit inference profiles: Gary's existing fallback
+sampler and the sampler settings used by the RoyalCities UI. clients can switch
+between them without changing the prompt, seed, steps, or CFG controls.
 
-we also pushed some changes to continuations to improve the quality of outputs
-whether you use the decoder LoRA or not.
+SA3 no longer validates an already configured Hugging Face token over the
+network during startup. if the selected model is cached, it can now start and
+generate with the network adapter disconnected.
 
 compatible with [gary4juce v4.0.14](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.14).
 
