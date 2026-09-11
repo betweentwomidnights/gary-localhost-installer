@@ -37,6 +37,10 @@ import ctypes
 import numpy as np
 
 from bpm_range import HostBpmError, resolve_host_bpm
+from inference_profiles import (
+    resolve_audio2audio_inference_settings,
+    resolve_inference_settings,
+)
 
 # RC stable-audio-tools imports
 from stable_audio_tools.models.factory import create_model_from_config
@@ -354,6 +358,11 @@ def validate_request(data: dict) -> list:
     except HostBpmError as e:
         errors.append(str(e))
 
+    try:
+        resolve_inference_settings(data)
+    except ValueError as e:
+        errors.append(str(e))
+
     return errors
 
 
@@ -396,6 +405,7 @@ def generation_worker(session_id: str, data: dict):
         prompt = data["_prompt"]
         guidance_scale = data["_guidance_scale"]
         steps = data["_steps"]
+        inference_settings = data["_inference_settings"]
         stretch_ratio_val = data["_stretch_ratio"]
         key_root = data.get("key_root", "C")
         key_mode = data.get("key_mode", "minor")
@@ -406,7 +416,14 @@ def generation_worker(session_id: str, data: dict):
         print(f"  seed={seed} bars={bars} host_bpm={host_bpm}")
         print(f"  foundation_bpm={foundation_bpm} duration={gen_duration:.2f}s")
         print(f"  stretch_ratio={stretch_ratio_val:.4f}")
-        print(f"  steps={steps} guidance={guidance_scale}")
+        print(
+            f"  profile={inference_settings['inference_profile']} "
+            f"sampler={inference_settings['sampler_type']}"
+        )
+        print(
+            f"  sigma={inference_settings['sigma_min']}..{inference_settings['sigma_max']} "
+            f"rho={inference_settings['rho']} steps={steps} guidance={guidance_scale}"
+        )
         print(f"  prompt: {prompt}")
 
         model, config, device = load_model()
@@ -440,6 +457,10 @@ def generation_worker(session_id: str, data: dict):
                 device=device,
                 batch_size=1,
                 callback=on_step,
+                sampler_type=inference_settings["sampler_type"],
+                sigma_min=inference_settings["sigma_min"],
+                sigma_max=inference_settings["sigma_max"],
+                rho=inference_settings["rho"],
             )
 
         update_session(session_id, progress=92, status="stretching" if abs(stretch_ratio_val - 1.0) >= 0.001 else "encoding")
@@ -499,6 +520,7 @@ def generation_worker(session_id: str, data: dict):
                 "final_duration": round(final_duration, 4),
                 "key": f"{key_root} {key_mode}",
                 "prompt": prompt,
+                **inference_settings,
                 "generation_time": round(gen_time, 2),
                 "output_path": output_path,
             },
@@ -752,8 +774,9 @@ def generate():
         seed = int(data.get("seed", -1))
         bars = int(data.get("bars", 4))
         host_bpm = resolve_host_bpm(data.get("host_bpm"), default=120.0)
-        guidance_scale = float(data.get("guidance_scale", 7.0))
-        steps = int(data.get("steps", 100))
+        inference_settings = resolve_inference_settings(data)
+        guidance_scale = inference_settings["guidance_scale"]
+        steps = inference_settings["steps"]
         custom_override = (data.get("custom_prompt_override") or "").strip()
         key_root = data.get("key_root", "C")
         key_mode = data.get("key_mode", "minor")
@@ -790,6 +813,7 @@ def generate():
         data["_prompt"] = prompt
         data["_guidance_scale"] = guidance_scale
         data["_steps"] = steps
+        data["_inference_settings"] = inference_settings
         data["_stretch_ratio"] = stretch_ratio_val
         data["_original_request"] = {
             k: v for k, v in data.items() if not k.startswith("_")
@@ -802,6 +826,7 @@ def generate():
             "bars": bars,
             "host_bpm": host_bpm,
             "foundation_bpm": foundation_bpm,
+            **inference_settings,
         })
 
         # Launch background worker
@@ -822,6 +847,7 @@ def generate():
             "gen_duration": round(gen_duration, 4),
             "stretch_ratio": round(stretch_ratio_val, 4),
             "prompt": prompt,
+            **inference_settings,
         })
 
     except Exception as e:
@@ -849,8 +875,10 @@ def audio2audio():
       bars (int):               4 or 8 (default 8)
       init_noise_level (float): 0.01–1.0; low = preserve input, high = more generation (default 0.25)
       seed (int):               -1 for random (default -1)
-      steps (int):              diffusion steps (default 75)
+      steps (int):              diffusion steps (profile default 100)
       guidance_scale (float):   CFG scale (default 7.0)
+      inference_profile (str):  "gary_fallback" (default) or "royalcities"
+      sampler/sampler_type, sigma_min, sigma_max, rho: optional profile overrides
       key_root (str):           e.g. "A#" (default "C")
       key_mode (str):           "major" or "minor" (default "minor")
     """
@@ -877,8 +905,14 @@ def audio2audio():
         init_noise_level = float(data.get("init_noise_level", 0.25))
         init_noise_level = max(0.01, min(1.0, init_noise_level))
         seed = int(data.get("seed", -1))
-        steps = int(data.get("steps", 75))
-        guidance_scale = float(data.get("guidance_scale", 7.0))
+        try:
+            inference_settings = resolve_audio2audio_inference_settings(
+                data, init_noise_level
+            )
+        except ValueError as e:
+            return reject("/audio2audio", str(e))
+        steps = inference_settings["steps"]
+        guidance_scale = inference_settings["guidance_scale"]
         key_root = data.get("key_root", "C")
         key_mode = data.get("key_mode", "minor")
 
@@ -916,6 +950,9 @@ def audio2audio():
         if seed == -1:
             seed = int(torch.randint(0, 2**31, (1,)).item())
 
+        # Variation generation always starts its schedule at the requested
+        # init-noise strength. Preserve the profile value for diagnostics while
+        # reporting sigma_max as the value the sampler will actually receive.
         session_id = str(uuid.uuid4())[:12]
 
         create_session(session_id, {
@@ -926,6 +963,7 @@ def audio2audio():
             "host_bpm": host_bpm,
             "foundation_bpm": foundation_bpm,
             "mode": "audio2audio",
+            **inference_settings,
         })
 
         thread = threading.Thread(
@@ -946,6 +984,7 @@ def audio2audio():
                 "guidance_scale": guidance_scale,
                 "key_root": key_root,
                 "key_mode": key_mode,
+                "inference_settings": inference_settings,
             },
             daemon=True,
         )
@@ -958,6 +997,7 @@ def audio2audio():
             "foundation_bpm": foundation_bpm,
             "init_noise_level": init_noise_level,
             "prompt": prompt_text,
+            **inference_settings,
         })
 
     except Exception as e:
@@ -983,6 +1023,7 @@ def audio2audio_worker(
     guidance_scale: float,
     key_root: str,
     key_mode: str,
+    inference_settings: dict,
 ):
     """Background worker for audio-to-audio generation."""
     t_start = time.time()
@@ -1001,7 +1042,15 @@ def audio2audio_worker(
         print(f"[{session_id}] Audio2Audio request:")
         print(f"  seed={seed} bars={bars} host_bpm={host_bpm}")
         print(f"  foundation_bpm={foundation_bpm} duration={gen_duration:.2f}s")
-        print(f"  init_noise_level={init_noise_level} steps={steps} guidance={guidance_scale}")
+        print(
+            f"  profile={inference_settings['inference_profile']} "
+            f"sampler={inference_settings['sampler_type']}"
+        )
+        print(
+            f"  sigma={inference_settings['sigma_min']}..{inference_settings['sigma_max']} "
+            f"rho={inference_settings['rho']} init_noise_level={init_noise_level} "
+            f"steps={steps} guidance={guidance_scale}"
+        )
         print(f"  prompt: {prompt}")
 
         model, config, device = load_model()
@@ -1050,6 +1099,10 @@ def audio2audio_worker(
                 init_audio=init_audio,
                 init_noise_level=init_noise_level,
                 callback=on_step,
+                sampler_type=inference_settings["sampler_type"],
+                sigma_min=inference_settings["sigma_min"],
+                sigma_max=inference_settings["sigma_max"],
+                rho=inference_settings["rho"],
             )
 
         update_session(session_id, progress=92,
@@ -1111,6 +1164,7 @@ def audio2audio_worker(
                 "final_duration": round(final_duration, 4),
                 "key": f"{key_root} {key_mode}",
                 "prompt": prompt,
+                **inference_settings,
                 "generation_time": round(gen_time, 2),
                 "output_path": output_path,
             },
