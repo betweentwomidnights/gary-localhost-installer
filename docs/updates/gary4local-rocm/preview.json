@@ -1,12 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.3.1-rocm.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.1-rocm.1/gary4local-rocm_0.3.1-rocm.1_x64-setup.exe",
-    "sha256":  "27e3ccf66da193f78df76cbbf11694fed1776af3f96bf3d7c39479ee83d047d7",
-    "published_at":  "2026-09-02T02:27:41.5950548Z",
+    "latest_version":  "0.3.2-rocm.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2-rocm.1/gary4local-rocm_0.3.2-rocm.1_x64-setup.exe",
+    "sha256":  "673ad14cc74bdb7ae1a02a29293298e2ac17b7fa39177fa3dcd7135c3eeb8edf",
+    "published_at":  "2026-09-11T10:43:28.1678757Z",
     "notes":  [
-                  "This ROCm preview includes the optional decoder LoRA for improved transform and continue results.",
-                  "Continuations now use improved splice behavior whether the decoder LoRA is enabled or not.",
-                  "Compatible with gary4juce v4.0.14."
+                  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.",
+                  "Fully cached SA3 models can start while offline without validating the saved Hugging Face token over the network."
               ]
 }

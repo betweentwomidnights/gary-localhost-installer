@@ -1,11 +1,11 @@
 {
-    "version":  "0.3.1-rocm.1",
-    "notes":  "This ROCm preview includes the optional decoder LoRA for improved transform and continue results.\nContinuations now use improved splice behavior whether the decoder LoRA is enabled or not.\nCompatible with gary4juce v4.0.14.",
-    "pub_date":  "2026-09-02T02:27:41.5950548Z",
+    "version":  "0.3.2-rocm.1",
+    "notes":  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.\nFully cached SA3 models can start while offline without validating the saved Hugging Face token over the network.",
+    "pub_date":  "2026-09-11T10:43:28.1678757Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMENnTEFFWlEvYnUvRUorS3Jxc0kxYkVJelVNL1EzV3hTQ05mdUFJaUFOMlQxK29EY21IK1RaQzZiMHJsSXNQVVNyQjBac0pOb2xTZmE4NWYvbGpmcWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MzE1MjM1CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMy4xLXJvY20uMV94NjQtc2V0dXAuZXhlCjV3WHFXTGdzQzlRMUJSSXdHVWkrNnlBU2oyRm1LNDdPV0djcDJFVWV2bzNzRDVIYjlwbGt5czdUMjVUaHVzajBFamdSUDNJRGZuaDBPYm8venpWdURnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.1-rocm.1/gary4local-rocm_0.3.1-rocm.1_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEpvSXJJS3NrQ0g1OXBKZU82NmNLVlppekZEZkRhN3JGNWdraWdqQ2pyVStiaG1wZDZKNzJWbThUYklIMTcxVm5XaGlWT2pySDA2NGYzKy9xYjl0UlE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTIzMzc4CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuMy4yLXJvY20uMV94NjQtc2V0dXAuZXhlCmNuOFdjRGdybmg5cVJwM0I2LzN6OXlBbTJnR3hLQVErNW1nV3BjT0wrcmlPZlpSTHJvUDZGSjQzUE4yNDRKalpHL002Y3RwUTE2enhnVVVpVUVDZkF3PT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2-rocm.1/gary4local-rocm_0.3.2-rocm.1_x64-setup.exe"
                                          }
                   }
 }
