@@ -1,11 +1,11 @@
 {
-    "version":  "0.3.1",
-    "notes":  "Adds the optional decoder LoRA used by the remote backend to improve audio-to-audio tasks such as transform and continue.\nImproves continuation quality whether or not the decoder LoRA is enabled. Compatible with gary4juce v4.0.14.",
-    "pub_date":  "2026-08-30T10:00:33.0072800Z",
+    "version":  "0.3.2",
+    "notes":  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.\nFully cached SA3 models can start while offline without validating the saved Hugging Face token over the network.\nCompatible with gary4juce v4.0.14.",
+    "pub_date":  "2026-09-11T10:40:22.7139428Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMENIWUN5RUlrS3cxS2libHNTeTlHYVA5eHJBUERiR1NkQkw3dGVDN1VHaG1YbFBScldmb3QyWmgzVTcyVXE1Y0VlTU5KNjNjQU02bFhaVm1mUzVRTGc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MDg0MDAxCWZpbGU6Z2FyeTRsb2NhbF8wLjMuMV94NjQtc2V0dXAuZXhlCkdDVFJiUmNmeG5vUlh2VHRlU0hlano3U2FHaUVpVmo2Y2JLY3I4ekJzVGFKb0FmaFE0WEp4Q0NmZW05UUtHb2wzMUo1UE9wWDk2VnprZ2dDelNEaENBPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.1/gary4local_0.3.1_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME8rR0JJRUIvNG9JT0dpYzZhQ2xNSFZjNW54d2dvSlcwemxpcTk5WkZvMjg4ZHpncTBQOEkydzg0ZzFTa0ttc3RENlJrejBGTTYxUjh4em0vZWNNSUE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTIzMTg0CWZpbGU6Z2FyeTRsb2NhbF8wLjMuMl94NjQtc2V0dXAuZXhlCmVpZVJ3TjQzaHREUnBHUURTVDJhZDhObkdZOUY5aElaSjVNKzViRGhxN04rWEpsN0FYMUFPSmxhMWkwOWhtMjVMYnRCbGVsa0J0b2ZKaEhrbllMQkFBPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2/gary4local_0.3.2_x64-setup.exe"
                                          }
                   }
 }
