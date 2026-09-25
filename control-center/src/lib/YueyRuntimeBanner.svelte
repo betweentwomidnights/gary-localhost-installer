@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { chooseYueyTier, loadYueyTiers, type YueyTiers } from "./yueyTiers";
 
   interface NativeDevice {
     name: string;
@@ -38,22 +39,26 @@
   } = $props();
 
   let info = $state<NativeRuntimeInfo | null>(null);
+  let tiers = $state<YueyTiers | null>(null);
   let saving = $state(false);
   let message: string | null = $state(null);
 
   async function load() {
     try {
       info = await invoke<NativeRuntimeInfo>("get_native_runtime_info", { serviceId: "yuey" });
+      tiers = await loadYueyTiers();
     } catch (e) {
       console.error("Failed to load the yuey runtime:", e);
     }
   }
 
-  // Reload whenever an install finishes or the installed backend changes.
+  // Reload whenever an install finishes, the installed backend changes, or a
+  // download lets yuey start.
   $effect(() => {
     void nativeBackend;
     void envExists;
     void building;
+    void startBlocker;
     load();
   });
 
@@ -86,6 +91,19 @@
       message = info?.installed
         ? "reinstall the runtime to switch backends."
         : "install the runtime to use this backend.";
+    } catch (e: any) {
+      message = "Failed: " + (typeof e === "string" ? e : e?.message || "unknown");
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function chooseTier(encoding: string) {
+    saving = true;
+    message = null;
+    try {
+      message = await chooseYueyTier(encoding);
+      await load();
     } catch (e: any) {
       message = "Failed: " + (typeof e === "string" ? e : e?.message || "unknown");
     } finally {
@@ -134,6 +152,22 @@
         {/if}
       </div>
     </div>
+    {#if tiers && tiers.installed.length > 1}
+      <!-- Only downloaded tiers: the others are one download away in models. -->
+      <label class="backend">
+        <span>model</span>
+        <select
+          value={tiers.installed.includes(tiers.chosen) ? tiers.chosen : ""}
+          disabled={saving}
+          onchange={(e) => chooseTier((e.currentTarget as HTMLSelectElement).value)}
+        >
+          <option value="">auto{#if !tiers.installed.includes(tiers.chosen) && tiers.active} ({tiers.active}){/if}</option>
+          {#each tiers.installed as tier}
+            <option value={tier}>{tier}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     {#if info}
       <label class="backend">
         <span>backend</span>
@@ -183,6 +217,10 @@
     <button class="link" onclick={onShowModels}>open models</button>
     {#if info?.recommendedEncoding}
       (this GPU suits {info.recommendedEncoding})
+    {/if}
+    {#if tiers && tiers.installed.length > 1}
+      auto launches with the recommended tier when it is downloaded; pick
+      another under model to trade quality for memory.
     {/if}
   </div>
 

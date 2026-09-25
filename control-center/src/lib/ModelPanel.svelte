@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
+  import { chooseYueyTier, loadYueyTiers } from "./yueyTiers";
 
   interface ModelEntry {
     id: string;
@@ -65,7 +66,7 @@
     if (!isYuey) return;
     try {
       yueyRuntime = await invoke<NativeRuntimeInfo>("get_native_runtime_info", { serviceId: "yuey" });
-      yueyActiveEncoding = await invoke<string | null>("get_yuey_active_encoding");
+      yueyActiveEncoding = (await loadYueyTiers()).active;
     } catch (e) {
       console.error("Failed to load yuey runtime state:", e);
     }
@@ -76,15 +77,7 @@
     modelActionError = null;
     modelActionMessage = null;
     try {
-      await invoke("save_app_settings", { settings: { yueyEncoding: encoding } });
-      const current = await invoke<{ id: string; status: string }[]>("get_services");
-      const status = current.find((service) => service.id === "yuey")?.status;
-      if (status === "running" || status === "starting" || status === "unhealthy") {
-        await invoke("restart_service", { serviceId: "yuey" });
-        modelActionMessage = `yuey is restarting on ${encoding}.`;
-      } else {
-        modelActionMessage = `yuey will use ${encoding} next time it starts.`;
-      }
+      modelActionMessage = await chooseYueyTier(encoding);
       await loadYueyState();
     } catch (e) {
       modelActionError = e instanceof Error ? e.message : String(e);

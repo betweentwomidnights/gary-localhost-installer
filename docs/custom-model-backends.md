@@ -193,7 +193,9 @@ the same native server the remote backend runs, on `http://localhost:8007`.
   [thepatch/YuE2-3B-GGUF](https://huggingface.co/thepatch/YuE2-3B-GGUF) into
   `models/yuey`: one shared set (VAE, tokenizer, SheetSage2 transcription, and
   the instrumental and continuation adapters) plus one generation tier.
-  `Q4_K_M` suits 8 GB GPUs, `Q8_0` 12 GB, and `BF16` 16 GB.
+  `Q4_K_M` suits 8 GB GPUs, `Q8_0` 12 GB, and `BF16` 16 GB. with more than
+  one tier downloaded, the yuey panel's model picker chooses which one
+  launches (auto is the recommended tier); a running yuey restarts on it.
 - a long song used to run an 8 GB card out of memory at the very end: the VAE
   decoded in ~3.2 GB windows while the ~3 GB generator was still loaded, and
   beside a DAW that failed on both backends (CUDA as a "device not ready"
