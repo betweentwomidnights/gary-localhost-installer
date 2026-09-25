@@ -5640,7 +5640,7 @@ pub fn run() {
             rebuild_all_envs,
             get_service_log,
             get_native_runtime_info,
-            get_yuey_active_encoding,
+            get_yuey_tiers,
             download_yuey_default_models,
             get_models,
             download_model,
@@ -6384,12 +6384,22 @@ async fn get_native_runtime_info(
     ))
 }
 
-/// The tier yuey launches with right now, by the same rule `start` uses.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct YueyTiers {
+    /// Downloaded tiers, smallest first.
+    installed: Vec<String>,
+    /// The tier picked in settings, or "" for automatic.
+    chosen: String,
+    /// The tier yuey launches with right now, by the same rule `start` uses.
+    active: Option<String>,
+}
+
 #[tauri::command]
-async fn get_yuey_active_encoding(
+async fn get_yuey_tiers(
     manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
-) -> Result<Option<String>, String> {
+) -> Result<YueyTiers, String> {
     let (def, native_dir) = {
         let mgr = manager.lock().await;
         mgr.native_service("yuey")
@@ -6398,10 +6408,17 @@ async fn get_yuey_active_encoding(
     let install_dir = native_runtime::installed("yuey", &native_dir, &def.executable)
         .map(|install| install.dir)
         .unwrap_or(native_dir);
-    Ok(yuey_launch_encoding(
-        &storage::models_dir(&repo_root),
-        &install_dir,
-    ))
+    let models_dir = storage::models_dir(&repo_root);
+    Ok(YueyTiers {
+        installed: model_manager::yuey_installed_tiers(&model_manager::yuey_models_dir_in(
+            &models_dir,
+        ))
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        chosen: read_app_settings().yuey_encoding,
+        active: yuey_launch_encoding(&models_dir, &install_dir),
+    })
 }
 
 #[tauri::command]
