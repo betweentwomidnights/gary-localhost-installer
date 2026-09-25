@@ -1,5 +1,7 @@
 mod manifest;
 mod model_manager;
+mod native_models;
+mod native_runtime;
 mod service_manager;
 mod storage;
 mod update;
@@ -141,6 +143,13 @@ struct AppSettings {
     sa3_use_decoder_lora: bool,
     #[serde(default)]
     sa3_loudness: Sa3LoudnessSettings,
+    /// Per native service: "cuda", "vulkan", "cpu", or absent for automatic.
+    #[serde(default)]
+    native_backends: BTreeMap<String, String>,
+    /// The yuey generation tier to launch with; empty means the one the
+    /// runtime check recommended, if it is downloaded.
+    #[serde(default)]
+    yuey_encoding: String,
     #[serde(default)]
     close_action_on_x: CloseActionOnX,
     #[serde(default = "default_auto_check_updates")]
@@ -160,6 +169,8 @@ impl Default for AppSettings {
             carey_use_scrag_vae: false,
             sa3_use_decoder_lora: false,
             sa3_loudness: Sa3LoudnessSettings::default(),
+            native_backends: BTreeMap::new(),
+            yuey_encoding: String::new(),
             close_action_on_x: CloseActionOnX::Ask,
             auto_check_updates: default_auto_check_updates(),
             skipped_update_version: None,
@@ -201,6 +212,11 @@ struct AppSettingsPatch {
     sa3_use_decoder_lora: Option<bool>,
     #[serde(default)]
     sa3_loudness: Option<Sa3LoudnessSettingsPatch>,
+    /// Merged per service; "auto" or an empty value removes the preference.
+    #[serde(default)]
+    native_backends: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    yuey_encoding: Option<String>,
     #[serde(default)]
     close_action_on_x: Option<CloseActionOnX>,
     #[serde(default)]
@@ -975,6 +991,35 @@ mod bundle_root_tests {
         assert_eq!(stamp, "0.3.1:content-hash");
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn an_app_update_keeps_a_native_runtime_and_refreshes_the_rest() {
+        let root = temp_root("native-sync-test");
+        let bundle = root.join("bundle");
+        let runtime = root.join("runtime");
+        let bundle_services = bundle.join("services");
+        std::fs::create_dir_all(bundle_services.join("manifests")).unwrap();
+        std::fs::create_dir_all(bundle_services.join("yuey")).unwrap();
+        std::fs::write(
+            bundle_services.join("manifests").join("services.json"),
+            "{}",
+        )
+        .unwrap();
+        std::fs::write(bundle_services.join("bundle-stamp.txt"), "0.4.0:new\n").unwrap();
+        std::fs::write(bundle_services.join("yuey").join("README.md"), "native").unwrap();
+
+        let installed = runtime.join("services").join("yuey");
+        std::fs::create_dir_all(installed.join("native")).unwrap();
+        std::fs::write(installed.join("native").join("yue2-server.exe"), b"exe").unwrap();
+        std::fs::write(installed.join("stale.txt"), "from an older bundle").unwrap();
+
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+
+        assert!(installed.join("native").join("yue2-server.exe").is_file());
+        assert!(installed.join("README.md").is_file());
+        assert!(!installed.join("stale.txt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 fn hide_console_window(cmd: &mut tokio::process::Command) {
@@ -1106,8 +1151,16 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> Result<(), String> {
-    const PRESERVED_RUNTIME_NAMES: &[&str] =
-        &["env", "checkpoints", ".cache", "gradio_outputs", "riffs"];
+    // `native` holds a native service's downloaded runtime, the counterpart
+    // of a Python service's `env`.
+    const PRESERVED_RUNTIME_NAMES: &[&str] = &[
+        "env",
+        native_runtime::NATIVE_DIR,
+        "checkpoints",
+        ".cache",
+        "gradio_outputs",
+        "riffs",
+    ];
 
     let bundle_services = bundle_root.join("services");
     let runtime_services = runtime_services_dir(runtime_root);
@@ -1298,6 +1351,21 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(sa3_loudness) = patch.sa3_loudness {
         merge_sa3_loudness_settings(&mut current.sa3_loudness, sa3_loudness);
+    }
+
+    if let Some(native_backends) = patch.native_backends {
+        for (service_id, backend) in native_backends {
+            let backend = backend.trim().to_ascii_lowercase();
+            if backend.is_empty() || backend == "auto" {
+                current.native_backends.remove(&service_id);
+            } else {
+                current.native_backends.insert(service_id, backend);
+            }
+        }
+    }
+
+    if let Some(yuey_encoding) = patch.yuey_encoding {
+        current.yuey_encoding = yuey_encoding.trim().to_ascii_uppercase();
     }
 
     if let Some(close_action_on_x) = patch.close_action_on_x {
@@ -4935,6 +5003,207 @@ pub(crate) fn sa3_use_decoder_lora_enabled() -> bool {
     read_app_settings().sa3_use_decoder_lora
 }
 
+/// "auto" unless the user picked a backend for this native service.
+pub(crate) fn native_backend_preference(service_id: &str) -> String {
+    read_app_settings()
+        .native_backends
+        .get(service_id)
+        .cloned()
+        .unwrap_or_else(|| "auto".to_string())
+}
+
+/// The yuey tier to launch with. yue2-server on its own prefers precision,
+/// which on an 8 GB card with BF16 downloaded means running out of memory, so
+/// gary4local always names one: the chosen tier if it is downloaded, else the
+/// runtime check's recommendation, else the smallest tier that is present.
+pub(crate) fn yuey_launch_encoding(models_dir: &Path, native_dir: &Path) -> Option<String> {
+    let installed =
+        model_manager::yuey_installed_tiers(&model_manager::yuey_models_dir_in(models_dir));
+    choose_yuey_encoding(
+        &installed,
+        &read_app_settings().yuey_encoding,
+        native_runtime::recommended_encoding(native_dir).as_deref(),
+    )
+}
+
+/// Why yuey cannot start yet, if it cannot: a server without its models
+/// answers every request with "no GGUF", which reads as a broken install.
+pub(crate) fn yuey_missing_models(models_dir: &Path) -> Option<String> {
+    let dir = model_manager::yuey_models_dir_in(models_dir);
+    let shared_ready = model_manager::yuey_files(model_manager::YUEY_SHARED_MODEL_ID)
+        .unwrap_or_default()
+        .iter()
+        .all(|file| dir.join(file).is_file());
+    let tier_ready = !model_manager::yuey_installed_tiers(&dir).is_empty();
+    match (shared_ready, tier_ready) {
+        (true, true) => None,
+        (false, false) => Some("needs its models: the shared components and a tier".to_string()),
+        (false, true) => Some("needs its shared components".to_string()),
+        (true, false) => Some("needs a generation tier".to_string()),
+    }
+}
+
+/// The published tier to fetch for a recommendation. yue2-server can
+/// recommend Q5_K_M, which is not published yet; the next smaller tier that
+/// is published is the safe substitute.
+fn yuey_default_tier(recommended: Option<&str>) -> &'static str {
+    const BY_SIZE: [&str; 4] = ["Q4_K_M", "Q5_K_M", "Q8_0", "BF16"];
+    let limit = recommended
+        .and_then(|tier| BY_SIZE.iter().position(|candidate| *candidate == tier))
+        .unwrap_or(0);
+    BY_SIZE[..=limit]
+        .iter()
+        .rev()
+        .find(|tier| model_manager::yuey_files(&format!("yuey::{tier}")).is_some())
+        .copied()
+        .unwrap_or("Q4_K_M")
+}
+
+/// Fetch whatever yuey still needs to generate: the shared components, and
+/// the recommended tier unless some tier is already downloaded. Runs after a
+/// runtime install and from the yuey panel. Returns the entries it queued.
+async fn queue_yuey_default_models(handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
+    let manager = handle.state::<ManagerState>().inner().clone();
+    let model_mgr = handle.state::<ModelState>().inner().clone();
+    let native_dir = {
+        let mgr = manager.lock().await;
+        let (def, native_dir) = mgr
+            .native_service("yuey")
+            .ok_or_else(|| "yuey is not in this build's manifest".to_string())?;
+        native_runtime::installed("yuey", &native_dir, &def.executable)
+            .map(|install| install.dir)
+            .unwrap_or(native_dir)
+    };
+
+    let mut queued = Vec::new();
+    let dest_dir = {
+        let mut mgr = model_mgr.lock().await;
+        let models = mgr.get_yuey_models();
+        let downloaded = |id: &str| {
+            models.iter().any(|model| {
+                model.id == id
+                    && matches!(
+                        model.status,
+                        model_manager::ModelStatus::Downloaded
+                            | model_manager::ModelStatus::Downloading
+                    )
+            })
+        };
+        let any_tier = models.iter().any(|model| {
+            model.size_category.as_deref() == Some("tier")
+                && matches!(
+                    model.status,
+                    model_manager::ModelStatus::Downloaded
+                        | model_manager::ModelStatus::Downloading
+                )
+        });
+        if !downloaded(model_manager::YUEY_SHARED_MODEL_ID) {
+            queued.push(model_manager::YUEY_SHARED_MODEL_ID.to_string());
+        }
+        if !any_tier {
+            let recommended = native_runtime::recommended_encoding(&native_dir);
+            queued.push(format!(
+                "yuey::{}",
+                yuey_default_tier(recommended.as_deref())
+            ));
+        }
+        for id in &queued {
+            mgr.set_download_started(id);
+        }
+        mgr.yuey_models_dir()
+    };
+    if queued.is_empty() {
+        return Ok(queued);
+    }
+    model_manager::emit_model_status(&model_mgr, handle).await;
+
+    // One after the other, so the first finishes rather than both crawling.
+    let ids = queued.clone();
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        for id in ids {
+            let Some(files) = model_manager::yuey_files(&id) else {
+                continue;
+            };
+            let _ = native_models::download_hf_files(
+                id,
+                model_manager::YUEY_REPO.to_string(),
+                files,
+                dest_dir.clone(),
+                model_mgr.clone(),
+                handle.clone(),
+            )
+            .await;
+        }
+    });
+    Ok(queued)
+}
+
+#[tauri::command]
+async fn download_yuey_default_models(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+    queue_yuey_default_models(&app_handle).await
+}
+
+fn choose_yuey_encoding(
+    installed: &[&str],
+    chosen: &str,
+    recommended: Option<&str>,
+) -> Option<String> {
+    if !chosen.is_empty() && installed.contains(&chosen) {
+        return Some(chosen.to_string());
+    }
+    if let Some(recommended) = recommended.filter(|tier| installed.contains(tier)) {
+        return Some(recommended.to_string());
+    }
+    // Tiers are listed smallest first.
+    installed.first().map(|tier| tier.to_string())
+}
+
+#[cfg(test)]
+mod yuey_encoding_tests {
+    use super::choose_yuey_encoding;
+
+    #[test]
+    fn a_downloaded_choice_wins() {
+        assert_eq!(
+            choose_yuey_encoding(&["Q4_K_M", "BF16"], "BF16", Some("Q4_K_M")).as_deref(),
+            Some("BF16")
+        );
+    }
+
+    #[test]
+    fn a_choice_that_is_not_downloaded_falls_to_the_recommendation() {
+        assert_eq!(
+            choose_yuey_encoding(&["Q4_K_M", "Q8_0"], "BF16", Some("Q8_0")).as_deref(),
+            Some("Q8_0")
+        );
+    }
+
+    #[test]
+    fn the_default_tier_is_the_recommendation_when_it_is_published() {
+        assert_eq!(super::yuey_default_tier(Some("Q8_0")), "Q8_0");
+        assert_eq!(super::yuey_default_tier(Some("BF16")), "BF16");
+        assert_eq!(super::yuey_default_tier(Some("Q4_K_M")), "Q4_K_M");
+    }
+
+    #[test]
+    fn an_unpublished_recommendation_falls_to_the_next_smaller_tier() {
+        // yue2-server recommends Q5_K_M for 10-12 GB cards; it is not published yet.
+        assert_eq!(super::yuey_default_tier(Some("Q5_K_M")), "Q4_K_M");
+        assert_eq!(super::yuey_default_tier(None), "Q4_K_M");
+        assert_eq!(super::yuey_default_tier(Some("F32")), "Q4_K_M");
+    }
+
+    #[test]
+    fn with_no_usable_hint_the_smallest_downloaded_tier_is_safest() {
+        assert_eq!(
+            choose_yuey_encoding(&["Q4_K_M", "BF16"], "", Some("Q8_0")).as_deref(),
+            Some("Q4_K_M")
+        );
+        assert_eq!(choose_yuey_encoding(&[], "", None), None);
+    }
+}
+
 pub(crate) fn sa3_loudness_env() -> Vec<(&'static str, String)> {
     let settings = read_app_settings().sa3_loudness;
     let tail_pad = settings.continuation_tail_pad;
@@ -5155,18 +5424,17 @@ pub fn run() {
                 .join("services.json");
             log::info!("Loading manifest from: {}", manifest_path.display());
 
-            let services = match manifest::load_manifest(&manifest_path) {
-                Ok(s) => s,
+            let (services, native_runtimes) = match manifest::load_manifest(&manifest_path) {
+                Ok(manifest) => (manifest.services, manifest.native_runtimes),
                 Err(e) => {
                     log::error!("Failed to load manifest: {}", e);
-                    Vec::new()
+                    (Vec::new(), HashMap::new())
                 }
             };
 
-            let manager = Arc::new(Mutex::new(ServiceManager::new(
-                services,
-                runtime_root.clone(),
-            )));
+            let mut service_manager = ServiceManager::new(services, runtime_root.clone());
+            service_manager.set_native_runtimes(native_runtimes);
+            let manager = Arc::new(Mutex::new(service_manager));
             app.manage(manager.clone());
 
             let model_mgr = Arc::new(Mutex::new(ModelManager::new(runtime_root.clone())));
@@ -5371,6 +5639,9 @@ pub fn run() {
             rebuild_env,
             rebuild_all_envs,
             get_service_log,
+            get_native_runtime_info,
+            get_yuey_active_encoding,
+            download_yuey_default_models,
             get_models,
             download_model,
             remove_model,
@@ -5490,9 +5761,7 @@ async fn rebuild_env(
     let build_info = {
         let mut mgr = manager.lock().await;
         let info = mgr.get_build_info(&service_id)?;
-        // +2 for "ensure uv" and "create venv" steps
-        let total = info.build_steps.len() + 2;
-        mgr.set_build_started(&service_id, total);
+        mgr.set_build_started(&service_id, info.total_steps());
         info
     };
 
@@ -5540,8 +5809,7 @@ async fn rebuild_all_envs(
 
             {
                 let mut mgr = mgr_clone.lock().await;
-                let total = info.build_steps.len() + 2;
-                mgr.set_build_started(&sid, total);
+                mgr.set_build_started(&sid, info.total_steps());
             }
 
             let result = run_build(info, mgr_clone.clone(), handle.clone()).await;
@@ -5735,6 +6003,31 @@ async fn run_build(
     manager: Arc<Mutex<ServiceManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    if build_info.runtime == manifest::ServiceRuntime::Native {
+        let service_id = build_info.service_id.clone();
+        native_runtime::install(build_info, manager.clone(), handle.clone()).await?;
+        // A runtime with no models can only fail its first request, so fetch
+        // the ones the install check just recommended.
+        if service_id == "yuey" {
+            match queue_yuey_default_models(&handle).await {
+                Ok(queued) if !queued.is_empty() => {
+                    manager.lock().await.append_build_log(
+                        &service_id,
+                        &format!("downloading models: {}", queued.join(", ")),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    manager.lock().await.append_build_log(
+                        &service_id,
+                        &format!("could not start the model downloads: {error}"),
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let service_id = build_info.service_id.clone();
     let work_dir = &build_info.work_dir;
     let env_dir = &build_info.env_dir;
@@ -6070,6 +6363,47 @@ async fn get_service_log(
 // Model management commands
 // ---------------------------------------------------------------------------
 
+/// What a native service's runtime is running on, what the install check saw,
+/// and which backends this build could switch it to.
+#[tauri::command]
+async fn get_native_runtime_info(
+    service_id: String,
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<native_runtime::NativeRuntimeInfo, String> {
+    let (def, native_dir) = {
+        let mgr = manager.lock().await;
+        mgr.native_service(&service_id)
+            .ok_or_else(|| format!("{service_id} is not a native service"))?
+    };
+    let preference = native_backend_preference(&service_id);
+    Ok(native_runtime::runtime_info(
+        &service_id,
+        &native_dir,
+        &def,
+        preference,
+    ))
+}
+
+/// The tier yuey launches with right now, by the same rule `start` uses.
+#[tauri::command]
+async fn get_yuey_active_encoding(
+    manager: tauri::State<'_, ManagerState>,
+    repo_root: tauri::State<'_, std::path::PathBuf>,
+) -> Result<Option<String>, String> {
+    let (def, native_dir) = {
+        let mgr = manager.lock().await;
+        mgr.native_service("yuey")
+            .ok_or_else(|| "yuey is not in this build's manifest".to_string())?
+    };
+    let install_dir = native_runtime::installed("yuey", &native_dir, &def.executable)
+        .map(|install| install.dir)
+        .unwrap_or(native_dir);
+    Ok(yuey_launch_encoding(
+        &storage::models_dir(&repo_root),
+        &install_dir,
+    ))
+}
+
 #[tauri::command]
 async fn get_models(
     model_mgr: tauri::State<'_, ModelState>,
@@ -6081,6 +6415,7 @@ async fn get_models(
     models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
+    models.extend(mgr.get_yuey_models());
     Ok(models)
 }
 
@@ -6093,6 +6428,33 @@ async fn download_model(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    // Native services download GGUFs directly; there is no Python env to borrow.
+    if let Some(files) = model_manager::yuey_files(&model_id) {
+        let dest_dir = {
+            let mut mgr = model_mgr.lock().await;
+            if mgr.is_downloading(&model_id) {
+                return Err("This model is already downloading.".to_string());
+            }
+            mgr.set_download_started(&model_id);
+            mgr.yuey_models_dir()
+        };
+        model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+        let mgr_clone = model_mgr.inner().clone();
+        let handle = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = native_models::download_hf_files(
+                model_id,
+                model_manager::YUEY_REPO.to_string(),
+                files,
+                dest_dir,
+                mgr_clone,
+                handle,
+            )
+            .await;
+        });
+        return Ok(());
+    }
+
     // Pick the Python env based on which service the model belongs to.
     let svc = service_id.as_deref().unwrap_or("gary");
     let env_dir = match svc {
@@ -6196,7 +6558,17 @@ async fn remove_model(
         .then(|| model_id.split_once("::"))
         .flatten()
         .map(|(repo, filename)| (repo.to_string(), filename.to_string()));
-    if !is_carey_model && !is_foundation_model && !is_hf_cache_model && finetune.is_none() {
+    // A yuey entry is a set of files in one shared folder: a tier is one GGUF,
+    // the shared entry is everything every tier needs.
+    let yuey_files = (service_id == "yuey")
+        .then(|| model_manager::yuey_files(&model_id))
+        .flatten();
+    if !is_carey_model
+        && !is_foundation_model
+        && !is_hf_cache_model
+        && finetune.is_none()
+        && yuey_files.is_none()
+    {
         return Err("This model is not available for managed removal.".to_string());
     }
 
@@ -6207,6 +6579,7 @@ async fn remove_model(
         "stable-audio" => "Jerry",
         "sa3" => "SA3",
         "foundation" => "Foundation-1",
+        "yuey" => "yuey",
         other => other,
     };
 
@@ -6238,6 +6611,30 @@ async fn remove_model(
         if mgr.is_downloading(&model_id) {
             return Err("Wait for this model download to finish first.".to_string());
         }
+    }
+
+    if let Some(files) = yuey_files {
+        let root = {
+            let mgr = model_mgr.lock().await;
+            mgr.yuey_models_dir()
+        };
+        let mut removed_bytes = 0;
+        for file in files {
+            let path = root.join(&file);
+            let bytes = path_size(&path);
+            if remove_managed_path(&path, &root)? {
+                removed_bytes += bytes;
+            }
+        }
+        {
+            let mut mgr = model_mgr.lock().await;
+            mgr.forget_model_status(&model_id);
+        }
+        model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+        return Ok(ModelRemovalResult {
+            model_id,
+            removed_bytes,
+        });
     }
 
     let (managed_root, model_path) = if is_carey_model {
