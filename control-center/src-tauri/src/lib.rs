@@ -145,7 +145,7 @@ struct AppSettings {
     sa3_use_decoder_lora: bool,
     #[serde(default)]
     sa3_loudness: Sa3LoudnessSettings,
-    /// Per native service: "cuda", "vulkan", "cpu", or absent for automatic.
+    /// Per native service: "cuda", "vulkan", or absent for automatic.
     #[serde(default)]
     native_backends: BTreeMap<String, String>,
     /// The yuey generation tier to launch with; empty means the one the

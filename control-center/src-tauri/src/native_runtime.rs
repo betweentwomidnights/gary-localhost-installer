@@ -283,7 +283,10 @@ const DEFAULT_BACKEND_ORDER: &[&str] = &["cuda", "metal", "vulkan"];
 /// candidate, so if it fails the install fails loudly. "auto" lists every
 /// published backend this machine's GPUs can run, in the service's `prefer`
 /// order, so a backend that does not come up falls through to the next.
-/// Services differ: yuey measured faster on Vulkan than CUDA even on NVIDIA.
+///
+/// There is no CPU runtime. The native models take minutes per song on a GPU,
+/// so on a CPU they would only look broken; a machine without a supported GPU
+/// is told so instead.
 pub fn resolve_backends(
     preference: &str,
     adapters: &[GpuAdapter],
@@ -293,7 +296,7 @@ pub fn resolve_backends(
     let offers = |backend: &str| offered.iter().any(|name| name == backend);
     let preference = preference.trim().to_ascii_lowercase();
     if !preference.is_empty() && preference != "auto" {
-        if preference == "cpu" || offers(&preference) {
+        if offers(&preference) {
             return Ok(vec![BackendChoice {
                 backend: preference,
                 reason: "chosen in settings".to_string(),
@@ -301,7 +304,6 @@ pub fn resolve_backends(
         }
         let mut available = offered.to_vec();
         available.sort();
-        available.push("cpu".to_string());
         return Err(format!(
             "the {preference} backend is not published for {} (available: {})",
             current_platform(),
@@ -326,7 +328,7 @@ pub fn resolve_backends(
     };
 
     let mut choices: Vec<BackendChoice> = Vec::new();
-    for backend in order {
+    for &backend in &order {
         if !offers(backend) || choices.iter().any(|choice| choice.backend == backend) {
             continue;
         }
@@ -337,12 +339,24 @@ pub fn resolve_backends(
             });
         }
     }
+    if choices.is_empty() && adapters.is_empty() {
+        // Listing GPUs failed, which says nothing about whether one is here.
+        // Try each backend and let the runtime check decide.
+        for &backend in &order {
+            if offers(backend) && !choices.iter().any(|choice| choice.backend == backend) {
+                choices.push(BackendChoice {
+                    backend: backend.to_string(),
+                    reason: "no GPU was listed, so trying each backend".to_string(),
+                });
+            }
+        }
+    }
     if choices.is_empty() {
-        choices.push(BackendChoice {
-            backend: "cpu".to_string(),
-            reason: "no supported GPU was found, so this will run on the CPU and be very slow"
-                .to_string(),
-        });
+        let found: Vec<&str> = adapters.iter().map(|adapter| adapter.name.as_str()).collect();
+        return Err(format!(
+            "this needs an NVIDIA, AMD, or Intel GPU, and none was found (found: {})",
+            found.join(", ")
+        ));
     }
     Ok(choices)
 }
@@ -623,13 +637,12 @@ fn devices(props: &serde_json::Value) -> Vec<&serde_json::Value> {
 
 /// ggml names its registries CUDA, Vulkan, Metal, and CPU.
 fn props_has_backend(props: &serde_json::Value, backend: &str) -> bool {
-    backend == "cpu"
-        || devices(props).iter().any(|device| {
-            device
-                .get("backend")
-                .and_then(|value| value.as_str())
-                .is_some_and(|name| name.to_ascii_lowercase().contains(backend))
-        })
+    devices(props).iter().any(|device| {
+        device
+            .get("backend")
+            .and_then(|value| value.as_str())
+            .is_some_and(|name| name.to_ascii_lowercase().contains(backend))
+    })
 }
 
 fn describe_devices(props: &serde_json::Value) -> Vec<String> {
@@ -702,7 +715,6 @@ pub fn runtime_info(
         .map(|platform| platform.backends.keys().cloned().collect())
         .unwrap_or_default();
     offered_backends.sort();
-    offered_backends.push("cpu".to_string());
 
     let devices = props
         .as_ref()
@@ -987,16 +999,16 @@ async fn ensure_runtime(
     Ok(())
 }
 
-/// Unpack core plus an optional backend into a fresh staging folder, stamp
-/// it, and swap it in for whatever was installed before.
+/// Unpack core plus a backend into a fresh staging folder, stamp it, and
+/// swap it in for whatever was installed before.
 async fn stage(
     core: &Path,
-    backend: Option<&Path>,
+    backend: &Path,
     stamp: &NativeStamp,
     native_dir: &Path,
 ) -> Result<(), String> {
     let core = core.to_path_buf();
-    let backend = backend.map(Path::to_path_buf);
+    let backend = backend.to_path_buf();
     let stamp = serde_json::to_string_pretty(stamp)
         .map_err(|error| format!("cannot write the runtime stamp: {error}"))?;
     let target = native_dir.to_path_buf();
@@ -1009,9 +1021,7 @@ async fn stage(
         std::fs::create_dir_all(&staging)
             .map_err(|error| format!("cannot create {}: {error}", staging.display()))?;
         extract_zip(&core, &staging)?;
-        if let Some(backend) = &backend {
-            extract_zip(backend, &staging)?;
-        }
+        extract_zip(&backend, &staging)?;
         std::fs::write(staging.join(STAMP_FILE), stamp)
             .map_err(|error| format!("cannot write the runtime stamp: {error}"))?;
         replace_dir(&staging, &target)
@@ -1121,45 +1131,39 @@ async fn install_inner(
     let exe = info.env_dir.join(&def.executable);
     let mut failures: Vec<String> = Vec::new();
     for (index, choice) in candidates.iter().enumerate() {
-        let (backend_archive, runtimes) = match packages.backends.get(&choice.backend) {
-            Some(package) => {
-                let source = package_source(package)?;
-                let archive = fetch(
-                    reporter,
-                    &client,
-                    &source,
-                    &downloads,
-                    2,
-                    &format!("Downloading the {} backend", choice.backend),
-                    fetched,
+        // resolve_backends only returns published backends.
+        let package = &packages.backends[&choice.backend];
+        let source = package_source(package)?;
+        let backend_archive = fetch(
+            reporter,
+            &client,
+            &source,
+            &downloads,
+            2,
+            &format!("Downloading the {} backend", choice.backend),
+            fetched,
+        )
+        .await?;
+        for name in &package.requires {
+            let runtime = info.native_runtimes.get(name).ok_or_else(|| {
+                format!(
+                    "the {} backend needs {name}, which the manifest does not define",
+                    choice.backend
                 )
-                .await?;
-                for name in &package.requires {
-                    let runtime = info.native_runtimes.get(name).ok_or_else(|| {
-                        format!(
-                            "the {} backend needs {name}, which the manifest does not define",
-                            choice.backend
-                        )
-                    })?;
-                    ensure_runtime(
-                        reporter,
-                        &client,
-                        name,
-                        runtime,
-                        &info.runtime_root,
-                        &downloads,
-                        2,
-                        fetched,
-                    )
-                    .await?;
-                }
-                (Some(archive), package.requires.clone())
-            }
-            None => {
-                reporter.step(2, "No GPU backend to download").await;
-                (None, Vec::new())
-            }
-        };
+            })?;
+            ensure_runtime(
+                reporter,
+                &client,
+                name,
+                runtime,
+                &info.runtime_root,
+                &downloads,
+                2,
+                fetched,
+            )
+            .await?;
+        }
+        let runtimes = package.requires.clone();
 
         reporter.step(3, "Unpacking...").await;
         let stamp = NativeStamp {
@@ -1171,7 +1175,7 @@ async fn install_inner(
             fallback_reason: (!failures.is_empty()).then(|| failures.join(" ")),
             runtimes,
         };
-        stage(&core, backend_archive.as_deref(), &stamp, &info.env_dir).await?;
+        stage(&core, &backend_archive, &stamp, &info.env_dir).await?;
 
         reporter
             .step(4, &format!("Checking the {} backend...", stamp.backend))
@@ -1305,11 +1309,21 @@ mod tests {
     }
 
     #[test]
-    fn no_gpu_falls_to_the_cpu() {
+    fn no_supported_gpu_is_an_error_not_a_cpu_runtime() {
         let adapters = [gpu("Microsoft Basic Render Driver", GpuVendor::Other)];
-        let choices =
-            resolve_backends("auto", &adapters, &names(&["cuda", "vulkan"]), &[]).unwrap();
-        assert_eq!(backends(choices), ["cpu"]);
+        let error =
+            resolve_backends("auto", &adapters, &names(&["cuda", "vulkan"]), &[]).unwrap_err();
+        assert!(error.contains("Microsoft Basic Render Driver"));
+        // "cpu" saved in settings by an earlier build is not published either.
+        let offered = names(&["cuda", "vulkan"]);
+        assert!(resolve_backends("cpu", &hybrid_laptop(), &offered, &[]).is_err());
+    }
+
+    #[test]
+    fn an_empty_gpu_list_tries_every_backend() {
+        let offered = names(&["cuda", "vulkan"]);
+        let choices = resolve_backends("auto", &[], &offered, &offered).unwrap();
+        assert_eq!(backends(choices), ["cuda", "vulkan"]);
     }
 
     #[test]
@@ -1411,7 +1425,6 @@ mod tests {
             ]
         });
         assert!(props_has_backend(&props, "vulkan"));
-        assert!(props_has_backend(&props, "cpu"));
         assert!(!props_has_backend(&props, "cuda"));
     }
 
