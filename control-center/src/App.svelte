@@ -12,6 +12,7 @@
   import CareyScragVaeBanner from "./lib/CareyScragVaeBanner.svelte";
   import Sa3DecoderLoraBanner from "./lib/Sa3DecoderLoraBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
+  import YueyRuntimeBanner from "./lib/YueyRuntimeBanner.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
@@ -39,6 +40,11 @@
     env_exists: boolean;
     health_endpoint: string | null;
     build_status: BuildStatus | null;
+    runtime: "python" | "native";
+    native_backend: string | null;
+    native_update_available: boolean;
+    native_fallback_reason: string | null;
+    start_blocker: string | null;
   }
 
   interface Sa3LoudnessSettings {
@@ -61,6 +67,8 @@
     careyUseScragVae: boolean;
     sa3UseDecoderLora: boolean;
     sa3Loudness: Sa3LoudnessSettings;
+    nativeBackends: Record<string, string>;
+    yueyEncoding: string;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
     skippedUpdateVersion: string | null;
@@ -185,6 +193,8 @@
       continuationSpliceGainMatch: true,
       continuationMaskOverlap: "0.2",
     },
+    nativeBackends: {},
+    yueyEncoding: "",
     closeActionOnX: "ask",
     autoCheckUpdates: true,
     skippedUpdateVersion: null,
@@ -916,6 +926,15 @@
             enabled={appSettings.garyUseFp16}
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onGaryFp16SettingUpdated}
+          />
+        {:else if selectedServiceId === "yuey"}
+          <YueyRuntimeBanner
+            serviceStatus={selectedService?.status ?? "stopped"}
+            nativeBackend={selectedService?.native_backend ?? null}
+            envExists={selectedService?.env_exists ?? false}
+            building={selectedService?.build_status?.building ?? false}
+            startBlocker={selectedService?.start_blocker ?? null}
+            onShowModels={() => showModels("yuey")}
           />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner

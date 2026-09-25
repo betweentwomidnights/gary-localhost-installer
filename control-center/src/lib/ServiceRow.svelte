@@ -19,6 +19,11 @@
     error: string | null;
     env_exists: boolean;
     build_status: BuildStatus | null;
+    runtime: "python" | "native";
+    native_backend: string | null;
+    native_update_available: boolean;
+    native_fallback_reason: string | null;
+    start_blocker: string | null;
   }
 
   let {
@@ -64,6 +69,19 @@
   }
 
   let isBuilding = $derived(service.build_status?.building ?? false);
+  // A native service downloads a prebuilt runtime instead of building a venv.
+  let isNative = $derived(service.runtime === "native");
+  let buildLabel = $derived(
+    isNative
+      ? !service.env_exists
+        ? "install runtime"
+        : service.native_update_available
+          ? "update runtime"
+          : "reinstall runtime"
+      : service.env_exists
+        ? "rebuild env"
+        : "build env"
+  );
   let buildProgress = $derived(
     service.build_status
       ? Math.round((service.build_status.current_step / service.build_status.total_steps) * 100)
@@ -96,7 +114,7 @@
     <span class="status-dot" style="background: {statusColor(service.status)}"></span>
     <div class="info">
       <span class="name">{service.display_name}</span>
-      <span class="meta">:{service.port} {#if service.pid}&middot; PID {service.pid}{/if}</span>
+      <span class="meta">:{service.port} {#if isNative && service.native_backend}&middot; {service.native_backend} {/if}{#if service.pid}&middot; PID {service.pid}{/if}</span>
     </div>
   </div>
 
@@ -114,25 +132,30 @@
   {:else if service.build_status?.error}
     <div class="error">build failed: {service.build_status.error}</div>
   {:else if service.build_status && !service.build_status.building && service.build_status.current_step > 0}
-    <div class="build-done">build complete</div>
+    <div class="build-done">{isNative ? "runtime installed" : "build complete"}</div>
+  {/if}
+
+  {#if service.env_exists && service.start_blocker && (service.status === "stopped" || service.status === "failed")}
+    <div class="blocker">{service.start_blocker}</div>
   {/if}
 
   <div class="controls">
     {#if service.status === "stopped" || service.status === "failed"}
-      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={!service.env_exists || isBuilding}>start</button>
+      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={!service.env_exists || isBuilding || !!service.start_blocker}>start</button>
     {:else}
       <button onclick={(e) => { e.stopPropagation(); stopService(); }}>stop</button>
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
     {/if}
     <button onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
       {#if isBuilding}
-        building...
+        {isNative ? "installing..." : "building..."}
       {:else}
-        {service.env_exists ? "rebuild env" : "build env"}
+        {buildLabel}
       {/if}
     </button>
     {#if hasModels}
-      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={!service.env_exists}>
+      <!-- Native models download without the runtime; Python ones need the env. -->
+      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={!service.env_exists && !isNative}>
         models
       </button>
     {/if}
@@ -212,6 +235,11 @@
     margin: 4px 0 0 18px;
     font-size: 11px;
     color: var(--green);
+  }
+  .blocker {
+    margin: 4px 0 0 18px;
+    font-size: 11px;
+    color: var(--yellow);
   }
   .build-progress {
     margin: 6px 0 0 18px;

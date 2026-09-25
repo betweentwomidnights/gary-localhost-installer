@@ -12,6 +12,63 @@ pub const SA3_DECODER_LORA_MODEL_ID: &str = "thepatch/same-l-decoder-lora";
 /// it carries a synthetic id.
 pub const FOUNDATION_MODEL_ID: &str = "foundation::foundation-1";
 
+/// Every yuey component and tier lives in one repo, as plain files in one
+/// folder that yue2-server scans by name.
+pub const YUEY_REPO: &str = "thepatch/YuE2-3B-GGUF";
+pub const YUEY_SHARED_MODEL_ID: &str = "yuey::shared";
+/// Published generation tiers, smallest first. Q5_K_M is not published yet.
+/// The GPU sizes are yue2-server's own conservative recommendation thresholds.
+pub const YUEY_TIERS: &[(&str, &str)] = &[
+    ("Q4_K_M", "compact · 2.5 GB file · 8 GB GPUs"),
+    ("Q8_0", "high quality · 3.9 GB file · 12 GB GPUs"),
+    ("BF16", "full quality · 7.3 GB file · 16 GB GPUs"),
+];
+/// What every tier needs beside its own GGUF: the VAE and tokenizer to
+/// render, SheetSage2 to transcribe for cover and continue, and the adapters
+/// and semantic tokenizer for instrumental and real-audio continuation.
+const YUEY_SHARED_FILES: &[&str] = &[
+    "yue2-vae-v1.0-F16.gguf",
+    "yue2-qwen.tiktoken",
+    "sheetsage2-mert2-0.7B-v1.0-F16.gguf",
+    "yue2-semantic-tokenizer-0.7B-v1.0-F16.gguf",
+    "yue2-instrumental-cot-full-v1.0-F16-LoRA.gguf",
+    "yue2-realaudio-nar-v9-v1.0-F16-LoRA.gguf",
+];
+
+fn yuey_tier_file(encoding: &str) -> String {
+    format!("yue2-3.6B-v1.0-{encoding}.gguf")
+}
+
+/// The files a yuey catalog entry stands for, or None for any other id.
+pub fn yuey_files(model_id: &str) -> Option<Vec<String>> {
+    if model_id == YUEY_SHARED_MODEL_ID {
+        return Some(
+            YUEY_SHARED_FILES
+                .iter()
+                .map(|file| file.to_string())
+                .collect(),
+        );
+    }
+    let encoding = model_id.strip_prefix("yuey::")?;
+    YUEY_TIERS
+        .iter()
+        .any(|(tier, _)| *tier == encoding)
+        .then(|| vec![yuey_tier_file(encoding)])
+}
+
+pub fn yuey_models_dir_in(models_dir: &Path) -> PathBuf {
+    models_dir.join("yuey")
+}
+
+/// Tiers whose GGUF is present, smallest first.
+pub fn yuey_installed_tiers(yuey_dir: &Path) -> Vec<&'static str> {
+    YUEY_TIERS
+        .iter()
+        .map(|(tier, _)| *tier)
+        .filter(|tier| regular_file_nonempty(&yuey_dir.join(yuey_tier_file(tier))))
+        .collect()
+}
+
 fn hide_console_window(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "windows")]
     {
@@ -598,6 +655,56 @@ impl ModelManager {
     /// Get the Foundation models directory under the selected runtime root.
     pub fn foundation_models_dir(&self) -> std::path::PathBuf {
         crate::storage::models_dir(&self.repo_root)
+    }
+
+    pub fn yuey_models_dir(&self) -> PathBuf {
+        yuey_models_dir_in(&crate::storage::models_dir(&self.repo_root))
+    }
+
+    pub fn get_yuey_models(&self) -> Vec<ModelEntry> {
+        let dir = self.yuey_models_dir();
+        let entry = |id: String, display_name: String, category: &str, group: &str| {
+            let files = yuey_files(&id).unwrap_or_default();
+            let status = match self.downloads.get(&id) {
+                Some(download) => download.status.clone(),
+                None if files
+                    .iter()
+                    .all(|file| regular_file_nonempty(&dir.join(file))) =>
+                {
+                    ModelStatus::Downloaded
+                }
+                None => ModelStatus::Available,
+            };
+            let downloaded_bytes = matches!(status, ModelStatus::Downloaded)
+                .then(|| files.iter().map(|file| path_size(&dir.join(file))).sum())
+                .filter(|bytes: &u64| *bytes > 0);
+            ModelEntry {
+                id,
+                display_name,
+                service: "yuey".to_string(),
+                size_category: Some(category.to_string()),
+                group: Some(group.to_string()),
+                epoch: None,
+                status,
+                downloaded_bytes,
+            }
+        };
+
+        let mut models = vec![entry(
+            YUEY_SHARED_MODEL_ID.to_string(),
+            "shared components".to_string(),
+            "shared",
+            "VAE, tokenizer, transcription, and continuation · about 3.2 GB",
+        )];
+        models.extend(YUEY_TIERS.iter().map(|(tier, label)| {
+            entry(
+                format!("yuey::{tier}"),
+                format!("yue2 3.6B {tier}"),
+                "tier",
+                label,
+            )
+        }));
+        models
     }
 
     /// Check if Foundation-1 model files are present
@@ -1891,14 +1998,20 @@ except Exception as e:
 /// Emit model status update to the frontend
 pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &tauri::AppHandle) {
     let mgr = manager.lock().await;
+    emit_model_status_from(&mgr, handle);
+}
+
+/// The same events from a manager already locked, for callers that cannot
+/// wait for the lock (a download's progress callback).
+pub fn emit_model_status_from(mgr: &ModelManager, handle: &tauri::AppHandle) {
     let mut models = mgr.get_gary_models();
     models.extend(mgr.get_melodyflow_models());
     models.extend(mgr.get_jerry_models());
     models.extend(mgr.get_sa3_models());
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
+    models.extend(mgr.get_yuey_models());
     let progress = mgr.get_download_progress();
-    drop(mgr);
 
     use tauri::Emitter;
     let _ = handle.emit("models-updated", &models);

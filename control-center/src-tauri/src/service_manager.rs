@@ -1,4 +1,5 @@
-use crate::manifest::{HealthCheck, ServiceDef};
+use crate::manifest::{HealthCheck, NativeDef, NativePackage, ServiceDef, ServiceRuntime};
+use crate::native_runtime::{self, NativeInstall};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
@@ -17,6 +18,17 @@ pub struct ServiceInfo {
     pub env_exists: bool,
     pub health_endpoint: Option<String>,
     pub build_status: Option<BuildStatus>,
+    /// "python" or "native".
+    pub runtime: String,
+    /// For a native service, the backend its installed runtime launches on.
+    pub native_backend: Option<String>,
+    /// The installed native runtime is older than the one this build pins.
+    pub native_update_available: bool,
+    /// Why an automatic backend choice had to fall back, if it did.
+    pub native_fallback_reason: Option<String>,
+    /// Why the service cannot start yet (e.g. its models are missing), shown
+    /// in place of a start that would only fail its first request.
+    pub start_blocker: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +57,7 @@ pub struct HealthTarget {
 
 pub struct ServiceManager {
     services: Vec<ServiceDef>,
+    native_runtimes: HashMap<String, NativePackage>,
     repo_root: PathBuf,
     running: HashMap<String, RunningService>,
     errors: HashMap<String, String>,
@@ -112,6 +125,7 @@ impl ServiceManager {
     pub fn new(services: Vec<ServiceDef>, repo_root: PathBuf) -> Self {
         Self {
             services,
+            native_runtimes: HashMap::new(),
             repo_root,
             running: HashMap::new(),
             errors: HashMap::new(),
@@ -119,20 +133,50 @@ impl ServiceManager {
         }
     }
 
+    /// Shared runtimes (e.g. the CUDA redistributables) native backends need.
+    pub fn set_native_runtimes(&mut self, runtimes: HashMap<String, NativePackage>) {
+        self.native_runtimes = runtimes;
+    }
+
     fn service_dir(&self, svc: &ServiceDef) -> PathBuf {
         self.repo_root.join(&svc.working_dir)
     }
 
+    /// A Python service's venv, or a native service's unpacked runtime.
     fn env_dir(&self, svc: &ServiceDef) -> PathBuf {
-        self.service_dir(svc).join("env")
+        match svc.runtime {
+            ServiceRuntime::Python => self.service_dir(svc).join("env"),
+            ServiceRuntime::Native => self.service_dir(svc).join(native_runtime::NATIVE_DIR),
+        }
+    }
+
+    fn native_install(&self, svc: &ServiceDef) -> Option<NativeInstall> {
+        let native = svc.native.as_ref()?;
+        native_runtime::installed(&svc.id, &self.env_dir(svc), &native.executable)
+    }
+
+    /// A native service's definition and install folder, for the UI.
+    pub fn native_service(&self, service_id: &str) -> Option<(NativeDef, PathBuf)> {
+        let svc = self.find_service(service_id)?;
+        Some((svc.native.clone()?, self.env_dir(svc)))
+    }
+
+    /// The service's env with every template resolved except
+    /// `${NATIVE_BACKEND}`, which depends on the runtime installed.
+    fn native_env_template(&self, svc: &ServiceDef) -> Vec<(String, String)> {
+        svc.env
+            .iter()
+            .map(|(key, value)| (key.clone(), self.resolve_env_var(value)))
+            .collect()
     }
 
     fn services_dir(&self) -> PathBuf {
         self.repo_root.join("services")
     }
 
-    /// Where a service's Python environment lives, for callers that manage
-    /// storage rather than processes.
+    /// Where a service's environment lives (a Python venv, or a native
+    /// service's downloaded runtime), for callers that manage storage rather
+    /// than processes.
     pub fn env_dir_for(&self, service_id: &str) -> Option<PathBuf> {
         self.find_service(service_id).map(|svc| self.env_dir(svc))
     }
@@ -328,11 +372,22 @@ impl ServiceManager {
                 let pid = running.and_then(|r| r.process.id().into());
                 let healthy = running.map(|r| r.healthy).unwrap_or(false);
                 let error = self.errors.get(&svc.id).cloned();
-                let env_exists = self
-                    .env_dir(svc)
-                    .join("Scripts")
-                    .join("python.exe")
-                    .exists();
+                let native_install = self.native_install(svc);
+                let env_exists = match svc.runtime {
+                    ServiceRuntime::Python => self
+                        .env_dir(svc)
+                        .join("Scripts")
+                        .join("python.exe")
+                        .exists(),
+                    ServiceRuntime::Native => native_install.is_some(),
+                };
+                let native_update_available = match (&native_install, &svc.native) {
+                    (Some(install), Some(native)) => install
+                        .version
+                        .as_ref()
+                        .is_some_and(|version| version != &native.version),
+                    _ => false,
+                };
 
                 let health_endpoint = svc
                     .health_check
@@ -361,6 +416,17 @@ impl ServiceManager {
                     env_exists,
                     health_endpoint,
                     build_status,
+                    runtime: match svc.runtime {
+                        ServiceRuntime::Python => "python".to_string(),
+                        ServiceRuntime::Native => "native".to_string(),
+                    },
+                    native_backend: native_install
+                        .as_ref()
+                        .map(|install| install.backend.clone()),
+                    native_update_available,
+                    native_fallback_reason: native_install
+                        .and_then(|install| install.fallback_reason),
+                    start_blocker: self.start_blocker(svc),
                 }
             })
             .collect()
@@ -374,6 +440,10 @@ impl ServiceManager {
 
         if self.running.contains_key(service_id) {
             return Err(format!("{} is already running", service_id));
+        }
+
+        if svc.runtime == ServiceRuntime::Native {
+            return self.start_native(&svc);
         }
 
         let python = self.python_exe(&svc);
@@ -517,6 +587,100 @@ impl ServiceManager {
         Ok(())
     }
 
+    fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
+        if svc.id == "yuey" {
+            return crate::yuey_missing_models(&self.models_dir());
+        }
+        None
+    }
+
+    /// Launch a native service's executable from its installed runtime, with
+    /// the backend it was installed for and any shared runtime on PATH.
+    fn start_native(&mut self, svc: &ServiceDef) -> Result<(), String> {
+        let native = svc
+            .native
+            .as_ref()
+            .ok_or_else(|| format!("{} has no native definition", svc.id))?;
+        let install = self.native_install(svc).ok_or_else(|| {
+            format!(
+                "{}'s runtime is not installed. Install it first.",
+                svc.display_name
+            )
+        })?;
+        if let Some(blocker) = self.start_blocker(svc) {
+            return Err(format!("{} {blocker}.", svc.display_name));
+        }
+        let exe = install.dir.join(&native.executable);
+
+        let work_dir = self.service_dir(svc);
+        std::fs::create_dir_all(&work_dir)
+            .map_err(|e| format!("Cannot create {}: {}", work_dir.display(), e))?;
+        let log_path = work_dir.join(format!("{}.log", svc.id));
+
+        self.errors.remove(&svc.id);
+
+        let log_file = std::fs::File::create(&log_path)
+            .map_err(|e| format!("Cannot create log file: {}", e))?;
+        let log_file_err = log_file
+            .try_clone()
+            .map_err(|e| format!("Cannot clone log handle: {}", e))?;
+
+        let mut cmd = Command::new(&exe);
+        cmd.args(&native.args)
+            .current_dir(&install.dir)
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err));
+        self.apply_runtime_env(&mut cmd);
+        for (key, value) in
+            native_runtime::launch_env(&self.native_env_template(svc), &install.backend)
+        {
+            cmd.env(key, value);
+        }
+        if let Some(path) = native_runtime::path_with_runtimes(&self.repo_root, &install.runtimes) {
+            cmd.env("PATH", path);
+        }
+
+        if svc.id == "yuey" {
+            if let Some(encoding) = crate::yuey_launch_encoding(&self.models_dir(), &install.dir) {
+                cmd.env("YUE2_ENCODING", encoding);
+            }
+        }
+
+        crate::workload_job::configure_std_command(&mut cmd);
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| native_runtime::spawn_error_message(&svc.display_name, &e))?;
+        if let Err(error) = crate::workload_job::enroll_std_child(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "Failed to enroll {} in the managed workload group: {}",
+                svc.id, error
+            ));
+        }
+
+        log::info!(
+            "Started {} (PID {}) from {} on {}",
+            svc.id,
+            child.id(),
+            install.dir.display(),
+            install.backend
+        );
+
+        self.running.insert(
+            svc.id.clone(),
+            RunningService {
+                process: child,
+                healthy: false,
+                started_at: Instant::now(),
+                last_health_check_at: None,
+            },
+        );
+
+        Ok(())
+    }
+
     pub fn stop(&mut self, service_id: &str) -> Result<(), String> {
         if let Some(mut running) = self.running.remove(service_id) {
             log::info!("Stopping {}", service_id);
@@ -562,6 +726,24 @@ impl ServiceManager {
             .find_service(service_id)
             .ok_or_else(|| format!("Unknown service: {}", service_id))?;
 
+        if svc.runtime == ServiceRuntime::Native {
+            if self
+                .build_statuses
+                .get(service_id)
+                .is_some_and(|b| b.building)
+            {
+                return Err(format!("{} is already installing", service_id));
+            }
+            // Its DLLs are locked while it runs, so the swap would fail halfway.
+            if self.running.contains_key(service_id) {
+                return Err(format!(
+                    "Stop {} before reinstalling its runtime.",
+                    svc.display_name
+                ));
+            }
+            return Ok(self.build_info_for(svc));
+        }
+
         if svc.build_steps.is_empty() {
             return Err(format!("No build steps defined for {}", service_id));
         }
@@ -574,7 +756,12 @@ impl ServiceManager {
             return Err(format!("{} is already building", service_id));
         }
 
-        Ok(BuildInfo {
+        Ok(self.build_info_for(svc))
+    }
+
+    fn build_info_for(&self, svc: &ServiceDef) -> BuildInfo {
+        let native = svc.runtime == ServiceRuntime::Native;
+        BuildInfo {
             service_id: svc.id.clone(),
             runtime_root: self.repo_root.clone(),
             work_dir: self.service_dir(svc),
@@ -582,7 +769,19 @@ impl ServiceManager {
             python_version: svc.python_version.clone(),
             accelerator_profile: svc.accelerator_profile.clone(),
             build_steps: svc.build_steps.clone(),
-        })
+            runtime: svc.runtime,
+            native: svc.native.clone(),
+            native_runtimes: if native {
+                self.native_runtimes.clone()
+            } else {
+                HashMap::new()
+            },
+            service_env: if native {
+                self.native_env_template(svc)
+            } else {
+                Vec::new()
+            },
+        }
     }
 
     /// Mark a build as started
@@ -638,8 +837,11 @@ impl ServiceManager {
         self.services
             .iter()
             .filter_map(|svc| {
-                if svc.build_steps.is_empty() {
-                    return None;
+                match svc.runtime {
+                    ServiceRuntime::Python if svc.build_steps.is_empty() => return None,
+                    // A running native service cannot have its runtime swapped.
+                    ServiceRuntime::Native if self.running.contains_key(&svc.id) => return None,
+                    _ => {}
                 }
                 if self
                     .build_statuses
@@ -648,15 +850,7 @@ impl ServiceManager {
                 {
                     return None;
                 }
-                Some(BuildInfo {
-                    service_id: svc.id.clone(),
-                    runtime_root: self.repo_root.clone(),
-                    work_dir: self.service_dir(svc),
-                    env_dir: self.env_dir(svc),
-                    python_version: svc.python_version.clone(),
-                    accelerator_profile: svc.accelerator_profile.clone(),
-                    build_steps: svc.build_steps.clone(),
-                })
+                Some(self.build_info_for(svc))
             })
             .collect()
     }
@@ -750,6 +944,22 @@ pub struct BuildInfo {
     pub python_version: String,
     pub accelerator_profile: String,
     pub build_steps: Vec<String>,
+    pub runtime: ServiceRuntime,
+    pub native: Option<NativeDef>,
+    pub native_runtimes: HashMap<String, NativePackage>,
+    /// A native service's env, resolved except for `${NATIVE_BACKEND}`, so
+    /// the install check runs the executable exactly as the service will.
+    pub service_env: Vec<(String, String)>,
+}
+
+impl BuildInfo {
+    /// Python builds add uv bootstrap and venv creation to the manifest steps.
+    pub fn total_steps(&self) -> usize {
+        match self.runtime {
+            ServiceRuntime::Python => self.build_steps.len() + 2,
+            ServiceRuntime::Native => native_runtime::INSTALL_STEPS,
+        }
+    }
 }
 
 pub fn install_xformers_shim(env_dir: &PathBuf) -> Result<(), String> {
@@ -809,6 +1019,8 @@ mod tests {
             build_steps: Vec::new(),
             env,
             health_check: None,
+            runtime: crate::manifest::ServiceRuntime::Python,
+            native: None,
         }
     }
 

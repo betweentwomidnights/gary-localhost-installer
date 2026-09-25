@@ -20,6 +20,11 @@
     error: string | null;
     env_exists: boolean;
     build_status: BuildStatus | null;
+    runtime: "python" | "native";
+    native_backend: string | null;
+    native_update_available: boolean;
+    native_fallback_reason: string | null;
+    start_blocker: string | null;
   }
 
   let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora }: {
@@ -43,7 +48,7 @@
   }
 
   // Services that have downloadable models
-  const servicesWithModels = new Set(["gary", "melodyflow", "stable-audio", "sa3", "carey", "foundation"]);
+  const servicesWithModels = new Set(["gary", "melodyflow", "stable-audio", "sa3", "carey", "foundation", "yuey"]);
   const showRebuildAll = import.meta.env.VITE_ENABLE_REBUILD_ALL === "1";
 </script>
 

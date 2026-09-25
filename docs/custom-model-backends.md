@@ -153,3 +153,52 @@ clean reference for the remote SA3 API shape.
   dtype, including CFG paths that may return float32 latents.
 - half-precision sa3 models are converted before transfer to CUDA, reducing
   transient GPU memory pressure during load and reload.
+
+## yuey localhost notes
+
+yuey is the first service with no Python environment at all. gary4local runs
+[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp)'s `yue2-server`,
+the same native server the remote backend runs, on `http://localhost:8007`.
+
+- "install runtime" replaces "build env". it detects the GPU, downloads the
+  yuey core package plus one GGML backend, checks both against the SHA-256
+  pinned in `services/manifests/services.json`, and unpacks them into
+  `services/yuey/native`.
+- yuey uses CUDA on NVIDIA and Vulkan on AMD and Intel. on an RTX 5070
+  Laptop with nothing else on the GPU, Vulkan is the faster backend: a 20s
+  render took 9.2s against CUDA's 13.3-14.2s, and a 170s render 119s against
+  152s. it is not the reliable one. with Ableton open, the same 170s render
+  stalled for over ten minutes on Vulkan. even on
+  an idle GPU, Vulkan's flash attention drops into a slow mode (2.6ms to 39ms a
+  call) for a few seconds out of every ten on some song lengths; the kernel
+  itself measures fine in isolation, so this looks like driver power-state
+  behaviour rather than a ggml bug. gary4juce runs inside a DAW, so NVIDIA
+  stays on CUDA. that order is yuey's own (`prefer` in the manifest); later
+  native services get measured for theirs.
+- after unpacking, the install runs `yue2-server --props` to confirm the
+  backend actually initialised. if the automatic choice does not come up, it
+  tries the next backend the GPU can run and says so in the yuey panel rather
+  than quietly running somewhere else.
+- the backend can be forced to `cuda`, `vulkan`, or `cpu` from the yuey panel.
+  a change takes effect on the next runtime install. CUDA's runtime DLLs
+  install once under `native-runtimes/` in runtime storage and are shared with
+  any later native service.
+- a runtime install finishes by downloading what yuey needs to generate: the
+  shared set and the tier the runtime check recommended (Q4_K_M in place of
+  the not-yet-published Q5_K_M). yuey will not start until they are present,
+  and its panel has a button to fetch them again if they were removed.
+- models download straight from
+  [thepatch/YuE2-3B-GGUF](https://huggingface.co/thepatch/YuE2-3B-GGUF) into
+  `models/yuey`: one shared set (VAE, tokenizer, SheetSage2 transcription, and
+  the instrumental and continuation adapters) plus one generation tier.
+  `Q4_K_M` suits 8 GB GPUs, `Q8_0` 12 GB, and `BF16` 16 GB.
+- a long song used to run an 8 GB card out of memory at the very end: the VAE
+  decoded in ~3.2 GB windows while the ~3 GB generator was still loaded, and
+  beside a DAW that failed on both backends (CUDA as a "device not ready"
+  abort). `yue2-server` now frees the generator before the decode on frugal
+  jobs, which gary4juce's always are, and decodes in 512-frame windows. a 170s
+  render peaks at 3.9 GB on CUDA and 4.1 GB on Vulkan, down from 7.4 GB.
+- `yue2-server` on its own prefers the most precise tier it can find, which on
+  a small card means running out of memory. gary4local always names one: the
+  tier you picked, else the one the runtime check recommended, else the
+  smallest one downloaded.
