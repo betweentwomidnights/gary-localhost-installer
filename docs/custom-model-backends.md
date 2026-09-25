@@ -179,8 +179,10 @@ the same native server the remote backend runs, on `http://localhost:8007`.
   backend actually initialised. if the automatic choice does not come up, it
   tries the next backend the GPU can run and says so in the yuey panel rather
   than quietly running somewhere else.
-- the backend can be forced to `cuda`, `vulkan`, or `cpu` from the yuey panel.
-  a change takes effect on the next runtime install. CUDA's runtime DLLs
+- the backend can be forced to `cuda` or `vulkan` from the yuey panel. a
+  change takes effect on the next runtime install. there is no CPU runtime:
+  a song takes minutes on a GPU, so on a CPU yuey would only look broken, and
+  a machine without an NVIDIA, AMD, or Intel GPU is told so at install. CUDA's runtime DLLs
   install once under `native-runtimes/` in runtime storage and are shared with
   any later native service.
 - a runtime install finishes by downloading what yuey needs to generate: the
