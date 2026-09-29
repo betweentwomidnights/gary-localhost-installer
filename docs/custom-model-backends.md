@@ -159,6 +159,8 @@ clean reference for the remote SA3 API shape.
 yuey is the first service with no Python environment at all. gary4local runs
 [yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp)'s `yue2-server`,
 the same native server the remote backend runs, on `http://localhost:8007`.
+the package format and install path every native service shares are in
+[native runtime packages](native-runtime-packages.md).
 
 - "install runtime" replaces "build env". it detects the GPU, downloads the
   yuey core package plus one GGML backend, checks both against the SHA-256
