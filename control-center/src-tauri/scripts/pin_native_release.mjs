@@ -1,15 +1,18 @@
-// Pin a native service to a published release: rewrite its package URLs and
-// SHA-256s in services/manifests/services.json from the release's SHA256SUMS.
+// Pin a native service, or a shared runtime, to a published release: rewrite
+// its URLs and SHA-256s in services/manifests/services.json from the release's
+// SHA256SUMS. See docs/native-runtime-packages.md.
 //
 // Usage:
 //   node control-center/src-tauri/scripts/pin_native_release.mjs \
 //     --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.1 [--sums path/to/SHA256SUMS]
+//   node control-center/src-tauri/scripts/pin_native_release.mjs \
+//     --runtime cudart-12.8 --repo betweentwomidnights/gary-localhost-installer --tag runtime-cudart-12.8.1
 //
-// Only URLs under the service's currently pinned release are touched, so a
-// shared runtime hosted elsewhere is left alone. A runtime pack whose name
-// carries no version (cudart-12.8-windows-x64.zip) keeps its old pin when the
-// new release does not ship one. The file is edited in place rather than
-// re-serialised, so the diff is only the lines that changed.
+// A service pin touches only URLs under the service's currently pinned
+// release, so a shared runtime hosted elsewhere is left alone. A runtime pin
+// rewrites that one nativeRuntimes entry to the single zip its release carries.
+// The file is edited in place rather than re-serialised, so the diff is only
+// the lines that changed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +32,8 @@ function parseArgs(argv) {
     if (!key?.startsWith('--') || argv[i + 1] === undefined) fail(`bad arguments near ${key}`);
     args[key.slice(2)] = argv[i + 1];
   }
-  for (const required of ['service', 'repo', 'tag']) {
+  if (Boolean(args.service) === Boolean(args.runtime)) fail('give --service or --runtime, not both');
+  for (const required of ['repo', 'tag']) {
     if (!args[required]) fail(`--${required} is required`);
   }
   return args;
@@ -46,9 +50,6 @@ function parseSums(text) {
 
 const args = parseArgs(process.argv.slice(2));
 const text = fs.readFileSync(manifestPath, 'utf8');
-const service = JSON.parse(text).services.find((entry) => entry.id === args.service);
-if (!service?.native) fail(`${args.service} is not a native service in ${manifestPath}`);
-const oldTag = service.native.version;
 
 let sumsText;
 if (args.sums) {
@@ -61,6 +62,27 @@ if (args.sums) {
 }
 const sums = parseSums(sumsText);
 if (sums.size === 0) fail('SHA256SUMS has no entries');
+
+if (args.runtime) {
+  // A runtime release carries exactly one zip, named for the exact toolkit it
+  // came from; the manifest names it by the compatibility class.
+  if (!JSON.parse(text).nativeRuntimes?.[args.runtime]) fail(`${args.runtime} is not in nativeRuntimes`);
+  if (sums.size !== 1) fail(`a runtime release should carry one zip; ${args.tag} has ${sums.size}`);
+  const [[file, sha]] = [...sums.entries()];
+  const name = args.runtime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const entry = new RegExp(`("${name}":\\s*\\{\\s*"url":\\s*")[^"]*(",\\s*"sha256":\\s*")[^"]*(")`);
+  if (!entry.test(text)) fail(`could not find ${args.runtime}'s url and sha256`);
+  const url = `https://github.com/${args.repo}/releases/download/${args.tag}/${file}`;
+  const updated = text.replace(entry, `$1${url}$2${sha}$3`);
+  JSON.parse(updated);
+  fs.writeFileSync(manifestPath, updated);
+  console.log(`[pin-native] ${args.runtime} -> ${url}  ${sha}`);
+  process.exit(0);
+}
+
+const service = JSON.parse(text).services.find((entry) => entry.id === args.service);
+if (!service?.native) fail(`${args.service} is not a native service in ${manifestPath}`);
+const oldTag = service.native.version;
 
 const releasePrefix = `https://github.com/${args.repo}/releases/download/`;
 let pinned = 0;

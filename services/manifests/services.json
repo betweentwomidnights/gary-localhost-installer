@@ -351,7 +351,7 @@
   ],
   "nativeRuntimes": {
     "cudart-12.8": {
-      "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.0/cudart-12.8-windows-x64.zip",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/runtime-cudart-12.8.1/cudart-12.8.1-windows-x64.zip",
       "sha256": "unpublished"
     }
   },

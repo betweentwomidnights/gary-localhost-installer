@@ -848,10 +848,36 @@ struct PackageSource {
     local: Option<PathBuf>,
 }
 
+/// The entry in a local package folder's SHA256SUMS for `file_name`. A runtime
+/// pack built on a developer's machine is named for that machine's toolkit
+/// (`cudart-12.8.0-...`), not the one the manifest pins (`cudart-12.8.1-...`),
+/// so for a runtime the one pack named for its compatibility class stands in.
+fn local_entry<'a>(
+    sums: &'a HashMap<String, String>,
+    file_name: &str,
+    runtime: Option<&str>,
+) -> Option<(&'a String, &'a String)> {
+    if let Some(found) = sums.get_key_value(file_name) {
+        return Some(found);
+    }
+    let runtime = runtime?;
+    let suffix = format!("-{}.zip", current_platform());
+    let mut matches = sums.iter().filter(|(name, _)| {
+        name.strip_prefix(runtime)
+            .is_some_and(|rest| rest.starts_with(['-', '.']) && rest.ends_with(&suffix))
+    });
+    let found = matches.next()?;
+    if matches.next().is_some() {
+        return None; // two candidates: better to say so than to guess
+    }
+    Some(found)
+}
+
 /// `GARY4LOCAL_NATIVE_PACKAGE_DIR` names a folder of packages built by a
 /// repo's `ci/package-windows.ps1`, so the install flow can be exercised
 /// before a release exists. Hashes then come from that folder's SHA256SUMS.
-fn package_source(package: &NativePackage) -> Result<PackageSource, String> {
+/// `runtime` names the shared runtime a package is, if it is one.
+fn package_source(package: &NativePackage, runtime: Option<&str>) -> Result<PackageSource, String> {
     let file_name = package
         .url
         .rsplit('/')
@@ -864,15 +890,13 @@ fn package_source(package: &NativePackage) -> Result<PackageSource, String> {
         let sums = std::fs::read_to_string(dir.join("SHA256SUMS"))
             .map(|raw| parse_sha256sums(&raw))
             .map_err(|error| format!("cannot read {}\\SHA256SUMS: {error}", dir.display()))?;
-        let sha256 = sums
-            .get(&file_name)
-            .cloned()
+        let (name, sha256) = local_entry(&sums, &file_name, runtime)
             .ok_or_else(|| format!("{} has no entry for {file_name}", dir.display()))?;
         return Ok(PackageSource {
-            local: Some(dir.join(&file_name)),
+            local: Some(dir.join(name)),
             url: package.url.clone(),
-            file_name,
-            sha256,
+            file_name: name.clone(),
+            sha256: sha256.clone(),
         });
     }
 
@@ -955,7 +979,7 @@ async fn ensure_runtime(
     step: usize,
     fetched: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
-    let source = package_source(package)?;
+    let source = package_source(package, Some(name))?;
     let dir = runtime_dir(runtime_root, name);
     if read_runtime_stamp(&dir).as_deref() == Some(source.sha256.as_str()) {
         reporter
@@ -1114,7 +1138,7 @@ async fn install_inner(
     let downloads = crate::storage::cache_dir(&info.runtime_root).join("native-downloads");
 
     // 2. The core runs anywhere by itself.
-    let core_source = package_source(&packages.core)?;
+    let core_source = package_source(&packages.core, None)?;
     let core = fetch(
         reporter,
         &client,
@@ -1133,7 +1157,7 @@ async fn install_inner(
     for (index, choice) in candidates.iter().enumerate() {
         // resolve_backends only returns published backends.
         let package = &packages.backends[&choice.backend];
-        let source = package_source(package)?;
+        let source = package_source(package, None)?;
         let backend_archive = fetch(
             reporter,
             &client,
@@ -1399,8 +1423,32 @@ mod tests {
             sha256: "unpublished".to_string(),
             requires: Vec::new(),
         };
-        let error = package_source(&package).err().unwrap();
+        let error = package_source(&package, None).err().unwrap();
         assert!(error.contains("no published checksum"));
+    }
+
+    #[test]
+    fn a_local_runtime_pack_stands_in_by_its_compatibility_class() {
+        let hash = "b".repeat(64);
+        let platform = current_platform();
+        let sums = parse_sha256sums(&format!(
+            "{hash}  cudart-12.8.0-{platform}.zip\n{hash}  yuey-v0.2.0-{platform}-core.zip\n"
+        ));
+        let pinned = format!("cudart-12.8.1-{platform}.zip");
+        // A service package has to match exactly; a runtime by its class.
+        assert!(local_entry(&sums, &pinned, None).is_none());
+        let (name, _) = local_entry(&sums, &pinned, Some("cudart-12.8")).unwrap();
+        assert_eq!(name, &format!("cudart-12.8.0-{platform}.zip"));
+        // The versionless name an older yuey build writes matches too.
+        let older = parse_sha256sums(&format!("{hash}  cudart-12.8-{platform}.zip\n"));
+        assert!(local_entry(&older, &pinned, Some("cudart-12.8")).is_some());
+        // A different class, or two candidates, is not a match.
+        assert!(local_entry(&sums, &pinned, Some("cudart-12.9")).is_none());
+        assert!(local_entry(&sums, &format!("cudart-12.80-{platform}.zip"), Some("cudart-12.80")).is_none());
+        let two = parse_sha256sums(&format!(
+            "{hash}  cudart-12.8.0-{platform}.zip\n{hash}  cudart-12.8.1-{platform}.zip\n"
+        ));
+        assert!(local_entry(&two, "cudart-12.8.2.zip", Some("cudart-12.8")).is_none());
     }
 
     #[test]
