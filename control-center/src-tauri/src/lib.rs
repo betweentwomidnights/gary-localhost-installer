@@ -130,6 +130,63 @@ struct Sa3LoudnessSettingsPatch {
     continuation_mask_overlap: Option<String>,
 }
 
+/// What yuey does with instrumental requests that leave these out, and how long
+/// a song it may plan on its own. Passed to the server as YUE2_* env at launch,
+/// so they apply to every client, gary4juce included; a request that sets a
+/// field itself still wins.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct YueyGenerationSettings {
+    /// "transfer" moves the sung or planned melody to an instrument; "rest"
+    /// silences it and keeps only the instrument lane.
+    #[serde(default = "default_yuey_instrumental_method")]
+    instrumental_method: String,
+    /// Stack the instrumental LoRA on instrumental requests when it is installed.
+    #[serde(default = "default_yuey_instrumental_adapter")]
+    instrumental_adapter: bool,
+    /// Ceiling on the length yuey picks when a request names no bar count.
+    #[serde(default = "default_yuey_natural_max_seconds")]
+    natural_max_seconds: u32,
+}
+
+impl Default for YueyGenerationSettings {
+    fn default() -> Self {
+        Self {
+            instrumental_method: default_yuey_instrumental_method(),
+            instrumental_adapter: default_yuey_instrumental_adapter(),
+            natural_max_seconds: default_yuey_natural_max_seconds(),
+        }
+    }
+}
+
+fn default_yuey_instrumental_method() -> String {
+    "transfer".to_string()
+}
+
+fn default_yuey_instrumental_adapter() -> bool {
+    true
+}
+
+/// The server's own default. The shared backend runs a tighter one.
+fn default_yuey_natural_max_seconds() -> u32 {
+    180
+}
+
+/// Long enough for a short loop, short enough that one runaway plan cannot tie
+/// up the GPU for a quarter of an hour; the server itself accepts up to 900.
+const YUEY_NATURAL_MAX_SECONDS: std::ops::RangeInclusive<u32> = 30..=600;
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct YueyGenerationSettingsPatch {
+    #[serde(default)]
+    instrumental_method: Option<String>,
+    #[serde(default)]
+    instrumental_adapter: Option<bool>,
+    #[serde(default)]
+    natural_max_seconds: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -153,6 +210,8 @@ struct AppSettings {
     #[serde(default)]
     yuey_encoding: String,
     #[serde(default)]
+    yuey_generation: YueyGenerationSettings,
+    #[serde(default)]
     close_action_on_x: CloseActionOnX,
     #[serde(default = "default_auto_check_updates")]
     auto_check_updates: bool,
@@ -173,6 +232,7 @@ impl Default for AppSettings {
             sa3_loudness: Sa3LoudnessSettings::default(),
             native_backends: BTreeMap::new(),
             yuey_encoding: String::new(),
+            yuey_generation: YueyGenerationSettings::default(),
             close_action_on_x: CloseActionOnX::Ask,
             auto_check_updates: default_auto_check_updates(),
             skipped_update_version: None,
@@ -220,6 +280,8 @@ struct AppSettingsPatch {
     native_backends: Option<BTreeMap<String, String>>,
     #[serde(default)]
     yuey_encoding: Option<String>,
+    #[serde(default)]
+    yuey_generation: Option<YueyGenerationSettingsPatch>,
     #[serde(default)]
     close_action_on_x: Option<CloseActionOnX>,
     #[serde(default)]
@@ -1300,6 +1362,28 @@ fn clean_setting_value(value: String) -> String {
     value.trim().to_string()
 }
 
+// Values outside what the server accepts are not saved: an unknown method
+// keeps the current one and the ceiling is held to its range. The panel checks
+// both first and says so, so this only guards a hand-edited settings file.
+fn merge_yuey_generation_settings(
+    current: &mut YueyGenerationSettings,
+    patch: YueyGenerationSettingsPatch,
+) {
+    if let Some(method) = patch.instrumental_method {
+        let method = method.trim().to_ascii_lowercase();
+        if method == "transfer" || method == "rest" {
+            current.instrumental_method = method;
+        }
+    }
+    if let Some(adapter) = patch.instrumental_adapter {
+        current.instrumental_adapter = adapter;
+    }
+    if let Some(seconds) = patch.natural_max_seconds {
+        current.natural_max_seconds =
+            seconds.clamp(*YUEY_NATURAL_MAX_SECONDS.start(), *YUEY_NATURAL_MAX_SECONDS.end());
+    }
+}
+
 fn merge_sa3_loudness_settings(current: &mut Sa3LoudnessSettings, patch: Sa3LoudnessSettingsPatch) {
     if let Some(value) = patch.peak_normalize_db {
         current.peak_normalize_db = clean_setting_value(value);
@@ -1373,6 +1457,10 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(yuey_encoding) = patch.yuey_encoding {
         current.yuey_encoding = yuey_encoding.trim().to_ascii_uppercase();
+    }
+
+    if let Some(yuey_generation) = patch.yuey_generation {
+        merge_yuey_generation_settings(&mut current.yuey_generation, yuey_generation);
     }
 
     if let Some(close_action_on_x) = patch.close_action_on_x {
@@ -5211,6 +5299,79 @@ mod yuey_encoding_tests {
             Some("Q4_K_M")
         );
         assert_eq!(choose_yuey_encoding(&[], "", None), None);
+    }
+}
+
+pub(crate) fn yuey_generation_env() -> Vec<(&'static str, String)> {
+    yuey_generation_env_for(&read_app_settings().yuey_generation)
+}
+
+fn yuey_generation_env_for(settings: &YueyGenerationSettings) -> Vec<(&'static str, String)> {
+    vec![
+        ("YUE2_INSTRUMENTAL_METHOD", settings.instrumental_method.clone()),
+        (
+            "YUE2_USE_INSTRUMENTAL_ADAPTER",
+            if settings.instrumental_adapter { "1" } else { "0" }.to_string(),
+        ),
+        ("YUE2_NATURAL_MAX_SECONDS", settings.natural_max_seconds.to_string()),
+    ]
+}
+
+#[cfg(test)]
+mod yuey_generation_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_the_server() {
+        let env = yuey_generation_env_for(&YueyGenerationSettings::default());
+        assert_eq!(
+            env,
+            vec![
+                ("YUE2_INSTRUMENTAL_METHOD", "transfer".to_string()),
+                ("YUE2_USE_INSTRUMENTAL_ADAPTER", "1".to_string()),
+                ("YUE2_NATURAL_MAX_SECONDS", "180".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_settings_file_without_the_group_reads_as_defaults() {
+        let settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.yuey_generation, YueyGenerationSettings::default());
+    }
+
+    #[test]
+    fn merge_keeps_values_the_server_accepts() {
+        let mut settings = YueyGenerationSettings::default();
+        merge_yuey_generation_settings(
+            &mut settings,
+            YueyGenerationSettingsPatch {
+                instrumental_method: Some(" Rest ".to_string()),
+                instrumental_adapter: Some(false),
+                natural_max_seconds: Some(96),
+            },
+        );
+        assert_eq!(settings.instrumental_method, "rest");
+        assert!(!settings.instrumental_adapter);
+        assert_eq!(settings.natural_max_seconds, 96);
+
+        merge_yuey_generation_settings(
+            &mut settings,
+            YueyGenerationSettingsPatch {
+                instrumental_method: Some("hum".to_string()),
+                instrumental_adapter: None,
+                natural_max_seconds: Some(5000),
+            },
+        );
+        assert_eq!(settings.instrumental_method, "rest");
+        assert!(!settings.instrumental_adapter);
+        assert_eq!(settings.natural_max_seconds, 600);
+
+        merge_yuey_generation_settings(
+            &mut settings,
+            YueyGenerationSettingsPatch { natural_max_seconds: Some(0), ..Default::default() },
+        );
+        assert_eq!(settings.natural_max_seconds, 30);
     }
 }
 

@@ -165,16 +165,20 @@ the same native server the remote backend runs, on `http://localhost:8007`.
   pinned in `services/manifests/services.json`, and unpacks them into
   `services/yuey/native`.
 - yuey uses CUDA on NVIDIA and Vulkan on AMD and Intel. on an RTX 5070
-  Laptop with nothing else on the GPU, Vulkan is the faster backend: a 20s
-  render took 9.2s against CUDA's 13.3-14.2s, and a 170s render 119s against
-  152s. it is not the reliable one. with Ableton open, the same 170s render
-  stalled for over ten minutes on Vulkan. even on
-  an idle GPU, Vulkan's flash attention drops into a slow mode (2.6ms to 39ms a
-  call) for a few seconds out of every ten on some song lengths; the kernel
-  itself measures fine in isolation, so this looks like driver power-state
-  behaviour rather than a ggml bug. gary4juce runs inside a DAW, so NVIDIA
-  stays on CUDA. that order is yuey's own (`prefer` in the manifest); later
+  Laptop CUDA is the faster backend now that yuey replays its decode step as
+  a CUDA graph: a 4000-token instrumental took 96s on CUDA against 154s on
+  Vulkan, most of the gap in the flow stage. Vulkan used to be ahead on an
+  idle GPU, and it is still the less reliable one: with Ableton open, a 170s
+  render stalled for over ten minutes on Vulkan. even on an idle GPU, Vulkan's
+  flash attention drops into a slow mode (2.6ms to 39ms a call) for a few
+  seconds out of every ten on some song lengths; the kernel itself measures
+  fine in isolation, so this looks like driver power-state behaviour rather
+  than a ggml bug. that order is yuey's own (`prefer` in the manifest); later
   native services get measured for theirs.
+- transcription (and so remix and continue) was broken on Vulkan until
+  yuey.cpp #12: SheetSage2's decoder drifted into one repeated note after a
+  bar or two. a runtime from before that fix gives AMD and Intel users
+  garbage scores.
 - after unpacking, the install runs `yue2-server --props` to confirm the
   backend actually initialised. if the automatic choice does not come up, it
   tries the next backend the GPU can run and says so in the yuey panel rather
@@ -202,6 +206,14 @@ the same native server the remote backend runs, on `http://localhost:8007`.
   abort). `yue2-server` now frees the generator before the decode on frugal
   jobs, which gary4juce's always are, and decodes in 512-frame windows. a 170s
   render peaks at 3.9 GB on CUDA and 4.1 GB on Vulkan, down from 7.4 GB.
+- the yuey generation panel sets three server defaults, passed as env at
+  launch and applied to every client, gary4juce included; saving restarts a
+  running yuey. what an instrumental job does with the sung or planned
+  melody (`YUE2_INSTRUMENTAL_METHOD`: move it to an instrument, the default,
+  or leave it out), whether the instrumental adapter is used
+  (`YUE2_USE_INSTRUMENTAL_ADAPTER`), and the natural-length ceiling
+  (`YUE2_NATURAL_MAX_SECONDS`, 30-600s, default 180; the remote backend runs
+  96). a request that sets one of these itself still wins.
 - `yue2-server` on its own prefers the most precise tier it can find, which on
   a small card means running out of memory. gary4local always names one: the
   tier you picked, else the one the runtime check recommended, else the

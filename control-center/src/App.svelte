@@ -13,6 +13,7 @@
   import Sa3DecoderLoraBanner from "./lib/Sa3DecoderLoraBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import YueyRuntimeBanner from "./lib/YueyRuntimeBanner.svelte";
+  import YueyGenerationPanel, { type YueyGenerationSettings } from "./lib/YueyGenerationPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
@@ -69,6 +70,7 @@
     sa3Loudness: Sa3LoudnessSettings;
     nativeBackends: Record<string, string>;
     yueyEncoding: string;
+    yueyGeneration: YueyGenerationSettings;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
     skippedUpdateVersion: string | null;
@@ -195,6 +197,7 @@
     },
     nativeBackends: {},
     yueyEncoding: "",
+    yueyGeneration: { instrumentalMethod: "transfer", instrumentalAdapter: true, naturalMaxSeconds: 180 },
     closeActionOnX: "ask",
     autoCheckUpdates: true,
     skippedUpdateVersion: null,
@@ -758,6 +761,10 @@
     appSettings = { ...appSettings, sa3Loudness: settings };
   }
 
+  function onYueyGenerationSettingUpdated(settings: YueyGenerationSettings) {
+    appSettings = { ...appSettings, yueyGeneration: settings };
+  }
+
   function onCloseRequestEvent() {
     closeRequestModalOpen = true;
     rememberCloseChoice = false;
@@ -935,6 +942,11 @@
             building={selectedService?.build_status?.building ?? false}
             startBlocker={selectedService?.start_blocker ?? null}
             onShowModels={() => showModels("yuey")}
+          />
+          <YueyGenerationPanel
+            settings={appSettings.yueyGeneration}
+            serviceStatus={selectedService?.status ?? "stopped"}
+            onUpdated={onYueyGenerationSettingUpdated}
           />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner

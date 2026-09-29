@@ -644,6 +644,9 @@ impl ServiceManager {
             if let Some(encoding) = crate::yuey_launch_encoding(&self.models_dir(), &install.dir) {
                 cmd.env("YUE2_ENCODING", encoding);
             }
+            for (key, value) in crate::yuey_generation_env() {
+                cmd.env(key, value);
+            }
         }
 
         crate::workload_job::configure_std_command(&mut cmd);

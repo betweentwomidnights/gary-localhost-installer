@@ -210,9 +210,9 @@
   {/if}
 
   <div class="note">
-    auto picks CUDA on NVIDIA and Vulkan on AMD and Intel. on NVIDIA, Vulkan
-    can be faster but has stalled on long renders with a DAW open, so it is
-    opt-in there.
+    auto picks CUDA on NVIDIA and Vulkan on AMD and Intel. on NVIDIA, CUDA is
+    the faster of the two, and Vulkan has stalled on long renders with a DAW
+    open.
     yuey still needs its models:
     <button class="link" onclick={onShowModels}>open models</button>
     {#if info?.recommendedEncoding}
