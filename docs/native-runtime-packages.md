@@ -64,7 +64,7 @@ page:
   "platform": "windows-x64",
   "backends": ["cuda", "vulkan"],
   "cuda": "12.8.1",
-  "vulkan_sdk": "1.4.309.0",
+  "vulkan_sdk": "1.4.350.0",
   "built_utc": "2026-09-29T21:18:02Z"
 }
 ```
@@ -82,9 +82,12 @@ all of them:
   instruction set at load time.
 - no CUDA architecture list, so ggml's portable default covers Maxwell through
   Blackwell.
-- CUDA 12.8.1 and Vulkan SDK 1.4.309.0, on GitHub's `windows-2022` runner with
+- CUDA 12.8.1 and Vulkan SDK 1.4.350.0, on GitHub's `windows-2022` runner with
   Visual Studio 2022. the CUDA toolkit's MSBuild integration targets 2022, so
   the runner is pinned rather than `windows-latest`.
+- the Vulkan SDK comes from LunarG's own installer, not a trimmed install.
+  ggml's Vulkan backend asks for SPIRV-Headers' CMake config, which trimmed
+  installs leave out. that's what failed yuey's first release dry run.
 - the same ggml fork everywhere (`betweentwomidnights/ggml`), pinned as a
   submodule. each service still ships its own copy of the ggml DLLs in its own
   folder. nothing is shared between services except the CUDA runtime.
