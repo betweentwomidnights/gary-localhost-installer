@@ -169,10 +169,10 @@ mod tests {
                 "yuey should offer a {backend} backend"
             );
         }
-        // Measured on an RTX 5070 Laptop: Vulkan is faster on an idle GPU, but
-        // with a DAW open a 170s render stalled for over ten minutes and
-        // another failed its allocation, where CUDA finished both. gary4juce
-        // lives in a DAW, so NVIDIA stays on CUDA.
+        // Measured on an RTX 5070 Laptop: with the decode step replayed as a
+        // CUDA graph, CUDA is also the faster backend, and with a DAW open a
+        // 170s Vulkan render stalled for over ten minutes where CUDA finished.
+        // gary4juce lives in a DAW, so NVIDIA stays on CUDA.
         assert_eq!(windows.prefer, ["cuda", "vulkan"]);
 
         // Every runtime a backend asks for has to be one the manifest can install.
