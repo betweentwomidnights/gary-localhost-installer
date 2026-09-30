@@ -352,7 +352,7 @@
   "nativeRuntimes": {
     "cudart-12.8": {
       "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/runtime-cudart-12.8.1/cudart-12.8.1-windows-x64.zip",
-      "sha256": "unpublished"
+      "sha256": "1d389e513e06eda2b3640160870fa0753c0d32f52439def79353a3c2e69acd97"
     }
   },
   "infrastructure": {},
