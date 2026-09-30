@@ -283,6 +283,9 @@ for sa3.cpp, audiocraft.cpp and acestep.cpp:
 
 - **macOS and Linux.** the platform key (`windows-x64`) leaves room for
   `macos-arm64` with a Metal backend and `linux-x64`, but nothing is built for
-  them yet.
+  them yet. one thing to fix first: ggml calls Metal `MTL`, as both the backend
+  and the device (`MTL0`). a device of `metal` doesn't match it in yuey's
+  device selection or in gary4local's `--props` check, so both need `metal`
+  as an alias before a Mac package can install.
 - **code signing.** see above. it would take a certificate, and the Smart App
   Control workaround is the price of not having one.
