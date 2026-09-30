@@ -1,0 +1,113 @@
+# ABOUTME: Builds the shared CUDA runtime pack for gary4local's native services
+# ABOUTME: and, when asked, publishes it as its own release.
+#
+# The pack is cudart and cuBLAS with NVIDIA's EULA: what every native service's
+# ggml-cuda.dll imports. gary4local installs it once and shares it. See
+# docs/native-runtime-packages.md.
+#
+# Dispatch only. Without `publish` it's a dry run and the zip is kept as a
+# workflow artifact. With it, the pack becomes release runtime-cudart-<cuda>,
+# never marked latest, so gary4local's own release stays the one the releases
+# page leads with. A published pack is never replaced: gary4local pins it by
+# hash, so a new pack is a new CUDA version and a new release.
+name: cuda-runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      cuda:
+        description: CUDA toolkit version, x.y.z (the one the native services build with)
+        required: true
+        default: '12.8.1'
+        type: string
+      publish:
+        description: publish as release runtime-cudart-<cuda>; leave off for a dry run
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  windows:
+    name: cuda runtime (windows-x64)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      CUDA_VERSION: ${{ inputs.cuda }}
+      TAG: runtime-cudart-${{ inputs.cuda }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Refuse to replace a published pack
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "$env:TAG is already published; gary4local may pin it, so it can't change" }
+          exit 0
+
+      # The full toolkit: it's what lays down version.json and EULA.txt next to
+      # the DLLs, and the pack has to carry the EULA.
+      - name: Cache CUDA toolkit
+        id: cache-cuda
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+          key: cuda-${{ inputs.cuda }}-windows-2022
+
+      - name: Install CUDA toolkit
+        if: steps.cache-cuda.outputs.cache-hit != 'true'
+        uses: Jimver/cuda-toolkit@v0.2.30
+        with:
+          cuda: ${{ inputs.cuda }}
+
+      - name: Point at the CUDA toolkit
+        shell: pwsh
+        run: |
+          $parts = $env:CUDA_VERSION.Split(".")
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$($parts[0]).$($parts[1])"
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Package
+        shell: pwsh
+        run: |
+          ./control-center/src-tauri/scripts/package_cuda_runtime.ps1
+          $zip = "dist/cuda-runtime/cudart-$env:CUDA_VERSION-windows-x64.zip"
+          if (-not (Test-Path $zip)) { throw "the toolkit on the runner is not $env:CUDA_VERSION: no $zip" }
+
+      - name: Keep the pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: cudart-${{ inputs.cuda }}-windows-x64
+          path: dist/cuda-runtime/
+          retention-days: 14
+
+      - name: Attest provenance
+        if: inputs.publish
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/cuda-runtime/*.zip'
+
+      - name: Publish
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = @"
+          the CUDA $env:CUDA_VERSION runtime (cudart and cuBLAS, with NVIDIA's EULA) that gary4local installs once for every native service's CUDA backend. it isn't an app release; gary4local downloads it by itself when a service needs it.
+
+          - pinned in services/manifests/services.json by its SHA-256, so this release never changes.
+          - see [docs/native-runtime-packages.md](https://github.com/$env:GITHUB_REPOSITORY/blob/main/docs/native-runtime-packages.md).
+          "@
+          gh release create $env:TAG (Get-ChildItem dist/cuda-runtime -File).FullName `
+            --repo $env:GITHUB_REPOSITORY --title "cuda runtime $env:CUDA_VERSION" `
+            --notes $notes --latest=false
