@@ -53,6 +53,7 @@
   interface ServiceEnvInfo {
     serviceId: string;
     displayName: string;
+    kind: "python" | "native" | "shared";
     envPath: string;
     envBytes: number;
     present: boolean;
@@ -268,12 +269,24 @@
   );
 
   function confirmRemoveServiceEnv(env: ServiceEnvInfo) {
-    const confirmed = window.confirm(
-      `Remove ${env.displayName}'s environment and free ${formatBytes(env.envBytes)}?\n\n` +
-      "Downloaded models are kept. This service can't run again until you rebuild " +
-      "its environment, which re-downloads its packages."
-    );
-    if (confirmed) onRemoveServiceEnv(env.serviceId);
+    const size = formatBytes(env.envBytes);
+    const message =
+      env.kind === "shared"
+        ? `Remove the ${env.displayName} and free ${size}?\n\n` +
+          "Nothing installed uses it now. It's downloaded again by the next runtime install that needs it."
+        : env.kind === "native"
+          ? `Remove ${env.displayName}'s runtime and free ${size}?\n\n` +
+            `Downloaded models are kept. ${env.displayName} can't run again until you install ` +
+            "its runtime, which downloads it again."
+          : `Remove ${env.displayName}'s environment and free ${size}?\n\n` +
+            "Downloaded models are kept. This service can't run again until you rebuild " +
+            "its environment, which re-downloads its packages.";
+    if (window.confirm(message)) onRemoveServiceEnv(env.serviceId);
+  }
+
+  function removeLabel(env: ServiceEnvInfo) {
+    if (env.kind === "shared") return "remove";
+    return env.kind === "native" ? "remove runtime" : "remove env";
   }
 
   function confirmReclaimBlobs() {
@@ -400,16 +413,16 @@
             <button
               type="button"
               class="small-action"
-              title={env.blockedReason ?? `Remove ${env.displayName}'s environment`}
+              title={env.blockedReason ?? removeLabel(env)}
               onclick={() => confirmRemoveServiceEnv(env)}
               disabled={busy || serviceEnvBusy !== null || env.blockedReason !== null}
-            >{serviceEnvBusy === env.serviceId ? "removing..." : "remove env"}</button>
+            >{serviceEnvBusy === env.serviceId ? "removing..." : removeLabel(env)}</button>
           </div>
           {#if env.blockedReason && env.present}
             <div class="env-blocked">{env.blockedReason}</div>
           {/if}
         {/each}
-        <div class="note">Each environment is the Python install for one model, several GB apiece. Removing one keeps that model's downloaded weights and frees the packages; rebuild it from the service when you want to run it again.</div>
+        <div class="note">Each environment is the Python install for one model, several GB apiece. Native services like yuey have a downloaded runtime instead, and a shared runtime (the CUDA pack) serves all of them. Removing any of these keeps the model's downloaded weights; rebuild or reinstall from the service when you want to run it again. A shared runtime can only go once nothing installed uses it.</div>
         {#if serviceEnvMessage}<div class="success-note">{serviceEnvMessage}</div>{/if}
         {#if serviceEnvError}<div class="error-note">{serviceEnvError}</div>{/if}
       </div>

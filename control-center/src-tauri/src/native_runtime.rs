@@ -121,7 +121,18 @@ pub fn installed(service_id: &str, native_dir: &Path, executable: &str) -> Optio
 }
 
 pub fn runtime_dir(runtime_root: &Path, name: &str) -> PathBuf {
-    runtime_root.join(RUNTIMES_DIR).join(name)
+    runtimes_root(runtime_root).join(name)
+}
+
+/// Where the shared runtimes (the CUDA pack) are installed, one folder each.
+pub fn runtimes_root(runtime_root: &Path) -> PathBuf {
+    runtime_root.join(RUNTIMES_DIR)
+}
+
+/// The shared runtimes an installed native service was set up with, from its
+/// stamp. Empty when nothing is installed there.
+pub fn installed_runtimes(native_dir: &Path) -> Vec<String> {
+    read_stamp(native_dir).map(|stamp| stamp.runtimes).unwrap_or_default()
 }
 
 /// The service's env with `${NATIVE_BACKEND}` filled in. Anything still
