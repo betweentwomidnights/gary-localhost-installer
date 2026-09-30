@@ -156,6 +156,7 @@
   interface ServiceEnvInfo {
     serviceId: string;
     displayName: string;
+    kind: "python" | "native" | "shared";
     envPath: string;
     envBytes: number;
     present: boolean;
@@ -569,13 +570,21 @@
     serviceEnvBusy = serviceId;
     serviceEnvError = null;
     serviceEnvMessage = null;
+    const row = serviceEnvs?.find((env) => env.serviceId === serviceId);
     try {
       const result = await invoke<ServiceEnvRemovalResult>("remove_service_env", { serviceId });
       serviceEnvs = result.environments;
-      const label = result.serviceId;
-      serviceEnvMessage = result.removedBytes > 0
-        ? `removed ${label}'s environment (${formatByteCount(result.removedBytes)}) - rebuild it when you next need that model`
-        : `${label} had no environment installed`;
+      const label = row?.displayName ?? result.serviceId;
+      const size = formatByteCount(result.removedBytes);
+      if (result.removedBytes <= 0) {
+        serviceEnvMessage = `${label} had nothing installed`;
+      } else if (row?.kind === "shared") {
+        serviceEnvMessage = `removed the ${label} (${size}) - it comes back with the next runtime install that needs it`;
+      } else if (row?.kind === "native") {
+        serviceEnvMessage = `removed ${label}'s runtime (${size}) - install it again when you next need ${label}`;
+      } else {
+        serviceEnvMessage = `removed ${label}'s environment (${size}) - rebuild it when you next need that model`;
+      }
     } catch (e) {
       serviceEnvError = formatError(e);
     } finally {

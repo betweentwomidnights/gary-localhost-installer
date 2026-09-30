@@ -187,6 +187,18 @@ impl ServiceManager {
         self.services_dir()
     }
 
+    /// Whether a service runs a downloaded native runtime rather than a
+    /// Python environment.
+    pub fn is_native(&self, service_id: &str) -> bool {
+        self.find_service(service_id)
+            .is_some_and(|svc| svc.runtime == ServiceRuntime::Native)
+    }
+
+    /// Where the shared runtimes native services need are installed.
+    pub fn native_runtimes_root(&self) -> PathBuf {
+        native_runtime::runtimes_root(&self.repo_root)
+    }
+
     fn models_dir(&self) -> PathBuf {
         crate::storage::models_dir(&self.repo_root)
     }
