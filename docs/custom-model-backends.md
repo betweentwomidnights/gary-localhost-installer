@@ -211,8 +211,9 @@ the package format and install path every native service shares are in
 - the yuey generation panel sets three server defaults, passed as env at
   launch and applied to every client, gary4juce included; saving restarts a
   running yuey. what an instrumental job does with the sung or planned
-  melody (`YUE2_INSTRUMENTAL_METHOD`: move it to an instrument, the default,
-  or leave it out), whether the instrumental adapter is used
+  melody (`YUE2_INSTRUMENTAL_METHOD`: "official YuE" moves it onto an
+  instrument and is the default; "our original" takes it out and leaves the
+  backing part), whether the instrumental adapter is used
   (`YUE2_USE_INSTRUMENTAL_ADAPTER`), and the natural-length ceiling
   (`YUE2_NATURAL_MAX_SECONDS`, 30-600s, default 180; the remote backend runs
   96). a request that sets one of these itself still wins.

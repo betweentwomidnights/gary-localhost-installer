@@ -80,16 +80,18 @@
   <div class="panel-subtitle">defaults for every client; a request that sets one itself still wins</div>
 
   <div class="field-grid">
-    <label class="field">
-      <span>instrumental melody</span>
+    <label
+      class="field"
+      title="official YuE: the melody moves to the instrument lane, so an instrument plays it. our original: the melody is taken out and only the backing part is left, which is usually sparser. both only apply with instrumental on."
+    >
+      <span>instrumental method</span>
       <select bind:value={method}>
-        <option value="transfer">move to an instrument</option>
-        <option value="rest">leave it out</option>
+        <option value="transfer">official YuE</option>
+        <option value="rest">our original</option>
       </select>
       <small>
-        With instrumental on, the sung or planned melody is played by an
-        instrument. Leaving it out keeps only the backing part, which is
-        usually sparser.
+        official YuE moves the sung or planned melody onto an instrument. our
+        original takes it out and keeps only the backing part.
       </small>
     </label>
     <label class="field">
