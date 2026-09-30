@@ -287,5 +287,11 @@ for sa3.cpp, audiocraft.cpp and acestep.cpp:
   and the device (`MTL0`). a device of `metal` doesn't match it in yuey's
   device selection or in gary4local's `--props` check, so both need `metal`
   as an alias before a Mac package can install.
+- **native code for older NVIDIA cards.** the CUDA build carries native code
+  for RTX 30, 40 and 50 cards. older ones (RTX 20, GTX 10) run through code
+  the driver compiles on first use, which needs a driver new enough for CUDA
+  12.8 and makes the first run slow; if CUDA won't come up, they fall back to
+  Vulkan. adding their native code costs build time and package size, so it
+  waits until someone on one of those cards asks.
 - **code signing.** see above. it would take a certificate, and the Smart App
   Control workaround is the price of not having one.
