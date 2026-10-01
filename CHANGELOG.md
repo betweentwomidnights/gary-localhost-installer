@@ -4,6 +4,50 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.4.0
+
+### yuey, the first native service
+
+yuey runs [YuE2](https://github.com/multimodal-art-projection/YuE) through
+[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) on port 8007. it's
+the first service with no Python environment: "install runtime" replaces
+"build env". gary4local detects the GPU, downloads yuey's core package plus one
+GGML backend (CUDA on NVIDIA, Vulkan on AMD and Intel), checks both against the
+SHA-256s pinned in the manifest, unpacks them, and runs `yue2-server --props`
+to confirm the backend actually came up before it calls the runtime installed.
+if the automatic choice doesn't come up, it tries the next backend and says so
+in the panel. there's no CPU runtime: a song takes minutes on a GPU, so on a
+CPU yuey would only look broken.
+
+the CUDA runtime (cudart and cuBLAS, about 550 MB) is shared by every native
+service, so it installs once under `native-runtimes/`, from its own release on
+this repo, `runtime-cudart-12.8.1`. how all of this is packaged, published and
+pinned is in [native runtime packages](docs/native-runtime-packages.md), which
+sa3.cpp, acestep.cpp and audiocraft.cpp will follow as they come over.
+
+### the yuey panel
+
+the panel shows the runtime's backend and version, a backend override (auto,
+cuda or vulkan), and the model tier, picked from the GPU's memory unless you
+choose one. a runtime install finishes by downloading the shared models and
+the recommended tier, and yuey won't start until they're present.
+
+a generation section sets three server defaults for every client, gary4juce
+included: the instrumental method ("official YuE" moves the melody onto an
+instrument, "our original" takes it out), whether the instrumental LoRA is
+used, and how long a song yuey may write for itself (30-600 seconds, 180 by
+default). saving restarts yuey. a request that sets one of these itself still
+wins.
+
+### storage
+
+the storage window lists native runtimes as runtimes, removed with "remove
+runtime" and brought back with "install runtime", and gives each shared runtime
+a row of its own. the CUDA runtime can only be removed once nothing installed
+uses it: after the last CUDA runtime is removed, or after a switch to Vulkan.
+
+compatible with gary4juce v5.0.0.
+
 ## v0.3.2
 
 ### foundation-1 inference profiles
