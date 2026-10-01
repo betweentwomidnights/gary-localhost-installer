@@ -1,11 +1,11 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.3.2-rocm.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2-rocm.1/gary4local-rocm_0.3.2-rocm.1_x64-setup.exe",
-    "sha256":  "673ad14cc74bdb7ae1a02a29293298e2ac17b7fa39177fa3dcd7135c3eeb8edf",
-    "published_at":  "2026-09-11T10:43:28.1678757Z",
+    "latest_version":  "0.4.0-rocm.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.1/gary4local-rocm_0.4.0-rocm.1_x64-setup.exe",
+    "sha256":  "bbf52f085ce7991260df34bc992781d538b858ebdf6f2d18543bbd8fa6f1a91f",
+    "published_at":  "2026-10-01T04:36:14.9047253Z",
     "notes":  [
-                  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.",
-                  "Fully cached SA3 models can start while offline without validating the saved Hugging Face token over the network."
+                  "yuey (YuE2) is here, running natively on Vulkan. Install its runtime from the yuey row.",
+                  "You\u0027ll need the gary4juce v5.0.0 pre-release for the yuey tab."
               ]
 }
