@@ -16,6 +16,8 @@
   let lastServiceId: string | null = $state(null);
   let lastLogLength = $state(0);
   let selectionText = $state("");
+  let copiedLog = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let mouseDownWasLive = false;
   let hasBufferedUpdates = $derived(logText !== visibleLogText);
 
@@ -79,6 +81,17 @@
         void resumeLiveUpdates();
       }
     }, 100);
+  }
+
+  // The whole tail in one click, for pasting into a bug report. Takes the
+  // newest output even while the view is paused.
+  async function copyLog() {
+    const text = logText || visibleLogText;
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    copiedLog = true;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copiedLog = false; }, 1500);
   }
 
   async function copySelection() {
@@ -172,6 +185,9 @@
           </button>
         {/if}
         <button type="button" class="scroll-btn" onclick={selectLogText}>select all</button>
+        <button type="button" class="scroll-btn" onclick={copyLog} disabled={!logText && !visibleLogText}>
+          {copiedLog ? "copied" : "copy log"}
+        </button>
       </div>
     </div>
     <div
