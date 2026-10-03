@@ -147,6 +147,12 @@ struct YueyGenerationSettings {
     /// Ceiling on the length yuey picks when a request names no bar count.
     #[serde(default = "default_yuey_natural_max_seconds")]
     natural_max_seconds: u32,
+    /// Which natural-length default this file was written under. Absent means
+    /// the 0.4.0 pre-releases, whose 180 was saved into every settings file
+    /// on any save, so a new default would otherwise never reach anyone who
+    /// had saved a setting. See `migrate`.
+    #[serde(default)]
+    natural_default_revision: u32,
 }
 
 impl Default for YueyGenerationSettings {
@@ -155,7 +161,24 @@ impl Default for YueyGenerationSettings {
             instrumental_method: default_yuey_instrumental_method(),
             instrumental_adapter: default_yuey_instrumental_adapter(),
             natural_max_seconds: default_yuey_natural_max_seconds(),
+            natural_default_revision: YUEY_NATURAL_DEFAULT_REVISION,
         }
+    }
+}
+
+/// Bumped when the natural-length default changes.
+/// 1: 180 → 96, matching the remote backend.
+const YUEY_NATURAL_DEFAULT_REVISION: u32 = 1;
+
+impl YueyGenerationSettings {
+    /// Moves a ceiling still at the previous default onto the current one. A
+    /// value someone chose stays put; 180 is the one ambiguous case, and in
+    /// 0.4.0's pre-releases it was almost always the default.
+    fn migrate(&mut self) {
+        if self.natural_default_revision < 1 && self.natural_max_seconds == 180 {
+            self.natural_max_seconds = default_yuey_natural_max_seconds();
+        }
+        self.natural_default_revision = YUEY_NATURAL_DEFAULT_REVISION;
     }
 }
 
@@ -167,9 +190,11 @@ fn default_yuey_instrumental_adapter() -> bool {
     true
 }
 
-/// The server's own default. The shared backend runs a tighter one.
+/// The remote backend's ceiling. A natural continuation is held to it by the
+/// bars it adds, so at the server's own 180 a 25-second clip came back as
+/// three and a half minutes, and Vulkan users waited minutes for it.
 fn default_yuey_natural_max_seconds() -> u32 {
-    180
+    96
 }
 
 /// Long enough for a short loop, short enough that one runaway plan cannot tie
@@ -1343,7 +1368,9 @@ fn read_hf_token() -> Option<String> {
 fn read_app_settings() -> AppSettings {
     for path in [app_settings_path(), legacy_app_settings_path()] {
         if let Ok(raw) = std::fs::read_to_string(&path) {
-            return serde_json::from_str::<AppSettings>(&raw).unwrap_or_default();
+            let mut settings = serde_json::from_str::<AppSettings>(&raw).unwrap_or_default();
+            settings.yuey_generation.migrate();
+            return settings;
         }
     }
 
@@ -5326,14 +5353,14 @@ mod yuey_generation_tests {
     use super::*;
 
     #[test]
-    fn defaults_match_the_server() {
+    fn defaults_match_the_remote_backend() {
         let env = yuey_generation_env_for(&YueyGenerationSettings::default());
         assert_eq!(
             env,
             vec![
                 ("YUE2_INSTRUMENTAL_METHOD", "transfer".to_string()),
                 ("YUE2_USE_INSTRUMENTAL_ADAPTER", "1".to_string()),
-                ("YUE2_NATURAL_MAX_SECONDS", "180".to_string()),
+                ("YUE2_NATURAL_MAX_SECONDS", "96".to_string()),
             ]
         );
     }
@@ -5342,6 +5369,30 @@ mod yuey_generation_tests {
     fn a_settings_file_without_the_group_reads_as_defaults() {
         let settings: AppSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings.yuey_generation, YueyGenerationSettings::default());
+    }
+
+    fn migrated(json: &str) -> YueyGenerationSettings {
+        let mut settings: YueyGenerationSettings = serde_json::from_str(json).unwrap();
+        settings.migrate();
+        settings
+    }
+
+    #[test]
+    fn the_old_default_saved_by_a_pre_release_moves_to_the_new_one() {
+        let settings = migrated(r#"{"naturalMaxSeconds":180}"#);
+        assert_eq!(settings.natural_max_seconds, 96);
+        assert_eq!(settings.natural_default_revision, YUEY_NATURAL_DEFAULT_REVISION);
+    }
+
+    #[test]
+    fn a_ceiling_someone_chose_survives_the_migration() {
+        assert_eq!(migrated(r#"{"naturalMaxSeconds":240}"#).natural_max_seconds, 240);
+        // 180 chosen after the default changed is a choice, not the old default.
+        assert_eq!(
+            migrated(r#"{"naturalMaxSeconds":180,"naturalDefaultRevision":1}"#)
+                .natural_max_seconds,
+            180
+        );
     }
 
     #[test]

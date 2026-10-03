@@ -17,11 +17,12 @@
     onUpdated: (settings: YueyGenerationSettings) => void;
   } = $props();
 
-  // The server's own defaults. The shared backend holds natural length tighter.
+  // gary4local's defaults. Natural length matches the remote backend, not the
+  // server's own 180.
   const defaults: YueyGenerationSettings = {
     instrumentalMethod: "transfer",
     instrumentalAdapter: true,
-    naturalMaxSeconds: 180,
+    naturalMaxSeconds: 96,
   };
   const minSeconds = 30;
   const maxSeconds = 600;
@@ -96,7 +97,7 @@
     </label>
     <label class="field">
       <span>natural length, seconds</span>
-      <input bind:value={seconds} inputmode="numeric" placeholder="180" />
+      <input bind:value={seconds} inputmode="numeric" placeholder="96" />
       <small>
         The longest song yuey picks for itself when no bar count is set,
         {minSeconds} to {maxSeconds}. A remix keeps its source's length.
