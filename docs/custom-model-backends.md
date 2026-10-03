@@ -215,8 +215,8 @@ the package format and install path every native service shares are in
   instrument and is the default; "our original" takes it out and leaves the
   backing part), whether the instrumental adapter is used
   (`YUE2_USE_INSTRUMENTAL_ADAPTER`), and the natural-length ceiling
-  (`YUE2_NATURAL_MAX_SECONDS`, 30-600s, default 180; the remote backend runs
-  96). a request that sets one of these itself still wins.
+  (`YUE2_NATURAL_MAX_SECONDS`, 30-600s, default 96 like the remote backend; a
+  continuation is held to it by the bars it adds). a request that sets one of these itself still wins.
 - `yue2-server` on its own prefers the most precise tier it can find, which on
   a small card means running out of memory. gary4local always names one: the
   tier you picked, else the one the runtime check recommended, else the

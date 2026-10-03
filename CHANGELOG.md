@@ -35,8 +35,9 @@ the recommended tier, and yuey won't start until they're present.
 a generation section sets three server defaults for every client, gary4juce
 included: the instrumental method ("official YuE" moves the melody onto an
 instrument, "our original" takes it out), whether the instrumental LoRA is
-used, and how long a song yuey may write for itself (30-600 seconds, 180 by
-default). saving restarts yuey. a request that sets one of these itself still
+used, and how long a song yuey may write for itself (30-600 seconds, 96 by
+default, the same as the remote backend; a continuation is held to it by what
+it adds). saving restarts yuey. a request that sets one of these itself still
 wins.
 
 ### storage
