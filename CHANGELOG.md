@@ -38,7 +38,14 @@ instrument, "our original" takes it out), whether the instrumental LoRA is
 used, and how long a song yuey may write for itself (30-600 seconds, 96 by
 default, the same as the remote backend; a continuation is held to it by what
 it adds). saving restarts yuey. a request that sets one of these itself still
-wins.
+wins. pre-release installs that saved settings under the old default of 180
+move to 96 once; a ceiling anyone actually chose stays.
+
+yuey is pinned at [v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
+which makes continuation faster. an 8-bar continuation of a 25-second clip went
+from 46s to 31s on an RTX 5070 Laptop over CUDA, and from 37s to 32s over Vulkan.
+each job also writes a one-line timing summary to yuey's log, and the log pane
+has a "copy log" button, so a slow job can be reported by pasting it.
 
 ### storage
 
