@@ -3,7 +3,7 @@
   "latest_version": "0.4.0-rc.2",
   "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rc.2/gary4local_0.4.0-rc.2_x64-setup.exe",
   "sha256": "a73031386a8b7116c68b4ccae584dafff321a86ad81b55168133b5933827ca84",
-  "published_at": "10/06/2026 07:13:13",
+  "published_at": "2026-10-06T07:13:13.0000000+00:00",
   "notes": [
     "Yuey 0.2.1 makes continuations faster; use Update runtime after installing this app.",
     "Natural-length default is now 96 seconds; old preview defaults migrate once.",

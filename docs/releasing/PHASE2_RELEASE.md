@@ -93,6 +93,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
 8. Review the generated files:
    - `docs/updates/gary4local/stable.json`
    - `docs/updates/gary4local/native-stable.json`
+   - Confirm `pub_date` is RFC 3339 (for example, `2026-10-06T07:13:17Z`). A locale-formatted date makes Tauri reject the feed and the app fall back to `download update`. Run `smoke-tests/test_update_feed_dates.ps1` after changing the feed generator.
 9. Commit those feed changes to `main` and push.
 10. Wait for GitHub Pages to publish the updated JSON.
 11. Sanity-check the live URLs:
