@@ -4,6 +4,19 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.4.0-rc.2
+
+yuey now installs [yuey.cpp v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
+with faster continuations and a timing summary for each job. existing installs
+need to press `update runtime` on yuey's row to replace 0.2.0.
+
+the default natural-length ceiling is now 96 seconds, matching the remote
+backend. a natural continuation is limited by the new bars it adds. old preview
+settings carrying the former default of 180 move to 96 once; other chosen
+limits stay. the log pane also has a `copy log` button for reporting slow jobs.
+
+compatible with gary4juce v5.0.0-rc.3.
+
 ## v0.4.0
 
 ### yuey, the first native service

@@ -24,7 +24,7 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
-## v0.4.0
+## v0.4.0-rc.2
 
 **yuey is here: [YuE2](https://github.com/multimodal-art-projection/YuE), the
 seventh model.** we've chosen to do this one in native GGML. there's no Python
@@ -40,7 +40,11 @@ how it handles instrumentals and how long a song it writes for itself. the
 storage window now shows native runtimes too, including the shared CUDA
 runtime, which you can remove once nothing uses it.
 
-compatible with [gary4juce v5.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0).
+yuey.cpp is now at 0.2.1, with faster continuations. after updating this app,
+press `update runtime` on yuey's row. the natural-length default is now 96
+seconds, and `copy log` makes it easier to report a slow job.
+
+compatible with [gary4juce v5.0.0-rc.3](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0-rc.3).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
