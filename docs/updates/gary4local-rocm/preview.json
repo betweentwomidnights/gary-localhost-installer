@@ -1,11 +1,12 @@
 {
-    "channel":  "preview",
-    "latest_version":  "0.4.0-rocm.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.1/gary4local-rocm_0.4.0-rocm.1_x64-setup.exe",
-    "sha256":  "bbf52f085ce7991260df34bc992781d538b858ebdf6f2d18543bbd8fa6f1a91f",
-    "published_at":  "2026-10-01T04:36:14.9047253Z",
-    "notes":  [
-                  "yuey (YuE2) is here, running natively on Vulkan. Install its runtime from the yuey row.",
-                  "You\u0027ll need the gary4juce v5.0.0 pre-release for the yuey tab."
-              ]
+  "channel": "preview",
+  "latest_version": "0.4.0-rocm.2",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.2/gary4local-rocm_0.4.0-rocm.2_x64-setup.exe",
+  "sha256": "4214eb4d9800cf972a0326c5b600d073283427189d6f902349ae536eb9b1ff43",
+  "published_at": "10/06/2026 07:13:17",
+  "notes": [
+    "Yuey 0.2.1 makes continuations faster on Vulkan; use Update runtime after installing this app.",
+    "Natural-length default is now 96 seconds; old preview defaults migrate once.",
+    "Copy log makes reporting slow jobs easier. Compatible with gary4juce v5.0.0-rc.3."
+  ]
 }

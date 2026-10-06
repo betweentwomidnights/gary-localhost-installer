@@ -1,12 +1,12 @@
 {
-    "channel":  "preview",
-    "latest_version":  "0.1.4",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe",
-    "sha256":  "b55521f9f3747ff7754a395ea5a67d51fd52864d24749587d5b461708eaff032",
-    "published_at":  "2026-04-04T10:17:00.8264242Z",
-    "notes":  [
-                  "Preview lane temporarily mirrors stable v0.1.4 so older preview-targeted builds can recover.",
-                  "Stable releases keep the built-in update check and in-app install flow.",
-                  "Source builders can still disable the updater flow at build time if needed."
-              ]
+  "channel": "preview",
+  "latest_version": "0.4.0-rc.2",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rc.2/gary4local_0.4.0-rc.2_x64-setup.exe",
+  "sha256": "a73031386a8b7116c68b4ccae584dafff321a86ad81b55168133b5933827ca84",
+  "published_at": "10/06/2026 07:13:13",
+  "notes": [
+    "Yuey 0.2.1 makes continuations faster; use Update runtime after installing this app.",
+    "Natural-length default is now 96 seconds; old preview defaults migrate once.",
+    "Copy log makes reporting slow jobs easier. Compatible with gary4juce v5.0.0-rc.3."
+  ]
 }

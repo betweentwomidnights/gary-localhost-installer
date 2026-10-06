@@ -1,11 +1,11 @@
 {
-    "version":  "0.4.0-rocm.1",
-    "notes":  "yuey (YuE2) is here, running natively on Vulkan. Install its runtime from the yuey row.\nYou\u0027ll need the gary4juce v5.0.0 pre-release for the yuey tab.",
-    "pub_date":  "2026-10-01T04:36:14.9047253Z",
-    "platforms":  {
-                      "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElWRCt5Y1Fkd0ttUEVmcWpLS2YxRldVQnI1anMvUGhQdTI5V0dla3dRa0grUjhjUFhMR1ArS2lCTld2SUhnN1dUNHkvQTF2VisvcHA3M2FsN3E5Q0FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwODI5MjA3CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uMV94NjQtc2V0dXAuZXhlCllkMktFZy9ldkFRaUs2TzhjaEMxZStuc1pFbFBMa0FleDBqSWJrS05YUnQ2eGVsdktUTTg3Q3Evc05jTks1WHU4eVZyengwU3BINmh4QUdWTE9uVkJBPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.1/gary4local-rocm_0.4.0-rocm.1_x64-setup.exe"
-                                         }
-                  }
+  "version": "0.4.0-rocm.2",
+  "notes": "Yuey 0.2.1 makes continuations faster on Vulkan; use Update runtime after installing this app.\nNatural-length default is now 96 seconds; old preview defaults migrate once.\nCopy log makes reporting slow jobs easier. Compatible with gary4juce v5.0.0-rc.3.",
+  "pub_date": "10/06/2026 07:13:17",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEFXRmN1Z0M0RHNzb1lGQXFqbUordE9uakU1T2dyYVM2M05tY3ZQZVloYkxialg0aGJRVWxCSWJvNktJQ3RSek0rY3RXUFpaaW1YUko0RnhNeHZOSGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMjcwNjAwCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uMl94NjQtc2V0dXAuZXhlCnFJSFNpZ0tRUEYyanBnOVI0TXhVS05VeURRdFVFbDZZZktvU1Ric3J1V3E3RGgwbi9ZMWpjTWlselN0WFhQelpEOHZlcHBscmQzZlJpUzQ2TTJHcEFnPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.2/gary4local-rocm_0.4.0-rocm.2_x64-setup.exe"
+    }
+  }
 }
