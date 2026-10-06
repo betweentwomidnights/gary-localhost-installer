@@ -26,6 +26,8 @@ param(
     [string[]]$Notes = @()
 )
 
+$ErrorActionPreference = 'Stop'
+
 function Ensure-ParentDirectory {
     param(
         [Parameter(Mandatory = $true)]
@@ -105,10 +107,7 @@ if (-not [string]::IsNullOrWhiteSpace($NotesText)) {
 }
 
 if (-not [System.DateTimeOffset]::TryParse($effectivePublishedAt, [ref]$parsedPublishedAt)) {
-    if (-not [string]::IsNullOrWhiteSpace($effectivePublishedAt)) {
-        $effectiveNotes += $effectivePublishedAt
-    }
-    $effectivePublishedAt = (Get-Date).ToUniversalTime().ToString("o")
+    throw "PublishedAt must be a timestamp. Omit it to use the current UTC time, or pass an RFC 3339 string such as 2026-10-06T07:13:17Z."
 }
 else {
     # PowerShell can coerce JSON timestamps to DateTime values, then bind them
@@ -151,6 +150,9 @@ Ensure-ParentDirectory -Path $nativeOutputPath
 
 Set-Content -LiteralPath $phase1OutputPath -Value ($phase1Payload | ConvertTo-Json -Depth 6)
 Set-Content -LiteralPath $nativeOutputPath -Value ($nativePayload | ConvertTo-Json -Depth 6)
+
+& (Join-Path $PSScriptRoot 'validate_update_feeds.ps1') -FeedDirectory $resolvedOutputDir `
+    -Channel $Channel -ExpectedVersion $Version -InstallerPath $resolvedInstallerPath -SignaturePath $resolvedSignaturePath
 
 Write-Host "Generated phase-1 manifest:" $phase1OutputPath
 Write-Host "Generated native updater feed:" $nativeOutputPath
