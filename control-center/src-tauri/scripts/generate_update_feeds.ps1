@@ -110,6 +110,12 @@ if (-not [System.DateTimeOffset]::TryParse($effectivePublishedAt, [ref]$parsedPu
     }
     $effectivePublishedAt = (Get-Date).ToUniversalTime().ToString("o")
 }
+else {
+    # PowerShell can coerce JSON timestamps to DateTime values, then bind them
+    # to this string parameter using the local date format. Tauri requires
+    # RFC 3339 even when TryParse accepts that local format.
+    $effectivePublishedAt = $parsedPublishedAt.ToUniversalTime().ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
+}
 
 $signature = (Get-Content -Raw -LiteralPath $resolvedSignaturePath).Trim()
 if ([string]::IsNullOrWhiteSpace($signature)) {
