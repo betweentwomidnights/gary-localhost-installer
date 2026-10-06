@@ -93,13 +93,80 @@ powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scr
 8. Review the generated files:
    - `docs/updates/gary4local/stable.json`
    - `docs/updates/gary4local/native-stable.json`
-   - Confirm `pub_date` is RFC 3339 (for example, `2026-10-06T07:13:17Z`). A locale-formatted date makes Tauri reject the feed and the app fall back to `download update`. Run `smoke-tests/test_update_feed_dates.ps1` after changing the feed generator.
+   - the generator now runs `validate_update_feeds.ps1` automatically. don't
+     publish unless it prints `PASS`. this checks the raw timestamp strings,
+     the intended channel/version, agreement between both feeds, and the hash
+     and signature against the exact local installer and `.sig` file.
+   - if you edit or copy a feed afterwards, run the validator again:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\validate_update_feeds.ps1 `
+  -FeedDirectory "docs/updates/gary4local" -Channel stable -ExpectedVersion "0.1.3" `
+  -InstallerPath "control-center\src-tauri\target\release\bundle\nsis\gary4local_0.1.3_x64-setup.exe"
+if ($LASTEXITCODE -ne 0) { throw "Feed validation failed; don't publish." }
+```
+
 9. Commit those feed changes to `main` and push.
 10. Wait for GitHub Pages to publish the updated JSON.
-11. Sanity-check the live URLs:
-   - `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json`
-   - `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json`
-12. Launch the currently installed app and verify it offers `install update`.
+11. validate both live feeds at the URLs the app uses, without a cache-busting
+    query. checking only the browser-download feed won't catch a broken native
+    feed:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\validate_update_feeds.ps1 `
+  -BaseUrl "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local" `
+  -Channel stable -ExpectedVersion "0.1.3"
+if ($LASTEXITCODE -ne 0) { throw "Live feed validation failed; the updater isn't verified." }
+```
+
+12. launch an older installed app configured for that channel and verify it
+    offers `install update`. `download update` only proves the fallback path
+    works. the validator checks feed metadata; it doesn't replace signature
+    verification during an actual install. if the UI can't be tested, record
+    that limitation rather than claiming the in-app update was verified.
+
+## timestamps and the download-only fallback
+
+leave `-PublishedAt` off to use the generator's current UTC time. if you want
+the GitHub release's exact publication time, obtain it as a string with `--jq`:
+
+```powershell
+$releaseTag = "v0.1.3"
+$publishedAt = gh release view $releaseTag --json publishedAt --jq '.publishedAt'
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($publishedAt) -or $publishedAt -eq 'null') {
+    throw "Couldn't read the published release timestamp."
+}
+```
+
+then pass `-PublishedAt $publishedAt` to the generator. don't construct the feed
+JSON by hand or round-trip timestamps through `ConvertFrom-Json` and string
+interpolation: PowerShell can turn them into locale-formatted dates. the
+generator normalizes valid input to UTC RFC 3339 and refuses invalid input.
+`2026-10-06T07:13:17Z` is valid; `10/06/2026 07:13:17` isn't valid in the feed.
+
+we hit this on the `0.4.0-rocm.2` preview. the app offered `download update`
+because Tauri rejected `pub_date`. the log showed:
+
+```text
+failed to deserialize update response: invalid value for `pub_date`: the 'year' component could not be parsed
+Native updater check unavailable: Native updater check failed: invalid value for `pub_date`
+```
+
+for this error, regenerate the feeds using the already signed installer and
+signature, validate them, and publish the correction on `main`. no rebuild,
+replacement installer, or new release tag is needed. wait for Pages to deploy,
+validate both live feeds, then check updates again. Pages/CDN caching can keep
+the old feed visible for several minutes. for other download-only failures,
+inspect the app log's `Native updater check unavailable` message before guessing
+at the cause.
+
+after changing either feed script, run the regression check in Windows
+PowerShell before publishing:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File smoke-tests\test_update_feed_dates.ps1
+if ($LASTEXITCODE -ne 0) { throw "Update feed regression check failed." }
+```
 
 ## Preview Testing
 
@@ -122,6 +189,9 @@ That writes:
 - `docs/updates/gary4local/native-preview.json`
 
 Preview apps can point at those feeds with runtime env overrides.
+use the same local and live validation commands from steps 8 and 11 with
+`-Channel preview` and the preview's exact version. confirm the tested app is
+configured for that feed; a normal stable-channel app won't read it.
 
 ## ROCm Preview Releases
 
@@ -175,13 +245,24 @@ Order:
 
    The script prints `Product: gary4local-rocm -> docs\updates\gary4local-rocm`.
    If it says `gary4local`, stop: the wrong installer was passed.
+   it must also print `PASS` from the automatic feed validator before you
+   commit the files. timestamp handling is the same as for regular releases.
 
 5. Commit the two changed feed files to `main` and push. The release assets must
    already be uploaded at this point, or the tester's updater will offer the new
    version and 404 on the download.
-6. Confirm the live feed, which lags a minute or two behind the push while Pages
-   rebuilds:
-   `https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm/preview.json`
+6. validate both live feeds after Pages rebuilds. substitute the exact release
+   version for `0.2.1-rocm.N`; the validator must print `PASS`:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\validate_update_feeds.ps1 `
+     -BaseUrl "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local-rocm" `
+     -Channel preview -ExpectedVersion "0.2.1-rocm.N"
+   if ($LASTEXITCODE -ne 0) { throw "ROCm live feed validation failed." }
+   ```
+
+   then check updates in an older installed ROCm app and confirm it offers
+   `install update`, as in step 12 above.
 
    If the feed still shows the old version well after the push, check whether
    the Pages build actually succeeded — during a GitHub incident it can fail
