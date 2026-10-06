@@ -255,17 +255,17 @@
           "windows-x64": {
             "core": {
               "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.1/yuey-v0.2.1-windows-x64-core.zip",
-              "sha256": "f7d87497da498d4a25d35a4a440d935b701ff1b7c6bdec2218e16228572e49b7"
+              "sha256": "0c46511deafae028df5e5ec1be9c6d399faf061719a414e237af01cfc17d9a02"
             },
             "backends": {
               "cuda": {
                 "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.1/yuey-v0.2.1-windows-x64-cuda.zip",
-                "sha256": "8631da003faa762cfa314cce00300d65946bb5b59f289453c4af0a84a0c65651",
+                "sha256": "71b3d6b2928e08e7bd9c82c8b80748b3e11a0091c9fd3a9ae8798db8075bec99",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
                 "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.1/yuey-v0.2.1-windows-x64-vulkan.zip",
-                "sha256": "5ec277335e74dfcd3629a422e555db1026286090be49cd12738a6ac4eeee0037"
+                "sha256": "974f1bb3353def1076a3b93b3f63e14bba112cc5c8acd5ae21b66bcb3d04da45"
               }
             },
             "prefer": ["cuda", "vulkan"]
