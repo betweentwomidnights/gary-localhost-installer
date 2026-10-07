@@ -36,6 +36,8 @@ build while we tried very hard to break it locally.
 
 ## v0.4.0
 
+[download gary4local v0.4.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.4.0).
+
 **yuey is here: [YuE2](https://github.com/multimodal-art-projection/YuE), the
 seventh model.** we've chosen to do this one in native GGML. there's no Python
 environment at all: "install runtime" downloads a prebuilt

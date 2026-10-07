@@ -1,11 +1,11 @@
 {
-    "version":  "0.3.2",
-    "notes":  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.\nFully cached SA3 models can start while offline without validating the saved Hugging Face token over the network.\nCompatible with gary4juce v4.0.14.",
-    "pub_date":  "2026-09-11T10:40:22.7139428Z",
+    "version":  "0.4.0",
+    "notes":  "YuE2 now runs locally through a native C++/GGML runtime: CUDA on NVIDIA, Vulkan on AMD and Intel.\nYuey v0.2.2 fixes short MIDI scores. Existing installs: press Update runtime on Yuey\u0027s row after updating the app.\nChoose Yuey model tiers and generation defaults; natural length defaults to 96 seconds. Native runtimes appear in storage.\nLocal SA3 and Carey accept 380 seconds. SA3 continuation counts source plus added audio. Compatible with gary4juce v5.0.0.",
+    "pub_date":  "2026-10-07T10:00:36.0000000+00:00",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME8rR0JJRUIvNG9JT0dpYzZhQ2xNSFZjNW54d2dvSlcwemxpcTk5WkZvMjg4ZHpncTBQOEkydzg0ZzFTa0ttc3RENlJrejBGTTYxUjh4em0vZWNNSUE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTIzMTg0CWZpbGU6Z2FyeTRsb2NhbF8wLjMuMl94NjQtc2V0dXAuZXhlCmVpZVJ3TjQzaHREUnBHUURTVDJhZDhObkdZOUY5aElaSjVNKzViRGhxN04rWEpsN0FYMUFPSmxhMWkwOWhtMjVMYnRCbGVsa0J0b2ZKaEhrbllMQkFBPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2/gary4local_0.3.2_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEpmMTE2TXVJT0IyTzFGZFRHMkg0REcyekR1c29vRlhDUXh1STEybm9XK2V6QldqMGIrYmNEZjVRWm9icmx2QUNpMFg5VU9hOWhkcHZaNTV4WEwvcXdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzY3MDY3CWZpbGU6Z2FyeTRsb2NhbF8wLjQuMF94NjQtc2V0dXAuZXhlCnAvbWpYaVZBWGhvc1JydndQNWM1eGtFQzFpWW1zZ0RQRWtVKzFuMUtYN2REcldKc2MwMmpDeTAxTUtkUGlJekpFMUFFcEF0a2tJdVZJZUNhTFdScERRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0/gary4local_0.4.0_x64-setup.exe"
                                          }
                   }
 }
