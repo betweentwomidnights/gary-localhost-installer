@@ -3,17 +3,27 @@
 this is a windows control center for running 7 music models directly on your
 computer.
 
-this project now supports multiple frontends:
-
-- [betweentwomidnights/sa3-ableton-extension](https://github.com/betweentwomidnights/sa3-ableton-extension)
-  (more extensions planned)
-- [betweentwomidnights/gary4juce](https://github.com/betweentwomidnights/gary4juce)
+use it with [gary4juce](https://github.com/betweentwomidnights/gary4juce)
+to run the models inside your DAW, or from the standalone app.
 
 find the macOS version here:
 [gary-localhost-installer-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac).
 
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
+
+## update 10/7
+
+now supporting [YuE2](https://github.com/multimodal-art-projection/YuE).
+you'll notice the runtime is a little different... we're using C++ (ggml) for
+this service, and in the future, all gary4local services will be replaced to
+follow this pattern.
+
+this is going to replace the need for a separate gary4local-mac application,
+and is going to save us all a lot of storage space when Python is no longer
+involved.
+
+plz bear with me as i try to make this migration to C++ as smooth as i can.
 
 ## update 8/23
 
@@ -24,16 +34,13 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
-## v0.4.0-rc.4
+## v0.4.0
 
 **yuey is here: [YuE2](https://github.com/multimodal-art-projection/YuE), the
 seventh model.** we've chosen to do this one in native GGML. there's no Python
 environment at all: "install runtime" downloads a prebuilt
 [yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) package for your
 GPU (CUDA on NVIDIA, Vulkan on AMD and Intel), checks it, and you're done.
-over the course of the next couple weeks, we'll be converting all the python
-environments to follow the pattern we've established for yuey.cpp's release
-packaging.
 
 the yuey panel picks the model tier for your GPU, and has a few defaults for
 how it handles instrumentals and how long a song it writes for itself. the
@@ -48,17 +55,19 @@ and `copy log` makes it easier to report a slow job.
 SA3 and Carey now accept up to 380 seconds locally. longer jobs still depend on
 your available memory; the remote frontend limits stay at 240 seconds.
 
-compatible with [gary4juce v5.0.0-rc.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0-rc.4).
+compatible with [gary4juce v5.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
 ## roadmap
 
-- [ ] package and integrate [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp) with LoRA training end to end
-- [ ] package and integrate [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp) with LoRA training end to end
-- [ ] package and integrate [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
-- [ ] dig into a LoRA training UI for yue2
-- [ ] attempt the first Metal build of gary4local once all runtimes are native and the switch-over has been smooth
+- [ ] replace jerry, foundation-1 and SA3 with [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), which already supports LoRA training in native C++
+- [ ] replace carey with [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), including the LoRA workflow
+- [ ] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
+- [ ] dig into a LoRA training UI for YuE2
+- [ ] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac) once the native migration is ready
+- [ ] produce a Linux build
+- [ ] launch the web UIs for sa3.cpp, acestep.cpp and yuey.cpp directly from gary4local
 
 how every native service is packaged and installed is in
 [native runtime packages](docs/native-runtime-packages.md).
@@ -89,6 +98,14 @@ install and startup flow:
 - `sa3` / Stable Audio 3: `http://localhost:8006` via [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
 - `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
 - `yuey` / YuE2: `http://localhost:8007` via [yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp), a native GGML build of [YuE2](https://github.com/multimodal-art-projection/YuE)
+
+## LoRA training
+
+LoRA training lives in gary4local. the service panels open the local trainers;
+the plugin loads the resulting adapters for generation. the current workflows
+still use Python, and preserving training is part of the native migration.
+see the [ACE-Step training guide](docs/ace-step-lora-training.md) and
+[SA3 service notes](services/sa3/README.md).
 
 ## custom model backends
 
@@ -174,10 +191,10 @@ the current preferred Windows artifact is the NSIS setup executable.
 
 ## unsigned builds
 
-the installers are currently unsigned. the intended verification flow is:
-
-1. build the installer locally from this branch with one of the commands above.
-2. compare the generated hash against the release artifact hash.
+the installers aren't Authenticode-signed. in-app updates use a separate
+updater signature checked against the public key built into the app.
+for a manual download, compare the file's SHA-256 with the release asset digest.
+rebuilding locally isn't expected to produce an identical installer hash.
 
 example:
 
