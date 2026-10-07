@@ -1,6 +1,6 @@
 # gary4local
 
-this is a windows control center for running 6 music models directly on your
+this is a windows control center for running 7 music models directly on your
 computer.
 
 this project now supports multiple frontends:
@@ -24,19 +24,44 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
-## v0.3.2
+## v0.4.0-rc.4
 
-Foundation-1 now has two explicit inference profiles: Gary's existing fallback
-sampler and the sampler settings used by the RoyalCities UI. clients can switch
-between them without changing the prompt, seed, steps, or CFG controls.
+**yuey is here: [YuE2](https://github.com/multimodal-art-projection/YuE), the
+seventh model.** we've chosen to do this one in native GGML. there's no Python
+environment at all: "install runtime" downloads a prebuilt
+[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) package for your
+GPU (CUDA on NVIDIA, Vulkan on AMD and Intel), checks it, and you're done.
+over the course of the next couple weeks, we'll be converting all the python
+environments to follow the pattern we've established for yuey.cpp's release
+packaging.
 
-SA3 no longer validates an already configured Hugging Face token over the
-network during startup. if the selected model is cached, it can now start and
-generate with the network adapter disconnected.
+the yuey panel picks the model tier for your GPU, and has a few defaults for
+how it handles instrumentals and how long a song it writes for itself. the
+storage window now shows native runtimes too, including the shared CUDA
+runtime, which you can remove once nothing uses it.
 
-compatible with [gary4juce v4.0.14](https://github.com/betweentwomidnights/gary4juce/releases/tag/v4.0.14).
+yuey.cpp is now at 0.2.2, fixing the short MIDI score failure that could report
+`invalid YuE2 AR sampling configuration`. after updating this app, press
+`update runtime` on yuey's row. the natural-length default stays at 96 seconds,
+and `copy log` makes it easier to report a slow job.
+
+SA3 and Carey now accept up to 380 seconds locally. longer jobs still depend on
+your available memory; the remote frontend limits stay at 240 seconds.
+
+compatible with [gary4juce v5.0.0-rc.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0-rc.4).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
+
+## roadmap
+
+- [ ] package and integrate [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp) with LoRA training end to end
+- [ ] package and integrate [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp) with LoRA training end to end
+- [ ] package and integrate [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
+- [ ] dig into a LoRA training UI for yue2
+- [ ] attempt the first Metal build of gary4local once all runtimes are native and the switch-over has been smooth
+
+how every native service is packaged and installed is in
+[native runtime packages](docs/native-runtime-packages.md).
 
 ## preview
 
@@ -50,7 +75,8 @@ install and startup flow:
   the Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into the selected runtime storage folder.
 - `services/`
   the Python backends and model-specific code for gary, terry, jerry, carey,
-  foundation, and sa3.
+  foundation, and sa3, plus the manifest entry for yuey, whose native runtime
+  is downloaded rather than built.
 - `keygen_music_for_installer.wav`
   source loop used to generate the tiny installer music asset. cuz why not?
 
@@ -62,6 +88,7 @@ install and startup flow:
 - `jerry` / Stable Audio: `http://localhost:8005` via [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and [stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools)
 - `sa3` / Stable Audio 3: `http://localhost:8006` via [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
 - `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
+- `yuey` / YuE2: `http://localhost:8007` via [yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp), a native GGML build of [YuE2](https://github.com/multimodal-art-projection/YuE)
 
 ## custom model backends
 

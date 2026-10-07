@@ -36,8 +36,19 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Service runtime artifacts (venvs, models, caches - not source code)
+# Service runtime artifacts (venvs, native runtimes, models, caches - not source code)
 services/**/env/
+services/**/native/
+services/**/native.staging/
+services/**/native.old/
+# In development the repo is the runtime root, so its model store, download
+# cache, and shared native runtimes (e.g. the CUDA redistributables) land here.
+/models/
+/cache/
+/native-runtimes/
+# The app's own settings and HF token, written to the runtime root too.
+/app_settings.json
+/hf_token.txt
 services/**/.venv/
 services/**/venv/
 services/**/__pycache__/

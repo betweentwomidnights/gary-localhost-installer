@@ -12,6 +12,8 @@
   import CareyScragVaeBanner from "./lib/CareyScragVaeBanner.svelte";
   import Sa3DecoderLoraBanner from "./lib/Sa3DecoderLoraBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
+  import YueyRuntimeBanner from "./lib/YueyRuntimeBanner.svelte";
+  import YueyGenerationPanel, { type YueyGenerationSettings } from "./lib/YueyGenerationPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
@@ -39,6 +41,11 @@
     env_exists: boolean;
     health_endpoint: string | null;
     build_status: BuildStatus | null;
+    runtime: "python" | "native";
+    native_backend: string | null;
+    native_update_available: boolean;
+    native_fallback_reason: string | null;
+    start_blocker: string | null;
   }
 
   interface Sa3LoudnessSettings {
@@ -61,6 +68,9 @@
     careyUseScragVae: boolean;
     sa3UseDecoderLora: boolean;
     sa3Loudness: Sa3LoudnessSettings;
+    nativeBackends: Record<string, string>;
+    yueyEncoding: string;
+    yueyGeneration: YueyGenerationSettings;
     closeActionOnX: "ask" | "tray" | "quit";
     autoCheckUpdates: boolean;
     skippedUpdateVersion: string | null;
@@ -146,6 +156,7 @@
   interface ServiceEnvInfo {
     serviceId: string;
     displayName: string;
+    kind: "python" | "native" | "shared";
     envPath: string;
     envBytes: number;
     present: boolean;
@@ -185,6 +196,9 @@
       continuationSpliceGainMatch: true,
       continuationMaskOverlap: "0.2",
     },
+    nativeBackends: {},
+    yueyEncoding: "",
+    yueyGeneration: { instrumentalMethod: "transfer", instrumentalAdapter: true, naturalMaxSeconds: 180 },
     closeActionOnX: "ask",
     autoCheckUpdates: true,
     skippedUpdateVersion: null,
@@ -556,13 +570,21 @@
     serviceEnvBusy = serviceId;
     serviceEnvError = null;
     serviceEnvMessage = null;
+    const row = serviceEnvs?.find((env) => env.serviceId === serviceId);
     try {
       const result = await invoke<ServiceEnvRemovalResult>("remove_service_env", { serviceId });
       serviceEnvs = result.environments;
-      const label = result.serviceId;
-      serviceEnvMessage = result.removedBytes > 0
-        ? `removed ${label}'s environment (${formatByteCount(result.removedBytes)}) - rebuild it when you next need that model`
-        : `${label} had no environment installed`;
+      const label = row?.displayName ?? result.serviceId;
+      const size = formatByteCount(result.removedBytes);
+      if (result.removedBytes <= 0) {
+        serviceEnvMessage = `${label} had nothing installed`;
+      } else if (row?.kind === "shared") {
+        serviceEnvMessage = `removed the ${label} (${size}) - it comes back with the next runtime install that needs it`;
+      } else if (row?.kind === "native") {
+        serviceEnvMessage = `removed ${label}'s runtime (${size}) - install it again when you next need ${label}`;
+      } else {
+        serviceEnvMessage = `removed ${label}'s environment (${size}) - rebuild it when you next need that model`;
+      }
     } catch (e) {
       serviceEnvError = formatError(e);
     } finally {
@@ -748,6 +770,10 @@
     appSettings = { ...appSettings, sa3Loudness: settings };
   }
 
+  function onYueyGenerationSettingUpdated(settings: YueyGenerationSettings) {
+    appSettings = { ...appSettings, yueyGeneration: settings };
+  }
+
   function onCloseRequestEvent() {
     closeRequestModalOpen = true;
     rememberCloseChoice = false;
@@ -916,6 +942,20 @@
             enabled={appSettings.garyUseFp16}
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onGaryFp16SettingUpdated}
+          />
+        {:else if selectedServiceId === "yuey"}
+          <YueyRuntimeBanner
+            serviceStatus={selectedService?.status ?? "stopped"}
+            nativeBackend={selectedService?.native_backend ?? null}
+            envExists={selectedService?.env_exists ?? false}
+            building={selectedService?.build_status?.building ?? false}
+            startBlocker={selectedService?.start_blocker ?? null}
+            onShowModels={() => showModels("yuey")}
+          />
+          <YueyGenerationPanel
+            settings={appSettings.yueyGeneration}
+            serviceStatus={selectedService?.status ?? "stopped"}
+            onUpdated={onYueyGenerationSettingUpdated}
           />
         {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
           <MelodyflowFlashBanner

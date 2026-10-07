@@ -12,12 +12,14 @@ const resourcesDir = path.join(tauriDir, 'resources');
 const stagedServicesDir = path.join(resourcesDir, 'services');
 const bundleStampName = 'bundle-stamp.txt';
 
-const serviceNames = ['gary', 'melodyflow', 'stable-audio', 'sa3', 'carey', 'foundation'];
+const serviceNames = ['gary', 'melodyflow', 'stable-audio', 'sa3', 'carey', 'foundation', 'yuey'];
 
 const excludedPathSegments = new Set([
   '.git',
   '.venv',
   'env',
+  // A native service's downloaded runtime, present in a dev checkout.
+  'native',
   '.claude',
   '.cache',
   '.pytest_cache',

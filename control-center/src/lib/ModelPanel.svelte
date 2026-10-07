@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
+  import { chooseYueyTier, loadYueyTiers } from "./yueyTiers";
 
   interface ModelEntry {
     id: string;
@@ -28,6 +29,12 @@
     removedBytes: number;
   }
 
+  interface NativeRuntimeInfo {
+    installed: boolean;
+    backend: string | null;
+    recommendedEncoding: string | null;
+  }
+
   let { serviceId, onBack }: {
     serviceId: string;
     onBack: () => void;
@@ -48,6 +55,40 @@
   const isJerry = $derived(serviceId === "stable-audio");
   const isSa3 = $derived(serviceId === "sa3");
   const isCarey = $derived(serviceId === "carey");
+  const isYuey = $derived(serviceId === "yuey");
+
+  // yuey: which tier the runtime check recommends, and which one it launches with.
+  let yueyRuntime: NativeRuntimeInfo | null = $state(null);
+  let yueyActiveEncoding: string | null = $state(null);
+  let yueyBusy = $state(false);
+
+  async function loadYueyState() {
+    if (!isYuey) return;
+    try {
+      yueyRuntime = await invoke<NativeRuntimeInfo>("get_native_runtime_info", { serviceId: "yuey" });
+      yueyActiveEncoding = (await loadYueyTiers()).active;
+    } catch (e) {
+      console.error("Failed to load yuey runtime state:", e);
+    }
+  }
+
+  async function useYueyTier(encoding: string) {
+    yueyBusy = true;
+    modelActionError = null;
+    modelActionMessage = null;
+    try {
+      modelActionMessage = await chooseYueyTier(encoding);
+      await loadYueyState();
+    } catch (e) {
+      modelActionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      yueyBusy = false;
+    }
+  }
+
+  function yueyEncodingOf(model: ModelEntry): string {
+    return model.id.replace("yuey::", "");
+  }
 
   async function loadModels() {
     try {
@@ -87,6 +128,7 @@
     "stable-audio": "Jerry",
     sa3: "SA3",
     foundation: "Foundation-1",
+    yuey: "yuey",
   };
 
   function canRemoveModel(model: ModelEntry): boolean {
@@ -143,6 +185,7 @@
 
   onMount(() => {
     loadModels();
+    loadYueyState();
 
     const unlistenModels = listen<ModelEntry[]>("models-updated", (event) => {
       models = event.payload;
@@ -165,6 +208,8 @@
         }
         progress = newMap;
         await loadModels();
+        // A finished tier download can change which tier yuey launches with.
+        await loadYueyState();
       } catch (_) {}
     }, 3000);
 
@@ -195,6 +240,12 @@
   );
   let careyDitModels = $derived(
     serviceModels.filter((m) => m.size_category === "dit")
+  );
+  let yueyShared = $derived(
+    serviceModels.filter((m) => m.size_category === "shared")
+  );
+  let yueyTiers = $derived(
+    serviceModels.filter((m) => m.size_category === "tier")
   );
   let sa3Models = $derived(
     serviceModels.filter((m) =>
@@ -228,6 +279,7 @@
     serviceId === "sa3" ? "sa3 (stable audio 3)" :
     serviceId === "carey" ? "carey (ace-step)" :
     serviceId === "foundation" ? "foundation-1" :
+    serviceId === "yuey" ? "yuey (yue2)" :
     serviceId
   );
 
@@ -261,7 +313,7 @@
         <span class="active-badge">{activeDownloads} downloading</span>
       {/if}
     </div>
-    {#if !isJerry && !isSa3 && !isCarey && availableSizes.length > 1}
+    {#if !isJerry && !isSa3 && !isCarey && !isYuey && availableSizes.length > 1}
       <div class="filters">
         <button class:active={filterSize === "all"} onclick={() => filterSize = "all"}>All</button>
         {#each sizeOrder as size}
@@ -597,6 +649,137 @@
         {/each}
       </div>
 
+    {:else if isYuey}
+      <div class="size-group">
+        <div class="size-label">shared components</div>
+        <div class="carey-hint">
+          every tier needs these: the VAE and tokenizer to render audio, SheetSage2 to
+          transcribe for cover and continue, and the adapters for instrumental and audio
+          continuation. the weights are CC BY-NC 4.0.
+        </div>
+        {#each yueyShared as model}
+          {@const prog = getProgress(model.id)}
+          <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
+            <div class="model-info">
+              <span class="model-name">{model.display_name}</span>
+              <span class="model-path">{model.group || ""}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
+              {#if model.status === "downloading" && prog?.message}
+                <span class="model-size">{prog.message}</span>
+              {/if}
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
+            </div>
+            {#if model.status === "downloading" && prog}
+              <div class="download-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {Math.round(prog.progress * 100)}%"></div>
+                </div>
+                <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
+              </div>
+            {:else if model.status === "downloaded"}
+              <button
+                class="remove-btn"
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+              >
+                {removingModelId === model.id ? "removing..." : "remove"}
+              </button>
+            {:else}
+              <button
+                class="dl-btn"
+                class:failed={model.status === "failed"}
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
+              >
+                {statusLabels[model.status] || "Download"}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      <div class="size-group">
+        <div class="size-label">generation tier</div>
+        <div class="carey-hint">
+          one tier is enough.
+          {#if yueyRuntime?.recommendedEncoding}
+            the runtime check recommends {yueyRuntime.recommendedEncoding} for this GPU.
+          {:else}
+            install the runtime to get a recommendation for this GPU; Q4_K_M suits 8 GB cards.
+          {/if}
+          {#if yueyActiveEncoding}
+            yuey launches with {yueyActiveEncoding}.
+          {/if}
+        </div>
+        {#each yueyTiers as model}
+          {@const prog = getProgress(model.id)}
+          {@const encoding = yueyEncodingOf(model)}
+          <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
+            <div class="model-info">
+              <span class="model-name">
+                {model.display_name}
+                {#if yueyRuntime?.recommendedEncoding === encoding}
+                  <span class="tier-badge">recommended</span>
+                {/if}
+                {#if yueyActiveEncoding === encoding}
+                  <span class="tier-badge active">active</span>
+                {/if}
+              </span>
+              <span class="model-path">{model.group || ""}</span>
+              {#if model.status === "downloaded" && model.downloaded_bytes}
+                <span class="model-size">{formatBytes(model.downloaded_bytes)} on disk</span>
+              {/if}
+              {#if model.status === "downloading" && prog?.message}
+                <span class="model-size">{prog.message}</span>
+              {/if}
+              {#if prog?.error}
+                <span class="download-error">{prog.error}</span>
+              {/if}
+            </div>
+            {#if model.status === "downloading" && prog}
+              <div class="download-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {Math.round(prog.progress * 100)}%"></div>
+                </div>
+                <span class="progress-pct">{Math.round(prog.progress * 100)}%</span>
+              </div>
+            {:else if model.status === "downloaded"}
+              <div class="tier-actions">
+                {#if yueyActiveEncoding !== encoding}
+                  <button
+                    class="dl-btn"
+                    disabled={yueyBusy || removingModelId !== null}
+                    onclick={(e) => { e.stopPropagation(); useYueyTier(encoding); }}
+                  >
+                    use
+                  </button>
+                {/if}
+                <button
+                  class="remove-btn"
+                  disabled={removingModelId !== null}
+                  onclick={(e) => { e.stopPropagation(); removeManagedModel(model); }}
+                >
+                  {removingModelId === model.id ? "removing..." : "remove"}
+                </button>
+              </div>
+            {:else}
+              <button
+                class="dl-btn"
+                class:failed={model.status === "failed"}
+                disabled={removingModelId !== null}
+                onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
+              >
+                {statusLabels[model.status] || "Download"}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
     {:else}
       <!-- Gary / other services: grouped by size -->
       {#if serviceModels.length === 0}
@@ -763,6 +946,28 @@
     color: white;
     border-radius: 3px;
     font-family: var(--font-mono);
+  }
+
+  .tier-badge {
+    margin-left: 6px;
+    font-size: 9px;
+    padding: 1px 5px;
+    border: 1px solid var(--text-secondary);
+    border-radius: 3px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    vertical-align: middle;
+  }
+
+  .tier-badge.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .tier-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
   }
 
   .filters {

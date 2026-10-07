@@ -1569,8 +1569,8 @@ async def extract_status(task_id: str):
 async def complete_submit(req: CompleteRequest):
     if req.audio_duration < 5:
         raise HTTPException(400, "audio_duration must be at least 5 seconds")
-    if req.audio_duration > 300:
-        raise HTTPException(400, "audio_duration must be at most 300 seconds (5 min)")
+    if req.audio_duration > 380:
+        raise HTTPException(400, "audio_duration must be at most 380 seconds")
     _validate_lora_request("complete", req)
 
     _cleanup_old_jobs()

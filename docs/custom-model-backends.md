@@ -153,3 +153,71 @@ clean reference for the remote SA3 API shape.
   dtype, including CFG paths that may return float32 latents.
 - half-precision sa3 models are converted before transfer to CUDA, reducing
   transient GPU memory pressure during load and reload.
+
+## yuey localhost notes
+
+yuey is the first service with no Python environment at all. gary4local runs
+[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp)'s `yue2-server`,
+the same native server the remote backend runs, on `http://localhost:8007`.
+the package format and install path every native service shares are in
+[native runtime packages](native-runtime-packages.md).
+
+- "install runtime" replaces "build env". it detects the GPU, downloads the
+  yuey core package plus one GGML backend, checks both against the SHA-256
+  pinned in `services/manifests/services.json`, and unpacks them into
+  `services/yuey/native`.
+- yuey uses CUDA on NVIDIA and Vulkan on AMD and Intel. on an RTX 5070
+  Laptop CUDA is the faster backend now that yuey replays its decode step as
+  a CUDA graph: a 4000-token instrumental took 96s on CUDA against 154s on
+  Vulkan, most of the gap in the flow stage. Vulkan used to be ahead on an
+  idle GPU, and it is still the less reliable one: with Ableton open, a 170s
+  render stalled for over ten minutes on Vulkan. even on an idle GPU, Vulkan's
+  flash attention drops into a slow mode (2.6ms to 39ms a call) for a few
+  seconds out of every ten on some song lengths; the kernel itself measures
+  fine in isolation, so this looks like driver power-state behaviour rather
+  than a ggml bug. that order is yuey's own (`prefer` in the manifest); later
+  native services get measured for theirs.
+- transcription (and so remix and continue) was broken on Vulkan until
+  yuey.cpp #12: SheetSage2's decoder drifted into one repeated note after a
+  bar or two. a runtime from before that fix gives AMD and Intel users
+  garbage scores.
+- after unpacking, the install runs `yue2-server --props` to confirm the
+  backend actually initialised. if the automatic choice does not come up, it
+  tries the next backend the GPU can run and says so in the yuey panel rather
+  than quietly running somewhere else.
+- the backend can be forced to `cuda` or `vulkan` from the yuey panel. a
+  change takes effect on the next runtime install. there is no CPU runtime:
+  a song takes minutes on a GPU, so on a CPU yuey would only look broken, and
+  a machine without an NVIDIA, AMD, or Intel GPU is told so at install. CUDA's runtime DLLs
+  install once under `native-runtimes/` in runtime storage and are shared with
+  any later native service.
+- a runtime install finishes by downloading what yuey needs to generate: the
+  shared set and the tier the runtime check recommended (Q4_K_M in place of
+  the not-yet-published Q5_K_M). yuey will not start until they are present,
+  and its panel has a button to fetch them again if they were removed.
+- models download straight from
+  [thepatch/YuE2-3B-GGUF](https://huggingface.co/thepatch/YuE2-3B-GGUF) into
+  `models/yuey`: one shared set (VAE, tokenizer, SheetSage2 transcription, and
+  the instrumental and continuation adapters) plus one generation tier.
+  `Q4_K_M` suits 8 GB GPUs, `Q8_0` 12 GB, and `BF16` 16 GB. with more than
+  one tier downloaded, the yuey panel's model picker chooses which one
+  launches (auto is the recommended tier); a running yuey restarts on it.
+- a long song used to run an 8 GB card out of memory at the very end: the VAE
+  decoded in ~3.2 GB windows while the ~3 GB generator was still loaded, and
+  beside a DAW that failed on both backends (CUDA as a "device not ready"
+  abort). `yue2-server` now frees the generator before the decode on frugal
+  jobs, which gary4juce's always are, and decodes in 512-frame windows. a 170s
+  render peaks at 3.9 GB on CUDA and 4.1 GB on Vulkan, down from 7.4 GB.
+- the yuey generation panel sets three server defaults, passed as env at
+  launch and applied to every client, gary4juce included; saving restarts a
+  running yuey. what an instrumental job does with the sung or planned
+  melody (`YUE2_INSTRUMENTAL_METHOD`: "official YuE" moves it onto an
+  instrument and is the default; "our original" takes it out and leaves the
+  backing part), whether the instrumental adapter is used
+  (`YUE2_USE_INSTRUMENTAL_ADAPTER`), and the natural-length ceiling
+  (`YUE2_NATURAL_MAX_SECONDS`, 30-600s, default 96 like the remote backend; a
+  continuation is held to it by the bars it adds). a request that sets one of these itself still wins.
+- `yue2-server` on its own prefers the most precise tier it can find, which on
+  a small card means running out of memory. gary4local always names one: the
+  tier you picked, else the one the runtime check recommended, else the
+  smallest one downloaded.
