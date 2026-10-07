@@ -4,6 +4,21 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.4.0-rc.4
+
+yuey now installs [yuey.cpp v0.2.2](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.2),
+fixing the short-score token-budget failure found with two-bar MIDI. after
+updating the app, press `update runtime` on yuey's row; replacing the app alone
+doesn't replace an already installed native runtime.
+
+SA3's default request ceiling and Carey's completion limit are now 380 seconds,
+matching gary4juce's localhost controls. SA3 continuation counts the source and
+added audio against that total. existing explicit SA3_MAX_DURATION overrides
+still apply. this raises the accepted duration, not a guarantee of memory use
+or generation speed on every GPU.
+
+compatible with gary4juce v5.0.0-rc.4.
+
 ## v0.4.0-rc.2
 
 yuey now installs [yuey.cpp v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),

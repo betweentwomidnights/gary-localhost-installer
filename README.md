@@ -24,7 +24,7 @@ wherever you please, and clean up the legacy storage afterward if you like.
 big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
 build while we tried very hard to break it locally.
 
-## v0.4.0-rc.2
+## v0.4.0-rc.4
 
 **yuey is here: [YuE2](https://github.com/multimodal-art-projection/YuE), the
 seventh model.** we've chosen to do this one in native GGML. there's no Python
@@ -40,11 +40,15 @@ how it handles instrumentals and how long a song it writes for itself. the
 storage window now shows native runtimes too, including the shared CUDA
 runtime, which you can remove once nothing uses it.
 
-yuey.cpp is now at 0.2.1, with faster continuations. after updating this app,
-press `update runtime` on yuey's row. the natural-length default is now 96
-seconds, and `copy log` makes it easier to report a slow job.
+yuey.cpp is now at 0.2.2, fixing the short MIDI score failure that could report
+`invalid YuE2 AR sampling configuration`. after updating this app, press
+`update runtime` on yuey's row. the natural-length default stays at 96 seconds,
+and `copy log` makes it easier to report a slow job.
 
-compatible with [gary4juce v5.0.0-rc.3](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0-rc.3).
+SA3 and Carey now accept up to 380 seconds locally. longer jobs still depend on
+your available memory; the remote frontend limits stay at 240 seconds.
+
+compatible with [gary4juce v5.0.0-rc.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0-rc.4).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
