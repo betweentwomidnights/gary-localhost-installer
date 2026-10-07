@@ -217,6 +217,15 @@ not served. Both the `Release gary4local-rocm …` commit (ROCm branch) and the
 
 Order:
 
+Before the version bump, merge the current `main` into the ROCm branch so the
+shared services inherit the same fixes. retain the AMD product identity,
+dependency pins and runtime profiles when resolving conflicts. check the final
+`services/manifests/services.json` for exactly one entry per service ID, and
+compare Yuey's entire `native` block with main. a clean automatic merge can
+still leave two Yuey entries: during rc.4, that would have kept the AMD package
+on v0.2.1 despite the new v0.2.2 entry. verify the staged manifest matches the
+source after the signed build too.
+
 1. Bump the five version files on `feature/rocm-custom-runtime-storage`, commit,
    and **push the branch**.
 2. Build the signed installer.

@@ -1,12 +1,12 @@
 {
-  "channel": "preview",
-  "latest_version": "0.4.0-rocm.2",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.2/gary4local-rocm_0.4.0-rocm.2_x64-setup.exe",
-  "sha256": "4214eb4d9800cf972a0326c5b600d073283427189d6f902349ae536eb9b1ff43",
-  "published_at": "2026-10-06T07:13:17.0000000+00:00",
-  "notes": [
-    "Yuey 0.2.1 makes continuations faster on Vulkan; use Update runtime after installing this app.",
-    "Natural-length default is now 96 seconds; old preview defaults migrate once.",
-    "Copy log makes reporting slow jobs easier. Compatible with gary4juce v5.0.0-rc.3."
-  ]
+    "channel":  "preview",
+    "latest_version":  "0.4.0-rocm.4",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.4/gary4local-rocm_0.4.0-rocm.4_x64-setup.exe",
+    "sha256":  "e3d54ffff6e057f642438afe211c8158e843999e9bb0446efcdbdc27c2836042",
+    "published_at":  "2026-10-07T05:35:44.0000000+00:00",
+    "notes":  [
+                  "Yuey v0.2.2 fixes short MIDI scores. After installing, press Update runtime on Yuey\u0027s row.",
+                  "Local SA3 and Carey accept up to 380 seconds. SA3 continuation includes source plus added audio.",
+                  "Compatible with gary4juce v5.0.0-rc.4 for ten-minute stem imports and model-limited selections."
+              ]
 }
