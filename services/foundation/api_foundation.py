@@ -48,6 +48,10 @@ import numpy as np
 import soundfile as sf
 
 from bpm_range import HostBpmError, resolve_host_bpm
+from inference_profiles import (
+    resolve_audio2audio_inference_settings,
+    resolve_inference_settings,
+)
 
 from bpm_range import HostBpmError, resolve_host_bpm
 from inference_profiles import (

@@ -1,11 +1,11 @@
 {
-    "version":  "0.1.4",
-    "notes":  "Preview lane temporarily mirrors stable v0.1.4 so older preview-targeted builds can recover.\nStable releases keep the built-in update check and in-app install flow.\nSource builders can still disable the updater flow at build time if needed.",
-    "pub_date":  "2026-04-04T10:17:00.8264242Z",
-    "platforms":  {
-                      "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMERpS1FkblZGZWwrZHdzWDFYY3dnc0xaSlBSQ0RHV1dWWU9tSlZ5WC8wZ2hHRWhlTHlRL0Iyd0VVZHJQQkdleWY5TFJzTk9vSGtCaGN4bFZTdVA4RVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1Mjk2ODQ4CWZpbGU6Z2FyeTRsb2NhbF8wLjEuNF94NjQtc2V0dXAuZXhlCkZRRVFjWVFheXI5N3JrYUJKdEJyY2hQWEplUTdXbGNhc0ZJQmY1a2U2VWFGVTV3TFZHblBZUThrcVVubUh6bnR3a3BQdHZOdkx0SDNQUmZzcnNsY0RnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.1.4/gary4local_0.1.4_x64-setup.exe"
-                                         }
-                  }
+  "version": "0.4.0-rc.2",
+  "notes": "Yuey 0.2.1 makes continuations faster; use Update runtime after installing this app.\nNatural-length default is now 96 seconds; old preview defaults migrate once.\nCopy log makes reporting slow jobs easier. Compatible with gary4juce v5.0.0-rc.3.",
+  "pub_date": "2026-10-06T07:13:13.0000000+00:00",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElTbWM4UlRubXUrVFZPdVhhUHV5V2oxbzg5bTZMZmJLTzJwR2I3djV0dndIN1hGWHQwSXhCK01DUUp1MlRjRklKOXlXa0M2bFVwd1ZUcEVObkdyT1FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMjcwNjAwCWZpbGU6Z2FyeTRsb2NhbF8wLjQuMC1yYy4yX3g2NC1zZXR1cC5leGUKOFF0K0VvSUpwemZ4Q01yaTdxTE1BbUdBUE1YNmhvNk5TaEVnWGVYYW94VGtoYjZkVXIzL1pvSmRnV2U2d05LTGJQSDFuZTljSDAwZGV6M3dCb2d3QXc9PQo=",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rc.2/gary4local_0.4.0-rc.2_x64-setup.exe"
+    }
+  }
 }

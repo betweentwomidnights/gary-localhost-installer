@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
   interface RuntimeStorageInfo {
@@ -115,8 +116,8 @@
     blobReclaimMessage: string | null;
     onReclaimBlobs: () => void;
     restarting?: boolean;
-    onChoose: (path: string) => void;
-    onReset: () => void;
+    onChoose: (path: string) => void | Promise<void>;
+    onReset: () => void | Promise<void>;
     onReveal: (path: string) => void;
     onRefreshMaintenance: () => void;
     onMigrateLoras: () => void;
@@ -130,6 +131,8 @@
   let loraListExpanded = $state(false);
   let storageMoveListExpanded = $state(false);
   let cleanupListExpanded = $state(false);
+  let modalElement: HTMLDivElement | null = $state(null);
+  let restartButton: HTMLButtonElement | null = $state(null);
 
   let visibleLoraCandidates = $derived(
     maintenanceInfo
@@ -229,7 +232,24 @@
       defaultPath: info?.activeRoot,
     });
     if (typeof selected === "string" && selected.trim()) {
-      onChoose(selected);
+      await onChoose(selected);
+      await revealStorageChange();
+    }
+  }
+
+  async function resetStorage() {
+    if (busy || !info?.configuredRoot) return;
+    await onReset();
+    await revealStorageChange();
+  }
+
+  async function revealStorageChange() {
+    await tick();
+    modalElement?.scrollTo({ top: 0, behavior: "smooth" });
+    if (info?.pendingRestart) {
+      restartButton?.focus({ preventScroll: true });
+    } else {
+      modalElement?.focus({ preventScroll: true });
     }
   }
 
@@ -286,6 +306,7 @@
     <button type="button" class="backdrop" aria-label="close storage settings" onclick={onClose}></button>
     <div
       class="modal"
+      bind:this={modalElement}
       role="dialog"
       aria-modal="true"
       aria-labelledby="storage-modal-title"
@@ -297,6 +318,7 @@
         {#if info?.pendingRestart}
           <span class="pill">restart required</span>
           <button
+            bind:this={restartButton}
             type="button"
             class="restart-action"
             onclick={onRestart}
@@ -560,7 +582,7 @@
         <button type="button" onclick={chooseFolder} disabled={busy}>choose folder</button>
         <button
           type="button"
-          onclick={onReset}
+          onclick={resetStorage}
           disabled={busy || !info?.configuredRoot}
           title={resetButtonTitle}
         >

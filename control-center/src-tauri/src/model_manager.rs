@@ -2207,11 +2207,7 @@ fine-grained token settings to view this repository."#;
 
     #[test]
     fn regular_dits_require_silence_latent() {
-        for component in [
-            "acestep-v15-base",
-            "acestep-v15-sft",
-            "acestep-v15-turbo",
-        ] {
+        for component in ["acestep-v15-base", "acestep-v15-sft", "acestep-v15-turbo"] {
             let required = carey_component_required_files(component).unwrap();
             let silence_latent = format!("{component}/silence_latent.pt");
             assert!(required.contains(&silence_latent.as_str()));

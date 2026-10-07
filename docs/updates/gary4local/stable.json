@@ -1,12 +1,12 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.2.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.2.1/gary4local_0.2.1_x64-setup.exe",
-    "sha256":  "1b4ca854f332a3ef46f1925bc2a5660a9172d0157ad04a28c3b8ebbbd117f853",
-    "published_at":  "2026-08-16T10:47:22.5086641Z",
+    "latest_version":  "0.3.2",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2/gary4local_0.3.2_x64-setup.exe",
+    "sha256":  "ded982ac562e1b82e2ca4e46e7a52807c08475373544b525536f5613416e1772",
+    "published_at":  "2026-09-11T10:40:22.7139428Z",
     "notes":  [
-                  "Bugfix for ace-step lora training - the base/xl-base selector was sending names that did not resolve to real model folders.",
-                  "Terry gets a use seed toggle, and no longer converts to 32k before the edit. It hears more detail, but caps at 30 seconds instead of 45.",
-                  "SA3 lora training defaults to 168 layers instead of the full set. Trains faster, and you honestly will not hear a difference. Compatible with gary4juce v4.0.12."
+                  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.",
+                  "Fully cached SA3 models can start while offline without validating the saved Hugging Face token over the network.",
+                  "Compatible with gary4juce v4.0.14."
               ]
 }

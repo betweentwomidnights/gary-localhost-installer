@@ -4,7 +4,111 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
-## pending ROCm sync
+## v0.4.0-rc.4
+
+yuey now installs [yuey.cpp v0.2.2](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.2),
+fixing the short-score token-budget failure found with two-bar MIDI. after
+updating the app, press `update runtime` on yuey's row; replacing the app alone
+doesn't replace an already installed native runtime.
+
+SA3's default request ceiling and Carey's completion limit are now 380 seconds,
+matching gary4juce's localhost controls. SA3 continuation counts the source and
+added audio against that total. existing explicit SA3_MAX_DURATION overrides
+still apply. this raises the accepted duration, not a guarantee of memory use
+or generation speed on every GPU.
+
+compatible with gary4juce v5.0.0-rc.4.
+
+## v0.4.0-rc.2
+
+yuey now installs [yuey.cpp v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
+with faster continuations and a timing summary for each job. existing installs
+need to press `update runtime` on yuey's row to replace 0.2.0.
+
+the default natural-length ceiling is now 96 seconds, matching the remote
+backend. a natural continuation is limited by the new bars it adds. old preview
+settings carrying the former default of 180 move to 96 once; other chosen
+limits stay. the log pane also has a `copy log` button for reporting slow jobs.
+
+compatible with gary4juce v5.0.0-rc.3.
+
+## v0.4.0
+
+### yuey, the first native service
+
+yuey runs [YuE2](https://github.com/multimodal-art-projection/YuE) through
+[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) on port 8007. it's
+the first service with no Python environment: "install runtime" replaces
+"build env". gary4local detects the GPU, downloads yuey's core package plus one
+GGML backend (CUDA on NVIDIA, Vulkan on AMD and Intel), checks both against the
+SHA-256s pinned in the manifest, unpacks them, and runs `yue2-server --props`
+to confirm the backend actually came up before it calls the runtime installed.
+if the automatic choice doesn't come up, it tries the next backend and says so
+in the panel. there's no CPU runtime: a song takes minutes on a GPU, so on a
+CPU yuey would only look broken.
+
+the CUDA runtime (cudart and cuBLAS, about 550 MB) is shared by every native
+service, so it installs once under `native-runtimes/`, from its own release on
+this repo, `runtime-cudart-12.8.1`. how all of this is packaged, published and
+pinned is in [native runtime packages](docs/native-runtime-packages.md), which
+sa3.cpp, acestep.cpp and audiocraft.cpp will follow as they come over.
+
+### the yuey panel
+
+the panel shows the runtime's backend and version, a backend override (auto,
+cuda or vulkan), and the model tier, picked from the GPU's memory unless you
+choose one. a runtime install finishes by downloading the shared models and
+the recommended tier, and yuey won't start until they're present.
+
+a generation section sets three server defaults for every client, gary4juce
+included: the instrumental method ("official YuE" moves the melody onto an
+instrument, "our original" takes it out), whether the instrumental LoRA is
+used, and how long a song yuey may write for itself (30-600 seconds, 96 by
+default, the same as the remote backend; a continuation is held to it by what
+it adds). saving restarts yuey. a request that sets one of these itself still
+wins. pre-release installs that saved settings under the old default of 180
+move to 96 once; a ceiling anyone actually chose stays.
+
+yuey is pinned at [v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
+which makes continuation faster. an 8-bar continuation of a 25-second clip went
+from 46s to 31s on an RTX 5070 Laptop over CUDA, and from 37s to 32s over Vulkan.
+each job also writes a one-line timing summary to yuey's log, and the log pane
+has a "copy log" button, so a slow job can be reported by pasting it.
+
+### storage
+
+the storage window lists native runtimes as runtimes, removed with "remove
+runtime" and brought back with "install runtime", and gives each shared runtime
+a row of its own. the CUDA runtime can only be removed once nothing installed
+uses it: after the last CUDA runtime is removed, or after a switch to Vulkan.
+
+compatible with gary4juce v5.0.0.
+
+## v0.3.2
+
+### foundation-1 inference profiles
+
+Foundation-1 generation and audio-to-audio routes now resolve named sampler
+profiles before applying explicit request overrides. `gary_fallback` preserves
+the sampler defaults used by existing local generations, while `royalcities`
+matches the sampler and sigma range passed by RoyalCities' Gradio UI.
+
+Both routes report the resolved profile, sampler, sigma range, rho, steps, and
+guidance in their accepted and completed metadata. Audio-to-audio also keeps
+the configured sigma maximum visible while reporting the effective variation
+maximum actually passed to the sampler.
+
+### sa3 offline startup
+
+SA3 no longer calls Hugging Face's login helper during service startup. A saved
+token is normalized into the environment without a validation request, so a
+fully cached model can load and generate while the machine is offline. Missing
+model files still use the normal authenticated download path when networking is
+available.
+
+compatible with gary4juce v4.0.14.
+
+## v0.3.1
 
 ### sa3 decoder squeak fix
 
@@ -40,7 +144,9 @@ checkouts and release-builder checkouts produce the same training bundle.
 Generated Python `*.egg-info` directories are also excluded from runtime
 staging so local editable installs cannot leak build metadata into a release.
 
-## shared custom-runtime baseline
+compatible with gary4juce v4.0.14.
+
+## v0.3.0
 
 ### custom runtime storage
 
