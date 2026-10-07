@@ -15,14 +15,14 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_functions(relative_path, names, namespace):
+def load_functions(relative_path, names, namespace, optional_names=()):
     tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"))
     selected = []
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (node.name in names or node.name in optional_names):
             node.decorator_list = []
             selected.append(node)
-    assert len(selected) == len(names), "endpoint renamed or missing"
+    assert names <= {node.name for node in selected}, "endpoint renamed or missing"
     future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
     module = ast.fix_missing_locations(ast.Module(body=[future, *selected], type_ignores=[]))
     exec(compile(module, str(ROOT / relative_path), "exec"), namespace)
@@ -48,6 +48,7 @@ class LocalDurationLimitsTest(unittest.TestCase):
             CONTINUE_TAIL_MODE="regen_past", OUTPUT_SAMPLE_RATE=44100,
             VALID_SHIFTS={"default"}, VALID_CONTINUATION_MODES={"inpaint", "latent_prefix"},
             get_json_body=lambda: data, cleanup_old_sessions=lambda: None,
+            request=SimpleNamespace(path="/duration-test"),
             jsonify=lambda value: value, create_session=Mock(return_value="test-job"),
             generation_worker=Mock(), threading=SimpleNamespace(Thread=worker),
             decode_audio_data=lambda _: (44100, SimpleNamespace(shape=(2, round(source_seconds*44100)))),
@@ -61,7 +62,8 @@ class LocalDurationLimitsTest(unittest.TestCase):
                 splice_source=False, splice_xfade=0, splice_gain_match=False),
         )
         load_functions("services/sa3/api.py",
-            {"parse_float", "parse_int", "validate_common", "transform", "continue_audio"}, namespace)
+            {"parse_float", "parse_int", "validate_common", "transform", "continue_audio"}, namespace,
+            optional_names={"reject_bad_request"})
         return namespace, worker
 
     def test_sa3_default_and_explicit_override(self):
