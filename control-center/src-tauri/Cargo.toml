@@ -1,6 +1,6 @@
 [package]
 name = "gary4local-rocm"
-version = "0.4.0-rocm.2"
+version = "0.4.0-rocm.4"
 description = "gary4local-rocm control center"
 authors = ["betweentwomidnights"]
 license = "MIT"

@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "gary4local-rocm"
-version = "0.4.0-rocm.2"
+version = "0.4.0-rocm.4"
 dependencies = [
  "log",
  "reqwest 0.12.28",
