@@ -313,50 +313,6 @@
       "workingDir": "services/yuey",
       "native": {
         "executable": "yue2-server.exe",
-        "version": "v0.2.1",
-        "platforms": {
-          "windows-x64": {
-            "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.1/yuey-v0.2.1-windows-x64-core.zip",
-              "sha256": "0c46511deafae028df5e5ec1be9c6d399faf061719a414e237af01cfc17d9a02"
-            },
-            "backends": {
-              "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.1/yuey-v0.2.1-windows-x64-cuda.zip",
-                "sha256": "71b3d6b2928e08e7bd9c82c8b80748b3e11a0091c9fd3a9ae8798db8075bec99",
-                "requires": ["cudart-12.8"]
-              },
-              "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.1/yuey-v0.2.1-windows-x64-vulkan.zip",
-                "sha256": "974f1bb3353def1076a3b93b3f63e14bba112cc5c8acd5ae21b66bcb3d04da45"
-              }
-            },
-            "prefer": ["cuda", "vulkan"]
-          }
-        }
-      },
-      "healthCheck": {
-        "endpoint": "/health",
-        "intervalSeconds": 15,
-        "timeoutSeconds": 5,
-        "startupGraceSeconds": 15
-      },
-      "env": {
-        "YUE2_MODELS_DIR": "${MODELS_DIR}/yuey",
-        "YUE2_PORT": "8007",
-        "YUE2_DEVICE": "${NATIVE_BACKEND}"
-      },
-      "dependsOn": []
-    },
-    {
-      "id": "yuey",
-      "displayName": "yuey (yue2)",
-      "description": "YuE2 song generation, covers, continuation, and audio-to-MIDI transcription with yuey.cpp",
-      "port": 8007,
-      "runtime": "native",
-      "workingDir": "services/yuey",
-      "native": {
-        "executable": "yue2-server.exe",
         "version": "v0.2.2",
         "platforms": {
           "windows-x64": {
