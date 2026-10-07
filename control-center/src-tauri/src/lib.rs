@@ -2,6 +2,7 @@ mod manifest;
 mod model_manager;
 mod native_models;
 mod native_runtime;
+mod sa3_migration;
 mod service_manager;
 mod storage;
 mod update;
@@ -5898,6 +5899,7 @@ pub fn run() {
             save_hf_token,
             delete_hf_token,
             get_runtime_storage_info,
+            get_sa3_migration_preview,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -9472,6 +9474,19 @@ fn get_runtime_storage_info(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<storage::RuntimeStorageInfo, String> {
     Ok(storage::storage_info(repo_root.inner()))
+}
+
+#[tauri::command]
+async fn get_sa3_migration_preview(
+    repo_root: tauri::State<'_, PathBuf>,
+    model_mgr: tauri::State<'_, ModelState>,
+) -> Result<sa3_migration::Sa3MigrationPreview, String> {
+    let root = repo_root.inner().clone();
+    // Use the model manager's effective cache, including legacy HF overrides.
+    let hub = model_mgr.lock().await.hf_hub_cache_dir();
+    tauri::async_runtime::spawn_blocking(move || sa3_migration::preview(&root, &hub))
+        .await
+        .map_err(|error| format!("SA3 migration scan failed: {error}"))
 }
 
 fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {

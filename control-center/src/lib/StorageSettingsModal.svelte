@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import Sa3MigrationPreview from "./Sa3MigrationPreview.svelte";
 
   interface RuntimeStorageInfo {
     activeRoot: string;
@@ -363,6 +364,8 @@
       {#if error}
         <div class="error-note">{error}</div>
       {/if}
+
+      <Sa3MigrationPreview pendingRestart={info?.pendingRestart ?? true} {onReveal} />
 
       <div class="active-cache">
         <div class="section-row">
