@@ -12,7 +12,9 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 10/7
+## update 10/7 - v0.4.0
+
+[download gary4local v0.4.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.4.0).
 
 now supporting [YuE2](https://github.com/multimodal-art-projection/YuE).
 you'll notice the runtime is a little different... we're using C++ (ggml) for
@@ -25,24 +27,9 @@ involved.
 
 plz bear with me as i try to make this migration to C++ as smooth as i can.
 
-## update 8/23
-
-custom runtime storage is now supported. everything should work the same for
-existing users, but now you can move the runtime to an external drive or
-wherever you please, and clean up the legacy storage afterward if you like.
-
-big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
-build while we tried very hard to break it locally.
-
-## v0.4.0
-
-[download gary4local v0.4.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.4.0).
-
-**yuey is here: [YuE2](https://github.com/multimodal-art-projection/YuE), the
-seventh model.** we've chosen to do this one in native GGML. there's no Python
-environment at all: "install runtime" downloads a prebuilt
-[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) package for your
-GPU (CUDA on NVIDIA, Vulkan on AMD and Intel), checks it, and you're done.
+on yuey's row, `install runtime` downloads the right
+[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) package for your GPU
+(CUDA on NVIDIA, Vulkan on AMD and Intel), checks it, and you're done.
 
 the yuey panel picks the model tier for your GPU, and has a few defaults for
 how it handles instrumentals and how long a song it writes for itself. the
@@ -60,6 +47,15 @@ your available memory; the remote frontend limits stay at 240 seconds.
 compatible with [gary4juce v5.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
+
+## update 8/23
+
+custom runtime storage is now supported. everything should work the same for
+existing users, but now you can move the runtime to an external drive or
+wherever you please, and clean up the legacy storage afterward if you like.
+
+big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
+build while we tried very hard to break it locally.
 
 ## roadmap
 
