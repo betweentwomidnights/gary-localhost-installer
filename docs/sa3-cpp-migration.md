@@ -49,6 +49,12 @@ warnings, restart requirement, native/completed resume and enabled decoder fix.
 The frontend checks and build pass; 172 regular Rust tests pass (15 ignored).
 The real automatic training check passed on the RTX 5070 Laptop with both Q4 and
 F16 bases, taking about 14 seconds per base and retaining only small diagnostics.
+The production installer plus the complete verification/activation sequence also
+passed with the corrected package, real generation, the synthetic training check
+and the Python fixture preserved. These checks establish basic runtime operation,
+not exhaustive training configuration or audio-quality parity. A rank-1 variant
+of the short CUDA check hit an unsupported `ggml` outer-product shape; rank 16
+passes and is used for migration. Low-rank CUDA behavior remains follow-up work.
 
 ### Windows trainer progress publication
 
