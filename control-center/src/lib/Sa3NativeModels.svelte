@@ -178,7 +178,7 @@
       {#if decoder?.error}<p>{decoder.error}</p>{/if}
     </div>
   {/if}
-  <p>Model preparation uses your selected storage folder. Verify and switch runtimes in Storage after preparing the components and adapters.</p>
+  <p>Model preparation uses your selected storage folder. Use “migrate runtime” on the SA3 service to verify and switch to C++.</p>
   {#if message}<p role="status">{message}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>

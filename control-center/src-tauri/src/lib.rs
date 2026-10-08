@@ -10280,6 +10280,7 @@ async fn prepare_sa3_native_models(
     encoding: String,
     training_base: Option<String>,
     include_decoder: Option<bool>,
+    wait_for_completion: Option<bool>,
     repo_root: tauri::State<'_, PathBuf>,
     model_mgr: tauri::State<'_, ModelState>,
     svc_mgr: tauri::State<'_, ManagerState>,
@@ -10317,23 +10318,39 @@ async fn prepare_sa3_native_models(
     let manager = model_mgr.inner().clone();
     let services = svc_mgr.inner().clone();
     let queued = ids.clone();
-    tauri::async_runtime::spawn(async move {
+    let preparation = async move {
+        let mut errors = Vec::new();
         for id in queued {
             let files = sa3_models::component(&id)
                 .expect("validated model plan")
                 .files
                 .clone();
-            let _ = native_models::download_pinned_hf_files(
+            if let Err(error) = native_models::download_pinned_hf_files(
                 id,
                 files,
                 dest_dir.clone(),
                 manager.clone(),
                 app_handle.clone(),
             )
-            .await;
+            .await
+            {
+                errors.push(error);
+            }
         }
         services.lock().await.end_native_model_mutation("sa3");
-    });
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("\n"))
+        }
+    };
+    if wait_for_completion.unwrap_or(false) {
+        // The guided migration must wait for both downloads and their mutation
+        // reservation to finish before converting adapters or validating SA3.
+        preparation.await?;
+    } else {
+        tauri::async_runtime::spawn(preparation);
+    }
     Ok(ids)
 }
 

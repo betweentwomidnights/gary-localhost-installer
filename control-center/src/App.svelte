@@ -18,6 +18,7 @@
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
+  import Sa3MigrationModal from "./lib/Sa3MigrationModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
   import StorageSettingsModal from "./lib/StorageSettingsModal.svelte";
@@ -214,6 +215,7 @@
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
   let storageModalOpen = $state(false);
+  let sa3MigrationOpen = $state(false);
   let storageInfo: RuntimeStorageInfo | null = $state(null);
   let storageBusy = $state(false);
   let storageError: string | null = $state(null);
@@ -315,6 +317,12 @@
 
   function closeSa3LoraTraining() {
     sa3LoraTrainingModalOpen = false;
+  }
+
+  async function showSa3Migration() {
+    selectedServiceId = "sa3";
+    sa3MigrationOpen = true;
+    await loadRuntimeStorageInfo();
   }
 
   function backToLogs() {
@@ -907,6 +915,7 @@
         onTrainCareyAce={showCareyAceTraining}
         onManageSa3Loras={showSa3Loras}
         onTrainSa3Lora={showSa3LoraTraining}
+        onMigrateSa3Runtime={showSa3Migration}
       />
     </div>
     <div class="divider"></div>
@@ -1058,6 +1067,13 @@
     serviceEnvExists={sa3Service?.env_exists ?? false}
     pendingRestart={storageInfo?.pendingRestart ?? false}
     onClose={closeSa3Loras}
+  />
+  <Sa3MigrationModal
+    open={sa3MigrationOpen}
+    pendingRestart={storageInfo?.pendingRestart ?? true}
+    onReveal={revealStoragePath}
+    onClose={() => sa3MigrationOpen = false}
+    onTrain={() => { sa3MigrationOpen = false; showSa3LoraTraining(); }}
   />
   <Sa3LoraTrainingModal
     open={sa3LoraTrainingModalOpen}
