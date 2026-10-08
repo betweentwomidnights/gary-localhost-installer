@@ -6,6 +6,7 @@ mod sa3_adapter;
 mod sa3_loras;
 mod sa3_migration;
 mod sa3_models;
+mod sa3_training;
 mod service_manager;
 mod storage;
 mod update;
@@ -169,7 +170,7 @@ impl Default for YueyGenerationSettings {
 }
 
 /// Bumped when the natural-length default changes.
-/// 1: 180 â†’ 96, matching the remote backend.
+/// 1: 180 → 96, matching the remote backend.
 const YUEY_NATURAL_DEFAULT_REVISION: u32 = 1;
 
 impl YueyGenerationSettings {
@@ -758,6 +759,10 @@ struct Sa3AutolabelAvailability {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoraTrainingState {
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(default)]
+    resume_checkpoint_path: Option<String>,
     #[serde(default)]
     job_id: Option<String>,
     #[serde(default)]
@@ -3939,6 +3944,8 @@ fn read_sa3_training_status_file(path: &Path) -> Sa3LoraTrainingState {
         .ok()
         .and_then(|raw| serde_json::from_str::<Sa3LoraTrainingState>(&raw).ok())
         .unwrap_or_else(|| Sa3LoraTrainingState {
+            runtime: None,
+            resume_checkpoint_path: None,
             job_id: None,
             name: None,
             status: "idle".to_string(),
@@ -4791,6 +4798,16 @@ where
     if !matches!(state.status.as_str(), "starting" | "running") {
         return Ok(());
     }
+    if state.runtime.as_deref() == Some("sa3.cpp") {
+        // The app's native monitor owns process exit and adapter registration.
+        // Recovery after an app exit must not invoke Python child discovery or
+        // advertise a CLI result as registered when publication was interrupted.
+        if state.owner_pid.is_some_and(|pid| is_process_running(pid) == Some(false)) {
+            return mark_sa3_lora_training_failed(status_path,
+                "The app that owned native training exited. Saved checkpoint pairs remain available for resume.", state.launcher_pid);
+        }
+        return Ok(());
+    }
     let mut monitored_pids = Vec::new();
     for pid in [state.owner_pid, state.launcher_pid, state.pid]
         .into_iter()
@@ -5059,7 +5076,7 @@ async fn try_reload_carey_admin() -> bool {
 ///
 /// SA3 bakes adapters into the pipeline at load time (api.py `load_pipeline` ->
 /// `loaded.load_lora(paths)`), so rewriting the catalog/registry on disk does not
-/// affect a service that is already running â€” switching a checkpoint would
+/// affect a service that is already running — switching a checkpoint would
 /// silently keep serving the previously loaded adapter until a manual restart.
 /// `/reload` does `load_pipeline(force=True)`, so this is a full model reload and
 /// takes a while; it returns 409 when a generation is in flight. A false return
@@ -6289,7 +6306,7 @@ async fn run_build(
         if let Err(e) = py_install {
             let mut mgr = manager.lock().await;
             mgr.append_build_log(&service_id, &format!("Warning: uv python install: {}", e));
-            // Non-fatal â€” Python 3.11 might already be on PATH
+            // Non-fatal — Python 3.11 might already be on PATH
         }
 
         // Create the venv
@@ -6337,7 +6354,7 @@ async fn run_build(
 
     let python_exe = env_dir.join("Scripts").join("python.exe");
 
-    // Execute build steps â€” translate "pip install ..." to "uv pip install ... --python ..."
+    // Execute build steps — translate "pip install ..." to "uv pip install ... --python ..."
     for (i, step) in build_info.build_steps.iter().enumerate() {
         let step_num = i + 2; // offset by 2 (uv bootstrap + venv creation)
 
@@ -8933,11 +8950,11 @@ async fn start_sa3_autolabel(
     let availability = build_sa3_autolabel_availability(repo_root.inner(), caption_lm_model);
     let python_exe = carey_autolabel_python(repo_root.inner());
     if !availability.carey_built {
-        return Err("Carey must be built to auto-label â€” it runs the caption model.".to_string());
+        return Err("Carey must be built to auto-label — it runs the caption model.".to_string());
     }
     if !availability.captioner_downloaded {
         return Err(format!(
-            "Download the selected ACE-Step captioner ({caption_lm_model}) from Carey â†’ Models before auto-labeling."
+            "Download the selected ACE-Step captioner ({caption_lm_model}) from Carey → Models before auto-labeling."
         ));
     }
     let script_path = carey_autolabel_script(repo_root.inner());
@@ -9156,7 +9173,9 @@ fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
 
 fn sa3_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String> {
     let catalog = read_sa3_lora_catalog()?;
-    lora_name_availability(name, catalog.keys())
+    let native = sa3_loras::state(&gary4juce_runtime_root())?;
+    let names: Vec<_> = catalog.keys().cloned().chain(native.entries.into_iter().map(|entry| entry.name)).collect();
+    lora_name_availability(name, names.iter())
 }
 
 #[tauri::command]
@@ -9215,8 +9234,107 @@ async fn start_sa3_lora_training(
     loudness_fix_enabled: bool,
     target_latent_rms: f64,
     layer_scope: String,
+    runtime: Option<String>,
+    native_encoding: Option<String>,
+    resume_checkpoint: Option<String>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Sa3LoraTrainingState, String> {
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "A SA3 training launch is already in progress")?;
+    let native = match runtime.as_deref() {
+        Some("native") => true,
+        Some("python") => false,
+        None => manager.lock().await.is_native("sa3"),
+        _ => return Err("Choose the Python or native SA3 trainer".into()),
+    };
+    if native {
+        if storage::storage_info(repo_root.inner()).pending_restart {
+            return Err("Restart before training in your chosen storage folder.".into());
+        }
+        let current = read_sa3_lora_training_state();
+        if matches!(current.status.as_str(), "starting" | "running") {
+            return Err("SA3 training is already active".into());
+        }
+        let name = sanitize_lora_name(&name).ok_or("Invalid LoRA name")?;
+        if resume_checkpoint.is_none() {
+            require_available_lora_name(&sa3_lora_name_availability(&name)?)?;
+        }
+        let (exe, backend, path) = {
+            let mut services = manager.lock().await;
+            if services.is_running("sa3") {
+                return Err("Stop SA3 before native training.".into());
+            }
+            if let Some(blocker) = services.native_mutation_blocker("sa3") {
+                return Err(format!("Cannot start native training: {blocker}."));
+            }
+            let (def, dir) = services
+                .native_service("sa3")
+                .ok_or("SA3 has no native runtime")?;
+            let installed = native_runtime::installed("sa3", &dir, &def.executable)
+                .ok_or("Prepare SA3's C++ runtime first.")?;
+            let exe = installed.dir.join("sa3-train.exe");
+            let path = native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes);
+            services.begin_native_workload("sa3", "native-training", "SA3 native training")?;
+            let _ = app_handle.emit("services-updated",services.get_service_info());
+            (exe, installed.backend, path)
+        };
+        let options = sa3_training::Options {
+            name,
+            dataset: PathBuf::from(dataset_path.trim()),
+            fixed_prompt,
+            steps: max_steps,
+            rank,
+            batch_size,
+            checkpoint_every,
+            duration: latent_crop_seconds,
+            learning_rate,
+            target_latent_rms: if loudness_fix_enabled {
+                target_latent_rms
+            } else {
+                0.0
+            },
+            layer_scope,
+            encoding: native_encoding.unwrap_or_else(|| "F16".into()),
+            resume: resume_checkpoint.map(PathBuf::from),
+            prompt_config: None,
+        };
+        let job =
+            match sa3_training::start(repo_root.inner(), &exe, &backend, path.as_deref(), options)
+                .await
+            {
+                Ok(job) => job,
+            Err(error) => {
+                let mut services=manager.lock().await;
+                services.end_native_workload("sa3", "native-training");
+                let _ = app_handle.emit("services-updated",services.get_service_info());
+                return Err(error);
+                }
+            };
+        let initial = job.state();
+        let status_path = job.status_path().to_path_buf();
+        let manager = manager.inner().clone();
+        let root = repo_root.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = job.monitor().await {
+                let _ = mark_sa3_lora_training_failed(&status_path, &error, None);
+            }
+            {
+                let mut services=manager.lock().await;
+                services.end_native_workload("sa3", "native-training");
+                let _ = app_handle.emit("services-updated",services.get_service_info());
+            }
+            if let Ok(state) = sa3_loras::state(&root) {
+                let _ = app_handle.emit("sa3-native-loras-updated", state);
+            }
+        });
+        return Ok(initial);
+    }
+    if resume_checkpoint.is_some() {
+        return Err("Checkpoint resume is currently available for the native trainer.".into());
+    }
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
     require_available_lora_name(&sa3_lora_name_availability(&normalized_name)?)?;
@@ -9475,6 +9593,9 @@ fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
     });
     if let Some(path) = cancel_path.as_ref() {
         write_cancel_marker(path)?;
+    }
+    if state.runtime.as_deref() == Some("sa3.cpp") {
+        return Ok(Sa3LoraTrainingState {message:"Cancellation requested; waiting for a sample boundary and checkpoint save.".into(),..state});
     }
 
     let mut pids = Vec::new();

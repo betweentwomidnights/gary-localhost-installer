@@ -6,6 +6,8 @@
   import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
 
   interface Sa3LoraTrainingState {
+    runtime?: string | null;
+    resumeCheckpointPath?: string | null;
     jobId: string | null;
     name: string | null;
     status: string;
@@ -97,6 +99,10 @@
   // The efficient MLX-compatible scope keeps the seven attention/feed-forward
   // projections in each of the 24 transformer blocks: 7 * 24 = 168 adapters.
   let layerScope = $state("transformer-core");
+  let trainer = $state("python");
+  let nativeInstalled = $state(false);
+  let nativeEncoding = $state("F16");
+  let resumeLast = $state(false);
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -241,7 +247,7 @@
     error = null;
     autoScrollLog = true;
     try {
-      if (!(await checkNameAvailability(true))) return;
+      if (!resumeLast && !(await checkNameAvailability(true))) return;
       trainingState = await invoke<Sa3LoraTrainingState>("start_sa3_lora_training", {
         name: formName,
         datasetPath,
@@ -255,6 +261,9 @@
         loudnessFixEnabled,
         targetLatentRms,
         layerScope,
+        runtime: trainer,
+        nativeEncoding,
+        resumeCheckpoint: resumeLast ? trainingState.resumeCheckpointPath : null,
       });
       shouldRevealLog = true;
       await revealLogOutput();
@@ -284,7 +293,7 @@
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
   let canStart = $derived(
     open &&
-      serviceEnvExists &&
+      (trainer === "native" ? nativeInstalled : serviceEnvExists) &&
       serviceStatus !== "running" &&
       !starting &&
       !cancelling &&
@@ -307,6 +316,11 @@
   $effect(() => {
     if (!open) return;
     void loadTrainingState();
+    void invoke<{ installed: boolean }>("get_native_runtime_info", { serviceId: "sa3" })
+      .then((info) => { nativeInstalled = info.installed; }).catch((cause) => { error = describeError(cause); });
+    void invoke<{ id: string; runtime: string }[]>("get_services").then((services) => {
+      if (services.find((service) => service.id === "sa3")?.runtime === "native") trainer = "native";
+    }).catch((cause) => { error = describeError(cause); });
     const timer = window.setInterval(() => {
       void loadTrainingState();
     }, 3000);
@@ -380,7 +394,32 @@
         </div>
       </div>
 
-      {#if !serviceEnvExists}
+      <div class="section-label">trainer</div>
+      <div class="form-grid">
+        <label class="field"><span>Runtime</span>
+          <select bind:value={trainer} disabled={isTraining || starting} onchange={() => resumeLast = false}>
+            <option value="python">Python</option>
+            <option value="native">C++ — migration validation</option>
+          </select>
+        </label>
+        {#if trainer === "native"}
+          <label class="field"><span>Training base precision</span>
+            <select bind:value={nativeEncoding} disabled={isTraining || starting}>
+              <option value="F16">F16</option><option value="Q4_K_M">Q4_K_M</option>
+            </select>
+          </label>
+        {/if}
+      </div>
+      {#if trainer === "native"}
+        <div class="body">Prepare native models in storage settings first. C++ training requires a release with progress and cooperative cancellation support. Originals, datasets and the Python service are preserved.</div>
+        {#if !nativeInstalled}<div class="warning">Prepare SA3's C++ runtime in storage settings.</div>{/if}
+        {#if trainingState.runtime === "sa3.cpp" && trainingState.resumeCheckpointPath && !isTraining}
+          <label class="field"><span><input type="checkbox" bind:checked={resumeLast} onchange={() => { if (resumeLast && trainingState.name) formName = trainingState.name; }} /> Resume the last native checkpoint</span>
+            <small>Use the original dataset and training settings. Steps is the new total target.</small>
+          </label>
+        {/if}
+      {/if}
+      {#if trainer === "python" && !serviceEnvExists}
         <div class="warning">build SA3 first so the training environment exists.</div>
       {:else if serviceStatus === "running"}
         <div class="warning">stop SA3 before training. generation keeps the model in VRAM.</div>
@@ -395,7 +434,7 @@
             bind:value={formName}
             placeholder="my-style"
             oninput={() => nameNotice = null}
-            onblur={() => void checkNameAvailability()}
+            onblur={() => { if (!resumeLast) void checkNameAvailability(); }}
           />
           {#if nameNotice}<small class="name-notice">{nameNotice}</small>{/if}
         </label>

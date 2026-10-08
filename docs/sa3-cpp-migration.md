@@ -317,7 +317,7 @@ cargo test --lib downloads_published_sa3_conditioner_and_verifies_catalog -- --i
 At this checkpoint, 127 regular Rust tests pass (four explicit integration
 checks ignored); the new live model check passed separately. Frontend checks
 report zero errors/warnings and the production build passes.
-Native training and the final cleanup transaction remain outstanding. The
+At that checkpoint native training and final cleanup remained outstanding. The
 following slice adds exported-adapter conversion and client catalog mapping.
 
 ## Native LoRA preparation and client mapping
@@ -396,6 +396,76 @@ connect Gary's existing training controls, checkpoint registration and resume
 handling to that contract. Keep latent caches under managed storage rather than
 writing them into the user's dataset.
 
+## Native training launch, cancellation and resume
+
+The upstream CLI now exposes `--control-info`, `--progress-file` and
+`--cancel-file`. Progress/result JSON is replaced atomically on Windows as well
+as POSIX. Cancellation uses the existing native sample-boundary hook, including
+during pre-encode; it saves immutable adapter/optimizer checkpoint pairs after
+updates. Cancelling before the first optimizer update now returns cancellation
+without fabricating an adapter. The control parser/writer tests and real CLI
+missing-model/pre-load-cancel smoke test pass without a GPU. These generic
+changes belong in the candidate sa3.cpp release, rather than Gary's adapter.
+
+Gary's training modal offers an explicit C++ validation path while the service
+default remains Python. Native launch requires compatible control capabilities,
+prepared shared text/decoder components and the chosen F16 or Q4_K_M base. It
+uses explicit base/component paths so a quantized training base does not require
+the matching inference tier to be installed. It carries the existing rank,
+batch size, checkpoint cadence, crop length, learning rate, fixed prompt,
+target RMS and layer-scope choices into the native job. Native training needs no
+Python environment or HF token once its pinned models are prepared.
+
+Native jobs share Gary's current-job status contract, logs and managed process
+ownership. Cancellation requests a native save rather than terminating the
+process. The shared runtime stays reserved through process exit and adapter
+registration; SA3 cannot launch another Python/native generation process during
+native training. Terminal GGUF adapters are copied into the native catalog,
+leaving run/checkpoint files intact. Resume uses the original named job and its
+immutable checkpoint pair, with steps as the new total target. Fixed-prompt
+resume reuses the original prompt-config file because native compatibility
+fingerprints include its path and modification time.
+
+Latent caches live under managed `sa3/training/native-latents`, partitioned by
+decoder hash/precision and target RMS. The dataset is read-only. The native CLI
+validates its own checkpoint compatibility rather than treating every GGUF as
+an interchangeable resume source.
+
+The real host job round trip passed on the RTX 5070 Laptop CUDA backend using
+the user's 42-track Koan dataset, F16 medium base/text weights, F32 decoder,
+rank-16 DoRA core scope and 47-second crops. All five component files matched
+the published SHA-256 pins. It pre-encoded 42 tracks, requested cancellation
+after update 1, stopped and registered a checkpoint at update 2, then resumed
+to update 4 in a new run. The second run reused all 42 latent caches. SHA-256
+checks proved the resume source checkpoint and every original dataset file were
+unchanged; no cache directory was created in the dataset. Both run logs,
+progress JSON, checkpoint pairs and catalog revisions are retained in
+`artifacts/sa3-migration/training-smoke-1`.
+
+This was the production Rust native job machinery exercised headlessly, using
+a locally built compatible CLI plus the verified published CUDA backend and
+shared CUDA pack. It is not a desktop UI/client validation or a published
+0.1.2-package test. Full-track/default-length training, quantized-base host
+training, inference with the newly trained adapter, native checkpoint-history
+selection, prompt-pool registration and orphan recovery/resume UX still need
+validation or integration before cleanup can be enabled.
+
+At this slice, 133 regular Rust tests pass (six explicit integration checks
+ignored); the live CUDA round trip passed separately. Frontend checks report
+zero errors/warnings and the production build passes. The service default,
+Python installation and models have not been removed or switched.
+
+```powershell
+# From control-center/src-tauri; use a new isolated root for each invocation.
+$env:GARY4LOCAL_SA3_TRAIN_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/training-smoke-new'
+$env:GARY4LOCAL_SA3_TRAIN_MODELS = 'C:/dev/sa3.cpp/models'
+$env:GARY4LOCAL_SA3_TRAIN_BINARY = 'C:/dev/sa3-cpp-gary4local-compat/build-gary-compat/bin/Release/sa3-train.exe'
+$env:GARY4LOCAL_SA3_TRAIN_DATASET = 'C:/Users/thegr/Downloads/koan_dset'
+$env:GGML_BACKEND_PATH = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/runtime/services/sa3/native/ggml-cuda.dll'
+$env:PATH = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/runtime/native-runtimes/cudart-12.8;' + $env:PATH
+cargo test --lib real_native_training_cancel_resume -- --ignored --nocapture
+```
+
 ## Validation before enabling cleanup
 
 First-slice checks completed: four Rust inventory tests passed, `npm run check`
@@ -407,8 +477,9 @@ CPU continuation smoke check passed using existing small-music GGUFs: native
 48 kHz resampling, exact output length, measured splice metadata, and both normal
 and consume polling. It is a transport check, not audio-quality validation.
 The subsequent preparation slice pins and probes the published v0.1.1 bundle
-as described above. No GPU model inference/training, native switchover,
-destructive cleanup or release publication has been performed yet.
+as described above. The later CUDA training round trip is recorded in the
+native-training section. GPU inference/client validation, native switchover,
+destructive cleanup and release publication remain outstanding.
 
 - Fresh/default/legacy/custom roots; pending restart; HF overrides; redirected
   paths; low disk; interrupted downloads; retry; partial cleanup failures.

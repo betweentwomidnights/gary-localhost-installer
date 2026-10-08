@@ -138,6 +138,58 @@ fn validate_gguf(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<PathBuf, String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    if crate::sanitize_lora_name(name).as_deref() != Some(name) {
+        return Err("Invalid native adapter name".into());
+    }
+    validate_gguf(source)?;
+    let hash = sha256_file(source).await?;
+    let dir = checked_adapters_dir(root)?;
+    let dest = dir.join(format!("lora-{name}-{}-f32.gguf", &hash[..24]));
+    if !dest.exists() || sha256_file(&dest).await? != hash {
+        let stage = dir.join(format!(
+            ".trained-{}-{}.partial",
+            std::process::id(),
+            NEXT_STAGE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _cleanup = ConversionStage {
+            path: stage.clone(),
+            boundary: dir.clone(),
+        };
+        tokio::fs::copy(source, &stage)
+            .await
+            .map_err(|error| error.to_string())?;
+        if sha256_file(&stage).await? != hash {
+            return Err("Trained adapter changed during registration".into());
+        }
+        if dest.exists() {
+            crate::remove_managed_path(&dest, &dir)?;
+        }
+        std::fs::rename(stage, &dest).map_err(|error| error.to_string())?;
+    }
+    let mut entries = read_catalog(root)?;
+    entries.insert(
+        name.into(),
+        NativeLora {
+            name: name.into(),
+            source_path: source.to_string_lossy().into(),
+            config_path: None,
+            source_sha256: Some(hash.clone()),
+            config_sha256: None,
+            converter_sha256: None,
+            native_path: Some(dest.to_string_lossy().into()),
+            native_sha256: Some(hash),
+            strength: 1.0,
+            error: None,
+        },
+    );
+    save_catalog(root, &entries)?;
+    Ok(dest)
+}
+
 fn checked_adapters_dir(root: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
     let boundary = root.canonicalize().map_err(|error| error.to_string())?;
@@ -291,6 +343,27 @@ async fn convert_one(
     converter_hash: &str,
     runtime_path: Option<&std::ffi::OsStr>,
 ) -> Result<(), String> {
+    if Path::new(&entry.source_path)
+        .extension()
+        .is_some_and(|ext| ext == "gguf")
+    {
+        let source = Path::new(&entry.source_path);
+        validate_gguf(source)?;
+        let hash = sha256_file(source).await?;
+        if entry.source_sha256.as_deref() != Some(&hash)
+            || entry
+                .native_path
+                .as_ref()
+                .is_none_or(|path| !Path::new(path).is_file())
+            || sha256_file(Path::new(entry.native_path.as_ref().unwrap())).await? != hash
+        {
+            return Err(
+                "Native trained adapter needs registration from its training job again.".into(),
+            );
+        }
+        entry.error = None;
+        return Ok(());
+    }
     let source = Path::new(&entry.source_path)
         .canonicalize()
         .map_err(|error| format!("Cannot read original adapter: {error}"))?;

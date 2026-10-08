@@ -571,6 +571,9 @@ impl ServiceManager {
         if self.running.contains_key(service_id) {
             return Err(format!("{} is already running", service_id));
         }
+        if let Some(blocker) = self.start_blocker(&svc) {
+            return Err(format!("{} {blocker}.",svc.display_name));
+        }
 
         if svc.runtime == ServiceRuntime::Native {
             return self.start_native(&svc);
@@ -719,6 +722,10 @@ impl ServiceManager {
     }
 
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
+        if svc.id == "sa3" && self.native_workloads.get(&self.native_dir(svc).to_string_lossy().to_string())
+            .is_some_and(|jobs| jobs.contains_key("native-training")) {
+            return Some("is waiting for native training to finish".into());
+        }
         if svc.runtime == ServiceRuntime::Native {
             if let Some(label) = self.native_model_mutations.get(&svc.id) {
                 return Some(format!("is waiting for {label} to finish"));
@@ -1263,6 +1270,17 @@ mod tests {
         assert!(manager.native_mutation_blocker("foundation").is_some());
         manager.end_native_workload("foundation", "converter");
         assert!(manager.native_mutation_blocker("sa3").is_none());
+    }
+
+    #[test]
+    fn native_training_blocks_python_and_native_sa3_launches() {
+        let mut manager = shared_native_manager();
+        manager.begin_native_workload("sa3","native-training","SA3 native training").unwrap();
+        assert!(manager.start("sa3").unwrap_err().contains("native training"));
+        manager.services.iter_mut().find(|svc| svc.id == "sa3").unwrap().runtime=ServiceRuntime::Python;
+        assert!(manager.start("sa3").unwrap_err().contains("native training"));
+        manager.end_native_workload("sa3","native-training");
+        assert!(!manager.start("sa3").unwrap_err().contains("native training"));
     }
 
     #[test]
