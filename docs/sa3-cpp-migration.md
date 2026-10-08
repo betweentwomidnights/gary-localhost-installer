@@ -178,6 +178,60 @@ unchanged and refuses an incomplete checksum set without writing. Frontend
 checks/build passed. Native model setup, client shim, training integration and
 destructive migration remain outstanding.
 
+## Client adapter and upstream capability work
+
+`sa3_adapter.rs` now translates the public generation routes into native
+`/generate`: text, loop, transform and continuation. It maps `shift`, validates
+WAV uploads, preserves source rate/channel metadata, stages uploads under the
+active runtime and separates final sample count from the padded generation
+canvas. Native parsing reads the uploaded WAV before acknowledging the job,
+so acknowledged uploads are removed immediately. Ambiguous transport failures
+retain their source until storage maintenance can safely reclaim it after the
+native process has stopped; automatic reclamation still needs implementing.
+
+The adapter preserves native seeds, status/audio and actual splice measurements
+while adding Gary's request metadata. Poll/consume behavior is covered through
+HTTP. Saved loudness/splice/tail defaults seed the adapter; explicit client
+fields override them. Native selection will bind the public service port before
+launching its child, serve the C++ API privately on 18006, and own the adapter
+task with the process entry. The manifest still selects Python. Lifecycle,
+LoRA/prompt catalog routes, default/decoder adapter selection and native training
+remain to be wired before offering switchover.
+
+The upstream compatibility branch now implements real fixed latent-prefix
+sampling in addition to local inpainting conditioning. It also accepts an
+explicit conditioning duration independent of the output crop, hidden inpaint
+canvas padding, mono WAV input and non-narrowed HTTP integer seeds. Results
+report actual conditioned seconds/schedule frames, prefix tokens and full
+latent canvas size. `/health.capabilities` advertises these controls. The
+adapter checks them before uploading/queuing; published v0.1.1 is refused for
+this path because it would silently ignore required fields. A compatible
+v0.1.2 release is still pending validation and publication.
+
+Seven adapter unit/HTTP tests passed, including rejection of the old capability
+contract before writing uploads. A separate real native CPU integration check
+passed for all four public routes against the local compatibility build and
+existing small-music models. It checks mono 48 kHz transform input, source
+resampling, exact returned lengths, independent conditioning length, large
+recalled seed, prefix/splice measurements, identical normal/consume metadata
+and removal of acknowledged uploads. One-step synthetic output tests transport
+and geometry, not audio quality. Artifacts are under
+`artifacts/sa3-migration/adapter-smoke`.
+
+```powershell
+# From control-center/src-tauri; use the isolated local compatibility build.
+$env:GARY4LOCAL_SA3_SMOKE_BINARY = 'C:/dev/sa3-cpp-gary4local-compat/build-gary-compat/bin/Release/sa3-server.exe'
+$env:GARY4LOCAL_SA3_SMOKE_MODELS = 'C:/dev/sa3.cpp/models'
+$env:GARY4LOCAL_SA3_ADAPTER_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/adapter-smoke'
+cargo test --lib real_native_adapter_smoke -- --ignored --nocapture
+```
+
+Non-default LoRA intervals/layer filters and non-pingpong samplers are still
+explicitly rejected rather than silently changed. Existing gary4juce requests
+use full intervals; broader Python feature parity remains an audit requirement.
+GPU model generation, host UI/client validation, converted/trained adapters and
+the cleanup transaction are still outstanding.
+
 ## First host validation dataset
 
 The user selected `~/Downloads/koan_dset`, resolved on this laptop to

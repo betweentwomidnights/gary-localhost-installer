@@ -46,6 +46,7 @@ struct RunningService {
     healthy: bool,
     started_at: Instant,
     last_health_check_at: Option<Instant>,
+    _adapter: Option<crate::sa3_adapter::AdapterHandle>,
 }
 
 pub struct HealthTarget {
@@ -680,6 +681,7 @@ impl ServiceManager {
                 healthy: false,
                 started_at: Instant::now(),
                 last_health_check_at: None,
+                _adapter: None,
             },
         );
 
@@ -718,6 +720,27 @@ impl ServiceManager {
             return Err(format!("{} {blocker}.", svc.display_name));
         }
         let exe = install.dir.join(&native.executable);
+        // The manifest keeps SA3 on Python until migration is validated. When
+        // native is selected, preserve the public client port while the C++
+        // server serves its unified API on the private native port.
+        let adapter = if svc.id == "sa3" {
+            let template = self.native_env_template(svc);
+            let port = template
+                .iter()
+                .find(|(key, _)| key == "SA3_PORT")
+                .ok_or("SA3's native server port is missing")?
+                .1
+                .parse::<u16>()
+                .map_err(|_| "SA3's native server port is invalid")?;
+            Some(crate::sa3_adapter::AdapterListener::bind(
+                svc.port,
+                port,
+                self.repo_root.join("sa3/native-inputs"),
+                crate::sa3_adapter::client_defaults(&crate::sa3_loudness_env()),
+            )?)
+        } else {
+            None
+        };
 
         let work_dir = self.service_dir(svc);
         std::fs::create_dir_all(&work_dir)
@@ -785,6 +808,7 @@ impl ServiceManager {
                 healthy: false,
                 started_at: Instant::now(),
                 last_health_check_at: None,
+                _adapter: adapter.map(crate::sa3_adapter::AdapterListener::spawn),
             },
         );
 

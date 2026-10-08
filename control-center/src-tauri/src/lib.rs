@@ -2,6 +2,7 @@ mod manifest;
 mod model_manager;
 mod native_models;
 mod native_runtime;
+mod sa3_adapter;
 mod sa3_migration;
 mod service_manager;
 mod storage;

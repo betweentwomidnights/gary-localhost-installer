@@ -140,6 +140,7 @@
         "args": ["--model", "medium", "--encoding", "f16", "--t5-encoding", "f16", "--ae-encoding", "f32"],
         "env": {
           "SA3_PORT": "18006",
+          "SA3_MAX_DURATION": "446",
           "SA3_DEVICE": "${NATIVE_BACKEND}",
           "SA3_MODELS_DIR": "${MODELS_DIR}/sa3",
           "SA3_ADAPTERS_DIR": "${GARY_RUNTIME}/sa3/native-loras",
