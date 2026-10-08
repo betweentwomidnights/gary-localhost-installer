@@ -349,8 +349,13 @@ impl ServiceManager {
         self.services_dir()
     }
 
-    /// Whether a service runs a downloaded native runtime rather than a
-    /// Python environment.
+    /// Refresh cleanup journal fields after a transaction without changing the runtime.
+    pub fn refresh_sa3_native_selection(&mut self) -> Result<(), String> {
+        self.sa3_selection = crate::sa3_runtime::read(&self.repo_root)?;
+        Ok(())
+    }
+
+    /// Whether a service runs a downloaded native runtime rather than Python.
     pub fn is_native(&self, service_id: &str) -> bool {
         self.find_service(service_id)
             .is_some_and(|svc| svc.runtime == ServiceRuntime::Native)

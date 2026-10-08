@@ -23,6 +23,7 @@ pub struct Sa3MigrationPreview {
     pub preserved_paths: Vec<MigrationItem>,
     pub warnings: Vec<String>,
     pub native_selection: Option<crate::sa3_runtime::Selection>,
+    pub cleanup_token: String,
 }
 
 fn item(label: &str, path: &Path) -> MigrationItem {
@@ -42,6 +43,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
         native_selection: None,
+        cleanup_token: String::new(),
     };
     match crate::sa3_runtime::read(active_root) {
         Ok(selection) => result.native_selection = selection,
@@ -82,11 +84,13 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     {
         for entry in catalog.values() {
             protected_paths.push(PathBuf::from(&entry.path));
+            protected_paths.push(PathBuf::from(&entry.path).with_extension("json"));
             if let Some(path) = &entry.prompts_path {
                 protected_paths.push(PathBuf::from(path));
             }
             for checkpoint in &entry.training_checkpoints {
                 protected_paths.push(PathBuf::from(&checkpoint.path));
+                protected_paths.push(PathBuf::from(&checkpoint.path).with_extension("json"));
             }
         }
     } else {
@@ -95,6 +99,9 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     if let Ok(catalog) = crate::sa3_loras::read_catalog(active_root) {
         for entry in catalog.values() {
             protected_paths.push(PathBuf::from(&entry.source_path));
+            if let Some(path) = &entry.prompts_path {
+                protected_paths.push(PathBuf::from(path));
+            }
             if let Some(path) = &entry.config_path {
                 protected_paths.push(PathBuf::from(path));
             }
@@ -102,9 +109,65 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     } else {
         result.warnings.push("Cannot read the native SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
     }
+    // Jobs may precede their first registered checkpoint. Preserve their
+    // original dataset and custom prompt configuration as well as job files.
+    let jobs = active_root.join("sa3/training/jobs");
+    if jobs.exists() {
+        match std::fs::read_dir(&jobs) {
+            Ok(entries) => {
+                for entry in entries {
+                    let Ok(entry) = entry else {
+                        result
+                            .warnings
+                            .push("Cannot fully inventory SA3 training history.".into());
+                        continue;
+                    };
+                    if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                        continue;
+                    }
+                    let options = entry.path().join("native-options.json");
+                    if !options.exists() {
+                        continue;
+                    }
+                    if !crate::path_is_inside(&options, &jobs) {
+                        result
+                            .warnings
+                            .push("SA3 training options redirect outside managed history.".into());
+                        continue;
+                    }
+                    match std::fs::read(&options)
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                    {
+                        Some(value) => {
+                            if let Some(dataset) = value["dataset"].as_str() {
+                                protected_paths.push(PathBuf::from(dataset));
+                            } else {
+                                result.warnings.push(
+                                    "SA3 native training history has no dataset path.".into(),
+                                );
+                            }
+                            if let Some(config) = value["promptConfig"].as_str() {
+                                protected_paths.push(PathBuf::from(config));
+                            }
+                        }
+                        None => result.warnings.push(
+                            "Cannot safely inspect SA3 native training dataset paths.".into(),
+                        ),
+                    }
+                }
+            }
+            Err(_) => result
+                .warnings
+                .push("Cannot safely inspect SA3 training history.".into()),
+        }
+    }
     match crate::sa3_decoder::read(active_root) {
         Ok(Some(entry)) => {
             protected_paths.push(PathBuf::from(&entry.source_path));
+            if let Some(path) = &entry.prompts_path {
+                protected_paths.push(PathBuf::from(path));
+            }
             if let Some(path) = entry.config_path {
                 protected_paths.push(PathBuf::from(path));
             }
@@ -139,8 +202,22 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     }
     let mut seen = Vec::new();
     for (label, path, owner) in candidates {
+        if owner == service && !crate::path_is_inside(&owner, active_root) && path.exists() {
+            result.warnings.push(format!(
+                "SA3 service storage redirects outside the active profile: {}",
+                owner.display()
+            ));
+            continue;
+        }
+
         match crate::resolve_managed_path(&path, &owner) {
             Ok(Some(canonical)) => {
+                if canonical.parent() != owner.canonicalize().ok().as_deref()
+                    || canonical.file_name() != path.file_name()
+                {
+                    result.warnings.push(format!("Preserving redirected SA3 cleanup target {}; review it manually.", path.display()));
+                    continue;
+                }
                 // A redirected cache or environment must never turn the
                 // proposed cleanup into removal of user-owned SA3 artifacts.
                 if protected_paths.iter().any(|protected| crate::path_is_inside(&canonical, protected)
@@ -190,6 +267,24 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
             bytes: 0,
         });
     }
+    use sha2::{Digest, Sha256};
+    let identities: Vec<_> = result
+        .cleanup_candidates
+        .iter()
+        .map(|entry| (&entry.path, Path::new(&entry.path).canonicalize().ok()))
+        .collect();
+    result.cleanup_token = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(
+                active_root.canonicalize().ok(),
+                hf_hub.canonicalize().ok(),
+                identities,
+                &result.warnings,
+            ))
+            .unwrap()
+        )
+    );
     result
 }
 
@@ -633,13 +728,37 @@ mod tests {
             version: None,
             fallback_reason: None,
         };
+        let decoder_enabled =
+            std::env::var("GARY4LOCAL_SA3_SMOKE_DECODER").is_ok_and(|value| value == "1");
+        if decoder_enabled {
+            let source = PathBuf::from(
+                std::env::var_os("GARY4LOCAL_SA3_DECODER_SOURCE")
+                    .expect("pinned decoder source required"),
+            );
+            std::fs::copy(source, crate::sa3_decoder::source_path(&root)).unwrap();
+            assert!(
+                crate::sa3_decoder::prepare(
+                    &root,
+                    &installed.dir.join("sa3-lora-convert.exe"),
+                    None
+                )
+                .await
+                .unwrap()
+                .prepared
+            );
+        }
         let env = vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())];
-        let selection =
-            super::verify_native(&root, &native, &installed, &env, "F16", false, |message| {
-                println!("{message}")
-            })
-            .await
-            .unwrap();
+        let selection = super::verify_native(
+            &root,
+            &native,
+            &installed,
+            &env,
+            "F16",
+            decoder_enabled,
+            |message| println!("{message}"),
+        )
+        .await
+        .unwrap();
         assert!(
             !crate::sa3_runtime::selection_path(&root).exists(),
             "verification must not commit the runtime choice"
@@ -648,12 +767,35 @@ mod tests {
         assert!(!manager.is_native("sa3"));
         manager.activate_native_sa3(selection).unwrap();
         assert!(manager.is_native("sa3"));
-        assert!(crate::service_manager::ServiceManager::new(defs, root).is_native("sa3"));
+        assert!(crate::service_manager::ServiceManager::new(defs, root.clone()).is_native("sa3"));
         assert_eq!(
-            std::fs::read(original).unwrap(),
+            std::fs::read(&original).unwrap(),
             b"preserved Python environment"
         );
         println!("PASS native trainer/server/model verification and persistent profile activation; Python preserved");
+        if std::env::var("GARY4LOCAL_SA3_SMOKE_CLEANUP").is_ok_and(|value| value == "1") {
+            let hub = root.join("models/huggingface/hub");
+            let legacy = hub.join("models--stabilityai--stable-audio-3-medium/weights.fixture");
+            std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+            std::fs::write(&legacy, b"owned legacy weight fixture").unwrap();
+            let reviewed = super::preview(&root, &hub);
+            assert!(reviewed.warnings.is_empty(), "{:?}", reviewed.warnings);
+            let result = crate::sa3_cleanup::run(&root, &hub, &reviewed.cleanup_token).unwrap();
+            assert!(result.selection.cleanup_complete);
+            assert_eq!(result.removed_paths.len(), 2);
+            assert!(!original.exists());
+            assert!(!legacy.exists());
+            assert!(crate::sa3_models::present(
+                crate::sa3_models::component("sa3-native::medium-F16").unwrap(),
+                &target
+            ));
+            if decoder_enabled {
+                crate::sa3_decoder::verified_path(&root).await.unwrap();
+            }
+            manager.refresh_sa3_native_selection().unwrap();
+            assert!(manager.is_native("sa3"));
+            println!("PASS reviewed fixture cleanup after real native verification; models, decoder and native selection preserved");
+        }
     }
 
     #[tokio::test]
@@ -742,10 +884,22 @@ mod tests {
         let health = checked.unwrap();
         assert_eq!(health["encoding"], "f16");
         assert_eq!(health["model_loaded"], true);
-        assert_eq!(
-            std::fs::read(root.join("services/sa3/env/Scripts/python.exe")).unwrap(),
-            b"preserved Python environment"
-        );
-        println!("PASS selected native profile started/stopped through production ServiceManager, public adapter load/readiness, and Python preservation");
+        let python = root.join("services/sa3/env/Scripts/python.exe");
+        if crate::sa3_runtime::read(&root)
+            .unwrap()
+            .unwrap()
+            .cleanup_complete
+        {
+            assert!(
+                !python.exists(),
+                "cleaned native profile must launch without Python"
+            );
+        } else {
+            assert_eq!(
+                std::fs::read(python).unwrap(),
+                b"preserved Python environment"
+            );
+        }
+        println!("PASS selected native profile started/stopped through production ServiceManager and public adapter load/readiness; legacy environment state preserved");
     }
 }

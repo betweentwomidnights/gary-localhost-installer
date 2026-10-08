@@ -709,3 +709,51 @@ lifecycle and incompatible creative-model filtering also passed (27.36s).
 This validates integration; correction/training audio quality still needs
 joint listening through gary4juce. Basic decoder routing already exists in
 sa3.cpp, so no new upstream change was needed for this feature.
+
+
+## Reviewed legacy cleanup transaction
+
+Storage now offers cleanup after native activation and explicit confirmation
+that the user has tested generation, adapters and training as needed. The UI
+shows the active storage/cache paths and deletion candidates before confirmation.
+The backend binds that review to canonical profile/cache/candidate identities;
+changed roots, candidates, redirects or protected paths require a new review.
+Pending storage restart, running SA3/dataset/training jobs, builds, native tools,
+model preparation and legacy SA3 downloads block the operation. It rechecks the
+actual native trainer, audio analyzer, model/adapter checksums and private native
+generation before deleting anything.
+
+Cleanup is restricted to `services/sa3/env`, `services/sa3/.venv` and the two
+SA3 Medium inference/base Hugging Face repositories in the model manager's
+effective cache, including legacy external HF overrides. Canonical target
+ownership and protections are rechecked before each removal. Top-level redirects
+require manual review; nested directory junctions are removed without following
+their targets. Catalog source/configuration paths, training checkpoints,
+unfinished native jobs' datasets/custom prompt configurations, native artifacts,
+other services, unrelated repositories and shared CUDA/UV caches are preserved.
+SA3 service source/scripts are retained in this slice; their retirement and
+bundled-resource refresh behavior still need the remaining native onboarding work.
+
+The profile selection acts as a durable cleanup journal: an incomplete marker is
+saved before the first deletion and after each target; failures are recorded,
+C++ remains selected, and rescanning/retry processes the remaining candidates.
+The service manager refreshes its in-memory selection afterward. The trainer UI
+checks the actual legacy Python executable instead of treating native bundle
+presence as Python availability. Rust prompt generation remains available without
+that environment.
+
+Tests cover stale review/native-selection requirements, protected adapters and
+unfinished training datasets, a simulated locked environment with successful
+independent cache removal and retry, an interruption after the first removal,
+and a nested Windows dataset junction whose external target survives deletion.
+`artifacts/sa3-migration/profile-cleanup-decoder-smoke-2` passed real native tool
+probes, pinned model hashing, decoder preparation/corrected CUDA generation,
+persistent activation, then reviewed fixture environment/cache deletion (159.15s).
+The actual user Python environments and original datasets were not removed.
+
+The cleaned profile subsequently passed the production `ServiceManager` launch,
+public Gary adapter `/load` and `/ready`, health and stop checks with no Python
+executable present (4.74s). The same smoke supports both cleaned and uncleaned
+profiles and verifies the expected legacy environment state. Regular Rust
+validation passed 152 tests (12 hardware/download smokes excluded); frontend type
+checks reported zero errors/warnings and the production build passed.

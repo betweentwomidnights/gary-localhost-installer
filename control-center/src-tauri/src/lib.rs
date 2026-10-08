@@ -5,6 +5,7 @@ mod native_runtime;
 mod sa3_adapter;
 mod sa3_analysis;
 mod sa3_decoder;
+mod sa3_cleanup;
 mod sa3_loras;
 mod sa3_migration;
 mod sa3_models;
@@ -5899,6 +5900,8 @@ pub fn run() {
             get_runtime_storage_info,
             get_sa3_migration_preview,
             activate_sa3_native_runtime,
+            cleanup_sa3_legacy_installation,
+            get_sa3_training_runtime_availability,
             get_sa3_native_runtime_selection,
             prepare_sa3_native_runtime,
             prepare_sa3_native_models,
@@ -6766,11 +6769,24 @@ async fn download_model(
         ));
     }
 
+    let sa3_legacy_download = [
+        "stabilityai/stable-audio-3-medium",
+        "stabilityai/stable-audio-3-medium-base",
+        "thepatch/same-l-decoder-lora",
+    ]
+    .contains(&model_id.as_str());
     {
+        let mut services = _svc_mgr.lock().await;
         let mut mgr = model_mgr.lock().await;
+        if mgr.is_downloading(&model_id) {
+            return Err("This model is already downloading.".into());
+        }
+        if sa3_legacy_download {
+            services.begin_native_model_mutation("sa3", "SA3 legacy model download")?;
+        }
         mgr.set_download_started(&model_id);
     }
-
+    let download_services = _svc_mgr.inner().clone();
     let mgr_clone = model_mgr.inner().clone();
     let handle = app_handle.clone();
     let root: std::path::PathBuf = repo_root.to_path_buf();
@@ -6807,6 +6823,7 @@ async fn download_model(
     } else {
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_model(model_id, python_exe, mgr_clone, handle).await;
+            if sa3_legacy_download { download_services.lock().await.end_native_model_mutation("sa3"); }
         });
     }
 
@@ -9630,6 +9647,110 @@ fn get_sa3_native_runtime_selection(
     sa3_runtime::read(repo_root.inner())
 }
 
+#[tauri::command]
+fn get_sa3_training_runtime_availability(
+    repo_root: tauri::State<'_, PathBuf>,
+) -> serde_json::Value {
+    serde_json::json!({"pythonAvailable":repo_root.join("services/sa3/env/Scripts/python.exe").is_file()})
+}
+
+#[tauri::command]
+async fn cleanup_sa3_legacy_installation(
+    review_token: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    model_mgr: tauri::State<'_, ModelState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_cleanup::ResultInfo, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before cleaning up SA3.".into());
+    }
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "SA3 training or migration is already starting")?;
+    if matches!(
+        read_sa3_lora_training_state().status.as_str(),
+        "starting" | "running"
+    ) || matches!(
+        read_sa3_autolabel_state().status.as_str(),
+        "starting" | "running"
+    ) {
+        return Err("Wait for SA3 training and dataset jobs to finish before cleanup.".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let selection =
+        sa3_runtime::read(repo_root.inner())?.ok_or("Verify and select C++ before cleanup")?;
+    let decoder_enabled = sa3_use_decoder_lora_enabled();
+    let (native, installed, env, hub) = {
+        let mut services = manager.lock().await;
+        if !services.is_native("sa3") || services.is_running("sa3") {
+            return Err("Select C++ and stop SA3 before cleanup.".into());
+        }
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot clean up SA3: {blocker}"));
+        }
+        let models = model_mgr.lock().await;
+        if models
+            .get_sa3_models()
+            .iter()
+            .any(|model| models.is_downloading(&model.id))
+        {
+            return Err("Wait for SA3 model downloads to finish before cleanup.".into());
+        }
+        let hub = models.hf_hub_cache_dir();
+        sa3_cleanup::validate_review(repo_root.inner(), &hub, &review_token)?;
+        let (native, installed, env) = services.sa3_migration_launch()?;
+        services.begin_native_workload("sa3", "legacy-cleanup", "SA3 legacy cleanup")?;
+        services.set_build_started("sa3", 1);
+        (native, installed, env, hub)
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    let verified = sa3_migration::verify_native(
+        repo_root.inner(),
+        &native,
+        &installed,
+        &env,
+        &selection.encoding,
+        decoder_enabled,
+        |message| {
+            let _ = app_handle.emit("sa3-native-migration-progress", message);
+        },
+    )
+    .await;
+    let result = match verified {
+        Err(error) => Err(error),
+        Ok(_) if decoder_enabled != sa3_use_decoder_lora_enabled() => {
+            Err("Decoder correction changed during verification; review cleanup again.".into())
+        }
+        Ok(_) => {
+            let root = repo_root.inner().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                sa3_cleanup::run(&root, &hub, &review_token)
+            })
+            .await
+            .map_err(|error| format!("SA3 cleanup transaction failed: {error}"))
+            .and_then(|result| result)
+        }
+    };
+    {
+        let mut services = manager.lock().await;
+        let _ = services.refresh_sa3_native_selection();
+        services.end_native_workload("sa3", "legacy-cleanup");
+        services.set_build_done("sa3", result.as_ref().err().cloned());
+    }
+    {
+        let mut models = model_mgr.lock().await;
+        for id in [
+            "stabilityai/stable-audio-3-medium",
+            "stabilityai/stable-audio-3-medium-base",
+        ] {
+            models.forget_model_status(id);
+        }
+    }
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    result
+}
 #[tauri::command]
 async fn activate_sa3_native_runtime(
     encoding: String,

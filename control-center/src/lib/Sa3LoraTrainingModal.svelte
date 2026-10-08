@@ -35,7 +35,6 @@
   let {
     open,
     serviceStatus,
-    serviceEnvExists,
     onClose,
   }: {
     open: boolean;
@@ -99,6 +98,7 @@
   // projections in each of the 24 transformer blocks: 7 * 24 = 168 adapters.
   let layerScope = $state("transformer-core");
   let trainer = $state("python");
+  let pythonAvailable = $state(false);
   let nativeInstalled = $state(false);
   let nativeEncoding = $state("F16");
   let nativeEncodingTouched = $state(false);
@@ -335,7 +335,7 @@
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
   let canStart = $derived(
     open &&
-      (trainer === "native" ? nativeInstalled : serviceEnvExists) &&
+      (trainer === "native" ? nativeInstalled : pythonAvailable) &&
       serviceStatus !== "running" &&
       !starting &&
       !cancelling &&
@@ -362,6 +362,7 @@
 
   $effect(() => {
     if (!open) return;
+    void invoke<{ pythonAvailable:boolean }>("get_sa3_training_runtime_availability").then((availability) => pythonAvailable = availability.pythonAvailable).catch((cause) => error = describeError(cause));
     void loadTrainingState();
     void invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state").then((state) => nativeHistory = state.entries).catch((cause) => error = describeError(cause));
     void invoke<Sa3TrainingHardware & { installed: boolean }>("get_native_runtime_info", { serviceId: "sa3" })
@@ -449,7 +450,7 @@
       <div class="form-grid">
         <label class="field"><span>Runtime</span>
           <select bind:value={trainer} disabled={isTraining || starting || loadingResume} onchange={() => resumeCheckpoint = ""}>
-            <option value="python">Python</option>
+            <option value="python" disabled={!pythonAvailable}>Python{pythonAvailable ? "" : " — not installed"}</option>
             <option value="native">C++ — migration validation</option>
           </select>
         </label>
@@ -475,7 +476,7 @@
           </label>
         {/if}
       {/if}
-      {#if trainer === "python" && !serviceEnvExists}
+      {#if trainer === "python" && !pythonAvailable}
         <div class="warning">build SA3 first so the training environment exists.</div>
       {:else if serviceStatus === "running"}
         <div class="warning">stop SA3 before training. generation keeps the model in VRAM.</div>

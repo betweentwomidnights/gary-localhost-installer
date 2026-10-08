@@ -29,7 +29,8 @@
     estimatedCleanupBytes: number;
     preservedPaths: MigrationItem[];
     warnings: string[];
-    nativeSelection: { encoding: string; verifiedRelease: string; cleanupComplete: boolean } | null;
+    nativeSelection: { encoding: string; verifiedRelease: string; cleanupComplete: boolean; cleanupErrors: string[] } | null;
+    cleanupToken: string;
   }
   type NativeSelection = NonNullable<MigrationPreview["nativeSelection"]>;
 
@@ -52,6 +53,8 @@
   let selection: NativeSelection | null = $state(null);
   let activationMessage: string | null = $state(null);
   let activationProgress = $state("");
+  let cleaning = $state(false);
+  let validatedClient = $state(false);
 
   function updateBuild(services: ServiceStatus[]) {
     const service = services.find((service) => service.id === "sa3");
@@ -120,6 +123,22 @@
     }
   }
 
+  async function cleanup() {
+    if (!preview || !selection || !validatedClient) return;
+    const paths = preview.cleanupCandidates.map((entry) => `${entry.label}: ${entry.path}`).join("\n");
+    if (!window.confirm(`Retire these SA3 Python files from ${preview.activeRoot}?\n\n${paths || "No legacy files remain."}\n\nEstimated size: ${formatBytes(preview.estimatedCleanupBytes)}. This removal cannot be undone. Native verification runs again before cleanup.`)) return;
+    cleaning = true; error = null; activationMessage = null;
+    activationProgress = "Verifying the native runtime before cleanup...";
+    try {
+      const result = await invoke<{selection:NativeSelection; errors:string[]; estimatedRemovedBytes:number}>("cleanup_sa3_legacy_installation", { reviewToken:preview.cleanupToken });
+      selection = result.selection;
+      if (result.errors.length) error = result.errors.join("\n");
+      activationMessage = result.selection.cleanupComplete ? `Legacy SA3 cleanup completed (${formatBytes(result.estimatedRemovedBytes)} estimated). C++ remains selected.` : "Some legacy files remain. C++ stays selected; rescan and retry cleanup.";
+      preview = await invoke<MigrationPreview>("get_sa3_migration_preview");
+    } catch (cause) { error = String(cause); }
+    finally { cleaning = false; }
+  }
+
   async function activate() {
     activating = true;
     error = null;
@@ -140,18 +159,18 @@
       <h3 id="sa3-migration-title">SA3 native migration preflight</h3>
       <p>Review the storage used by the current SA3 Python installation.</p>
     </div>
-    <button type="button" onclick={scan} disabled={busy || pendingRestart}>
+    <button type="button" onclick={scan} disabled={busy || cleaning || activating || pendingRestart}>
       {busy ? "scanning..." : preview ? "rescan SA3" : "preview SA3 cleanup"}
     </button>
   </div>
-  <p class="note">Prepare the runtime, models and adapters, then verify and select C++ for this storage profile. Cleanup follows separately after all migration gaps are resolved.</p>
+  <p class="note">Prepare the runtime, models and adapters, then verify and select C++ for this storage profile. Test generation and your LoRAs before retiring Python.</p>
   <div class="preparation">
     <div class="heading">
       <div>
         <h3>Prepare the C++ runtime</h3>
         <p>Download and verify the shared SA3 runtime using your detected GPU. Your Python service and models stay available.</p>
       </div>
-      <button type="button" onclick={prepareRuntime} disabled={preparing || serviceBuilding || pendingRestart}>
+      <button type="button" onclick={prepareRuntime} disabled={preparing || serviceBuilding || cleaning || pendingRestart}>
         {preparing || serviceBuilding ? "preparing..." : runtime?.installed ? "verify / reinstall runtime" : "prepare SA3 runtime"}
       </button>
     </div>
@@ -178,6 +197,7 @@
     <p class="note">Choose a prepared model. Training base precision is selected separately. Stop SA3 before switching.</p>
     {#if activating}<p class="note" role="status">{activationProgress}</p>{/if}
     {#if selection}<p class="note" role="status">C++ selected: {selection.encoding}, release {selection.verifiedRelease}. {selection.cleanupComplete ? "Legacy cleanup completed." : "Legacy cleanup pending."}</p>{/if}
+    {#if selection}{#each selection.cleanupErrors ?? [] as issue}<p class="note">{issue}</p>{/each}{/if}
     {#if activationMessage}<p class="note" role="status">{activationMessage}</p>{/if}
   </div>
   {#if pendingRestart}
@@ -210,6 +230,15 @@
     {#each preview.warnings as warning}
       <p class="error">{warning}</p>
     {/each}
+    {#if selection && (!selection.cleanupComplete || preview.cleanupCandidates.length > 0)}
+      <div class="preparation">
+        <h3>Retire the SA3 Python installation</h3>
+        <p>Removes the reviewed SA3 Python environments and PyTorch weight repositories. Original LoRAs, checkpoints, prompts, native models, shared runtimes and other services are preserved. SA3 service scripts are retained while migration is being validated.</p>
+        <label class="confirmation"><input type="checkbox" bind:checked={validatedClient} disabled={cleaning} /> I have tested native generation and my LoRAs in Gary, including training where needed.</label>
+        <button type="button" onclick={cleanup} disabled={cleaning || activating || preparing || serviceBuilding || serviceRunning || busy || pendingRestart || !validatedClient || preview.warnings.length > 0}>{cleaning ? "verifying and cleaning up..." : "clean up reviewed Python files"}</button>
+        {#if cleaning}<p class="note" role="status">{activationProgress}</p>{/if}
+      </div>
+    {/if}
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
@@ -233,4 +262,5 @@
   summary { cursor: pointer; }
   .preserved-path { margin-top: 3px; color: var(--text-secondary, #aaa); overflow-wrap: anywhere; }
   .error { color: var(--error, #f99); }
+  .confirmation { display: flex; align-items: start; gap: 8px; margin: 12px 0; line-height: 1.5; }
 </style>

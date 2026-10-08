@@ -43,7 +43,6 @@
   let {
     open,
     serviceStatus,
-    serviceEnvExists,
     onClose,
   }: {
     open: boolean;
@@ -289,9 +288,7 @@
         SA3 loads LoRAs into the model at startup. if the model is already resident, restart SA3 before testing a newly added LoRA.
       </div>
 
-      {#if !serviceEnvExists}
-        <div class="warning">build SA3 first. you can still save LoRA entries now, but prompt generation is unavailable.</div>
-      {:else if serviceStatus !== "running"}
+      {#if serviceStatus !== "running"}
         <div class="warning">SA3 is not running. you can save LoRA entries now; start SA3 before generation testing.</div>
       {/if}
 
