@@ -430,6 +430,9 @@ impl AdapterState {
             uploads,
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
+                // Native model loads can exceed cpp-httplib's short keep-alive
+                // timeout. Fresh loopback connections avoid stale pooled sockets.
+                .pool_max_idle_per_host(0)
                 .build()
                 .map_err(|error| error.to_string())?,
             jobs: Arc::new(Mutex::new(HashMap::new())),
@@ -446,6 +449,9 @@ impl AdapterState {
         let mut request = self
             .client
             .request(method, format!("{}{path}", self.upstream));
+        if matches!(path, "/load" | "/reload") {
+            request = request.timeout(Duration::from_secs(180));
+        }
         if let Some(body) = body {
             request = request.json(body);
         }
@@ -459,6 +465,23 @@ impl AdapterState {
             .await
             .map_err(|error| format!("invalid native SA3 response: {error}"))?;
         Ok((status, body))
+    }
+
+    async fn lifecycle(&self, method: reqwest::Method, path: &str) -> Reply {
+        match self.request(reqwest::Method::GET, "/health", None).await {
+            Ok((status, body)) if status.is_success() => {
+                if body.pointer("/capabilities/model_lifecycle") != Some(&json!(true)) {
+                    return failure(StatusCode::SERVICE_UNAVAILABLE,
+                        "SA3 native runtime lacks model_lifecycle support; install a compatible release before migration");
+                }
+            }
+            Ok((status, body)) => return (status, Json(body)),
+            Err(error) => return failure(StatusCode::BAD_GATEWAY, error),
+        }
+        match self.request(method, path, None).await {
+            Ok((status, body)) => (status, Json(body)),
+            Err(error) => failure(StatusCode::BAD_GATEWAY, error),
+        }
     }
 
     async fn submit(&self, mode: Mode, mut body: Value) -> Reply {
@@ -620,6 +643,10 @@ pub fn router(state: AdapterState) -> Router {
         .route("/continue", post(continue_audio))
         .route("/poll_status/{id}", get(poll))
         .route("/health", get(health))
+        .route("/ready", get(ready))
+        .route("/load", post(load))
+        .route("/reload", post(reload))
+        .route("/unload", post(unload))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .with_state(state)
 }
@@ -694,10 +721,25 @@ async fn health(State(state): State<AdapterState>) -> Reply {
     match state.request(reqwest::Method::GET, "/health", None).await {
         Ok((status, mut body)) => {
             body["model_loaded"] = body["loaded"].clone();
+            body["model_loading"] = body.get("loading").cloned().unwrap_or(json!(false));
+            body["model_error"] = body.get("error").cloned().unwrap_or(Value::Null);
             (status, Json(body))
         }
         Err(error) => failure(StatusCode::BAD_GATEWAY, error),
     }
+}
+
+async fn ready(State(state): State<AdapterState>) -> Reply {
+    state.lifecycle(reqwest::Method::GET, "/ready").await
+}
+async fn load(State(state): State<AdapterState>) -> Reply {
+    state.lifecycle(reqwest::Method::POST, "/load").await
+}
+async fn reload(State(state): State<AdapterState>) -> Reply {
+    state.lifecycle(reqwest::Method::POST, "/reload").await
+}
+async fn unload(State(state): State<AdapterState>) -> Reply {
+    state.lifecycle(reqwest::Method::POST, "/unload").await
 }
 
 async fn poll(
@@ -967,8 +1009,53 @@ mod tests {
                     .contains("conditioning_duration"));
                 assert!(!root.exists());
                 assert!(state.jobs.lock().await.is_empty());
+                let (status, body) = state.lifecycle(reqwest::Method::POST, "/unload").await;
+                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+                assert!(body.0["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("model_lifecycle"));
                 task.abort();
             });
+    }
+
+    #[test]
+    fn lifecycle_routes_preserve_native_readiness_failures_and_busy_responses() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let native = Router::new()
+                .route("/health", get(|| async { Json(json!({"loaded":false,"loading":false,
+                    "error":"missing GGUF","last_load_seconds":0.25,"capabilities":{"model_lifecycle":true}})) }))
+                .route("/ready", get(|| async { (StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"ready":false,"loading":false,"error":"missing GGUF"}))) }))
+                .route("/load", post(|| async { (StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"success":false,"loaded":false,"error":"missing GGUF"}))) }))
+                .route("/reload", post(|| async { (StatusCode::CONFLICT,
+                    Json(json!({"success":false,"error":"generation in progress"}))) }))
+                .route("/unload", post(|| async { Json(json!({"success":true,"status":"unloaded","loaded":false})) }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let native_port = listener.local_addr().unwrap().port();
+            let native_task = tokio::spawn(async move { axum::serve(listener,native).await.unwrap(); });
+            let state = AdapterState::new(native_port, PathBuf::from("unused-upload-root")).unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let task = tokio::spawn(async move { axum::serve(listener,router(state)).await.unwrap(); });
+            let client = reqwest::Client::new();
+            let body:Value = client.get(format!("http://127.0.0.1:{port}/health")).send().await.unwrap().json().await.unwrap();
+            assert_eq!(body["model_loaded"],false);
+            assert_eq!(body["model_loading"],false);
+            assert_eq!(body["model_error"],"missing GGUF");
+            assert_eq!(body["last_load_seconds"],0.25);
+            for (method,path,expected) in [(reqwest::Method::GET,"ready",503),
+                (reqwest::Method::POST,"load",503),(reqwest::Method::POST,"reload",409),
+                (reqwest::Method::POST,"unload",200)] {
+                let response = client.request(method,format!("http://127.0.0.1:{port}/{path}")).send().await.unwrap();
+                assert_eq!(response.status().as_u16(),expected);
+                let body:Value = response.json().await.unwrap();
+                if path == "unload" { assert_eq!(body["success"],true); }
+                else { assert!(body["error"].as_str().unwrap().contains(if path == "reload" { "in progress" } else { "missing GGUF" })); }
+            }
+            task.abort(); native_task.abort();
+        });
     }
 
     #[test]
@@ -1002,6 +1089,13 @@ mod tests {
             let port = listener.local_addr().unwrap().port();
             let task = tokio::spawn(async move { axum::serve(listener,router(state)).await.unwrap(); });
             let client = reqwest::Client::new();
+            let base = format!("http://127.0.0.1:{port}");
+            assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
+            let loaded:Value = client.post(format!("{base}/load")).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+            assert_eq!(loaded["status"],"loaded");
+            let health:Value = client.get(format!("{base}/health")).send().await.unwrap().json().await.unwrap();
+            assert_eq!(health["model_loaded"],true,"unexpected health: {health}"); assert_eq!(health["model_loading"],false); assert!(health["model_error"].is_null());
+            assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::OK);
             for (route, mut body, expected_samples) in [
                 ("generate",json!({"duration":0.25,"tail_pad":0}),11025),
                 ("generate/loop",json!({"bpm":960,"bars":4}),44100),
@@ -1042,6 +1136,10 @@ mod tests {
                 std::fs::write(root.join(format!("{}.json",route.replace('/' , "-"))),serde_json::to_vec_pretty(&completed["meta"]).unwrap()).unwrap();
                 println!("PASS {route}: {expected_samples} samples, recalled seed and matching normal/consume metadata");
             }
+            assert_eq!(client.post(format!("{base}/reload")).send().await.unwrap().status(),StatusCode::OK);
+            assert_eq!(client.post(format!("{base}/unload")).send().await.unwrap().status(),StatusCode::OK);
+            assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
+            println!("PASS native lifecycle through public adapter: load, readiness, reload, unload");
             native.kill().await.unwrap(); native.wait().await.unwrap(); task.abort();
             assert_eq!(std::fs::read_dir(root.join("uploads")).unwrap().count(),0);
         });

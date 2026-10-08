@@ -194,7 +194,7 @@ while adding Gary's request metadata. Poll/consume behavior is covered through
 HTTP. Saved loudness/splice/tail defaults seed the adapter; explicit client
 fields override them. Native selection will bind the public service port before
 launching its child, serve the C++ API privately on 18006, and own the adapter
-task with the process entry. The manifest still selects Python. Lifecycle,
+task with the process entry. The manifest still selects Python.
 LoRA/prompt catalog routes, default/decoder adapter selection and native training
 remain to be wired before offering switchover.
 
@@ -231,6 +231,36 @@ explicitly rejected rather than silently changed. Existing gary4juce requests
 use full intervals; broader Python feature parity remains an audit requirement.
 GPU model generation, host UI/client validation, converted/trained adapters and
 the cleanup transaction are still outstanding.
+
+### Native lifecycle integration
+
+The compatibility server now provides generic `/load`, `/reload`, `/ready` and
+idle-only `/unload` routes, advertised as `capabilities.model_lifecycle`.
+Health reports initialization, loading, the last load error/duration and the
+number of admitted generations. An admission reservation protects lifecycle
+changes from new submissions; queued as well as running jobs block reload,
+unload and model switching without making the request wait behind generation.
+Failure to load is a 503 and remains visible in health/readiness. Unload clears
+it. Load is idempotent once the pipeline is initialized.
+
+The public adapter forwards these routes, preserves their HTTP statuses and
+errors, and aliases health fields to `model_loaded`, `model_loading` and
+`model_error`. An old release lacking the capability is refused. Load/reload
+have a longer request timeout; local native connections are not pooled. The
+real adapter test exposed a stale connection after a longer load, and using
+fresh loopback connections fixed the subsequent health request.
+
+Native initialization reads/validates weights by phase and frees them; readiness
+does not promise persistent GPU residency. Frugal generation retains the
+initialized pipeline, so readiness remains true after it frees weight tensors.
+Full unload makes readiness false. This preserves sa3.cpp's memory behavior.
+
+The real CPU server test passed successful/idempotent load, reload, readiness,
+frugal completion and unload. With two admitted jobs, reload/unload/model
+selection returned 409 in under one second. Missing-model load failures and
+error recovery passed without GPU/models. The host adapter's real integration
+test then passed load/readiness/reload/unload alongside all four generation
+routes. Native training and LoRA catalogs/conversion are still outstanding.
 
 ## First host validation dataset
 
@@ -284,10 +314,10 @@ $env:GARY4LOCAL_SA3_MODEL_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifact
 cargo test --lib downloads_published_sa3_conditioner_and_verifies_catalog -- --ignored --nocapture
 ```
 
-At this checkpoint, 126 regular Rust tests pass (four explicit integration
+At this checkpoint, 127 regular Rust tests pass (four explicit integration
 checks ignored); the new live model check passed separately. Frontend checks
-report zero errors/warnings and the production build passes. Generic native
-load/readiness routes, LoRA conversion/catalogs, native training and the final
+report zero errors/warnings and the production build passes.
+LoRA conversion/catalogs, native training and the final
 cleanup transaction remain outstanding.
 
 ## Validation before enabling cleanup
