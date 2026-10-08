@@ -750,13 +750,25 @@ mod tests {
             std::env::var_os("GARY4LOCAL_SA3_MIGRATION_SMOKE_ROOT")
                 .expect("new isolated root required"),
         );
-        assert!(!root.exists());
+        let packaged = std::env::var("GARY4LOCAL_SA3_SMOKE_USE_INSTALLED_PACKAGE")
+            .is_ok_and(|value| value == "1");
+        if packaged {
+            assert!(root.join("services/sa3/native/gary-native.json").is_file());
+            assert!(!crate::sa3_runtime::selection_path(&root).exists());
+            assert!(!root.join("services/sa3/env").exists());
+            assert!(std::env::var_os("GARY4LOCAL_NATIVE_DIR_SA3").is_none());
+        } else {
+            assert!(!root.exists());
+        }
         let source_models = PathBuf::from(
             std::env::var_os("GARY4LOCAL_SA3_SMOKE_MODELS").expect("model folder required"),
         );
-        let server = PathBuf::from(
-            std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY").expect("compatible server required"),
-        );
+        let server = if packaged {
+            root.join("services/sa3/native/sa3-server.exe")
+        } else {
+            PathBuf::from(std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY")
+                .expect("compatible server required"))
+        };
         let target = crate::sa3_models::checked_models_dir(&root).unwrap();
         for id in crate::sa3_models::preparation_ids("F16", None).unwrap() {
             for file in &crate::sa3_models::component(&id).unwrap().files {
@@ -781,12 +793,17 @@ mod tests {
             .native
             .clone()
             .unwrap();
-        let installed = crate::native_runtime::NativeInstall {
-            dir: server.parent().unwrap().into(),
-            backend: "cuda".into(),
-            runtimes: Vec::new(),
-            version: None,
-            fallback_reason: None,
+        let installed = if packaged {
+            crate::native_runtime::installed("sa3", server.parent().unwrap(), &native.executable)
+                .expect("the production installer must have stamped the package")
+        } else {
+            crate::native_runtime::NativeInstall {
+                dir: server.parent().unwrap().into(),
+                backend: "cuda".into(),
+                runtimes: Vec::new(),
+                version: None,
+                fallback_reason: None,
+            }
         };
         let decoder_enabled =
             std::env::var("GARY4LOCAL_SA3_SMOKE_DECODER").is_ok_and(|value| value == "1");
@@ -803,7 +820,12 @@ mod tests {
                     .prepared
             );
         }
-        let env = vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())];
+        let env = if packaged {
+            let manager = crate::service_manager::ServiceManager::new(defs.clone(), root.clone());
+            manager.sa3_migration_launch().unwrap().2
+        } else {
+            vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())]
+        };
         let selection = super::verify_native(
             &root,
             &native,
@@ -874,14 +896,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "launches an already activated isolated profile through ServiceManager with a native developer override"]
+    #[ignore = "launches an activated isolated profile through ServiceManager with an installed package or developer override"]
     async fn real_native_selected_profile_launches_through_service_manager() {
         let root = PathBuf::from(
             std::env::var_os("GARY4LOCAL_SA3_MIGRATION_SMOKE_ROOT")
                 .expect("existing isolated activation profile required"),
         );
         assert!(crate::sa3_runtime::read(&root).unwrap().is_some());
-        assert!(std::env::var_os("GARY4LOCAL_NATIVE_DIR_SA3").is_some());
+        assert!(std::env::var_os("GARY4LOCAL_NATIVE_DIR_SA3").is_some()
+            || root.join("services/sa3/native/gary-native.json").is_file());
         let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let private = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let public_port = public.local_addr().unwrap().port();

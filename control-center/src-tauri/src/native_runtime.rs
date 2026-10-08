@@ -1018,6 +1018,14 @@ async fn ensure_runtime(
         return Ok(());
     }
 
+    // The reservation and native launches/tools share the manager lock. Keep
+    // the lease inside the blocking mutation so task cancellation cannot open
+    // a launch race while extraction or directory replacement is still running.
+    let runtime_lease = reporter
+        .manager
+        .lock()
+        .await
+        .begin_shared_runtime_replacement(name)?;
     let archive = fetch(
         reporter,
         client,
@@ -1033,6 +1041,7 @@ async fn ensure_runtime(
     let sha256 = source.sha256.clone();
     let runtime_name = name.to_string();
     tokio::task::spawn_blocking(move || {
+        let _runtime_lease = runtime_lease;
         if staging.exists() {
             std::fs::remove_dir_all(&staging)
                 .map_err(|error| format!("cannot clear {}: {error}", staging.display()))?;

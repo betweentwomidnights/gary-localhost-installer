@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +70,8 @@ pub struct ServiceManager {
     /// Model preparation may replace weights. Keep launches and native tools
     /// from opening them between the preflight check and the final hash check.
     native_model_mutations: HashMap<String, String>,
+    /// Weak leases expire even if an installer future is cancelled.
+    shared_runtime_mutations: HashMap<String, Weak<String>>,
     sa3_selection: Option<crate::sa3_runtime::Selection>,
     sa3_selection_error: Option<String>,
 }
@@ -150,6 +153,7 @@ impl ServiceManager {
             build_statuses: HashMap::new(),
             native_workloads: HashMap::new(),
             native_model_mutations: HashMap::new(),
+            shared_runtime_mutations: HashMap::new(),
             sa3_selection,
             sa3_selection_error,
         }
@@ -200,9 +204,86 @@ impl ServiceManager {
             .collect()
     }
 
+    fn uses_shared_runtime(&self, svc: &ServiceDef, name: &str) -> bool {
+        if let Some(install) = self.native_install(svc) {
+            if install.version.is_some() {
+                return install.runtimes.iter().any(|runtime| runtime == name);
+            }
+        }
+        // A development override or a not-yet-installed bundle has no stamp.
+        // Conservatively include every dependency offered on this platform.
+        svc.native
+            .as_ref()
+            .and_then(|native| native.platforms.get(native_runtime::current_platform()))
+            .is_some_and(|platform| {
+                platform
+                    .backends
+                    .values()
+                    .any(|package| package.requires.iter().any(|runtime| runtime == name))
+            })
+    }
+
+    fn shared_runtime_blocker(&self, svc: &ServiceDef) -> Option<String> {
+        self.shared_runtime_mutations
+            .iter()
+            .find_map(|(name, lease)| {
+                let label = lease.upgrade()?;
+                self.uses_shared_runtime(svc, name)
+                    .then(|| format!("wait for {label} to finish"))
+            })
+    }
+
+    /// Reserve only a shared runtime that actually needs replacement. Matching
+    /// packages are reused without a lease, so other services can keep running.
+    /// The caller owns the lease through its final filesystem mutation.
+    pub fn begin_shared_runtime_replacement(&mut self, name: &str) -> Result<Arc<String>, String> {
+        if self
+            .shared_runtime_mutations
+            .get(name)
+            .and_then(Weak::upgrade)
+            .is_some()
+        {
+            return Err(format!(
+                "Cannot replace {name}: another replacement is in progress."
+            ));
+        }
+        for svc in &self.services {
+            if !self.uses_shared_runtime(svc, name) {
+                continue;
+            }
+            if svc.runtime == ServiceRuntime::Native && self.is_running(&svc.id) {
+                return Err(format!(
+                    "Cannot replace {name}: stop {} first.",
+                    svc.display_name
+                ));
+            }
+            if let Some(label) = self.native_model_mutations.get(&svc.id) {
+                return Err(format!(
+                    "Cannot replace {name}: wait for {label} to finish."
+                ));
+            }
+            if let Some(label) = self
+                .native_workloads
+                .get(&self.native_dir(svc).to_string_lossy().to_string())
+                .and_then(|jobs| jobs.values().next())
+            {
+                return Err(format!(
+                    "Cannot replace {name}: wait for {label} to finish."
+                ));
+            }
+        }
+        let lease = Arc::new(format!("{name} replacement"));
+        self.shared_runtime_mutations
+            .insert(name.into(), Arc::downgrade(&lease));
+        Ok(lease)
+    }
+
     /// Called under the manager lock before reserving an install/removal.
     pub fn native_mutation_blocker(&self, service_id: &str) -> Option<String> {
         let svc = self.find_service(service_id)?;
+        if let Some(blocker) = self.shared_runtime_blocker(svc) {
+            return Some(blocker);
+        }
         for consumer in self.bundle_consumers(svc) {
             if let Some(label) = self.native_model_mutations.get(&consumer.id) {
                 return Some(format!("wait for {label} to finish"));
@@ -242,6 +323,9 @@ impl ServiceManager {
             .ok_or_else(|| format!("Unknown service: {service_id}"))?;
         if svc.native.is_none() {
             return Err(format!("{service_id} has no native runtime"));
+        }
+        if let Some(blocker) = self.shared_runtime_blocker(svc) {
+            return Err(format!("Cannot start native tool: {blocker}."));
         }
         if let Some(label) = self.native_model_mutations.get(service_id) {
             return Err(format!("Wait for {label} to finish"));
@@ -826,6 +910,9 @@ impl ServiceManager {
             return Some("is waiting for native training to finish".into());
         }
         if svc.runtime == ServiceRuntime::Native {
+            if let Some(blocker) = self.shared_runtime_blocker(svc) {
+                return Some(blocker);
+            }
             if let Some(label) = self.native_model_mutations.get(&svc.id) {
                 return Some(format!("is waiting for {label} to finish"));
             }
@@ -861,6 +948,9 @@ impl ServiceManager {
     /// Launch a native service's executable from its installed runtime, with
     /// the backend it was installed for and any shared runtime on PATH.
     fn start_native(&mut self, svc: &ServiceDef) -> Result<(), String> {
+        if let Some(blocker) = self.shared_runtime_blocker(svc) {
+            return Err(format!("Cannot start {}: {blocker}.", svc.display_name));
+        }
         if let Some(label) = self.native_model_mutations.get(&svc.id) {
             return Err(format!("Wait for {label} to finish."));
         }
@@ -1450,6 +1540,152 @@ mod tests {
         assert!(manager.native_mutation_blocker("foundation").is_some());
         manager.end_native_workload("foundation", "converter");
         assert!(manager.native_mutation_blocker("sa3").is_none());
+    }
+
+    #[test]
+    fn shared_cuda_replacement_waits_for_tools_in_another_bundle() {
+        let mut manager = shared_native_manager();
+        manager
+            .begin_native_workload("sa3", "trainer", "SA3 training")
+            .unwrap();
+        // Independent bundle installation remains possible when CUDA is reused.
+        assert!(manager.get_native_build_info("yuey").is_ok());
+        let error = manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .unwrap_err();
+        assert!(error.contains("SA3 training"), "{error}");
+        manager.end_native_workload("sa3", "trainer");
+        assert!(manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .is_ok());
+    }
+
+    #[test]
+    fn shared_runtime_lease_blocks_new_users_and_expires_on_drop() {
+        let mut manager = shared_native_manager();
+        let lease = manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .unwrap();
+        for service in ["sa3", "foundation", "yuey"] {
+            assert!(manager.start(service).unwrap_err().contains("cudart-12.8"));
+            assert!(manager
+                .begin_native_workload(service, "tool", "native tool")
+                .is_err());
+            assert!(manager.get_native_build_info(service).is_err());
+        }
+        assert!(manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .is_err());
+        // A native CUDA update doesn't reserve a legacy Python process.
+        manager
+            .services
+            .iter_mut()
+            .find(|svc| svc.id == "sa3")
+            .unwrap()
+            .runtime = ServiceRuntime::Python;
+        assert!(!manager.start("sa3").unwrap_err().contains("cudart-12.8"));
+        drop(lease);
+        assert!(manager.get_native_build_info("yuey").is_ok());
+        assert!(manager
+            .begin_native_workload("sa3", "tool", "native tool")
+            .is_ok());
+        manager.end_native_workload("sa3", "tool");
+        assert!(manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .is_ok());
+    }
+
+    #[test]
+    fn shared_cuda_replacement_waits_for_running_native_consumers() {
+        let mut manager = shared_native_manager();
+        let mut process = Command::new("cmd.exe")
+            .args(["/c", "exit /b 0"])
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        process.wait().unwrap();
+        // Keep a process entry until the regular health poll reaps it.
+        manager.running.insert(
+            "yuey".into(),
+            RunningService {
+                process,
+                healthy: false,
+                started_at: Instant::now(),
+                last_health_check_at: None,
+                _adapter: None,
+            },
+        );
+        let error = manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .unwrap_err();
+        assert!(error.contains("stop"), "{error}");
+        // Python processes don't load the shared native CUDA directory.
+        manager
+            .services
+            .iter_mut()
+            .find(|svc| svc.id == "yuey")
+            .unwrap()
+            .runtime = ServiceRuntime::Python;
+        assert!(manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .is_ok());
+        manager.running.clear();
+    }
+
+    #[test]
+    fn installed_vulkan_consumer_does_not_reserve_cuda() {
+        let mut manager = shared_native_manager();
+        let root = std::env::temp_dir().join(format!(
+            "gary-shared-vulkan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        manager.repo_root = root.clone();
+        let svc = manager.find_service("yuey").unwrap();
+        let native_dir = manager.native_dir(svc);
+        std::fs::create_dir_all(&native_dir).unwrap();
+        std::fs::write(
+            native_dir.join(&svc.native.as_ref().unwrap().executable),
+            b"fixture",
+        )
+        .unwrap();
+        let stamp = native_runtime::NativeStamp {
+            version: "fixture".into(),
+            platform: native_runtime::current_platform().into(),
+            backend: "vulkan".into(),
+            requested_backend: "vulkan".into(),
+            fallback_reason: None,
+            runtimes: vec![],
+        };
+        std::fs::write(
+            native_dir.join("gary-native.json"),
+            serde_json::to_vec(&stamp).unwrap(),
+        )
+        .unwrap();
+        let _lease = manager
+            .begin_shared_runtime_replacement("cudart-12.8")
+            .unwrap();
+        assert!(manager.get_native_build_info("yuey").is_ok());
+        assert!(manager
+            .begin_native_workload("yuey", "tool", "Vulkan tool")
+            .is_ok());
+        assert!(manager.get_native_build_info("sa3").is_err());
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn unrelated_shared_runtime_does_not_block_cuda_consumers() {
+        let mut manager = shared_native_manager();
+        let _lease = manager
+            .begin_shared_runtime_replacement("other-runtime")
+            .unwrap();
+        assert!(manager.get_native_build_info("yuey").is_ok());
+        assert!(manager
+            .begin_native_workload("sa3", "tool", "native tool")
+            .is_ok());
     }
 
     #[test]

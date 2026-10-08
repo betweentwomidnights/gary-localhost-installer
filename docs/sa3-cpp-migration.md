@@ -932,3 +932,47 @@ source is archived alongside it. These checks complement the real headless
 CUDA tests; actual Gary client interaction remains joint validation work.
 The published-runtime pin and default Python manifest remain unchanged until
 a compatible release is published and verified.
+
+## GPU package validation and shared CUDA replacement
+
+Upstream `ef5a41e` fixes the local Windows Vulkan helper compiler check by
+shortening its inherited ExternalProject build directory. All 46 native tests
+and staged package controls pass with both CUDA and Vulkan built. The resulting
+core records a clean source commit, `build_flavor: gpu-smoke`, and
+`cuda_architecture_policy: native`. This package targets this laptop; it is not
+an artifact to publish as a portable release. Ordinary packaging also clears a
+cached CUDA architecture override before restoring ggml's portable defaults.
+
+The production Gary4local installer installed this core, CUDA backend and shared
+CUDA runtime into `artifacts/sa3-migration/profile-package-gpu-smoke-1` in 39.68s.
+Automatic detection selected the RTX 5070 Laptop CUDA device (7.9 GiB), and the
+installed server, trainer, converter, SAT server and native stamp were checked.
+No Python environment was created. Archive hashes came from the local build's
+`SHA256SUMS`; the public manifest and published checksums remain unchanged.
+
+Gary4local reserves a shared runtime only when its archive hash differs from
+the installed stamp. Replacement waits for native services, native tools and
+model preparation using that dependency, including consumers of a different
+bundle. New native launches/tools wait while replacement is reserved. The lease
+survives in-progress blocking extraction if its async caller is cancelled and
+expires when its last owner drops. Matching runtimes bypass the reservation and
+are reused. An installed Vulkan consumer's recorded dependencies do not reserve
+CUDA; development overrides conservatively use manifest dependencies.
+
+All 172 regular Rust tests pass (14 explicit hardware/download tests excluded),
+including cross-bundle training, running consumers, lease release, Python
+availability, unrelated dependencies and an installed Vulkan consumer. The
+signed universal macOS CI package at `c0f12e2` passed all 46 tests for both CPU
+slices, staged controls on arm64 and x86_64, and Apple notarization. Later
+`ef5a41e` changes affect Windows only. Portable Windows CI at that latest commit
+is still running; no release has been published.
+
+The installed GPU package also passed production migration verification in
+192.21s, with no development runtime/backend override: offline tool controls,
+all pinned F16 weight hashes, private CUDA model load/generation, and durable
+profile activation. The existing verification smoke now accepts a production
+installation via `GARY4LOCAL_SA3_SMOKE_USE_INSTALLED_PACKAGE=1`. A subsequent
+production ServiceManager start/public-adapter load/readiness/stop passed in
+4.86s using the installed stamp and shared-runtime PATH. Its Python fixture
+remained unchanged. Reinstall reused CUDA in 2.44s and left the runtime stamp's
+timestamp unchanged. Svelte checks again reported zero errors/warnings.
