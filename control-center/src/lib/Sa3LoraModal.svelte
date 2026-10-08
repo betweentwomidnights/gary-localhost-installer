@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
+  import Sa3NativeLoras from "./Sa3NativeLoras.svelte";
 
   interface Sa3LoraEntry {
     name: string;
@@ -348,6 +349,7 @@
       {/if}
 
       <div class="section-label">registered LoRAs</div>
+      <Sa3NativeLoras refreshKey={loraState} />
       {#if loading && !loraState}
         <div class="empty">loading...</div>
       {:else if loraState && loraState.entries.length > 0}

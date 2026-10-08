@@ -775,6 +775,8 @@ impl ServiceManager {
                 port,
                 self.repo_root.join("sa3/native-inputs"),
                 crate::sa3_adapter::client_defaults(&crate::sa3_loudness_env()),
+                self.repo_root.clone(),
+                template.iter().rev().find(|(key, _)| key == "SA3_DEFAULT_LORA").map(|(_, value)| value.clone()),
             )?)
         } else {
             None

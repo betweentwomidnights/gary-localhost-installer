@@ -244,12 +244,12 @@ pub fn translate(mode: Mode, body: Value) -> Result<Translation, String> {
     } else if let Some(name) = data
         .get("lora")
         .and_then(Value::as_str)
-        .filter(|name| !name.is_empty())
+        .filter(|name| !name.trim().is_empty() && !name.trim().eq_ignore_ascii_case("none"))
     {
         if name.contains(['/', '\\', ':']) {
             return Err("LoRA must be a catalog name".into());
         }
-        loras.push(json!({"name":name, "strength":number(data, "lora_strength", 1.0)?}));
+        loras.push(json!({"name":name.trim().to_ascii_lowercase(), "strength":number(data, "lora_strength", 1.0)?}));
     }
     native["loras"] = json!(loras);
     let input = if matches!(mode, Mode::Transform | Mode::Continue) {
@@ -406,6 +406,52 @@ pub struct AdapterState {
     client: reqwest::Client,
     jobs: Arc<Mutex<HashMap<String, ClientJob>>>,
     defaults: Map<String, Value>,
+    registry_root: Option<PathBuf>,
+    default_lora: Option<String>,
+}
+
+struct AvailableLoras {
+    entries: Vec<crate::sa3_loras::NativeLora>,
+    unavailable: Vec<Value>,
+    model_loaded: Value,
+    model: Value,
+}
+
+fn compatible_loras(
+    entries: Vec<crate::sa3_loras::NativeLora>,
+    upstream: &Value,
+) -> AvailableLoras {
+    let native = upstream["loras"].as_array();
+    let mut available = Vec::new();
+    let mut unavailable = Vec::new();
+    for entry in entries {
+        let matched = entry.native_path.as_ref().is_some_and(|path| {
+            let local = std::path::Path::new(path).canonicalize().ok();
+            local.is_some()
+                && native.is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item["target"] == "dit"
+                            && item["path"]
+                                .as_str()
+                                .and_then(|path| std::path::Path::new(path).canonicalize().ok())
+                                == local
+                    })
+                })
+        });
+        if matched && entry.error.is_none() {
+            available.push(entry);
+        } else {
+            unavailable.push(json!({"name":entry.name, "error":entry.error.unwrap_or_else(||
+                if entry.native_path.is_none() { "Prepare this adapter for C++ first.".into() }
+                else { "Adapter is incompatible with the selected model, or model components are missing.".into() })}));
+        }
+    }
+    AvailableLoras {
+        entries: available,
+        unavailable,
+        model_loaded: upstream["model_loaded"].clone(),
+        model: upstream["model"].clone(),
+    }
 }
 
 struct ClientJob {
@@ -437,7 +483,80 @@ impl AdapterState {
                 .map_err(|error| error.to_string())?,
             jobs: Arc::new(Mutex::new(HashMap::new())),
             defaults: Map::new(),
+            registry_root: None,
+            default_lora: None,
         })
+    }
+
+    async fn available_loras(&self) -> Result<AvailableLoras, Reply> {
+        let Some(root) = self.registry_root.clone() else {
+            return Err(failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Native adapter registry is not configured",
+            ));
+        };
+        let entries =
+            match tokio::task::spawn_blocking(move || crate::sa3_loras::state(&root)).await {
+                Ok(Ok(state)) => state.entries,
+                Ok(Err(error)) => return Err(failure(StatusCode::SERVICE_UNAVAILABLE, error)),
+                Err(error) => return Err(failure(StatusCode::INTERNAL_SERVER_ERROR, error)),
+            };
+        let upstream = match self.request(reqwest::Method::GET, "/loras", None).await {
+            Ok((status, body)) if status.is_success() && body["success"] != false => body,
+            Ok((status, body)) => return Err((status, Json(body))),
+            Err(error) => return Err(failure(StatusCode::BAD_GATEWAY, error)),
+        };
+        Ok(compatible_loras(entries, &upstream))
+    }
+
+    async fn map_requested_loras(&self, request: &mut Value) -> Result<(), Reply> {
+        let loras = request["loras"]
+            .as_array_mut()
+            .expect("translated LoRA list");
+        if loras.is_empty() {
+            return Ok(());
+        }
+        let catalog = self.available_loras().await?;
+        for item in loras {
+            let name = item["name"].as_str().unwrap().trim().to_ascii_lowercase();
+            let selected = if name == "default" {
+                self.default_lora
+                    .as_deref()
+                    .or_else(|| catalog.entries.first().map(|entry| entry.name.as_str()))
+                    .or_else(|| {
+                        catalog
+                            .unavailable
+                            .first()
+                            .and_then(|entry| entry["name"].as_str())
+                    })
+            } else {
+                Some(name.as_str())
+            };
+            let Some(selected) = selected else {
+                continue;
+            };
+            let Some(entry) = catalog.entries.iter().find(|entry| entry.name == selected) else {
+                let detail = catalog
+                    .unavailable
+                    .iter()
+                    .find(|entry| entry["name"] == selected)
+                    .and_then(|entry| entry["error"].as_str())
+                    .unwrap_or("No compatible registered adapter with this name.");
+                return Err(failure(
+                    StatusCode::BAD_REQUEST,
+                    format!("LoRA '{selected}': {detail}"),
+                ));
+            };
+            // Only the resolved catalog path crosses the private API boundary.
+            item["path"] = json!(entry.native_path);
+            item.as_object_mut().unwrap().remove("name");
+        }
+        // Legacy 'default' means no adapter when the registry is empty.
+        request["loras"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| entry.get("path").is_some());
+        Ok(())
     }
 
     async fn request(
@@ -522,6 +641,9 @@ impl AdapterState {
                 return failure(StatusCode::SERVICE_UNAVAILABLE,
                     format!("The installed sa3.cpp release lacks {capability}; prepare a compatible runtime before native migration."));
             }
+        }
+        if let Err(reply) = self.map_requested_loras(&mut translated.native).await {
+            return reply;
         }
         let upload = if let Some(audio) = translated.audio.take() {
             if let Err(error) = tokio::fs::create_dir_all(&self.uploads).await {
@@ -647,6 +769,8 @@ pub fn router(state: AdapterState) -> Router {
         .route("/load", post(load))
         .route("/reload", post(reload))
         .route("/unload", post(unload))
+        .route("/loras", get(loras))
+        .route("/prompts", get(prompts))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .with_state(state)
 }
@@ -674,6 +798,8 @@ impl AdapterListener {
         native_port: u16,
         uploads: PathBuf,
         defaults: Map<String, Value>,
+        registry_root: PathBuf,
+        default_lora: Option<String>,
     ) -> Result<Self, String> {
         if public_port == native_port {
             return Err("SA3 adapter and native server need different ports".into());
@@ -687,6 +813,10 @@ impl AdapterListener {
             .map_err(|error| error.to_string())?;
         let mut state = AdapterState::new(native_port, uploads)?;
         state.defaults = defaults;
+        state.registry_root = Some(registry_root);
+        state.default_lora = default_lora
+            .filter(|name| !name.trim().is_empty())
+            .map(|name| name.trim().to_ascii_lowercase());
         Ok(Self { listener, state })
     }
 
@@ -742,6 +872,58 @@ async fn unload(State(state): State<AdapterState>) -> Reply {
     state.lifecycle(reqwest::Method::POST, "/unload").await
 }
 
+async fn loras(State(state): State<AdapterState>) -> Reply {
+    let catalog = match state.available_loras().await {
+        Ok(catalog) => catalog,
+        Err(reply) => return reply,
+    };
+    let entries: Vec<_> = catalog.entries.iter().enumerate().map(|(index, entry)|
+        json!({"index":index, "name":entry.name, "path":entry.source_path, "native_path":entry.native_path, "strength":entry.strength})).collect();
+    (
+        StatusCode::OK,
+        Json(
+            json!({"success":true, "loras":entries, "unavailable_loras":catalog.unavailable,
+        "default_lora":state.default_lora, "model_loaded":catalog.model_loaded, "model":catalog.model,
+        "lora_dir":state.registry_root.as_ref().map(|root| crate::sa3_loras::adapters_dir(root)),
+        "registry_path":state.registry_root.as_ref().map(|root| crate::sa3_loras::catalog_path(root))}),
+        ),
+    )
+}
+
+async fn prompts(
+    State(state): State<AdapterState>,
+    axum::extract::RawQuery(query): axum::extract::RawQuery,
+) -> Reply {
+    // Keep repeated lora query parameters and encoding intact, while refusing
+    // arbitrary filesystem paths before the native prompt parser opens files.
+    let path = format!(
+        "/prompts{}",
+        query.map(|query| format!("?{query}")).unwrap_or_default()
+    );
+    let url = reqwest::Url::parse(&format!("{}{path}", state.upstream)).unwrap();
+    for (key, value) in url.query_pairs().filter(|(key, _)| key == "lora") {
+        let _ = key;
+        for name in value
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            if crate::sanitize_lora_name(&name.to_ascii_lowercase()).as_deref()
+                != Some(name.to_ascii_lowercase().as_str())
+            {
+                return failure(
+                    StatusCode::BAD_REQUEST,
+                    "Prompt LoRA must be a catalog name",
+                );
+            }
+        }
+    }
+    match state.request(reqwest::Method::GET, &path, None).await {
+        Ok((status, body)) => (status, Json(body)),
+        Err(error) => failure(StatusCode::BAD_GATEWAY, error),
+    }
+}
+
 async fn poll(
     State(state): State<AdapterState>,
     Path(id): Path<String>,
@@ -790,7 +972,6 @@ async fn poll(
     }
     (status, Json(body))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1075,9 +1256,18 @@ mod tests {
                 "--ae-encoding","f16","--threads","8","--models-dir"])
                 .arg(models).arg("--port").arg(native_port.to_string()).env("SA3_DEVICE","cpu")
                 .current_dir(&root).stdout(log.try_clone().unwrap()).stderr(log).kill_on_drop(true);
+            let registry = std::env::var_os("GARY4LOCAL_SA3_LORA_REGISTRY").map(PathBuf::from);
+            if let Some(registry) = &registry {
+                command.env("SA3_ADAPTERS_DIR",crate::sa3_loras::adapters_dir(registry));
+                let prompts = root.join("prompts"); std::fs::create_dir_all(&prompts).unwrap();
+                std::fs::write(prompts.join("defaults.json"),json!({"version":1,"dice":{"generic":["default tone"]}}).to_string()).unwrap();
+                std::fs::write(prompts.join("koan.json"),json!({"dice":{"generic":["koan tone"]}}).to_string()).unwrap();
+                command.env("SA3_PROMPTS_DIR",prompts);
+            }
             crate::hide_console_window(&mut command);
             let mut native = command.spawn().unwrap();
-            let state = AdapterState::new(native_port, root.join("uploads")).unwrap();
+            let mut state = AdapterState::new(native_port, root.join("uploads")).unwrap();
+            state.registry_root = registry.clone();
             let deadline = Instant::now() + Duration::from_secs(20);
             loop {
                 assert!(native.try_wait().unwrap().is_none(), "server exited; inspect native-server.log");
@@ -1090,6 +1280,19 @@ mod tests {
             let task = tokio::spawn(async move { axum::serve(listener,router(state)).await.unwrap(); });
             let client = reqwest::Client::new();
             let base = format!("http://127.0.0.1:{port}");
+            if registry.is_some() {
+                let menu:Value = client.get(format!("{base}/loras")).send().await.unwrap().json().await.unwrap();
+                assert_eq!(menu["loras"][0]["name"],"koan","converted Koan missing from small model menu: {menu}");
+                assert_eq!(menu["loras"].as_array().unwrap().len(),1,"failed legacy conversion must remain unavailable");
+                let prompts:Value = client.get(format!("{base}/prompts?lora=koan&lora=missing")).send().await.unwrap().json().await.unwrap();
+                assert_eq!(prompts["prompts"]["dice"]["generic"][0],"koan tone");
+                assert_eq!(prompts["missing_loras"],json!(["missing"]));
+                assert_eq!(client.get(format!("{base}/prompts?lora=..%2Fsecret")).send().await.unwrap().status(),StatusCode::BAD_REQUEST);
+                let error = client.post(format!("{base}/transform")).json(&json!({"prompt":"tone","audio_data":source(1),"lora":"legacy"})).send().await.unwrap();
+                assert_eq!(error.status(),StatusCode::BAD_REQUEST);
+                assert!(!root.join("uploads").exists(),"failed LoRA request must not stage audio");
+                println!("PASS registered LoRA menu, native prompt pools, and rejection before audio staging");
+            }
             assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
             let loaded:Value = client.post(format!("{base}/load")).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
             assert_eq!(loaded["status"],"loaded");
@@ -1104,6 +1307,7 @@ mod tests {
                     "continuation_mode":"latent_prefix","mask_overlap":0.1,"splice_gain_match":false}),22050),
             ] {
                 body["prompt"] = json!("a soft tone"); body["steps"] = json!(1); body["seed"] = json!(4294967295u64);
+                if registry.is_some() { body["lora"] = json!("default"); body["lora_strength"] = json!(0.8); }
                 body["peak_normalize_db"] = Value::Null; body["limiter_ceiling_db"] = Value::Null;
                 let response = client.post(format!("http://127.0.0.1:{port}/{route}")).json(&body).send().await.unwrap();
                 let status = response.status(); let submitted:Value = response.json().await.unwrap();
@@ -1140,6 +1344,16 @@ mod tests {
             assert_eq!(client.post(format!("{base}/unload")).send().await.unwrap().status(),StatusCode::OK);
             assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
             println!("PASS native lifecycle through public adapter: load, readiness, reload, unload");
+            if registry.is_some() {
+                let selected = client.post(format!("http://127.0.0.1:{native_port}/models/select"))
+                    .json(&json!({"variant":"medium","encoding":"q4_k_m"})).send().await.unwrap();
+                assert_eq!(selected.status(),StatusCode::OK,"medium test model components must be available");
+                let menu:Value = client.get(format!("{base}/loras")).send().await.unwrap().json().await.unwrap();
+                assert!(menu["loras"].as_array().unwrap().is_empty(),"small Koan adapter must be excluded from medium: {menu}");
+                let rejected = client.post(format!("{base}/transform")).json(&json!({"prompt":"tone","audio_data":source(1),"lora":"koan"})).send().await.unwrap();
+                assert_eq!(rejected.status(),StatusCode::BAD_REQUEST);
+                println!("PASS incompatible small adapter omitted and rejected for medium model");
+            }
             native.kill().await.unwrap(); native.wait().await.unwrap(); task.abort();
             assert_eq!(std::fs::read_dir(root.join("uploads")).unwrap().count(),0);
         });

@@ -3,6 +3,7 @@ mod model_manager;
 mod native_models;
 mod native_runtime;
 mod sa3_adapter;
+mod sa3_loras;
 mod sa3_migration;
 mod sa3_models;
 mod service_manager;
@@ -168,7 +169,7 @@ impl Default for YueyGenerationSettings {
 }
 
 /// Bumped when the natural-length default changes.
-/// 1: 180 → 96, matching the remote backend.
+/// 1: 180 â†’ 96, matching the remote backend.
 const YUEY_NATURAL_DEFAULT_REVISION: u32 = 1;
 
 impl YueyGenerationSettings {
@@ -5058,7 +5059,7 @@ async fn try_reload_carey_admin() -> bool {
 ///
 /// SA3 bakes adapters into the pipeline at load time (api.py `load_pipeline` ->
 /// `loaded.load_lora(paths)`), so rewriting the catalog/registry on disk does not
-/// affect a service that is already running — switching a checkpoint would
+/// affect a service that is already running â€” switching a checkpoint would
 /// silently keep serving the previously loaded adapter until a manual restart.
 /// `/reload` does `load_pipeline(force=True)`, so this is a full model reload and
 /// takes a while; it returns 409 when a generation is in flight. A false return
@@ -5905,6 +5906,8 @@ pub fn run() {
             prepare_sa3_native_runtime,
             prepare_sa3_native_models,
             get_sa3_native_model_catalog,
+            get_sa3_native_lora_state,
+            prepare_sa3_native_loras,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -6286,7 +6289,7 @@ async fn run_build(
         if let Err(e) = py_install {
             let mut mgr = manager.lock().await;
             mgr.append_build_log(&service_id, &format!("Warning: uv python install: {}", e));
-            // Non-fatal — Python 3.11 might already be on PATH
+            // Non-fatal â€” Python 3.11 might already be on PATH
         }
 
         // Create the venv
@@ -6334,7 +6337,7 @@ async fn run_build(
 
     let python_exe = env_dir.join("Scripts").join("python.exe");
 
-    // Execute build steps — translate "pip install ..." to "uv pip install ... --python ..."
+    // Execute build steps â€” translate "pip install ..." to "uv pip install ... --python ..."
     for (i, step) in build_info.build_steps.iter().enumerate() {
         let step_num = i + 2; // offset by 2 (uv bootstrap + venv creation)
 
@@ -8930,11 +8933,11 @@ async fn start_sa3_autolabel(
     let availability = build_sa3_autolabel_availability(repo_root.inner(), caption_lm_model);
     let python_exe = carey_autolabel_python(repo_root.inner());
     if !availability.carey_built {
-        return Err("Carey must be built to auto-label — it runs the caption model.".to_string());
+        return Err("Carey must be built to auto-label â€” it runs the caption model.".to_string());
     }
     if !availability.captioner_downloaded {
         return Err(format!(
-            "Download the selected ACE-Step captioner ({caption_lm_model}) from Carey → Models before auto-labeling."
+            "Download the selected ACE-Step captioner ({caption_lm_model}) from Carey â†’ Models before auto-labeling."
         ));
     }
     let script_path = carey_autolabel_script(repo_root.inner());
@@ -9608,6 +9611,63 @@ async fn prepare_sa3_native_runtime(
 #[tauri::command]
 fn get_sa3_native_model_catalog() -> Vec<sa3_models::Component> {
     sa3_models::catalog().to_vec()
+}
+
+#[tauri::command]
+async fn get_sa3_native_lora_state(
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || sa3_loras::state(&root))
+        .await
+        .map_err(|error| format!("Cannot read native SA3 adapters: {error}"))?
+}
+
+#[tauri::command]
+async fn prepare_sa3_native_loras(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before preparing SA3 adapters.".into());
+    }
+    let (converter, runtime_path) = {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot prepare SA3 adapters: {blocker}."));
+        }
+        let (def, dir) = services
+            .native_service("sa3")
+            .ok_or("SA3 has no native runtime")?;
+        let installed = native_runtime::installed("sa3", &dir, &def.executable)
+            .ok_or("Prepare SA3's C++ runtime before converting its adapters.")?;
+        let converter = installed.dir.join("sa3-lora-convert.exe");
+        if !converter.is_file() {
+            return Err("Installed SA3 runtime has no LoRA converter; reinstall it.".into());
+        }
+        let runtime_path =
+            native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes);
+        services.begin_native_workload("sa3", "lora-preparation", "SA3 adapter preparation")?;
+        (converter, runtime_path)
+    };
+    let result = sa3_loras::prepare(
+        repo_root.inner(),
+        &converter,
+        runtime_path.as_deref(),
+        |state| {
+            let _ = app_handle.emit("sa3-native-loras-updated", state);
+        },
+    )
+    .await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "lora-preparation");
+    if let Ok(state) = sa3_loras::state(repo_root.inner()) {
+        let _ = app_handle.emit("sa3-native-loras-updated", state);
+    }
+    result
 }
 
 /// Claim the entire model plan before spawning downloads so repeated clicks,

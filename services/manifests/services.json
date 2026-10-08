@@ -144,7 +144,8 @@
           "SA3_DEVICE": "${NATIVE_BACKEND}",
           "SA3_MODELS_DIR": "${MODELS_DIR}/sa3",
           "SA3_ADAPTERS_DIR": "${GARY_RUNTIME}/sa3/native-loras",
-          "SA3_SOURCE_LORAS_DIR": "${GARY_RUNTIME}/sa3/loras"
+          "SA3_SOURCE_LORAS_DIR": "${GARY_RUNTIME}/sa3/loras",
+          "SA3_PROMPTS_DIR": "${GARY_RUNTIME}/sa3/prompts"
         }
       },
       "displayName": "sa3 (stable audio 3)",

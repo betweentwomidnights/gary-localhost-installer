@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import Sa3NativeModels from "./Sa3NativeModels.svelte";
+  import Sa3NativeLoras from "./Sa3NativeLoras.svelte";
 
   interface NativeRuntimeInfo {
     installed: boolean;
@@ -131,6 +132,7 @@
     {#if preparationError}<p class="error" role="alert">{preparationError}</p>{/if}
   </div>
   <Sa3NativeModels {pendingRestart} />
+  <Sa3NativeLoras {pendingRestart} />
   {#if pendingRestart}
     <p class="note">Restart to use your chosen storage folder before scanning.</p>
   {:else if preview}

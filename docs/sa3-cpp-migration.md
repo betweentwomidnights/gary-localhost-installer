@@ -317,8 +317,84 @@ cargo test --lib downloads_published_sa3_conditioner_and_verifies_catalog -- --i
 At this checkpoint, 127 regular Rust tests pass (four explicit integration
 checks ignored); the new live model check passed separately. Frontend checks
 report zero errors/warnings and the production build passes.
-LoRA conversion/catalogs, native training and the final
-cleanup transaction remain outstanding.
+Native training and the final cleanup transaction remain outstanding. The
+following slice adds exported-adapter conversion and client catalog mapping.
+
+## Native LoRA preparation and client mapping
+
+Storage preflight and the LoRA manager now offer **prepare / verify adapters**.
+The native converter creates separate GGUF files in
+`<active-root>/sa3/native-loras`; originals and the Python catalog stay intact.
+The native catalog records source/configuration/converter/output SHA-256 values.
+Verified conversions are reused. Changed inputs produce separate revisions;
+older files remain recoverable. Failed conversions report an error per adapter
+and remove unpublished staging files. A damaged cached conversion is repaired
+only while the shared native bundle is idle. Runtime replacement/removal is
+blocked while conversion runs, and pending storage restart blocks preparation.
+
+Exported `.safetensors` can carry embedded `lora_config`, as Gary's trainer
+already emits, or use a matching JSON sidecar. Legacy `.ckpt` sources currently
+report the need for a safetensors export and remain untouched. One-time export
+support must be implemented before their Python environment can be retired.
+
+The host adapter exposes the legacy `/loras` and `/prompts` endpoints. It maps
+registered logical names to their exact converted revision and keeps native
+filenames out of client selection. The native server's model-dimension checks
+filter the creative LoRA menu. Unknown, unprepared or incompatible adapters fail
+before upload staging or queue admission. `lora=none` selects no creative
+adapter; `lora=default` resolves the configured name or first compatible entry.
+Blended requests preserve their individual strengths. Non-default intervals
+and layer filters remain explicit compatibility gaps; the optional decoder
+correction also still needs native preparation/selection integration.
+
+Native prompt lookup uses the existing managed prompt directory and preserves
+repeated `lora` query arguments and the established prompt-pool schema. The
+wrapper validates prompt names before forwarding. Bundled default prompt
+initialization and Python-free prompt building still need integration.
+
+The actual published converter successfully prepared
+`~/Downloads/koan_small_step3000.safetensors`, including its DoRA metadata.
+The test verified original preservation, reuse without rewriting, repair of a
+damaged GGUF, and an independently recorded legacy checkpoint error. Its isolated
+artifacts are in `artifacts/sa3-migration/lora-smoke-1`.
+
+The compatible upstream CPU server then passed generate, loop, transform and
+continuation through the host adapter with that LoRA applied. It also passed
+prompt-pool merging, rejection before staging, lifecycle controls and medium
+model incompatibility filtering. Native logs confirm one adapter queued on each
+generation. These one-step, short-audio tests prove transport/application paths;
+they do not validate quality, CUDA memory use or training. Artifacts are in
+`artifacts/sa3-migration/adapter-lora-smoke-2`.
+
+```powershell
+# From control-center/src-tauri; converter preparation needs a new isolated root.
+$env:GARY4LOCAL_SA3_LORA_CONVERTER = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/runtime/services/sa3/native/sa3-lora-convert.exe'
+$env:GARY4LOCAL_SA3_LORA_SOURCE = 'C:/Users/thegr/Downloads/koan_small_step3000.safetensors'
+$env:GARY4LOCAL_SA3_LORA_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/lora-smoke-new'
+cargo test --lib real_native_lora_preparation -- --ignored --nocapture
+
+# Add these to the existing real_native_adapter_smoke command above.
+$env:GARY4LOCAL_SA3_LORA_REGISTRY = $env:GARY4LOCAL_SA3_LORA_SMOKE_ROOT
+$env:GARY4LOCAL_SA3_ADAPTER_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/adapter-lora-smoke-new'
+cargo test --lib real_native_adapter_smoke -- --ignored --nocapture
+```
+
+Regular Rust checks at this slice pass 131 tests, with five explicit integration
+checks ignored. The two live LoRA checks passed separately. Frontend type checks
+report zero errors/warnings and the production build passes. SA3 remains on
+Python; no cleanup, training or runtime switch has occurred.
+
+The user selected `~/Downloads/koan_dset` for native training validation. The
+read-only inventory found 42 WAV/caption pairs, all stereo 44.1 kHz PCM24, with
+track lengths from 45.176 to 288 seconds. The inventory is saved under
+`artifacts/sa3-migration/koan-dataset-inventory.json`; the dataset was not changed.
+The
+native CLI already has cooperative cancellation hooks at sample boundaries,
+but the published CLI does not expose them and the Windows training web server
+uses `TerminateProcess`. Expose generic CLI cancellation/progress upstream, then
+connect Gary's existing training controls, checkpoint registration and resume
+handling to that contract. Keep latent caches under managed storage rather than
+writing them into the user's dataset.
 
 ## Validation before enabling cleanup
 
