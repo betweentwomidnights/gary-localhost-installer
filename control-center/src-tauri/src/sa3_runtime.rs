@@ -17,6 +17,68 @@ pub struct Selection {
     pub cleanup_errors: Vec<String>,
 }
 
+// Reject an older or mismatched binary before hashing large models or starting
+// the private validation server. Live /health checks still verify the launched
+// process later; this is the model-free compatibility gate.
+fn check_server_info(info: &serde_json::Value) -> Result<(), String> {
+    if info["schema_version"] != 1
+        || info["service"] != "sa3"
+        || info["version"]
+            .as_str()
+            .map_or(true, |version| version.trim().is_empty())
+    {
+        return Err("Installed SA3 server has an unsupported control contract. Prepare a compatible sa3.cpp release before migration.".into());
+    }
+    for capability in [
+        "fixed_prefix",
+        "request_splice",
+        "conditioning_duration",
+        "model_lifecycle",
+    ] {
+        if info["capabilities"][capability] != true {
+            return Err(format!("Installed SA3 server lacks {capability}. Prepare a compatible sa3.cpp release before migration."));
+        }
+    }
+    Ok(())
+}
+
+pub async fn probe_server(
+    executable: &Path,
+    runtime_path: Option<&std::ffi::OsStr>,
+) -> Result<(), String> {
+    let mut command = tokio::process::Command::new(executable);
+    // Older servers ignore unknown flags. Their invalid-port guard ensures a
+    // missing --control-info cannot accidentally start the public service.
+    command
+        .args(["--control-info", "--port", "0"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(parent) = executable.parent() {
+        command.current_dir(parent);
+    }
+    if let Some(path) = runtime_path {
+        command.env("PATH", path);
+    }
+    crate::workload_job::configure_tokio_command(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Cannot check native SA3 server: {error}"))?;
+    if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), child.wait_with_output())
+        .await.map_err(|_| "Native SA3 server capability check timed out. Prepare a compatible sa3.cpp release before migration.")?
+        .map_err(|error| format!("Cannot read native SA3 server capabilities: {error}"))?;
+    if !result.status.success() {
+        return Err("Installed SA3 server does not support offline capability checks. Prepare a compatible sa3.cpp release before migration.".into());
+    }
+    let info = serde_json::from_slice(&result.stdout)
+        .map_err(|error| format!("Invalid native SA3 server capabilities: {error}"))?;
+    check_server_info(&info)
+}
+
 pub fn selection_path(root: &Path) -> PathBuf {
     root.join("sa3/native-runtime.json")
 }
@@ -154,6 +216,53 @@ mod tests {
         std::fs::write(selection_path(&root), "{}").unwrap();
         assert!(read(&root).is_err());
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn server_contract_requires_sa3_schema_and_each_typed_capability() {
+        let good = serde_json::json!({"schema_version":1,"service":"sa3","version":"0.1.2",
+            "capabilities":{"fixed_prefix":true,"request_splice":true,
+                "conditioning_duration":true,"model_lifecycle":true,"future_feature":true}});
+        check_server_info(&good).unwrap();
+        for (key, value) in [
+            ("schema_version", serde_json::json!(2)),
+            ("service", serde_json::json!("sat")),
+            ("version", serde_json::json!(" ")),
+        ] {
+            let mut invalid = good.clone();
+            invalid[key] = value;
+            assert!(check_server_info(&invalid).is_err());
+        }
+        for capability in [
+            "fixed_prefix",
+            "request_splice",
+            "conditioning_duration",
+            "model_lifecycle",
+        ] {
+            for value in [
+                serde_json::Value::Null,
+                serde_json::json!(false),
+                serde_json::json!("true"),
+            ] {
+                let mut invalid = good.clone();
+                invalid["capabilities"][capability] = value;
+                assert!(check_server_info(&invalid)
+                    .unwrap_err()
+                    .contains(capability));
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires locally built and published native server executables"]
+    async fn real_server_offline_probe_accepts_compatible_and_rejects_old_runtime() {
+        let executable = PathBuf::from(std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY").unwrap());
+        probe_server(&executable, None).await.unwrap();
+        let old = PathBuf::from(std::env::var_os("GARY4LOCAL_SA3_OLD_SMOKE_BINARY").unwrap());
+        let started = std::time::Instant::now();
+        let error = probe_server(&old, None).await.unwrap_err();
+        assert!(error.contains("does not support offline"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

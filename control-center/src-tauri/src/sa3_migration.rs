@@ -323,6 +323,12 @@ pub async fn verify_native(
     use serde_json::{json, Value};
     use std::time::{Duration, Instant};
     let runtime_path = crate::native_runtime::path_with_runtimes(root, &installed.runtimes);
+    progress("Checking native server capabilities...");
+    crate::sa3_runtime::probe_server(
+        &installed.dir.join(&native.executable),
+        runtime_path.as_deref(),
+    )
+    .await?;
     progress("Checking native trainer capabilities...");
     crate::sa3_training::probe(
         &installed.dir.join("sa3-train.exe"),

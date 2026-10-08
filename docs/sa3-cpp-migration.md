@@ -864,3 +864,43 @@ frontend checks reported zero errors/warnings and the production build passed.
 
 Bundle refresh also preserves alternate `.venv` environments alongside `env`,
 so an update cannot remove them before the reviewed migration transaction.
+
+## Check the native release contract before migration
+
+The compatibility branch adds model-free `sa3-server --control-info`, sharing
+its capability definition with `/health`. Gary4local requires schema 1, service
+`sa3`, a version, and fixed-prefix, request-splice, conditioning-duration and
+model-lifecycle support before trainer/analyzer checks or expensive weight
+hashing. The live server still receives the existing health/load/generation
+validation. The offline child is owned, hidden, bounded by a 15-second timeout,
+and killed if the check is dropped. Passing invalid `--port 0` prevents an older
+server that ignores the new flag from accidentally starting a service.
+
+Upstream commit `c0f12e2` checks staged server versions/devices and SA3
+server/trainer/analyzer controls on Windows and each runnable macOS slice, even
+when optional tests are skipped. SAT is included in the shared core and keeps
+its own API contract. These changes do not migrate Jerry or Foundation.
+
+Local portable Windows CPU packaging (dynamic backends, all CPU variants,
+SA3 and SAT enabled) passed all 46 upstream tests and the staged package checks.
+The generated archive was independently SHA-256 checked, unpacked into
+`artifacts/sa3-migration/package-contract-unpacked-1`, and passed the same checks
+there. This is an unpublished development build retaining version v0.1.1;
+`BUILD-INFO.json` explicitly records its dirty compatibility-branch origin.
+Its archive SHA-256 is
+`5382cff6ae74ec9cd51d099f731c9557b5ad691a4f848800b6e07606c5cfc080`.
+It must not be substituted for published release checksums. Full portable GPU
+packaging and macOS execution/signing remain CI validation work.
+
+Gary4local passed 166 regular Rust tests (14 hardware/download tests excluded).
+A real executable test accepted the compatible server and rejected the
+published v0.1.1 server in 0.49s total without binding a service port. The public
+manifest remains pinned to the published assets; enabling fresh-install native
+onboarding still requires a compatible published release and final client tests.
+
+The production migration verifier also passed against the staged portable core
+in `artifacts/sa3-migration/profile-package-control-smoke-1` (174.02s): all three
+offline controls, pinned F16 component hashes, private server load/readiness,
+CUDA generation and persistent profile activation succeeded. The test used the
+existing published CUDA backend plus shared CUDA runtime, not a newly built GPU
+release archive. The isolated Python environment fixture remained intact.
