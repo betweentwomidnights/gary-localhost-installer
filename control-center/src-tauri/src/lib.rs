@@ -1073,6 +1073,72 @@ mod bundle_root_tests {
     }
 
     #[test]
+    fn cleaned_sa3_profiles_skip_python_bundle_refresh_and_preserve_custom_assets() {
+        let root = temp_root("retired-sa3-sync-test");
+        let bundle = root.join("bundle");
+        let runtime = root.join("runtime");
+        let source = bundle.join("services/sa3");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(bundle.join("services/manifests")).unwrap();
+        std::fs::write(bundle.join("services/manifests/services.json"), "{}").unwrap();
+        std::fs::write(source.join("api.py"), b"new bundled code").unwrap();
+        let installed = runtime.join("services/sa3");
+        std::fs::create_dir_all(installed.join("native")).unwrap();
+        std::fs::write(installed.join("native/sa3-server.exe"), b"native runtime").unwrap();
+        let selection = crate::sa3_runtime::Selection {
+            schema_version: 1,
+            encoding: "F16".into(),
+            verified_release: "0.1.2".into(),
+            backend: "cuda".into(),
+            activated_at: 1,
+            cleanup_complete: false,
+            cleanup_errors: vec![],
+        };
+        crate::sa3_runtime::save(&runtime, &selection).unwrap();
+        // Before cleanup, retain normal Python resource refresh for optional
+        // legacy trainer use while its environment is still present.
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert_eq!(
+            std::fs::read(installed.join("api.py")).unwrap(),
+            b"new bundled code"
+        );
+        std::fs::remove_file(installed.join("api.py")).unwrap();
+        std::fs::write(installed.join("custom-notes.txt"), b"user asset").unwrap();
+        let mut selection = selection;
+        selection.cleanup_errors = vec!["interrupted cleanup".into()];
+        crate::sa3_runtime::save(&runtime, &selection).unwrap();
+        std::fs::write(
+            bundle.join("services/bundle-stamp.txt"),
+            "changed-after-cleanup",
+        )
+        .unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert!(!installed.join("api.py").exists());
+        assert_eq!(
+            std::fs::read(installed.join("custom-notes.txt")).unwrap(),
+            b"user asset"
+        );
+        assert_eq!(
+            std::fs::read(installed.join("native/sa3-server.exe")).unwrap(),
+            b"native runtime"
+        );
+        selection.cleanup_complete = true;
+        selection.cleanup_errors.clear();
+        crate::sa3_runtime::save(&runtime, &selection).unwrap();
+        // A later release can omit the legacy resource directory completely.
+        std::fs::remove_dir_all(source).unwrap();
+        std::fs::write(
+            bundle.join("services/bundle-stamp.txt"),
+            "no-python-directory",
+        )
+        .unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert!(installed.join("custom-notes.txt").is_file());
+        assert!(runtime.join("services/manifests/services.json").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn an_app_update_keeps_a_native_runtime_and_refreshes_the_rest() {
         let root = temp_root("native-sync-test");
         let bundle = root.join("bundle");
@@ -1258,6 +1324,13 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
         return Ok(());
     }
 
+    // Once cleanup begins, future bundles must not recreate retired Python
+    // code or clear native/custom assets, including after interrupted cleanup.
+    // Before cleanup, retain Python resource refresh for optional legacy training.
+    let sa3_retired = sa3_runtime::read(runtime_root)?.is_some_and(|selection| {
+        selection.cleanup_complete || !selection.cleanup_errors.is_empty()
+    });
+
     log::info!(
         "Refreshing runtime services at {} from bundled resources {}",
         runtime_services.display(),
@@ -1294,13 +1367,19 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if !bundle_names.contains(&name) {
+        if !bundle_names.contains(&name) && !(sa3_retired && name == "sa3") {
             remove_path(&existing)?;
         }
     }
 
     for src in bundle_entries {
         let name = src.file_name().unwrap_or_default().to_os_string();
+        if sa3_retired && name == "sa3" {
+            log::info!(
+                "Preserving retired SA3 native service folder without copying Python resources"
+            );
+            continue;
+        }
         let dst = runtime_services.join(name);
 
         if src.is_dir() {

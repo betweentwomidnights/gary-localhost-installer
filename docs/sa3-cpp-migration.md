@@ -807,3 +807,18 @@ or preservation. Regular Rust validation passed 156 tests (13 hardware/download
 smokes excluded), Svelte checks reported zero errors/warnings, and the production
 frontend build passed. GUI/gary4juce interaction and joint listening/training
 validation remain outstanding; the real tests use production Rust paths headlessly.
+
+
+## Preserve retirement across app updates
+
+Bundled service refresh now leaves the SA3 service directory intact after the
+cleanup journal records either completion or an interruption/failure. It neither
+recopies Python resources nor clears native files/custom assets, even if a future
+bundle omits the legacy SA3 resource directory entirely. Other service resources
+and the manifest still refresh normally. A native selection that has not begun
+cleanup retains normal Python code refresh for optional legacy trainer use.
+Invalid native selection metadata rejects a refresh instead of guessing whether
+the profile should be overwritten. The regression test covers ordinary refresh,
+interrupted retirement, completed retirement, preserved custom/native files and
+a subsequent bundle without Python resources. Existing Python source retirement
+itself remains pending; this safeguard prevents restored code from undoing it.
