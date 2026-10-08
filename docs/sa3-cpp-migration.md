@@ -601,10 +601,51 @@ restored; the actual Python environment was never changed. Three upstream tests
 also passed for tensor/config preservation, output collisions, invalid inputs and
 rejected pickle execution.
 
-143 regular Rust tests pass, with ten explicit integration tests excluded.
-Frontend checks/build pass. The cleanup transaction, native decoder adapter
-integration, Python helper retirement, published-package validation and joint
-desktop/client validation remain outstanding.
+144 regular Rust tests pass, with eleven explicit integration tests excluded.
+Frontend checks pass. The cleanup transaction, native decoder adapter integration,
+published-package validation and joint desktop/client validation remain outstanding.
+
+## Native sidecar audio analysis
+
+The shared sa3.cpp bundle now has `sa3-audio-analyze`, a standalone CPU helper
+with a schema-1 JSON contract and no model/backend/Python dependencies. Generic
+RMS-onset tempo estimation, centered Kaiser polyphase resampling, chroma/key
+profile scoring and the CLI belong upstream. The core Windows and macOS package
+lists include the executable; Windows staging probes its capabilities. Package
+publication and macOS execution remain unverified in this local Windows work.
+
+Gary's sidecar editor reserves the native bundle while analysis runs, honors a
+pending storage restart, and uses owned hidden processes. WAV inputs are read
+directly. Other dataset formats use FFmpeg through argument arrays, preserving
+sample rate/channels; its decoded WAV is staged in managed storage and removed
+on both success and failure. FFmpeg must be available on PATH for those formats,
+as with compressed-file native training; the core package does not include it.
+A native-selected profile never falls back to Python. Before migration, existing
+Python analysis remains available until a compatible native helper is installed.
+Activation now requires the native analysis capability probe too. The LoRA
+manager's Rust prompt builder is also enabled without a Python environment.
+
+The real Koan comparison passed on all 42 WAVs: BPM, key, caption suggestions and
+source labels matched the old helper exactly. Rounded key confidence matched;
+BPM confidence differed on two tracks by less than 0.001% relatively. These are
+estimator parity checks, not proof of true tempo/key. The repeatable
+`smoke-tests/compare_sa3_native_analysis.py` also verified unchanged source hashes
+for every track; results are under `artifacts/sa3-migration/analysis-comparison-2`.
+
+The production Rust helper passed a real no-Python smoke for WAV, FLAC, MP3, OGG,
+Opus, M4A, AIFF and AIF. Unicode, spaces, quotes, literal percent/ampersand paths,
+source hashes, invalid decoding and temporary cleanup were checked under
+`artifacts/sa3-migration/native-analysis-smoke-1`. Upstream CLI tests passed for
+known C major audio, 8-bit silence, Unicode paths, malformed files and NaN
+rejection; the existing training WAV-reader test still passes. Native activation
+was retested with the new helper probe, full model hashing and a real CUDA
+private generation under `artifacts/sa3-migration/profile-activation-smoke-2`.
+It preserved the original Python marker and persisted the native profile choice.
+
+The SA3 Python environment is now unnecessary for native generation, native
+training, prompt building, cached legacy adapters and sidecar analysis. It is
+still retained until optional decoder correction, cleanup/journal behavior and
+published-package/client validation are finished.
 
 ## Validation before enabling cleanup
 

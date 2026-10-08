@@ -200,6 +200,8 @@ pub async fn verify_native(
         runtime_path.as_deref(),
     )
     .await?;
+    progress("Checking native audio analysis capabilities...");
+    crate::sa3_analysis::probe(&installed.dir.join("sa3-audio-analyze.exe")).await?;
     let models = crate::sa3_models::models_dir(root);
     for id in crate::sa3_models::preparation_ids(encoding, None)? {
         let component = crate::sa3_models::component(&id).unwrap();

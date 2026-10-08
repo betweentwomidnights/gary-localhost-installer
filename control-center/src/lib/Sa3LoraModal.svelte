@@ -252,7 +252,7 @@
     }
   }
 
-  let canBuild = $derived(open && serviceEnvExists && !building);
+  let canBuild = $derived(open && !building);
 
   let poolSummary: [string, number][] = $derived.by(() => {
     if (!loraState) return [];
