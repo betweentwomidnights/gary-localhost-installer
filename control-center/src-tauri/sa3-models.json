@@ -1,0 +1,128 @@
+[
+  {
+    "id": "sa3-native::text",
+    "label": "Shared text encoder and tokenizer",
+    "description": "F16 text encoder; shared by SA3 inference and training.",
+    "files": [
+      {
+        "repo": "thepatch/t5gemma-b-b-ul2-GGUF",
+        "revision": "26caadf5cb1b6523370caff61f6a32337f46625e",
+        "filename": "t5gemma-b-b-ul2-encoder-0.3B-v1.0-F16.gguf",
+        "sha256": "26d7da5bdbe78b1bd11ac5e4b9b7a20ed43295bdd9eb3c1159b2cee004d9de43",
+        "bytes": 563243808
+      },
+      {
+        "repo": "thepatch/t5gemma-b-b-ul2-GGUF",
+        "revision": "26caadf5cb1b6523370caff61f6a32337f46625e",
+        "filename": "t5gemma-b-b-ul2-v1.0-vocab.gguf",
+        "sha256": "d58ef75568789d5d394a67231c853803bd24778d136aa0d1990210bcdd485d32",
+        "bytes": 13838496
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-decoder",
+    "label": "Medium decoder and conditioner",
+    "description": "F32 decoder; shared by every medium inference tier and its training base.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-GGUF",
+        "revision": "380a7b25ba6b3b12563b01193227580a9ae7dac0",
+        "filename": "stable-audio-3-medium-same-l-v1.0-F32.gguf",
+        "sha256": "b539b988d722f85bbb81e2ce415281c5c514349240d08d259286bdbf39d22bc9",
+        "bytes": 3408533248
+      },
+      {
+        "repo": "thepatch/stable-audio-3-medium-GGUF",
+        "revision": "380a7b25ba6b3b12563b01193227580a9ae7dac0",
+        "filename": "stable-audio-3-medium-conditioner-v1.0-F32.gguf",
+        "sha256": "8482cc42559f665db517fd469e0dd073de36071ebbdbe0ef4d38b5392fe6c724",
+        "bytes": 793184
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-F16",
+    "label": "Medium inference F16",
+    "description": "Inference DiT. Quantization applies to the DiT; decoder and text precision stay unchanged.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-GGUF",
+        "revision": "380a7b25ba6b3b12563b01193227580a9ae7dac0",
+        "filename": "stable-audio-3-medium-dit-1.5B-v1.0-F16.gguf",
+        "sha256": "3f49edcbc724815339166323ca58a85bdb21215c5dee0237e396231b1c3ee50f",
+        "bytes": 2908081472
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-Q8_0",
+    "label": "Medium inference Q8_0",
+    "description": "Inference DiT. Quantization applies to the DiT; decoder and text precision stay unchanged.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-GGUF",
+        "revision": "380a7b25ba6b3b12563b01193227580a9ae7dac0",
+        "filename": "stable-audio-3-medium-dit-1.5B-v1.0-Q8_0.gguf",
+        "sha256": "12f3d1c0e12bbfe0cb966a0b45538ab8410a50092c1593c9b7617649882b0e5a",
+        "bytes": 1555418432
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-Q5_K_M",
+    "label": "Medium inference Q5_K_M",
+    "description": "Inference DiT. Quantization applies to the DiT; decoder and text precision stay unchanged.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-GGUF",
+        "revision": "380a7b25ba6b3b12563b01193227580a9ae7dac0",
+        "filename": "stable-audio-3-medium-dit-1.5B-v1.0-Q5_K_M.gguf",
+        "sha256": "7b71e3b6df29bd70b83b10ae8a2bfec39af823d88c2c9b0fabf8c6a12a26d014",
+        "bytes": 1104596288
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-Q4_K_M",
+    "label": "Medium inference Q4_K_M",
+    "description": "Inference DiT. Quantization applies to the DiT; decoder and text precision stay unchanged.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-GGUF",
+        "revision": "380a7b25ba6b3b12563b01193227580a9ae7dac0",
+        "filename": "stable-audio-3-medium-dit-1.5B-v1.0-Q4_K_M.gguf",
+        "sha256": "eb91cce41996c38b7271ec05adf4d3d4f047dead45fd18ec7901a48b819cbfc4",
+        "bytes": 1009175872
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-base-F16",
+    "label": "Medium training base F16",
+    "description": "Training-only DiT. Adapters are applied to the inference model after training.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-base-GGUF",
+        "revision": "8fa5cdfc552ea9ade3e32dde3f3fd3d8a5b3f135",
+        "filename": "stable-audio-3-medium-base-dit-1.5B-v1.0-F16.gguf",
+        "sha256": "b6d672da618e9a3007250df4b44a2b295f429a60e3669ba60987943679a52d7d",
+        "bytes": 2908081888
+      }
+    ]
+  },
+  {
+    "id": "sa3-native::medium-base-Q4_K_M",
+    "label": "Medium training base Q4_K_M",
+    "description": "Training-only DiT. Adapters are applied to the inference model after training.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-3-medium-base-GGUF",
+        "revision": "8fa5cdfc552ea9ade3e32dde3f3fd3d8a5b3f135",
+        "filename": "stable-audio-3-medium-base-dit-1.5B-v1.0-Q4_K_M.gguf",
+        "sha256": "4b97f48b777cbe41c7f7b84bd95971e649ce5e899c97904f6b2a1caea0339719",
+        "bytes": 1009176288
+      }
+    ]
+  }
+]

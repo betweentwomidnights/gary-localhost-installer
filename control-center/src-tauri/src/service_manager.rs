@@ -66,6 +66,9 @@ pub struct ServiceManager {
     /// Native tools such as training/conversion also hold bundle files open.
     /// Keep those users visible to installation and storage maintenance.
     native_workloads: HashMap<String, HashMap<String, String>>,
+    /// Model preparation may replace weights. Keep launches and native tools
+    /// from opening them between the preflight check and the final hash check.
+    native_model_mutations: HashMap<String, String>,
 }
 
 fn health_check_interval(
@@ -135,6 +138,7 @@ impl ServiceManager {
             errors: HashMap::new(),
             build_statuses: HashMap::new(),
             native_workloads: HashMap::new(),
+            native_model_mutations: HashMap::new(),
         }
     }
 
@@ -187,6 +191,9 @@ impl ServiceManager {
     pub fn native_mutation_blocker(&self, service_id: &str) -> Option<String> {
         let svc = self.find_service(service_id)?;
         for consumer in self.bundle_consumers(svc) {
+            if let Some(label) = self.native_model_mutations.get(&consumer.id) {
+                return Some(format!("wait for {label} to finish"));
+            }
             if consumer.runtime == ServiceRuntime::Native && self.is_running(&consumer.id) {
                 return Some(format!("stop {} first", consumer.display_name));
             }
@@ -223,6 +230,9 @@ impl ServiceManager {
         if svc.native.is_none() {
             return Err(format!("{service_id} has no native runtime"));
         }
+        if let Some(label) = self.native_model_mutations.get(service_id) {
+            return Err(format!("Wait for {label} to finish"));
+        }
         for consumer in self.bundle_consumers(svc) {
             if self.is_building(&consumer.id) {
                 return Err(format!(
@@ -250,6 +260,26 @@ impl ServiceManager {
                 self.native_workloads.remove(&key);
             }
         }
+    }
+
+    pub fn begin_native_model_mutation(
+        &mut self,
+        service_id: &str,
+        label: &str,
+    ) -> Result<(), String> {
+        if self.native_service(service_id).is_none() {
+            return Err(format!("{service_id} has no native model runtime"));
+        }
+        if let Some(blocker) = self.native_mutation_blocker(service_id) {
+            return Err(format!("Cannot prepare models: {blocker}."));
+        }
+        self.native_model_mutations
+            .insert(service_id.into(), label.into());
+        Ok(())
+    }
+
+    pub fn end_native_model_mutation(&mut self, service_id: &str) {
+        self.native_model_mutations.remove(service_id);
     }
 
     fn native_install(&self, svc: &ServiceDef) -> Option<NativeInstall> {
@@ -689,6 +719,11 @@ impl ServiceManager {
     }
 
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
+        if svc.runtime == ServiceRuntime::Native {
+            if let Some(label) = self.native_model_mutations.get(&svc.id) {
+                return Some(format!("is waiting for {label} to finish"));
+            }
+        }
         if svc.id == "yuey" {
             return crate::yuey_missing_models(&self.models_dir());
         }
@@ -698,6 +733,9 @@ impl ServiceManager {
     /// Launch a native service's executable from its installed runtime, with
     /// the backend it was installed for and any shared runtime on PATH.
     fn start_native(&mut self, svc: &ServiceDef) -> Result<(), String> {
+        if let Some(label) = self.native_model_mutations.get(&svc.id) {
+            return Err(format!("Wait for {label} to finish."));
+        }
         for consumer in self.bundle_consumers(svc) {
             if self.is_building(&consumer.id) {
                 return Err(format!(
@@ -1223,6 +1261,58 @@ mod tests {
         assert!(manager.native_mutation_blocker("foundation").is_some());
         manager.end_native_workload("foundation", "converter");
         assert!(manager.native_mutation_blocker("sa3").is_none());
+    }
+
+    #[test]
+    fn model_preparation_blocks_launches_tools_and_removal_until_released() {
+        let mut manager = shared_native_manager();
+        manager
+            .begin_native_model_mutation("sa3", "SA3 model preparation")
+            .unwrap();
+        assert!(manager
+            .start("sa3")
+            .unwrap_err()
+            .contains("model preparation"));
+        assert!(manager
+            .begin_native_workload("sa3", "trainer", "training")
+            .is_err());
+        assert!(manager
+            .begin_native_model_mutation("sa3", "second download")
+            .is_err());
+        assert!(manager
+            .native_mutation_blocker("sa3")
+            .unwrap()
+            .contains("model preparation"));
+        assert!(manager.native_mutation_blocker("yuey").is_none());
+        manager.end_native_model_mutation("sa3");
+        assert!(manager.native_mutation_blocker("sa3").is_none());
+        manager
+            .begin_native_workload("sa3", "trainer", "training")
+            .unwrap();
+        assert!(manager
+            .begin_native_model_mutation("sa3", "SA3 models")
+            .is_err());
+    }
+
+    #[test]
+    fn preparing_native_models_leaves_the_python_start_available() {
+        let mut manager = shared_native_manager();
+        manager
+            .services
+            .iter_mut()
+            .find(|svc| svc.id == "sa3")
+            .unwrap()
+            .runtime = ServiceRuntime::Python;
+        manager
+            .begin_native_model_mutation("sa3", "SA3 model preparation")
+            .unwrap();
+        assert!(manager
+            .get_service_info()
+            .iter()
+            .find(|svc| svc.id == "sa3")
+            .unwrap()
+            .start_blocker
+            .is_none());
     }
 
     #[test]

@@ -427,7 +427,7 @@ pub async fn sha256_file(path: &Path) -> Result<String, String> {
     .map_err(|error| format!("checksum task failed: {error}"))?
 }
 
-fn partial_path(dest: &Path) -> PathBuf {
+pub(crate) fn partial_path(dest: &Path) -> PathBuf {
     let name = dest
         .file_name()
         .map(|name| name.to_string_lossy().to_string())

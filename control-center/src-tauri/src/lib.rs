@@ -4,6 +4,7 @@ mod native_models;
 mod native_runtime;
 mod sa3_adapter;
 mod sa3_migration;
+mod sa3_models;
 mod service_manager;
 mod storage;
 mod update;
@@ -5902,6 +5903,8 @@ pub fn run() {
             get_runtime_storage_info,
             get_sa3_migration_preview,
             prepare_sa3_native_runtime,
+            prepare_sa3_native_models,
+            get_sa3_native_model_catalog,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -6653,6 +6656,7 @@ async fn get_models(
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
     models.extend(mgr.get_yuey_models());
+    models.extend(mgr.get_sa3_native_models());
     Ok(models)
 }
 
@@ -6666,6 +6670,40 @@ async fn download_model(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     // Native services download GGUFs directly; there is no Python env to borrow.
+    if let Some(component) = sa3_models::component(&model_id) {
+        if storage::storage_info(repo_root.inner()).pending_restart {
+            return Err("Restart to use your chosen storage before preparing SA3 models.".into());
+        }
+        let mut svc_mgr = _svc_mgr.lock().await;
+        if svc_mgr.is_native("sa3") {
+            if let Some(blocker) = svc_mgr.native_mutation_blocker("sa3") {
+                return Err(format!("Cannot prepare SA3 models: {blocker}."));
+            }
+        }
+        let dest_dir = {
+            let mut mgr = model_mgr.lock().await;
+            if mgr.is_downloading(&model_id) {
+                return Err("This model is already downloading.".into());
+            }
+            let dir = sa3_models::checked_models_dir(&mgr.runtime_root())?;
+            svc_mgr.begin_native_model_mutation("sa3", "SA3 model preparation")?;
+            mgr.set_download_started(&model_id);
+            dir
+        };
+        drop(svc_mgr);
+        model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+        let files = component.files.clone();
+        let manager = model_mgr.inner().clone();
+        let services = _svc_mgr.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = native_models::download_pinned_hf_files(
+                model_id, files, dest_dir, manager, app_handle,
+            )
+            .await;
+            services.lock().await.end_native_model_mutation("sa3");
+        });
+        return Ok(());
+    }
     if let Some(files) = model_manager::yuey_files(&model_id) {
         let dest_dir = {
             let mut mgr = model_mgr.lock().await;
@@ -6780,6 +6818,53 @@ async fn remove_model(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<ModelRemovalResult, String> {
+    if service_id == "sa3" {
+        if let Some(component) = sa3_models::component(&model_id) {
+            if storage::storage_info(repo_root.inner()).pending_restart {
+                return Err(
+                    "Restart to use your chosen storage before removing SA3 models.".into(),
+                );
+            }
+            // Keep both reservations until the files are removed: a new native
+            // launch, trainer, component download or preparation cannot race us.
+            let services = svc_mgr.lock().await;
+            if services.is_running("sa3") {
+                return Err("Stop SA3 before removing its model.".into());
+            }
+            if let Some(blocker) = services.native_mutation_blocker("sa3") {
+                return Err(format!("Cannot remove SA3 models: {blocker}."));
+            }
+            let mut models = model_mgr.lock().await;
+            if models.is_downloading(&model_id) {
+                return Err("Wait for this model download to finish first.".into());
+            }
+            let root = sa3_models::checked_models_dir(&models.runtime_root())?;
+            let files = component.files.clone();
+            let removed_bytes = tauri::async_runtime::spawn_blocking(move || {
+                let mut removed_bytes = 0;
+                for file in files {
+                    let dest = root.join(file.filename);
+                    for path in [&dest, &native_runtime::partial_path(&dest)] {
+                        let bytes = path_size(path);
+                        if remove_managed_path(path, &root)? {
+                            removed_bytes += bytes;
+                        }
+                    }
+                }
+                Ok::<_, String>(removed_bytes)
+            })
+            .await
+            .map_err(|error| format!("SA3 model removal failed: {error}"))??;
+            models.forget_model_status(&model_id);
+            drop(models);
+            drop(services);
+            model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+            return Ok(ModelRemovalResult {
+                model_id,
+                removed_bytes,
+            });
+        }
+    }
     let is_carey_model = service_id == "carey" && model_id.starts_with("carey::");
     let is_foundation_model =
         service_id == "foundation" && model_id == model_manager::FOUNDATION_MODEL_ID;
@@ -9518,6 +9603,71 @@ async fn prepare_sa3_native_runtime(
     }
     result?;
     get_native_runtime_info("sa3".to_string(), manager).await
+}
+
+#[tauri::command]
+fn get_sa3_native_model_catalog() -> Vec<sa3_models::Component> {
+    sa3_models::catalog().to_vec()
+}
+
+/// Claim the entire model plan before spawning downloads so repeated clicks,
+/// individual component downloads and managed removal see the same reservation.
+#[tauri::command]
+async fn prepare_sa3_native_models(
+    encoding: String,
+    training_base: Option<String>,
+    repo_root: tauri::State<'_, PathBuf>,
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before preparing SA3 models.".into());
+    }
+    let ids = sa3_models::preparation_ids(&encoding, training_base.as_deref())?;
+    let mut services = svc_mgr.lock().await;
+    if services.is_native("sa3") {
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot prepare SA3 models: {blocker}."));
+        }
+    }
+    let dest_dir = {
+        let mut mgr = model_mgr.lock().await;
+        if ids.iter().any(|id| mgr.is_downloading(id)) {
+            return Err(
+                "SA3 model preparation is already in progress. Wait for it to finish.".into(),
+            );
+        }
+        let dir = sa3_models::checked_models_dir(&mgr.runtime_root())?;
+        services.begin_native_model_mutation("sa3", "SA3 model preparation")?;
+        for id in &ids {
+            mgr.set_download_started(id);
+        }
+        dir
+    };
+    drop(services);
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    let manager = model_mgr.inner().clone();
+    let services = svc_mgr.inner().clone();
+    let queued = ids.clone();
+    tauri::async_runtime::spawn(async move {
+        for id in queued {
+            let files = sa3_models::component(&id)
+                .expect("validated model plan")
+                .files
+                .clone();
+            let _ = native_models::download_pinned_hf_files(
+                id,
+                files,
+                dest_dir.clone(),
+                manager.clone(),
+                app_handle.clone(),
+            )
+            .await;
+        }
+        services.lock().await.end_native_model_mutation("sa3");
+    });
+    Ok(ids)
 }
 
 fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {

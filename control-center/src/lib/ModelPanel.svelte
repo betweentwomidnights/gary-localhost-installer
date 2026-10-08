@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
+  import Sa3NativeModels from "./Sa3NativeModels.svelte";
   import { chooseYueyTier, loadYueyTiers } from "./yueyTiers";
 
   interface ModelEntry {
@@ -451,8 +452,9 @@
       </div>
 
     {:else if isSa3}
+      <Sa3NativeModels />
       <div class="size-group">
-        <div class="size-label">models and optional components</div>
+        <div class="size-label">Python models and optional components</div>
         <div class="carey-hint">
           Download the inference model first. The base model is only needed for LoRA training,
           and the decoder squeak fix is optional. Downloads reuse the saved Hugging Face token.

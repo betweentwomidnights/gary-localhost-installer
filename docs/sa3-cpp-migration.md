@@ -242,6 +242,54 @@ host training validation should launch a short run from gary4local before a
 longer quality run, then register/select its native checkpoint and generate
 through the client with that adapter.
 
+## Native model preparation
+
+The migration/storage screen and SA3 model panel now offer a preparation step
+for medium GGUF models while the Python service remains selected. Inference
+DiT choices are F16 (default), Q8_0, Q5_K_M and Q4_K_M. The optional training
+base has its own F16 (default) or Q4_K_M selection. These controls choose what
+to prepare; active native precision selection still needs wiring during the
+service migration slice.
+
+`control-center/src-tauri/sa3-models.json` pins each file's HF repository,
+immutable revision, exact size and SHA-256. The files come from
+`thepatch/stable-audio-3-medium-GGUF`,
+`thepatch/stable-audio-3-medium-base-GGUF` and
+`thepatch/t5gemma-b-b-ul2-GGUF`. Native weights are plain files under
+`<active-root>/models/sa3`; the existing Python HF cache stays separate.
+Every DiT tier and training base shares one F32 SAME-L decoder, one F32
+conditioner, one F16 text encoder and one tokenizer. Components own disjoint
+file sets so storage accounting and removal do not double-count shared files.
+
+Preparation hashes existing files before reuse, resumes partial downloads and
+discards downloads with wrong hashes. Pending storage restart blocks mutations.
+The selected runtime root is resolved before creating model subfolders; a
+subfolder redirected outside it is refused. Model preparation claims a service
+reservation before queuing: native launches, trainers/converters, overlapping
+preparation and removal cannot race the downloads. The Python start stays
+available. Removal holds both service/model locks through checked file deletion
+and removes the component's partial files as well. Present-status checks use
+exact file sizes and do not trust a stale successful-download state; preparation
+performs the full hash verification.
+
+The live catalog check verified every pinned filename, size and LFS hash at its
+exact HF revision. It also downloaded the 793 KB conditioner, reused it without
+a network request, and repaired a corrupted local copy through the production
+transfer path. Artifacts are in `artifacts/sa3-migration/model-smoke`. Full model
+downloads and real desktop UI interaction still need validation.
+
+```powershell
+# From control-center/src-tauri.
+$env:GARY4LOCAL_SA3_MODEL_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/model-smoke'
+cargo test --lib downloads_published_sa3_conditioner_and_verifies_catalog -- --ignored --nocapture
+```
+
+At this checkpoint, 126 regular Rust tests pass (four explicit integration
+checks ignored); the new live model check passed separately. Frontend checks
+report zero errors/warnings and the production build passes. Generic native
+load/readiness routes, LoRA conversion/catalogs, native training and the final
+cleanup transaction remain outstanding.
+
 ## Validation before enabling cleanup
 
 First-slice checks completed: four Rust inventory tests passed, `npm run check`
