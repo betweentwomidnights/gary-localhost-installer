@@ -466,6 +466,73 @@ $env:PATH = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/runtime/nat
 cargo test --lib real_native_training_cancel_resume -- --ignored --nocapture
 ```
 
+## Native checkpoint history and caption prompts
+
+Native LoRA entries now retain caption-folder metadata and expose the paired
+checkpoints from every managed training run with the same logical name. The
+checkpoint selector distinguishes resumed branches by job ID, including branches
+that produced the same step number. Only adapter/optimizer pairs within their
+managed run are selectable. Selecting an adapter copies it into the immutable
+native adapter cache and preserves its original training files and strength.
+
+The training modal offers that history for resume and restores the original
+dataset, duration, base precision, fixed prompt and optimizer settings. The step
+target remains editable as the new total. Failed jobs with a valid checkpoint
+pair remain resumable even before they have a registered final adapter.
+
+Caption prompt generation now runs in Rust for both legacy and native LoRAs.
+It preserves the legacy BPM/key-tail stripping, relative-path sort, UTF-8 BOM
+handling and case-insensitive prompt deduplication. Automatic native registration
+preserves an existing curated pool; the existing manual rebuild action explicitly
+rebuilds pools. Dataset links outside the source folder are rejected and directory
+cycles are skipped. Prompt output uses the selected managed storage root.
+
+The real history test passed against the CUDA-trained adapter under
+`artifacts/sa3-migration/training-smoke-1`: both cancelled and resumed checkpoint
+branches remained available, an earlier checkpoint could be selected and the
+final adapter restored, original GGUF hashes stayed unchanged, and a native
+prompt pool was registered from all 42 Koan captions. This uses production Rust
+helpers with real artifacts; desktop interaction remains untested.
+
+At this slice, 136 regular Rust tests pass, with seven explicit integration
+checks excluded from the regular suite. Frontend checks and build pass.
+
+## Full-duration CUDA training and trained-adapter inference
+
+The host training check also passed at the UI's default 285.35-second window,
+rank 16, batch 1, core DoRA scope, RMS correction off, and fixed prompt
+`glitch hop, neurofunk, electronica`. Both bases reused the 42 cached Koan
+tracks, cancelled cooperatively, resumed from the checkpoint pair, registered
+the final adapter, and preserved the dataset and original checkpoint hashes.
+
+| Base | Recorded full-step times | Cancel / resumed target | Artifact root |
+| --- | --- | --- | --- |
+| F16 | 291–297 seconds | step 2 / step 4 | `artifacts/sa3-migration/training-fulltrack-smoke-1` |
+| Q4_K_M | 8.22–10.04 seconds | step 1 / step 3 | `artifacts/sa3-migration/training-q4-fulltrack-smoke-1` |
+
+These are trainer log timings on the RTX 5070 Laptop with 8 GB VRAM, including
+the full update, rather than the narrower progress-JSON timing. F16 completed
+correctly but was approximately 30 times slower at this duration. A memory
+sample during Q4 training showed 7,426 MiB used; it is not a peak measurement.
+The Q4 source GGUF's SHA-256 matched the pinned model catalog. Inference still
+defaults to F16. Model preparation and full-track training recommend Q4 on
+CUDA GPUs with at most 9 GiB reported VRAM; explicit choices and restored
+resume settings take precedence. Smaller GPUs may also need shorter crops.
+
+CUDA inference through the production Rust wrapper passed with the F16-trained
+medium adapter, F16 inference DiT/T5, and F32 decoder. The four public client
+routes, seed recall, normal/consume polling, prompt pools, incompatible-adapter
+filtering, load/readiness/reload/unload, and rejected legacy requests passed.
+The same CUDA suite also passed with the Q4-trained adapter loaded into the F16
+inference model, under `artifacts/sa3-migration/adapter-cuda-q4-trained-smoke-1`.
+Artifacts are under `artifacts/sa3-migration/adapter-cuda-lora-smoke-1`, including
+`trained-adapter-listening.wav`: a 12-second, 20-step, seed-42 generation using
+the registered adapter at strength 0.8. The tiny route checks validate transport;
+three or four training updates do not establish fine-tune quality. These tests
+use local compatibility tools with the published CUDA backend/runtime pack.
+Desktop/gary4juce interaction and an unmodified compatible release installation
+remain required before cleanup.
+
 ## Validation before enabling cleanup
 
 First-slice checks completed: four Rust inventory tests passed, `npm run check`

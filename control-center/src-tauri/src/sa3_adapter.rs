@@ -1251,17 +1251,26 @@ mod tests {
             let reservation = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let native_port = reservation.local_addr().unwrap().port(); drop(reservation);
             let log = std::fs::File::create(root.join("native-server.log")).unwrap();
+            let variant = std::env::var("GARY4LOCAL_SA3_SMOKE_VARIANT").unwrap_or_else(|_| "small-music".into());
+            let encoding = std::env::var("GARY4LOCAL_SA3_SMOKE_ENCODING").unwrap_or_else(|_| "q4_k_m".into());
+            let ae_encoding = std::env::var("GARY4LOCAL_SA3_SMOKE_AE_ENCODING").unwrap_or_else(|_| "f16".into());
+            let device = std::env::var("GARY4LOCAL_SA3_SMOKE_DEVICE").unwrap_or_else(|_| "cpu".into());
+            let lora_name = std::env::var("GARY4LOCAL_SA3_SMOKE_LORA_NAME").unwrap_or_else(|_| "koan".into());
             let mut command = tokio::process::Command::new(binary);
-            command.args(["--model","small-music","--encoding","q4_k_m","--t5-encoding","f16",
-                "--ae-encoding","f16","--threads","8","--models-dir"])
-                .arg(models).arg("--port").arg(native_port.to_string()).env("SA3_DEVICE","cpu")
+            command.args(["--model",variant.as_str(),"--encoding",encoding.as_str(),"--t5-encoding","f16",
+                "--ae-encoding",ae_encoding.as_str(),"--threads","8","--models-dir"])
+                .arg(models).arg("--port").arg(native_port.to_string()).env("SA3_DEVICE",&device)
                 .current_dir(&root).stdout(log.try_clone().unwrap()).stderr(log).kill_on_drop(true);
             let registry = std::env::var_os("GARY4LOCAL_SA3_LORA_REGISTRY").map(PathBuf::from);
+            let real_prompt_pool = registry.as_ref().is_some_and(|registry| registry.join(format!("sa3/prompts/{lora_name}.json")).is_file());
             if let Some(registry) = &registry {
                 command.env("SA3_ADAPTERS_DIR",crate::sa3_loras::adapters_dir(registry));
-                let prompts = root.join("prompts"); std::fs::create_dir_all(&prompts).unwrap();
+                let prompts = if real_prompt_pool { registry.join("sa3/prompts") } else { root.join("prompts") };
+                if !real_prompt_pool {
+                std::fs::create_dir_all(&prompts).unwrap();
                 std::fs::write(prompts.join("defaults.json"),json!({"version":1,"dice":{"generic":["default tone"]}}).to_string()).unwrap();
-                std::fs::write(prompts.join("koan.json"),json!({"dice":{"generic":["koan tone"]}}).to_string()).unwrap();
+                std::fs::write(prompts.join(format!("{lora_name}.json")),json!({"dice":{"generic":["koan tone"]}}).to_string()).unwrap();
+                }
                 command.env("SA3_PROMPTS_DIR",prompts);
             }
             crate::hide_console_window(&mut command);
@@ -1282,10 +1291,11 @@ mod tests {
             let base = format!("http://127.0.0.1:{port}");
             if registry.is_some() {
                 let menu:Value = client.get(format!("{base}/loras")).send().await.unwrap().json().await.unwrap();
-                assert_eq!(menu["loras"][0]["name"],"koan","converted Koan missing from small model menu: {menu}");
+                assert_eq!(menu["loras"][0]["name"],lora_name,"converted Koan missing from small model menu: {menu}");
                 assert_eq!(menu["loras"].as_array().unwrap().len(),1,"failed legacy conversion must remain unavailable");
-                let prompts:Value = client.get(format!("{base}/prompts?lora=koan&lora=missing")).send().await.unwrap().json().await.unwrap();
-                assert_eq!(prompts["prompts"]["dice"]["generic"][0],"koan tone");
+                let prompts:Value = client.get(format!("{base}/prompts?lora={lora_name}&lora=missing")).send().await.unwrap().json().await.unwrap();
+                if real_prompt_pool { assert!(!prompts["prompts"]["dice"]["instrumental"].as_array().unwrap().is_empty(),"trained caption pool missing: {prompts}"); }
+                else { assert_eq!(prompts["prompts"]["dice"]["generic"][0],"koan tone"); }
                 assert_eq!(prompts["missing_loras"],json!(["missing"]));
                 assert_eq!(client.get(format!("{base}/prompts?lora=..%2Fsecret")).send().await.unwrap().status(),StatusCode::BAD_REQUEST);
                 let error = client.post(format!("{base}/transform")).json(&json!({"prompt":"tone","audio_data":source(1),"lora":"legacy"})).send().await.unwrap();
@@ -1340,17 +1350,38 @@ mod tests {
                 std::fs::write(root.join(format!("{}.json",route.replace('/' , "-"))),serde_json::to_vec_pretty(&completed["meta"]).unwrap()).unwrap();
                 println!("PASS {route}: {expected_samples} samples, recalled seed and matching normal/consume metadata");
             }
+            if let Ok(duration) = std::env::var("GARY4LOCAL_SA3_SMOKE_LISTEN_DURATION") {
+                let duration: f64 = duration.parse().unwrap();
+                let response = client.post(format!("{base}/generate")).json(&json!({"prompt":"glitch hop, neurofunk, electronica, intricate bass and syncopated percussion","duration":duration,"tail_pad":0,"steps":20,"seed":42,"lora":lora_name,"lora_strength":0.8})).send().await.unwrap().error_for_status().unwrap();
+                let submitted: Value = response.json().await.unwrap();
+                let url = format!("{base}/poll_status/{}", submitted["session_id"].as_str().unwrap());
+                let deadline = Instant::now() + Duration::from_secs(300);
+                let completed = loop {
+                    let polled: Value = client.get(&url).send().await.unwrap().json().await.unwrap();
+                    assert_ne!(polled["status"], "failed", "listening sample: {polled}");
+                    if polled["status"] == "completed" { break polled; }
+                    assert!(Instant::now() < deadline, "listening sample timed out");
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                };
+                let wav = STANDARD.decode(completed["audio_data"].as_str().unwrap()).unwrap();
+                let reader = hound::WavReader::new(Cursor::new(&wav)).unwrap();
+                assert_eq!(reader.duration(), (duration * 44100.0).round() as u32);
+                assert!(reader.into_samples::<i16>().any(|sample| sample.unwrap() != 0), "listening sample is silent");
+                std::fs::write(root.join("trained-adapter-listening.wav"), wav).unwrap();
+                std::fs::write(root.join("trained-adapter-listening.json"), serde_json::to_vec_pretty(&completed["meta"]).unwrap()).unwrap();
+                println!("PASS trained adapter listening sample: {duration} seconds, 20 steps");
+            }
             assert_eq!(client.post(format!("{base}/reload")).send().await.unwrap().status(),StatusCode::OK);
             assert_eq!(client.post(format!("{base}/unload")).send().await.unwrap().status(),StatusCode::OK);
             assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
             println!("PASS native lifecycle through public adapter: load, readiness, reload, unload");
             if registry.is_some() {
                 let selected = client.post(format!("http://127.0.0.1:{native_port}/models/select"))
-                    .json(&json!({"variant":"medium","encoding":"q4_k_m"})).send().await.unwrap();
+                    .json(&json!({"variant":if variant == "medium" { "small-music" } else { "medium" },"encoding":"q4_k_m"})).send().await.unwrap();
                 assert_eq!(selected.status(),StatusCode::OK,"medium test model components must be available");
                 let menu:Value = client.get(format!("{base}/loras")).send().await.unwrap().json().await.unwrap();
-                assert!(menu["loras"].as_array().unwrap().is_empty(),"small Koan adapter must be excluded from medium: {menu}");
-                let rejected = client.post(format!("{base}/transform")).json(&json!({"prompt":"tone","audio_data":source(1),"lora":"koan"})).send().await.unwrap();
+                assert!(menu["loras"].as_array().unwrap().is_empty(),"trained adapter must be excluded from incompatible model: {menu}");
+                let rejected = client.post(format!("{base}/transform")).json(&json!({"prompt":"tone","audio_data":source(1),"lora":lora_name})).send().await.unwrap();
                 assert_eq!(rejected.status(),StatusCode::BAD_REQUEST);
                 println!("PASS incompatible small adapter omitted and rejected for medium model");
             }

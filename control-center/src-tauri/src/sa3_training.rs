@@ -30,6 +30,173 @@ pub struct Options {
     pub prompt_config: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Checkpoint {
+    pub job_id: String,
+    pub step: u32,
+    pub epoch: Option<u32>,
+    pub path: String,
+    pub state_path: String,
+}
+
+fn runs(root: &Path, name: &str) -> Result<Vec<(PathBuf, Options)>, String> {
+    let jobs = root.join("sa3/training/jobs");
+    if !jobs.exists() {
+        return Ok(Vec::new());
+    }
+    let boundary = root.canonicalize().map_err(|error| error.to_string())?;
+    let jobs = jobs.canonicalize().map_err(|error| error.to_string())?;
+    if !jobs.starts_with(&boundary) {
+        return Err("Native job history escapes runtime storage".into());
+    }
+    let mut result = Vec::new();
+    for job in std::fs::read_dir(&jobs).map_err(|error| error.to_string())? {
+        let job = job.map_err(|error| error.to_string())?;
+        if !job.file_type().map_err(|error| error.to_string())?.is_dir() {
+            continue;
+        }
+        let path = job
+            .path()
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if path.parent() != Some(jobs.as_path()) {
+            return Err("Native job directory escapes history storage".into());
+        }
+        let options_path = path.join("native-options.json");
+        if !options_path.is_file() {
+            continue;
+        }
+        if options_path
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .parent()
+            != Some(path.as_path())
+        {
+            return Err("Native job settings escape their job directory".into());
+        }
+        let options: Options = serde_json::from_slice(
+            &std::fs::read(options_path).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        if options.name == name {
+            let run = path.join("run");
+            if run.is_dir() {
+                let run = run.canonicalize().map_err(|error| error.to_string())?;
+                if run.parent() != Some(path.as_path()) {
+                    return Err("Native run escapes its job directory".into());
+                }
+                result.push((run, options));
+            }
+        }
+    }
+    Ok(result)
+}
+
+pub fn dataset_for_checkpoint(
+    root: &Path,
+    name: &str,
+    source: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let source = source.canonicalize().map_err(|error| error.to_string())?;
+    Ok(runs(root, name)?
+        .into_iter()
+        .find(|(run, _)| source.parent() == Some(run.as_path()))
+        .map(|(_, options)| options.dataset))
+}
+
+pub fn checkpoints(root: &Path, name: &str) -> Result<Vec<Checkpoint>, String> {
+    let mut result = Vec::new();
+    for (run, _) in runs(root, name)? {
+        let mut epochs = std::collections::BTreeMap::new();
+        if let Ok(metrics) = std::fs::read_to_string(run.join("metrics.jsonl")) {
+            for line in metrics.lines() {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                    if let (Some(step), Some(epoch)) =
+                        (value["update"].as_u64(), value["epoch"].as_u64())
+                    {
+                        epochs.insert(step as u32, epoch as u32);
+                    }
+                }
+            }
+        }
+        for file in std::fs::read_dir(&run).map_err(|error| error.to_string())? {
+            let file = file.map_err(|error| error.to_string())?;
+            let filename = file.file_name();
+            let filename = filename.to_string_lossy();
+            let Some(step) = filename
+                .strip_prefix("adapter-step-")
+                .and_then(|name| name.strip_suffix(".gguf"))
+                .and_then(|step| step.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let state = run.join(format!("trainer-state-step-{step}.gguf"));
+            if !file.path().is_file() || !state.is_file() {
+                continue;
+            }
+            let adapter = file
+                .path()
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
+            let state = state.canonicalize().map_err(|error| error.to_string())?;
+            if adapter.parent() != Some(run.as_path()) || state.parent() != Some(run.as_path()) {
+                return Err("Native checkpoint pair escapes its training run".into());
+            }
+            result.push(Checkpoint {
+                job_id: run
+                    .parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into(),
+                step,
+                epoch: epochs.get(&step).copied(),
+                path: adapter.to_string_lossy().into(),
+                state_path: state.to_string_lossy().into(),
+            });
+        }
+    }
+    result.sort_by(|a, b| a.step.cmp(&b.step).then(a.job_id.cmp(&b.job_id)));
+    Ok(result)
+}
+
+pub async fn select_checkpoint(root: &Path, name: &str, requested: &Path) -> Result<(), String> {
+    let requested = requested
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let known = checkpoints(root, name)?
+        .iter()
+        .any(|checkpoint| Path::new(&checkpoint.path) == requested);
+    if !known {
+        return Err(
+            "Select a paired checkpoint from this native LoRA's managed training history".into(),
+        );
+    }
+    crate::sa3_loras::register_trained(root, name, &requested).await?;
+    Ok(())
+}
+
+pub fn resume_options(root: &Path, name: &str, requested: &Path) -> Result<Options, String> {
+    let requested = requested
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !checkpoints(root, name)?
+        .iter()
+        .any(|checkpoint| Path::new(&checkpoint.path) == requested)
+    {
+        return Err(
+            "Select a paired checkpoint from this native LoRA's managed training history".into(),
+        );
+    }
+    runs(root, name)?
+        .into_iter()
+        .find(|(run, _)| requested.parent() == Some(run.as_path()))
+        .map(|(_, options)| options)
+        .ok_or_else(|| "Original native training settings are unavailable".into())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Progress {
     pub schema_version: u32,
@@ -54,19 +221,40 @@ pub fn read_progress(path: &Path) -> Result<Progress, String> {
     Ok(progress)
 }
 
-fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
+pub(crate) fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    save_with_policy(path, value, true)
+}
+
+pub(crate) fn save_with_policy(
+    path: &Path,
+    value: &impl Serialize,
+    overwrite: bool,
+) -> Result<(), String> {
+    use std::io::Write;
     let stage = path.with_extension(format!(
         "json-{}-{}.tmp",
         std::process::id(),
         NEXT_JOB.fetch_add(1, Ordering::Relaxed)
     ));
-    let result = (|| {
-        std::fs::write(
-            &stage,
-            serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?,
-        )
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stage)
         .map_err(|error| error.to_string())?;
-        std::fs::rename(&stage, path).map_err(|error| error.to_string())
+    let result = (|| {
+        file.write_all(&serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+        if overwrite {
+            std::fs::rename(&stage, path).map_err(|error| error.to_string())
+        } else {
+            match publish_new(&stage, path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+                Err(error) => Err(error.to_string()),
+            }
+        }
     })();
     if stage.exists() {
         let _ = std::fs::remove_file(stage);
@@ -74,7 +262,27 @@ fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
     result
 }
 
-fn checked_folder(root: &Path, folders: &[&str]) -> Result<PathBuf, String> {
+#[cfg(windows)]
+fn publish_new(stage: &Path, dest: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+    let stage: Vec<u16> = stage.as_os_str().encode_wide().chain(Some(0)).collect();
+    let dest: Vec<u16> = dest.as_os_str().encode_wide().chain(Some(0)).collect();
+    // No REPLACE_EXISTING: preserve a curated pool created during caption scanning.
+    // A rename also works on custom FAT/exFAT storage without hard-link support.
+    if unsafe { MoveFileExW(stage.as_ptr(), dest.as_ptr(), MOVEFILE_WRITE_THROUGH) } != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(windows))]
+fn publish_new(stage: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(stage, dest)
+}
+
+pub(crate) fn checked_folder(root: &Path, folders: &[&str]) -> Result<PathBuf, String> {
     std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
     let boundary = root.canonicalize().map_err(|error| error.to_string())?;
     let mut path = boundary.clone();
@@ -515,6 +723,142 @@ impl Job {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn checkpoint_history_keeps_branches_and_selects_only_paired_owned_adapters() {
+        let root = std::env::temp_dir().join(format!(
+            "gary-native-history-{}",
+            NEXT_JOB.fetch_add(1, Ordering::Relaxed)
+        ));
+        let dataset = root.join("dataset");
+        std::fs::create_dir_all(&dataset).unwrap();
+        std::fs::write(dataset.join("a.txt"), "neurofunk, 172 bpm, F minor").unwrap();
+        let options = Options {
+            name: "history".into(),
+            dataset: dataset.clone(),
+            fixed_prompt: String::new(),
+            steps: 4,
+            rank: 16,
+            batch_size: 1,
+            checkpoint_every: 1,
+            duration: 47.0,
+            learning_rate: 1e-4,
+            target_latent_rms: 0.0,
+            layer_scope: "transformer-core".into(),
+            encoding: "F16".into(),
+            resume: None,
+            prompt_config: None,
+        };
+        let mut header = vec![0u8; 24];
+        header[..4].copy_from_slice(b"GGUF");
+        header[4..8].copy_from_slice(&3u32.to_le_bytes());
+        header[8..16].copy_from_slice(&1u64.to_le_bytes());
+        for job in ["branch-a", "branch-b"] {
+            let path = checked_folder(&root, &["sa3", "training", "jobs", job]).unwrap();
+            save(&path.join("native-options.json"), &options).unwrap();
+            let run = checked_folder(&root, &["sa3", "training", "jobs", job, "run"]).unwrap();
+            std::fs::write(run.join("adapter-step-2.gguf"), &header).unwrap();
+            std::fs::write(run.join("trainer-state-step-2.gguf"), &header).unwrap();
+            std::fs::write(run.join("adapter-step-3.gguf"), &header).unwrap();
+            std::fs::write(run.join("metrics.jsonl"), "{\"epoch\":1,\"update\":2}\n").unwrap();
+        }
+        let history = checkpoints(&root, "history").unwrap();
+        assert_eq!(
+            history.len(),
+            2,
+            "unpaired adapters are excluded; resumed branches are retained"
+        );
+        assert_eq!(history[0].epoch, Some(1));
+        assert_ne!(history[0].path, history[1].path);
+        let restored = resume_options(&root, "history", Path::new(&history[0].path)).unwrap();
+        assert_eq!(restored.dataset, options.dataset);
+        assert_eq!(restored.duration, options.duration);
+        assert_eq!(restored.encoding, options.encoding);
+        assert!(resume_options(&root, "another-name", Path::new(&history[0].path)).is_err());
+        select_checkpoint(&root, "history", Path::new(&history[0].path))
+            .await
+            .unwrap();
+        let catalog = crate::sa3_loras::state(&root).unwrap();
+        assert_eq!(catalog.entries[0].source_path, history[0].path);
+        assert_eq!(catalog.entries[0].training_checkpoints.len(), 2);
+        assert_eq!(
+            catalog.entries[0].prompts_path.as_deref(),
+            Some(dataset.to_str().unwrap())
+        );
+        let pool: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("sa3/prompts/history.json")).unwrap())
+                .unwrap();
+        assert_eq!(pool["dice"]["instrumental"], json!(["neurofunk"]));
+        let owned = root.join("sa3/training/jobs/branch-a/run/adapter-step-3.gguf");
+        assert!(select_checkpoint(&root, "history", &owned).await.is_err());
+        assert!(
+            select_checkpoint(&root, "another-name", Path::new(&history[0].path))
+                .await
+                .is_err()
+        );
+        std::fs::write(root.join("sa3/prompts/history.json"), b"curated").unwrap();
+        select_checkpoint(&root, "history", Path::new(&history[1].path))
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("sa3/prompts/history.json")).unwrap(),
+            b"curated"
+        );
+        assert!(Path::new(&history[0].path).is_file());
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "registers and selects checkpoints from an existing isolated real native training run"]
+    async fn real_native_checkpoint_history_and_prompts() {
+        let root = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_TRAIN_HISTORY_ROOT")
+                .expect("isolated training root required"),
+        );
+        let entries = crate::sa3_loras::read_catalog(&root).unwrap();
+        let entry = entries
+            .values()
+            .find(|entry| entry.name == "koan-native-validation")
+            .unwrap();
+        let original_source = PathBuf::from(&entry.source_path);
+        let original_hash = crate::native_runtime::sha256_file(&original_source)
+            .await
+            .unwrap();
+        crate::sa3_loras::register_trained(&root, &entry.name, &original_source)
+            .await
+            .unwrap();
+        let history = checkpoints(&root, &entry.name).unwrap();
+        assert!(
+            history.len() >= 3,
+            "cancelled and resumed checkpoints retained: {history:?}"
+        );
+        select_checkpoint(&root, &entry.name, Path::new(&history[0].path))
+            .await
+            .unwrap();
+        assert_eq!(
+            crate::sa3_loras::read_catalog(&root).unwrap()[&entry.name].source_path,
+            history[0].path
+        );
+        crate::sa3_loras::register_trained(&root, &entry.name, &original_source)
+            .await
+            .unwrap();
+        let prompts: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("sa3/prompts/koan-native-validation.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(prompts["source"]["files"], 42);
+        assert!(!prompts["dice"]["instrumental"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            crate::native_runtime::sha256_file(&original_source)
+                .await
+                .unwrap(),
+            original_hash
+        );
+        println!("PASS real native checkpoint branches, selection, source preservation and caption prompt registration");
+    }
+
     #[test]
     fn progress_schema_and_settings_are_validated() {
         let root =
@@ -562,19 +906,44 @@ mod tests {
         let dataset = PathBuf::from(
             std::env::var_os("GARY4LOCAL_SA3_TRAIN_DATASET").expect("dataset required"),
         );
+        let encoding =
+            std::env::var("GARY4LOCAL_SA3_TRAIN_ENCODING").unwrap_or_else(|_| "F16".into());
+        let duration = std::env::var("GARY4LOCAL_SA3_TRAIN_DURATION")
+            .ok()
+            .map(|value| value.parse::<f64>().unwrap())
+            .unwrap_or(47.0);
         assert!(
             !root.exists(),
             "test must not overwrite an existing storage root"
         );
         let target = sa3_models::checked_models_dir(&root).unwrap();
         for id in [
-            "sa3-native::text",
-            "sa3-native::medium-decoder",
-            "sa3-native::medium-base-F16",
+            "sa3-native::text".into(),
+            "sa3-native::medium-decoder".into(),
+            format!("sa3-native::medium-base-{encoding}"),
         ] {
-            for file in &sa3_models::component(id).unwrap().files {
+            for file in &sa3_models::component(&id).unwrap().files {
                 std::fs::hard_link(models.join(&file.filename), target.join(&file.filename))
                     .unwrap();
+            }
+        }
+        if let Some(source) =
+            std::env::var_os("GARY4LOCAL_SA3_TRAIN_CACHE_SOURCE").map(PathBuf::from)
+        {
+            let decoder_hash = &sa3_models::component("sa3-native::medium-decoder")
+                .unwrap()
+                .files
+                .iter()
+                .find(|file| file.filename.contains("same-l"))
+                .unwrap()
+                .sha256;
+            let leaf = format!("medium-F32-{}-rms0", &decoder_hash[..12]);
+            let cache =
+                checked_folder(&root, &["sa3", "training", "native-latents", &leaf]).unwrap();
+            for file in std::fs::read_dir(source).unwrap() {
+                let file = file.unwrap();
+                assert!(file.file_type().unwrap().is_file());
+                std::fs::copy(file.path(), cache.join(file.file_name())).unwrap();
             }
         }
         let mut originals = Vec::new();
@@ -590,16 +959,16 @@ mod tests {
         let options = Options {
             name: "koan-native-validation".into(),
             dataset: dataset.clone(),
-            fixed_prompt: String::new(),
+            fixed_prompt: std::env::var("GARY4LOCAL_SA3_TRAIN_FIXED_PROMPT").unwrap_or_default(),
             steps: 8,
             rank: 16,
             batch_size: 1,
             checkpoint_every: 1,
-            duration: 47.0,
+            duration,
             learning_rate: 1e-4,
             target_latent_rms: 0.0,
             layer_scope: "transformer-core".into(),
-            encoding: "F16".into(),
+            encoding,
             resume: None,
             prompt_config: None,
         };

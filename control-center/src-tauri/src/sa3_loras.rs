@@ -27,6 +27,10 @@ pub struct NativeLora {
     pub native_sha256: Option<String>,
     pub strength: f64,
     pub error: Option<String>,
+    #[serde(default)]
+    pub prompts_path: Option<String>,
+    #[serde(default)]
+    pub training_checkpoints: Vec<crate::sa3_training::Checkpoint>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -171,6 +175,13 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
         std::fs::rename(stage, &dest).map_err(|error| error.to_string())?;
     }
     let mut entries = read_catalog(root)?;
+    let previous = entries.get(name);
+    let strength = previous.map_or(1.0, |entry| entry.strength);
+    let mut prompts_path = previous.and_then(|entry| entry.prompts_path.clone());
+    if let Some(dataset) = crate::sa3_training::dataset_for_checkpoint(root, name, source)? {
+        prompts_path = Some(dataset.to_string_lossy().into());
+        crate::sa3_prompts::build(root, name, &dataset, false)?;
+    }
     entries.insert(
         name.into(),
         NativeLora {
@@ -182,8 +193,10 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
             converter_sha256: None,
             native_path: Some(dest.to_string_lossy().into()),
             native_sha256: Some(hash),
-            strength: 1.0,
+            strength,
             error: None,
+            prompts_path,
+            training_checkpoints: crate::sa3_training::checkpoints(root, name)?,
         },
     );
     save_catalog(root, &entries)?;
@@ -257,6 +270,8 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
             native_sha256: None,
             strength: source.strength,
             error: None,
+            prompts_path: source.prompts_path.clone(),
+            training_checkpoints: Vec::new(),
         });
         // The Python checkpoint selection may have changed since preparation.
         // Preserve its converted revision in storage but show the pending source.
@@ -268,8 +283,15 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
             entry.error = None;
         }
         entry.strength = source.strength;
+        entry.prompts_path = source.prompts_path;
     }
     for entry in entries.values_mut() {
+        if Path::new(&entry.source_path)
+            .extension()
+            .is_some_and(|ext| ext == "gguf")
+        {
+            entry.training_checkpoints = crate::sa3_training::checkpoints(root, &entry.name)?;
+        }
         if entry
             .native_path
             .as_ref()
@@ -565,6 +587,8 @@ mod tests {
             native_sha256: None,
             strength: 0.8,
             error: None,
+            prompts_path: None,
+            training_checkpoints: Vec::new(),
         }
     }
 

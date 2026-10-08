@@ -6,6 +6,7 @@ mod sa3_adapter;
 mod sa3_loras;
 mod sa3_migration;
 mod sa3_models;
+mod sa3_prompts;
 mod sa3_training;
 mod service_manager;
 mod storage;
@@ -5925,6 +5926,8 @@ pub fn run() {
             get_sa3_native_model_catalog,
             get_sa3_native_lora_state,
             prepare_sa3_native_loras,
+            select_sa3_native_checkpoint,
+            get_sa3_native_resume_options,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -8593,69 +8596,33 @@ async fn build_sa3_lora_prompts(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3PromptsBuildResult, String> {
     let initial_state = build_sa3_lora_state(repo_root.inner())?;
-    let python_exe = repo_root
-        .join("services")
-        .join("sa3")
-        .join("env")
-        .join("Scripts")
-        .join("python.exe");
-    if !python_exe.exists() {
-        return Err("SA3 must be built before prompts can be generated.".to_string());
-    }
-
-    let script_path = repo_root
-        .join("services")
-        .join("sa3")
-        .join("build_lora_prompts.py");
-    if !script_path.exists() {
-        return Err(format!("Missing {}", script_path.display()));
-    }
-
-    std::fs::create_dir_all(sa3_prompts_dir())
-        .map_err(|e| format!("Cannot create {}: {}", sa3_prompts_dir().display(), e))?;
-
-    let mut outputs = Vec::new();
+    let mut sources = BTreeMap::new();
     for entry in &initial_state.entries {
-        if !entry.registered || entry.caption_count == 0 {
-            continue;
+        if entry.registered && entry.caption_count > 0 {
+            if let Some(path) = &entry.resolved_prompts_path {
+                sources.insert(entry.name.clone(), PathBuf::from(path));
+            }
         }
-        let Some(source_path) = entry.resolved_prompts_path.as_ref() else {
-            continue;
-        };
-
-        let mut cmd = tokio::process::Command::new(&python_exe);
-        hide_console_window(&mut cmd);
-        cmd.arg(&script_path)
-            .arg("--name")
-            .arg(&entry.name)
-            .arg("--captions-dir")
-            .arg(source_path)
-            .arg("--out-dir")
-            .arg(sa3_prompts_dir())
-            .arg("--force")
-            .current_dir(repo_root.join("services").join("sa3"));
-
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run build_lora_prompts.py: {}", e))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let combined_output = match (stdout.is_empty(), stderr.is_empty()) {
-            (false, false) => format!("{}\n{}", stdout, stderr),
-            (false, true) => stdout,
-            (true, false) => stderr,
-            (true, true) => format!("{}: no output", entry.name),
-        };
-        if !output.status.success() {
-            return Err(combined_output);
+    }
+    for entry in sa3_loras::state(repo_root.inner())?.entries {
+        if let Some(path) = entry.prompts_path {
+            sources.insert(entry.name, PathBuf::from(path));
         }
-        outputs.push(combined_output);
     }
-
-    if outputs.is_empty() {
-        outputs.push("No registered SA3 LoRAs with txt sidecars were found.".to_string());
-    }
+    let root = repo_root.inner().clone();
+    let outputs = tauri::async_runtime::spawn_blocking(move || {
+        sources
+            .into_iter()
+            .map(|(name, dataset)| sa3_prompts::build(&root, &name, &dataset, true))
+            .collect::<Result<Vec<_>, String>>()
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let outputs = if outputs.is_empty() {
+        vec!["No registered SA3 LoRAs with txt sidecars were found.".into()]
+    } else {
+        outputs
+    };
 
     ensure_default_sa3_prompts(repo_root.inner())?;
     let state = build_sa3_lora_state(repo_root.inner())?;
@@ -9742,6 +9709,56 @@ async fn get_sa3_native_lora_state(
     tauri::async_runtime::spawn_blocking(move || sa3_loras::state(&root))
         .await
         .map_err(|error| format!("Cannot read native SA3 adapters: {error}"))?
+}
+
+#[tauri::command]
+async fn select_sa3_native_checkpoint(
+    name: String,
+    checkpoint: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(
+            "Restart to use your chosen storage before selecting a native checkpoint.".into(),
+        );
+    }
+    {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot select a native checkpoint: {blocker}."));
+        }
+        services.begin_native_workload(
+            "sa3",
+            "checkpoint-selection",
+            "SA3 checkpoint selection",
+        )?;
+    }
+    let result =
+        sa3_training::select_checkpoint(repo_root.inner(), &name, Path::new(&checkpoint)).await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "checkpoint-selection");
+    let state = sa3_loras::state(repo_root.inner())?;
+    let _ = app_handle.emit("sa3-native-loras-updated", &state);
+    result?;
+    Ok(state)
+}
+
+#[tauri::command]
+async fn get_sa3_native_resume_options(
+    name: String,
+    checkpoint: String,
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<sa3_training::Options, String> {
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        sa3_training::resume_options(&root, &name, Path::new(&checkpoint))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

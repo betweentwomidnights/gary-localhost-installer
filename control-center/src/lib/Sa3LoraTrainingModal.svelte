@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import Sa3DatasetSidecarModal from "./Sa3DatasetSidecarModal.svelte";
+  import { recommendQuantizedSa3Training, type Sa3TrainingHardware } from "./sa3NativeTraining";
   import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
 
   interface Sa3LoraTrainingState {
@@ -81,10 +82,8 @@
   let rank = $state(16);
   let batchSize = $state(1);
   let checkpointEvery = $state(500);
-  // Full-track training (spark / stable-audio-3 default): train each clip whole,
-  // starting at its downbeat, so the model keeps its native duration/bpm =>
-  // seamless-loop behavior. 380s clamps to the model's native 4096 latent
-  // tokens. Turn off to train shorter random crops on low-VRAM cards.
+  // Use the native 3072-token training window. Shorter tracks are padded;
+  // tracks longer than the window use a random crop in both trainers.
   let fullTrack = $state(true);
   // 285.35s = the model's real native length (3072 latent tokens). The model
   // config's "380s" is wrong per the Spark notes; 380 would pad every clip out to
@@ -102,7 +101,46 @@
   let trainer = $state("python");
   let nativeInstalled = $state(false);
   let nativeEncoding = $state("F16");
-  let resumeLast = $state(false);
+  let nativeEncodingTouched = $state(false);
+  let smallCudaGpu = $state(false);
+  let resumeCheckpoint = $state("");
+  let loadingResume = $state(false);
+  let nativeHistory = $state<{ name: string; trainingCheckpoints: { path: string; step: number; jobId: string }[] }[]>([]);
+  let resumeChoices = $derived.by(() => {
+    const choices = nativeHistory.flatMap((entry) => entry.trainingCheckpoints.map((checkpoint) => ({ ...checkpoint, name: entry.name })));
+    if (trainingState.runtime === "sa3.cpp" && trainingState.resumeCheckpointPath && trainingState.name && !choices.some((choice) => choice.path === trainingState.resumeCheckpointPath)) {
+      choices.push({ name: trainingState.name, path: trainingState.resumeCheckpointPath, step: trainingState.currentStep ?? 0, jobId: trainingState.jobId ?? "last run" });
+    }
+    return choices;
+  });
+
+  async function chooseResume() {
+    error = null;
+    if (!resumeCheckpoint) return;
+    const choice = resumeChoices.find((choice) => choice.path === resumeCheckpoint);
+    if (!choice) { error = "Refresh native checkpoint history before resuming."; return; }
+    loadingResume = true;
+    try {
+      const options = await invoke<{ name: string; dataset: string; fixedPrompt: string; steps: number; rank: number; batchSize: number; checkpointEvery: number; duration: number; learningRate: number; targetLatentRms: number; layerScope: string; encoding: string }>("get_sa3_native_resume_options", { name: choice.name, checkpoint: choice.path });
+      formName = options.name;
+      nameNotice = null;
+      datasetPath = options.dataset;
+      fixedPrompt = options.fixedPrompt;
+      maxSteps = Math.max(options.steps, choice.step + 1);
+      rank = options.rank;
+      batchSize = options.batchSize;
+      checkpointEvery = options.checkpointEvery;
+      fullTrack = Math.abs(options.duration - FULL_TRACK_CROP_SECONDS) < 0.001;
+      latentCropSeconds = options.duration;
+      learningRateText = String(options.learningRate);
+      loudnessFixEnabled = options.targetLatentRms !== 0;
+      targetLatentRms = options.targetLatentRms || 0.9;
+      layerScope = options.layerScope;
+      nativeEncoding = options.encoding;
+      nativeEncodingTouched = true;
+    } catch (cause) { error = describeError(cause); resumeCheckpoint = ""; }
+    finally { loadingResume = false; }
+  }
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -221,7 +259,11 @@
 
   async function loadTrainingState() {
     try {
+      const previousStatus = trainingState.status;
       trainingState = await invoke<Sa3LoraTrainingState>("get_sa3_lora_training_state");
+      if (previousStatus !== trainingState.status && !["starting", "running"].includes(trainingState.status)) {
+        nativeHistory = (await invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state")).entries;
+      }
     } catch (e) {
       error = describeError(e);
     }
@@ -247,7 +289,7 @@
     error = null;
     autoScrollLog = true;
     try {
-      if (!resumeLast && !(await checkNameAvailability(true))) return;
+      if (!resumeCheckpoint && !(await checkNameAvailability(true))) return;
       trainingState = await invoke<Sa3LoraTrainingState>("start_sa3_lora_training", {
         name: formName,
         datasetPath,
@@ -263,7 +305,7 @@
         layerScope,
         runtime: trainer,
         nativeEncoding,
-        resumeCheckpoint: resumeLast ? trainingState.resumeCheckpointPath : null,
+        resumeCheckpoint: trainer === "native" ? resumeCheckpoint || null : null,
       });
       shouldRevealLog = true;
       await revealLogOutput();
@@ -297,6 +339,7 @@
       serviceStatus !== "running" &&
       !starting &&
       !cancelling &&
+      !loadingResume &&
       !isTraining &&
       !!formName.trim() &&
       !!datasetPath.trim() &&
@@ -314,10 +357,18 @@
   );
 
   $effect(() => {
+    if (!nativeEncodingTouched && !resumeCheckpoint) nativeEncoding = smallCudaGpu && fullTrack ? "Q4_K_M" : "F16";
+  });
+
+  $effect(() => {
     if (!open) return;
     void loadTrainingState();
-    void invoke<{ installed: boolean }>("get_native_runtime_info", { serviceId: "sa3" })
-      .then((info) => { nativeInstalled = info.installed; }).catch((cause) => { error = describeError(cause); });
+    void invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state").then((state) => nativeHistory = state.entries).catch((cause) => error = describeError(cause));
+    void invoke<Sa3TrainingHardware & { installed: boolean }>("get_native_runtime_info", { serviceId: "sa3" })
+      .then((info) => {
+        nativeInstalled = info.installed;
+        smallCudaGpu = recommendQuantizedSa3Training(info);
+      }).catch((cause) => { error = describeError(cause); });
     void invoke<{ id: string; runtime: string }[]>("get_services").then((services) => {
       if (services.find((service) => service.id === "sa3")?.runtime === "native") trainer = "native";
     }).catch((cause) => { error = describeError(cause); });
@@ -397,14 +448,14 @@
       <div class="section-label">trainer</div>
       <div class="form-grid">
         <label class="field"><span>Runtime</span>
-          <select bind:value={trainer} disabled={isTraining || starting} onchange={() => resumeLast = false}>
+          <select bind:value={trainer} disabled={isTraining || starting || loadingResume} onchange={() => resumeCheckpoint = ""}>
             <option value="python">Python</option>
             <option value="native">C++ — migration validation</option>
           </select>
         </label>
         {#if trainer === "native"}
           <label class="field"><span>Training base precision</span>
-            <select bind:value={nativeEncoding} disabled={isTraining || starting}>
+            <select bind:value={nativeEncoding} disabled={isTraining || starting || loadingResume} onchange={() => nativeEncodingTouched = true}>
               <option value="F16">F16</option><option value="Q4_K_M">Q4_K_M</option>
             </select>
           </label>
@@ -412,10 +463,15 @@
       </div>
       {#if trainer === "native"}
         <div class="body">Prepare native models in storage settings first. C++ training requires a release with progress and cooperative cancellation support. Originals, datasets and the Python service are preserved.</div>
+        {#if smallCudaGpu && fullTrack}<div class="body">Q4_K_M is recommended for full-track training on this GPU. F16 may exceed available GPU memory and run much slower. Generation model precision is selected separately.</div>{/if}
         {#if !nativeInstalled}<div class="warning">Prepare SA3's C++ runtime in storage settings.</div>{/if}
-        {#if trainingState.runtime === "sa3.cpp" && trainingState.resumeCheckpointPath && !isTraining}
-          <label class="field"><span><input type="checkbox" bind:checked={resumeLast} onchange={() => { if (resumeLast && trainingState.name) formName = trainingState.name; }} /> Resume the last native checkpoint</span>
-            <small>Use the original dataset and training settings. Steps is the new total target.</small>
+        {#if resumeChoices.length && !isTraining}
+          <label class="field"><span>Resume native training</span>
+            <select bind:value={resumeCheckpoint} disabled={starting || loadingResume} onchange={() => void chooseResume()}>
+              <option value="">Start a new LoRA</option>
+              {#each resumeChoices as choice (choice.path)}<option value={choice.path}>{choice.name} · step {choice.step} · {choice.jobId}</option>{/each}
+            </select>
+            <small>Selecting a checkpoint restores its original dataset and settings. Steps is the new total target.</small>
           </label>
         {/if}
       {/if}
@@ -434,7 +490,7 @@
             bind:value={formName}
             placeholder="my-style"
             oninput={() => nameNotice = null}
-            onblur={() => { if (!resumeLast) void checkNameAvailability(); }}
+            onblur={() => { if (!resumeCheckpoint) void checkNameAvailability(); }}
           />
           {#if nameNotice}<small class="name-notice">{nameNotice}</small>{/if}
         </label>
@@ -479,14 +535,14 @@
           <input type="checkbox" bind:checked={fullTrack} />
           <span>
             <strong>train on full tracks</strong>
-            <small>trains each clip whole (up to ~380s) from its downbeat, matching the stable-audio-3 defaults — best for seamless loops and bpm-accurate lengths. Uses more VRAM; turn off to train shorter random crops on smaller cards.</small>
+            <small>uses a 285.35-second training window. Shorter tracks are padded; longer tracks use a random crop. Uses more VRAM; turn off to use shorter crops on smaller cards.</small>
           </span>
         </label>
         {#if !fullTrack}
           <label class="field">
             <span>crop seconds</span>
             <input type="number" min="1" step="1" bind:value={latentCropSeconds} />
-            <small>random crop length. Shorter = less VRAM, but loops start mid-beat.</small>
+            <small>random crop length. Shorter crops use less VRAM.</small>
           </label>
         {/if}
         <label class="field">

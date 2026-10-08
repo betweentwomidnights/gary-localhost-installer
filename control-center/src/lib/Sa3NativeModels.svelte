@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import { recommendQuantizedSa3Training, type Sa3TrainingHardware } from "./sa3NativeTraining";
 
   interface Component {
     id: string;
@@ -28,6 +29,7 @@
   let encoding = $state("F16");
   let includeTraining = $state(true);
   let trainingBase = $state("F16");
+  let trainingBaseTouched = $state(false);
   let busy = $state(false);
   let removing: string | null = $state(null);
   let error: string | null = $state(null);
@@ -63,6 +65,9 @@
       catalog = entries;
       models = statuses;
       progress = downloads;
+    }).catch((cause) => { if (!disposed) error = String(cause); });
+    void invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId: "sa3" }).then((info) => {
+      if (!disposed && !trainingBaseTouched && recommendQuantizedSa3Training(info)) trainingBase = "Q4_K_M";
     }).catch((cause) => { if (!disposed) error = String(cause); });
     return () => { disposed = true; for (const listener of listeners) void listener.then((stop) => stop()); };
   });
@@ -114,7 +119,7 @@
     <label class="checkbox"><input type="checkbox" bind:checked={includeTraining} disabled={busy || downloading || pendingRestart} /> Include LoRA training base</label>
     {#if includeTraining}
       <label>Training precision
-        <select bind:value={trainingBase} disabled={busy || downloading || pendingRestart}>
+        <select bind:value={trainingBase} disabled={busy || downloading || pendingRestart} onchange={() => trainingBaseTouched = true}>
           <option value="F16">F16 — default</option>
           <option value="Q4_K_M">Q4_K_M — smaller base</option>
         </select>

@@ -8,6 +8,8 @@
     sourcePath: string;
     nativePath: string | null;
     error: string | null;
+    promptsPath: string | null;
+    trainingCheckpoints: { jobId: string; step: number; epoch: number | null; path: string; statePath: string }[];
   }
   interface NativeLoraState {
     entries: NativeLora[];
@@ -22,6 +24,7 @@
   let error: string | null = $state(null);
   let message: string | null = $state(null);
   let disposed = false;
+  let selected: Record<string, string> = $state({});
 
   async function refresh() {
     const result = await invoke<NativeLoraState>("get_sa3_native_lora_state");
@@ -61,6 +64,19 @@
     try { await invoke("reveal_path", { path }); }
     catch (cause) { error = String(cause); }
   }
+
+  async function selectCheckpoint(entry: NativeLora) {
+    const checkpoint = selected[entry.name];
+    if (!checkpoint) return;
+    busy = true;
+    error = null;
+    message = null;
+    try {
+      loraState = await invoke<NativeLoraState>("select_sa3_native_checkpoint", { name: entry.name, checkpoint });
+      message = `Selected checkpoint for ${entry.name}. Training originals are preserved.`;
+    } catch (cause) { error = String(cause); }
+    finally { busy = false; }
+  }
 </script>
 
 <section aria-label="SA3 native adapters">
@@ -75,6 +91,20 @@
         <div class="row"><span>{entry.name}</span><span>{entry.nativePath && !entry.error ? "prepared" : "needs preparation"}</span></div>
         <button type="button" class="path" onclick={() => reveal(entry.sourcePath)} title="Show original adapter">{entry.sourcePath}</button>
         {#if entry.nativePath}<button type="button" class="path" onclick={() => entry.nativePath && reveal(entry.nativePath)} title="Show native copy">{entry.nativePath}</button>{/if}
+        {#if entry.trainingCheckpoints.length}
+          <div class="checkpoints">
+            <label>Training checkpoint
+              <select bind:value={selected[entry.name]} disabled={busy || loraState.preparing || pendingRestart}>
+                <option value="">Choose a checkpoint</option>
+                {#each entry.trainingCheckpoints as checkpoint (checkpoint.path)}
+                  <option value={checkpoint.path}>step {checkpoint.step}{checkpoint.epoch === null ? "" : ` · epoch ${checkpoint.epoch}`} · {checkpoint.jobId}{checkpoint.path === entry.sourcePath ? " · selected" : ""}</option>
+                {/each}
+              </select>
+            </label>
+            <button type="button" onclick={() => selectCheckpoint(entry)} disabled={busy || loraState.preparing || pendingRestart || !selected[entry.name]}>use checkpoint</button>
+          </div>
+        {/if}
+        {#if entry.promptsPath}<p>Caption prompts: {entry.promptsPath}</p>{/if}
         {#if entry.error}<p class="error">{entry.error}</p>{/if}
       </div>
     {/each}
@@ -94,6 +124,9 @@
   button:disabled { opacity: 0.5; cursor: default; }
   .entry { margin-top: 12px; font-size: 12px; }
   .row { display: flex; justify-content: space-between; gap: 12px; }
+  .checkpoints { display: flex; align-items: end; gap: 8px; margin-top: 8px; }
+  label { flex: 1; min-width: 0; }
+  select { display: block; width: 100%; margin-top: 4px; background: var(--bg-secondary, #222); border: 1px solid var(--border, #444); color: inherit; padding: 6px; border-radius: 6px; }
   .path { display: block; text-align: left; border: none; background: transparent; padding: 4px 0; color: var(--text-secondary, #aaa); overflow-wrap: anywhere; width: 100%; }
   .path:hover { text-decoration: underline; }
   .error { color: var(--error, #f99); overflow-wrap: anywhere; }
