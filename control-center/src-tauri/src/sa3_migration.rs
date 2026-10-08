@@ -245,19 +245,10 @@ pub async fn verify_native(
                 entry.name
             ));
         }
-        if let Some(path) = &entry.config_path {
-            if crate::native_runtime::sha256_file(Path::new(path))
-                .await?
-                .as_str()
-                != entry.config_sha256.as_deref().unwrap_or("")
-            {
-                return Err(format!(
-                    "LoRA '{}' configuration changed since preparation; prepare it again",
-                    entry.name
-                ));
-            }
-        }
+        crate::sa3_loras::verify_legacy_export(root, &entry).await?;
+        crate::sa3_loras::verify_source_config(&entry).await?;
     }
+    crate::sa3_loras::verify_legacy_history(root).await?;
     progress("Starting the private native test server...");
     let dir = crate::sa3_training::checked_folder(root, &["sa3", "migration-checks"])?;
     let nonce = std::time::SystemTime::now()

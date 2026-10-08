@@ -11,6 +11,21 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 
+// Vendored from sa3.cpp/tools/lora_ckpt_export.py. Keep the two files identical;
+// the script's content hash is recorded with each one-time legacy export.
+const LEGACY_EXPORTER: &str = include_str!("sa3_helpers/lora_ckpt_export.py");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyExport {
+    pub source_sha256: String,
+    pub exporter_sha256: String,
+    pub safetensors_path: String,
+    pub safetensors_sha256: String,
+    pub config_path: String,
+    pub config_sha256: String,
+}
+
 static PREPARATION: Mutex<()> = Mutex::const_new(());
 static NEXT_STAGE: AtomicU64 = AtomicU64::new(0);
 
@@ -31,6 +46,8 @@ pub struct NativeLora {
     pub prompts_path: Option<String>,
     #[serde(default)]
     pub training_checkpoints: Vec<crate::sa3_training::Checkpoint>,
+    #[serde(default)]
+    pub legacy_export: Option<LegacyExport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -197,6 +214,7 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
             error: None,
             prompts_path,
             training_checkpoints: crate::sa3_training::checkpoints(root, name)?,
+            legacy_export: None,
         },
     );
     save_catalog(root, &entries)?;
@@ -272,6 +290,7 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
             error: None,
             prompts_path: source.prompts_path.clone(),
             training_checkpoints: Vec::new(),
+            legacy_export: None,
         });
         // The Python checkpoint selection may have changed since preparation.
         // Preserve its converted revision in storage but show the pending source.
@@ -358,6 +377,292 @@ fn config_for_source(entry: &NativeLora) -> Result<Option<PathBuf>, String> {
     Err("Adapter has no embedded LoRA configuration or matching JSON sidecar. Export its configuration before migration.".into())
 }
 
+/// Validate exported copies separately from the original checkpoint. A missing
+/// or damaged copy can be rebuilt while Python still exists; a redirected path
+/// is rejected rather than opened outside managed adapter storage.
+async fn verified_export(root: &Path, export: &LegacyExport) -> Result<bool, String> {
+    let dir = checked_adapters_dir(root)?.join("legacy-exports");
+    let mut complete = true;
+    for (path, hash) in [
+        (&export.safetensors_path, &export.safetensors_sha256),
+        (&export.config_path, &export.config_sha256),
+    ] {
+        let path = Path::new(path);
+        if !path.starts_with(&dir)
+            || path
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err("Legacy export points outside managed adapter storage.".into());
+        }
+        if !path.is_file() {
+            complete = false;
+            continue;
+        }
+        let boundary = dir.canonicalize().map_err(|error| error.to_string())?;
+        if !boundary.starts_with(checked_adapters_dir(root)?)
+            || !path
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+                .starts_with(&boundary)
+        {
+            return Err("Legacy export points outside managed adapter storage.".into());
+        }
+        if sha256_file(path).await? != *hash {
+            complete = false;
+        }
+    }
+    Ok(complete)
+}
+
+pub async fn verify_legacy_export(root: &Path, entry: &NativeLora) -> Result<(), String> {
+    if Path::new(&entry.source_path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ckpt"))
+        && entry.legacy_export.is_none()
+    {
+        return Err(format!(
+            "LoRA '{}' has no verified legacy export; prepare it again",
+            entry.name
+        ));
+    }
+    if let Some(export) = &entry.legacy_export {
+        if entry.source_sha256.as_deref() != Some(&export.source_sha256)
+            || !verified_export(root, export).await?
+        {
+            return Err(format!(
+                "LoRA '{}' legacy export changed; prepare it again",
+                entry.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn cached_legacy_export(
+    root: &Path,
+    previous: Option<&LegacyExport>,
+    source_hash: &str,
+) -> Result<Option<LegacyExport>, String> {
+    // A verified previous export remains usable after environment cleanup and
+    // across app updates. New exports record the current helper's exact hash.
+    if let Some(export) = previous {
+        if export.source_sha256 == source_hash && verified_export(root, export).await? {
+            return Ok(Some(export.clone()));
+        }
+    }
+    // Check older selected checkpoints too. Switching away from an adapter
+    // must not make its previously exported revision depend on Python again.
+    let adapters = checked_adapters_dir(root)?;
+    let exports = adapters.join("legacy-exports");
+    if exports.is_dir() {
+        let boundary = exports.canonicalize().map_err(|error| error.to_string())?;
+        if !boundary.starts_with(&adapters) {
+            return Err("Legacy export storage points outside managed adapter storage.".into());
+        }
+        let mut candidates = std::fs::read_dir(&exports)
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("export.json"))
+            .collect::<Vec<_>>();
+        candidates.sort();
+        for path in candidates {
+            let Ok(resolved) = path.canonicalize() else {
+                continue;
+            };
+            if !resolved.starts_with(&boundary)
+                || resolved.metadata().map_or(true, |info| info.len() > 65536)
+            {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(&resolved) else {
+                continue;
+            };
+            let Ok(export) = serde_json::from_slice::<LegacyExport>(&bytes) else {
+                continue;
+            };
+            if export.source_sha256 == source_hash && verified_export(root, &export).await? {
+                return Ok(Some(export));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Cleanup must retain the ability to select every older checkpoint, including
+/// CKPT history whose currently selected adapter is already safetensors.
+pub async fn verify_legacy_history(root: &Path) -> Result<(), String> {
+    let history = crate::read_sa3_lora_catalog_from(&root.join("sa3/lora_catalog.json"))?;
+    for (name, legacy) in history {
+        for path in std::iter::once(legacy.path).chain(
+            legacy
+                .training_checkpoints
+                .into_iter()
+                .map(|checkpoint| checkpoint.path),
+        ) {
+            let source = Path::new(&path);
+            if source
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ckpt"))
+            {
+                let hash = sha256_file(source).await?;
+                if cached_legacy_export(root, None, &hash).await?.is_none() {
+                    return Err(format!("LoRA '{name}' has a legacy checkpoint without a verified export: {path}. Prepare adapters before migration."));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Verify an automatically discovered sidecar too, not only explicitly selected
+/// configuration files. CKPT exports carry their configuration in the cache.
+pub async fn verify_source_config(entry: &NativeLora) -> Result<(), String> {
+    let extension = Path::new(&entry.source_path)
+        .extension()
+        .unwrap_or_default();
+    let config = if extension.eq_ignore_ascii_case("safetensors") {
+        config_for_source(entry)?
+    } else if extension.eq_ignore_ascii_case("ckpt") {
+        entry.config_path.as_ref().map(PathBuf::from)
+    } else {
+        None
+    };
+    let hash = match config {
+        Some(path) => Some(sha256_file(&path).await?),
+        None => None,
+    };
+    if hash != entry.config_sha256 {
+        return Err(format!(
+            "LoRA '{}' configuration changed since preparation; prepare it again",
+            entry.name
+        ));
+    }
+    Ok(())
+}
+
+async fn export_legacy_checkpoint(
+    root: &Path,
+    entry: &mut NativeLora,
+    source: &Path,
+    source_hash: &str,
+) -> Result<PathBuf, String> {
+    if let Some(export) =
+        cached_legacy_export(root, entry.legacy_export.as_ref(), source_hash).await?
+    {
+        let input = PathBuf::from(&export.safetensors_path);
+        entry.legacy_export = Some(export);
+        return Ok(input);
+    }
+    let adapters = checked_adapters_dir(root)?;
+    let python = root.join("services/sa3/env/Scripts/python.exe");
+    if !python.is_file() {
+        return Err("This .ckpt needs the existing SA3 Python environment for a one-time export. The original is preserved. Prepare it before removing that environment, or import a safetensors export.".into());
+    }
+    let dir =
+        crate::sa3_training::checked_folder(root, &["sa3", "native-loras", "legacy-exports"])?;
+    let nonce = NEXT_STAGE.fetch_add(1, Ordering::Relaxed);
+    let exporter_hash = format!("{:x}", Sha256::digest(LEGACY_EXPORTER.as_bytes()));
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(format!("{source_hash}:{exporter_hash}"))
+    );
+    let stage = dir.join(format!(".export-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&stage)
+        .map_err(|error| format!("Cannot reserve legacy export: {error}"))?;
+    let _cleanup = ConversionStage {
+        path: stage.clone(),
+        boundary: dir.clone(),
+    };
+    let script = stage.join("exporter.py");
+    std::fs::write(&script, LEGACY_EXPORTER).map_err(|error| error.to_string())?;
+    let mut cmd = tokio::process::Command::new(python);
+    cmd.arg("-I")
+        .arg(&script)
+        .arg("--ckpt")
+        .arg(source)
+        .arg("--out")
+        .arg(stage.join("adapter"))
+        .env("CUDA_VISIBLE_DEVICES", "")
+        .env("PYTHONIOENCODING", "utf-8")
+        .current_dir(&stage)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    crate::workload_job::configure_tokio_command(&mut cmd);
+    let mut child = cmd
+        .spawn()
+        .map_err(|error| format!("Cannot start legacy checkpoint export: {error}"))?;
+    if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    let result = child
+        .wait_with_output()
+        .await
+        .map_err(|error| error.to_string())?;
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    crate::sa3_training::save(
+        &adapters.join(format!("legacy-export-{}.json", entry.name)),
+        &serde_json::json!({"source":source,"success":result.status.success(),"output":output}),
+    )?;
+    if !result.status.success() {
+        let detail = output
+            .lines()
+            .rev()
+            .take(8)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "Legacy checkpoint export failed ({}): {detail}. The original is preserved.",
+            result.status
+        ));
+    }
+    let tensors = stage.join("adapter.safetensors");
+    let config = stage.join("adapter.json");
+    if !embedded_config(&tensors)? {
+        return Err("Legacy export has no embedded adapter configuration.".into());
+    }
+    let config_value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if !config_value
+        .as_object()
+        .is_some_and(|config| !config.is_empty())
+    {
+        return Err("Legacy export has an invalid adapter configuration.".into());
+    }
+    if sha256_file(source).await? != source_hash {
+        return Err("Original checkpoint changed during export; prepare it again.".into());
+    }
+    let dest = dir.join(format!(
+        "ckpt-{}-{}-{nonce}",
+        &digest[..24],
+        std::process::id()
+    ));
+    let export = LegacyExport {
+        source_sha256: source_hash.into(),
+        exporter_sha256: exporter_hash,
+        safetensors_path: dest.join("adapter.safetensors").to_string_lossy().into(),
+        safetensors_sha256: sha256_file(&tensors).await?,
+        config_path: dest.join("adapter.json").to_string_lossy().into(),
+        config_sha256: sha256_file(&config).await?,
+    };
+    crate::sa3_training::save(&stage.join("export.json"), &export)?;
+    std::fs::rename(&stage, &dest)
+        .map_err(|error| format!("Cannot publish legacy export: {error}"))?;
+    let path = PathBuf::from(&export.safetensors_path);
+    entry.legacy_export = Some(export);
+    Ok(path)
+}
+
 async fn convert_one(
     root: &Path,
     entry: &mut NativeLora,
@@ -389,8 +694,24 @@ async fn convert_one(
     let source = Path::new(&entry.source_path)
         .canonicalize()
         .map_err(|error| format!("Cannot read original adapter: {error}"))?;
-    let config = config_for_source(entry)?;
     let source_hash = sha256_file(&source).await?;
+    let previous_export_hash = entry
+        .legacy_export
+        .as_ref()
+        .map(|export| export.safetensors_sha256.clone());
+    let (input, config) = if source
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ckpt"))
+    {
+        let input = export_legacy_checkpoint(root, entry, &source, &source_hash).await?;
+        let mut exported = entry.clone();
+        exported.source_path = input.to_string_lossy().into();
+        (input, config_for_source(&exported)?)
+    } else {
+        entry.legacy_export = None;
+        (source.clone(), config_for_source(entry)?)
+    };
+    let input_hash = sha256_file(&input).await?;
     let config_hash = match &config {
         Some(path) => Some(sha256_file(path).await?),
         None => None,
@@ -398,6 +719,7 @@ async fn convert_one(
     if entry.source_sha256.as_deref() == Some(&source_hash)
         && entry.config_sha256 == config_hash
         && entry.converter_sha256.as_deref() == Some(converter_hash)
+        && (entry.legacy_export.is_none() || previous_export_hash.as_deref() == Some(&input_hash))
     {
         if let (Some(path), Some(hash)) = (&entry.native_path, &entry.native_sha256) {
             if Path::new(path).is_file() && sha256_file(Path::new(path)).await? == *hash {
@@ -407,13 +729,18 @@ async fn convert_one(
         }
     }
     let dir = checked_adapters_dir(root)?;
-    let digest = format!(
-        "{:x}",
-        Sha256::digest(format!(
+    let revision = if entry.legacy_export.is_some() {
+        format!(
+            "v2:{source_hash}:{input_hash}:{}:{converter_hash}",
+            config_hash.as_deref().unwrap_or("embedded")
+        )
+    } else {
+        format!(
             "v1:{source_hash}:{}:{converter_hash}",
             config_hash.as_deref().unwrap_or("embedded")
-        ))
-    );
+        )
+    };
+    let digest = format!("{:x}", Sha256::digest(revision));
     let dest = dir.join(format!("lora-{}-{}-f32.gguf", entry.name, &digest[..24]));
     // Each conversion uses a unique unpublished file, never overwriting an
     // adapter a queued job may still open. Old revisions remain recoverable.
@@ -433,7 +760,7 @@ async fn convert_one(
     };
     let mut cmd = tokio::process::Command::new(converter);
     cmd.arg("--safetensors")
-        .arg(&source)
+        .arg(&input)
         .arg("--out")
         .arg(&stage)
         .current_dir(converter.parent().ok_or("Invalid native converter path")?)
@@ -493,11 +820,19 @@ async fn convert_one(
         Some(path) => Some(sha256_file(path).await?),
         None => None,
     };
-    if sha256_file(&source).await? != source_hash || current_config_hash != config_hash {
+    if sha256_file(&source).await? != source_hash
+        || sha256_file(&input).await? != input_hash
+        || current_config_hash != config_hash
+    {
         let _ = crate::remove_managed_path(&stage, &dir);
         return Err(
             "Original adapter or configuration changed during conversion; prepare it again.".into(),
         );
+    }
+    if let Some(export) = &entry.legacy_export {
+        if export.source_sha256 != source_hash || !verified_export(root, export).await? {
+            return Err("Legacy export changed during native conversion; prepare it again.".into());
+        }
     }
     let native_hash = sha256_file(&stage).await?;
     if let Some(old_hash) = entry
@@ -542,12 +877,44 @@ pub async fn prepare(
         .into_iter()
         .map(|entry| (entry.name.clone(), entry))
         .collect();
+    let history = crate::read_sa3_lora_catalog_from(&root.join("sa3/lora_catalog.json"))?;
     let converter_hash = sha256_file(converter).await?;
     let names: Vec<_> = entries.keys().cloned().collect();
     for name in names {
         let entry = entries.get_mut(&name).unwrap();
-        if let Err(error) = convert_one(root, entry, converter, &converter_hash, runtime_path).await
-        {
+        let result = async {
+            if let Some(legacy) = history.get(&name) {
+                for checkpoint in &legacy.training_checkpoints {
+                    let path = Path::new(&checkpoint.path);
+                    if path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("ckpt"))
+                    {
+                        let path = path.canonicalize().map_err(|error| {
+                            format!(
+                                "Cannot read original checkpoint at step {}: {error}",
+                                checkpoint.step
+                            )
+                        })?;
+                        let hash = sha256_file(&path).await?;
+                        let mut historical = entry.clone();
+                        historical.config_path = None;
+                        historical.legacy_export = None;
+                        export_legacy_checkpoint(root, &mut historical, &path, &hash)
+                            .await
+                            .map_err(|error| {
+                                format!(
+                                    "Cannot preserve legacy checkpoint at step {}: {error}",
+                                    checkpoint.step
+                                )
+                            })?;
+                    }
+                }
+            }
+            convert_one(root, entry, converter, &converter_hash, runtime_path).await
+        }
+        .await;
+        if let Err(error) = result {
             // Keep an older good revision in storage, but do not advertise it
             // as the newly selected source's successfully prepared checkpoint.
             entry.native_path = None;
@@ -589,6 +956,7 @@ mod tests {
             error: None,
             prompts_path: None,
             training_checkpoints: Vec::new(),
+            legacy_export: None,
         }
     }
 
@@ -684,6 +1052,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_exports_survive_selection_changes_without_python_and_reject_tampering() {
+        let root = root("legacy-cache");
+        let dir = crate::sa3_training::checked_folder(
+            &root,
+            &["sa3", "native-loras", "legacy-exports", "old-revision"],
+        )
+        .unwrap();
+        let original = root.join("original.ckpt");
+        std::fs::write(&original, b"original checkpoint preserved").unwrap();
+        let tensors = dir.join("adapter.safetensors");
+        safetensors(
+            &tensors,
+            serde_json::json!({"__metadata__":{"lora_config":"{\"rank\":16}"}}),
+        );
+        let config = dir.join("adapter.json");
+        std::fs::write(&config, b"{\"rank\":16}").unwrap();
+        let source_hash = sha256_file(&original).await.unwrap();
+        let export = LegacyExport {
+            source_sha256: source_hash.clone(),
+            exporter_sha256: "older-audited-exporter".into(),
+            safetensors_path: tensors.to_string_lossy().into(),
+            safetensors_sha256: sha256_file(&tensors).await.unwrap(),
+            config_path: config.to_string_lossy().into(),
+            config_sha256: sha256_file(&config).await.unwrap(),
+        };
+        crate::sa3_training::save(&dir.join("export.json"), &export).unwrap();
+        let mut adapter = entry(&original);
+        let input = export_legacy_checkpoint(&root, &mut adapter, &original, &source_hash)
+            .await
+            .unwrap();
+        assert_eq!(input, tensors);
+        adapter.source_sha256 = Some(source_hash.clone());
+        verify_legacy_export(&root, &adapter).await.unwrap();
+        assert!(!root.join("services/sa3/env").exists());
+        std::fs::write(&config, b"changed").unwrap();
+        assert!(verify_legacy_export(&root, &adapter)
+            .await
+            .unwrap_err()
+            .contains("changed"));
+        assert!(
+            export_legacy_checkpoint(&root, &mut adapter, &original, &source_hash)
+                .await
+                .unwrap_err()
+                .contains("one-time export")
+        );
+        assert_eq!(sha256_file(&original).await.unwrap(), source_hash);
+        adapter.legacy_export.as_mut().unwrap().safetensors_path =
+            original.to_string_lossy().into();
+        assert!(verify_legacy_export(&root, &adapter)
+            .await
+            .unwrap_err()
+            .contains("outside"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn automatically_discovered_sidecar_changes_block_migration() {
+        let root = root("sidecar-integrity");
+        let source = root.join("original.safetensors");
+        safetensors(&source, serde_json::json!({"tensor":{}}));
+        let config = source.with_extension("json");
+        std::fs::write(&config, b"{\"rank\":16}").unwrap();
+        let mut adapter = entry(&source);
+        adapter.config_sha256 = Some(sha256_file(&config).await.unwrap());
+        assert!(adapter.config_path.is_none());
+        verify_source_config(&adapter).await.unwrap();
+        std::fs::write(&config, b"{\"rank\":32}").unwrap();
+        assert!(verify_source_config(&adapter)
+            .await
+            .unwrap_err()
+            .contains("changed"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn unavailable_converter_does_not_leave_partial_output() {
         let root = root("spawn-failure");
         let source = root.join("original.safetensors");
@@ -708,6 +1151,142 @@ mod tests {
             .next()
             .is_none());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "uses a real legacy checkpoint and a junction to an existing Python environment"]
+    async fn real_legacy_checkpoint_export_conversion_and_repair_without_python() {
+        let converter = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_LORA_CONVERTER").expect("converter path required"),
+        );
+        let root = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_LEGACY_SMOKE_ROOT")
+                .expect("isolated fixture root required"),
+        );
+        assert!(
+            root.join("legacy-export-fixture.json").is_file(),
+            "isolated fixture marker required"
+        );
+        assert!(
+            !catalog_path(&root).exists(),
+            "fresh native catalog required"
+        );
+        let source = root.join("original.ckpt");
+        let source_hash = sha256_file(&source).await.unwrap();
+        let historical = root.join("earlier.ckpt");
+        let historical_hash = sha256_file(&historical).await.unwrap();
+        checked_adapters_dir(&root).unwrap();
+        let legacy_catalog = root.join("sa3/lora_catalog.json");
+        std::fs::write(
+            &legacy_catalog,
+            serde_json::json!({"koan":{"path":source,"strength":0.8,"trainingCheckpoints":[{"step":1000,"epoch":1,"path":historical}]}}).to_string(),
+        )
+        .unwrap();
+        let original_catalog = std::fs::read(&legacy_catalog).unwrap();
+        assert!(verify_legacy_history(&root)
+            .await
+            .unwrap_err()
+            .contains("without a verified export"));
+        let first = prepare(&root, &converter, None, |_| {}).await.unwrap();
+        let adapter = first.entries.first().unwrap();
+        assert!(adapter.error.is_none(), "{:?}", adapter.error);
+        assert_eq!(adapter.source_sha256.as_ref(), Some(&source_hash));
+        let export = adapter.legacy_export.as_ref().unwrap();
+        assert!(verified_export(&root, export).await.unwrap());
+        let native = PathBuf::from(adapter.native_path.as_ref().unwrap());
+        validate_gguf(&native).unwrap();
+        let native_hash = sha256_file(&native).await.unwrap();
+        let native_modified = native.metadata().unwrap().modified().unwrap();
+        let exported_modified = Path::new(&export.safetensors_path)
+            .metadata()
+            .unwrap()
+            .modified()
+            .unwrap();
+        let env = root.join("services/sa3/env");
+        let retained = root.join("services/sa3/env-retained");
+        assert!(
+            !env.canonicalize()
+                .unwrap()
+                .starts_with(root.canonicalize().unwrap()),
+            "fixture must use a junction, not a copied user environment"
+        );
+        assert!(!retained.exists());
+        // Rename only the fixture junction; the environment it targets is untouched.
+        std::fs::rename(&env, &retained).unwrap();
+        assert!(!env.exists());
+        let second = prepare(&root, &converter, None, |_| {}).await.unwrap();
+        assert!(
+            second.entries[0].error.is_none(),
+            "{:?}",
+            second.entries[0].error
+        );
+        assert_eq!(
+            native.metadata().unwrap().modified().unwrap(),
+            native_modified
+        );
+        assert_eq!(
+            Path::new(&export.safetensors_path)
+                .metadata()
+                .unwrap()
+                .modified()
+                .unwrap(),
+            exported_modified
+        );
+        std::fs::write(&native, b"damaged native cache").unwrap();
+        let repaired = prepare(&root, &converter, None, |_| {}).await.unwrap();
+        assert!(
+            repaired.entries[0].error.is_none(),
+            "{:?}",
+            repaired.entries[0].error
+        );
+        assert_eq!(sha256_file(&native).await.unwrap(), native_hash);
+        // Lost selected-source metadata can recover an older immutable export.
+        let mut reset = entry(&source);
+        reset.name = "koan".into();
+        save_catalog(&root, &BTreeMap::from([("koan".into(), reset)])).unwrap();
+        let recovered = prepare(&root, &converter, None, |_| {}).await.unwrap();
+        assert!(
+            recovered.entries[0].error.is_none(),
+            "{:?}",
+            recovered.entries[0].error
+        );
+        assert_eq!(
+            recovered.entries[0].native_sha256.as_deref(),
+            Some(native_hash.as_str())
+        );
+        assert_eq!(sha256_file(&source).await.unwrap(), source_hash);
+        assert_eq!(std::fs::read(&legacy_catalog).unwrap(), original_catalog);
+        assert_eq!(sha256_file(&historical).await.unwrap(), historical_hash);
+        verify_legacy_history(&root).await.unwrap();
+        let historical_export = cached_legacy_export(&root, None, &historical_hash)
+            .await
+            .unwrap()
+            .unwrap();
+        let original_config = std::fs::read(&historical_export.config_path).unwrap();
+        std::fs::write(
+            &historical_export.config_path,
+            b"changed historical configuration",
+        )
+        .unwrap();
+        assert!(verify_legacy_history(&root)
+            .await
+            .unwrap_err()
+            .contains("without a verified export"));
+        std::fs::write(&historical_export.config_path, original_config).unwrap();
+        assert!(
+            !std::fs::read_dir(adapters_dir(&root).join("legacy-exports"))
+                .unwrap()
+                .any(|item| item
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".export-"))
+        );
+        println!(
+            "Verified legacy checkpoint and native cache without Python: {}",
+            native.display()
+        );
+        std::fs::rename(&retained, &env).unwrap();
     }
 
     #[tokio::test]

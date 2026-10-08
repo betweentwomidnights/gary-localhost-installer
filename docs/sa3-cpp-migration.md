@@ -333,9 +333,24 @@ only while the shared native bundle is idle. Runtime replacement/removal is
 blocked while conversion runs, and pending storage restart blocks preparation.
 
 Exported `.safetensors` can carry embedded `lora_config`, as Gary's trainer
-already emits, or use a matching JSON sidecar. Legacy `.ckpt` sources currently
-report the need for a safetensors export and remain untouched. One-time export
-support must be implemented before their Python environment can be retired.
+already emits, or use a matching JSON sidecar. Legacy `.ckpt` sources now use
+a one-time CPU export through the existing SA3 Python environment, before that
+environment is retired. The host bundles the audited upstream exporter rather
+than importing Gary's model code. The helper uses restricted tensor-only loading,
+requires a JSON-compatible LoRA config, embeds it in safetensors, retains integer
+tensor types, and refuses to replace existing outputs. Unsupported pickles report
+an error; there is no unrestricted loading fallback.
+
+Exports live in immutable folders under `sa3/native-loras/legacy-exports`, with
+original-checkpoint, helper, safetensors and configuration hashes. Preparation
+exports all registered CKPT training history, including older checkpoints whose
+currently selected adapter is safetensors. The original files and legacy catalog
+are unchanged. Switching back to an older checkpoint can rediscover its verified
+cache without Python. A missing/corrupt native GGUF can also be repaired using
+that cache after environment removal. A changed checkpoint or damaged exported
+source needs a new export while Python still exists; it blocks migration if the
+environment is unavailable. Activation verifies every legacy historical export
+and automatically discovered configuration sidecars as well as selected adapters.
 
 The host adapter exposes the legacy `/loras` and `/prompts` endpoints. It maps
 registered logical names to their exact converted revision and keeps native
@@ -574,10 +589,22 @@ passed public adapter load/readiness before stopping. They use the local
 compatibility build, a developer override and isolated storage, rather than
 a published compatible package or the user's live desktop profile.
 
-141 regular Rust tests pass, with nine explicit integration tests excluded.
-Frontend checks/build pass. The cleanup transaction, legacy checkpoint export,
-native decoder adapter integration, Python helper retirement, published-package
-validation and joint desktop/client validation remain outstanding.
+Legacy checkpoint validation passed with the published native converter and
+two CKPT fixtures reconstructed from the real Koan safetensors adapter (579
+adapter tensors); these are format fixtures, not original user CKPTs. Under
+`artifacts/sa3-migration/legacy-export-smoke-2`, both selected and historical
+checkpoints were exported, the fixture's Python junction was temporarily renamed,
+and cache reuse, GGUF repair and old-export rediscovery passed without Python.
+Original checkpoint hashes and legacy catalog bytes stayed unchanged. Tampering
+with a historical exported configuration blocked migration. The junction was
+restored; the actual Python environment was never changed. Three upstream tests
+also passed for tensor/config preservation, output collisions, invalid inputs and
+rejected pickle execution.
+
+143 regular Rust tests pass, with ten explicit integration tests excluded.
+Frontend checks/build pass. The cleanup transaction, native decoder adapter
+integration, Python helper retirement, published-package validation and joint
+desktop/client validation remain outstanding.
 
 ## Validation before enabling cleanup
 

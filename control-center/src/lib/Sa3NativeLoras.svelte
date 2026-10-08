@@ -111,7 +111,7 @@
   {:else if loraState}
     <p>No registered LoRAs to prepare. Add an exported adapter in the SA3 LoRA manager.</p>
   {/if}
-  <p>Legacy .ckpt adapters need a safetensors export. Preparation records any conversion gaps; cleanup remains unavailable until those are resolved.</p>
+  <p>Legacy .ckpt adapters are exported using your existing SA3 Python environment. Prepare them before cleanup; cached copies remain usable afterward. Originals and training history are preserved.</p>
   {#if message}<p role="status">{message}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
