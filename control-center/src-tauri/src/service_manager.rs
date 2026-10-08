@@ -62,6 +62,9 @@ pub struct ServiceManager {
     running: HashMap<String, RunningService>,
     errors: HashMap<String, String>,
     build_statuses: HashMap<String, BuildStatus>,
+    /// Native tools such as training/conversion also hold bundle files open.
+    /// Keep those users visible to installation and storage maintenance.
+    native_workloads: HashMap<String, HashMap<String, String>>,
 }
 
 fn health_check_interval(
@@ -130,6 +133,7 @@ impl ServiceManager {
             running: HashMap::new(),
             errors: HashMap::new(),
             build_statuses: HashMap::new(),
+            native_workloads: HashMap::new(),
         }
     }
 
@@ -146,26 +150,126 @@ impl ServiceManager {
     fn env_dir(&self, svc: &ServiceDef) -> PathBuf {
         match svc.runtime {
             ServiceRuntime::Python => self.service_dir(svc).join("env"),
-            ServiceRuntime::Native => self.service_dir(svc).join(native_runtime::NATIVE_DIR),
+            ServiceRuntime::Native => self.native_dir(svc),
+        }
+    }
+
+    fn native_dir(&self, svc: &ServiceDef) -> PathBuf {
+        match svc
+            .native
+            .as_ref()
+            .and_then(|native| native.bundle.as_deref())
+        {
+            Some(bundle) => self
+                .services_dir()
+                .join(bundle)
+                .join(native_runtime::NATIVE_DIR),
+            None => self.service_dir(svc).join(native_runtime::NATIVE_DIR),
+        }
+    }
+
+    pub fn native_dir_for(&self, service_id: &str) -> Option<PathBuf> {
+        let svc = self.find_service(service_id)?;
+        svc.native.as_ref()?;
+        Some(self.native_dir(svc))
+    }
+
+    fn bundle_consumers(&self, svc: &ServiceDef) -> Vec<&ServiceDef> {
+        let dir = self.native_dir(svc);
+        self.services
+            .iter()
+            .filter(|candidate| candidate.native.is_some() && self.native_dir(candidate) == dir)
+            .collect()
+    }
+
+    /// Called under the manager lock before reserving an install/removal.
+    pub fn native_mutation_blocker(&self, service_id: &str) -> Option<String> {
+        let svc = self.find_service(service_id)?;
+        for consumer in self.bundle_consumers(svc) {
+            if consumer.runtime == ServiceRuntime::Native && self.is_running(&consumer.id) {
+                return Some(format!("stop {} first", consumer.display_name));
+            }
+            if self.is_building(&consumer.id) {
+                return Some(format!(
+                    "wait for {}'s install to finish",
+                    consumer.display_name
+                ));
+            }
+        }
+        if let Some(workloads) = self
+            .native_workloads
+            .get(&self.native_dir(svc).to_string_lossy().to_string())
+        {
+            if let Some(label) = workloads.values().next() {
+                return Some(format!("wait for {label} to finish"));
+            }
+        }
+        None
+    }
+
+    /// Reserve a bundle for a trainer/converter before spawning it, and release
+    /// on process exit (including failure/cancellation). Concurrent readers are
+    /// fine, but installers must see every reservation.
+    pub fn begin_native_workload(
+        &mut self,
+        service_id: &str,
+        job: &str,
+        label: &str,
+    ) -> Result<(), String> {
+        let svc = self
+            .find_service(service_id)
+            .ok_or_else(|| format!("Unknown service: {service_id}"))?;
+        if svc.native.is_none() {
+            return Err(format!("{service_id} has no native runtime"));
+        }
+        for consumer in self.bundle_consumers(svc) {
+            if self.is_building(&consumer.id) {
+                return Err(format!(
+                    "Wait for {}'s install to finish",
+                    consumer.display_name
+                ));
+            }
+        }
+        let key = self.native_dir(svc).to_string_lossy().to_string();
+        self.native_workloads
+            .entry(key)
+            .or_default()
+            .insert(job.to_string(), label.to_string());
+        Ok(())
+    }
+
+    pub fn end_native_workload(&mut self, service_id: &str, job: &str) {
+        let Some(dir) = self.native_dir_for(service_id) else {
+            return;
+        };
+        let key = dir.to_string_lossy().to_string();
+        if let Some(workloads) = self.native_workloads.get_mut(&key) {
+            workloads.remove(job);
+            if workloads.is_empty() {
+                self.native_workloads.remove(&key);
+            }
         }
     }
 
     fn native_install(&self, svc: &ServiceDef) -> Option<NativeInstall> {
         let native = svc.native.as_ref()?;
-        native_runtime::installed(&svc.id, &self.env_dir(svc), &native.executable)
+        native_runtime::installed(&svc.id, &self.native_dir(svc), &native.executable)
     }
 
     /// A native service's definition and install folder, for the UI.
     pub fn native_service(&self, service_id: &str) -> Option<(NativeDef, PathBuf)> {
         let svc = self.find_service(service_id)?;
-        Some((svc.native.clone()?, self.env_dir(svc)))
+        Some((svc.native.clone()?, self.native_dir(svc)))
     }
 
     /// The service's env with every template resolved except
     /// `${NATIVE_BACKEND}`, which depends on the runtime installed.
     fn native_env_template(&self, svc: &ServiceDef) -> Vec<(String, String)> {
-        svc.env
-            .iter()
+        let mut env = svc.env.clone();
+        if let Some(native) = &svc.native {
+            env.extend(native.env.clone());
+        }
+        env.iter()
             .map(|(key, value)| (key.clone(), self.resolve_env_var(value)))
             .collect()
     }
@@ -365,7 +469,9 @@ impl ServiceManager {
                 let pid = running.and_then(|r| r.process.id().into());
                 let healthy = running.map(|r| r.healthy).unwrap_or(false);
                 let error = self.errors.get(&svc.id).cloned();
-                let native_install = self.native_install(svc);
+                let native_install = (svc.runtime == ServiceRuntime::Native)
+                    .then(|| self.native_install(svc))
+                    .flatten();
                 let env_exists = match svc.runtime {
                     ServiceRuntime::Python => self
                         .env_dir(svc)
@@ -590,6 +696,14 @@ impl ServiceManager {
     /// Launch a native service's executable from its installed runtime, with
     /// the backend it was installed for and any shared runtime on PATH.
     fn start_native(&mut self, svc: &ServiceDef) -> Result<(), String> {
+        for consumer in self.bundle_consumers(svc) {
+            if self.is_building(&consumer.id) {
+                return Err(format!(
+                    "Wait for {}'s runtime install to finish.",
+                    consumer.display_name
+                ));
+            }
+        }
         let native = svc
             .native
             .as_ref()
@@ -723,17 +837,9 @@ impl ServiceManager {
             .ok_or_else(|| format!("Unknown service: {}", service_id))?;
 
         if svc.runtime == ServiceRuntime::Native {
-            if self
-                .build_statuses
-                .get(service_id)
-                .is_some_and(|b| b.building)
-            {
-                return Err(format!("{} is already installing", service_id));
-            }
-            // Its DLLs are locked while it runs, so the swap would fail halfway.
-            if self.running.contains_key(service_id) {
+            if let Some(reason) = self.native_mutation_blocker(service_id) {
                 return Err(format!(
-                    "Stop {} before reinstalling its runtime.",
+                    "Cannot install {}'s runtime: {reason}.",
                     svc.display_name
                 ));
             }
@@ -753,6 +859,29 @@ impl ServiceManager {
         }
 
         Ok(self.build_info_for(svc))
+    }
+
+    /// Install the native candidate alongside a legacy Python environment,
+    /// without switching the service or deleting any Python files.
+    pub fn get_native_build_info(&self, service_id: &str) -> Result<BuildInfo, String> {
+        let svc = self
+            .find_service(service_id)
+            .ok_or_else(|| format!("Unknown service: {service_id}"))?;
+        if svc.native.is_none() {
+            return Err(format!("{service_id} has no native definition"));
+        }
+        if let Some(reason) = self.native_mutation_blocker(service_id) {
+            return Err(format!(
+                "Cannot install {}'s runtime: {reason}.",
+                svc.display_name
+            ));
+        }
+        let mut info = self.build_info_for(svc);
+        info.runtime = ServiceRuntime::Native;
+        info.env_dir = self.native_dir(svc);
+        info.native_runtimes = self.native_runtimes.clone();
+        info.service_env = self.native_env_template(svc);
+        Ok(info)
     }
 
     fn build_info_for(&self, svc: &ServiceDef) -> BuildInfo {
@@ -998,6 +1127,103 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shared_native_manager() -> ServiceManager {
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let native = manifest
+            .services
+            .iter()
+            .find(|svc| svc.id == "sa3")
+            .unwrap()
+            .native
+            .clone()
+            .unwrap();
+        for svc in &mut manifest.services {
+            if ["sa3", "stable-audio", "foundation"].contains(&svc.id.as_str()) {
+                svc.native = Some(native.clone());
+                svc.runtime = ServiceRuntime::Native;
+            }
+        }
+        let mut manager = ServiceManager::new(manifest.services, PathBuf::from("C:/test-runtime"));
+        manager.set_native_runtimes(manifest.native_runtimes);
+        manager
+    }
+
+    #[test]
+    fn stable_audio_services_share_a_bundle_but_yuey_keeps_its_own_ggml() {
+        let manager = shared_native_manager();
+        assert_eq!(
+            manager.native_dir_for("sa3"),
+            manager.native_dir_for("foundation")
+        );
+        assert_eq!(
+            manager.native_dir_for("sa3"),
+            manager.native_dir_for("stable-audio")
+        );
+        assert_ne!(
+            manager.native_dir_for("sa3"),
+            manager.native_dir_for("yuey")
+        );
+        assert_eq!(manager.env_dir_for("sa3"), manager.native_dir_for("sa3"));
+    }
+
+    #[test]
+    fn installing_one_consumer_blocks_other_installers_launches_and_tools() {
+        let mut manager = shared_native_manager();
+        manager.set_build_started("foundation", 5);
+        assert!(manager.get_native_build_info("sa3").is_err());
+        assert!(manager.get_build_info("stable-audio").is_err());
+        assert!(manager.start("sa3").unwrap_err().contains("install"));
+        assert!(manager
+            .begin_native_workload("sa3", "trainer", "SA3 training")
+            .is_err());
+        assert!(manager.get_native_build_info("yuey").is_ok());
+        manager.set_build_done("foundation", None);
+        assert!(manager.get_native_build_info("sa3").is_ok());
+    }
+
+    #[test]
+    fn native_tools_keep_the_bundle_reserved_until_their_last_job_exits() {
+        let mut manager = shared_native_manager();
+        manager
+            .begin_native_workload("sa3", "trainer", "SA3 training")
+            .unwrap();
+        manager
+            .begin_native_workload("foundation", "converter", "adapter conversion")
+            .unwrap();
+        assert!(manager.get_native_build_info("stable-audio").is_err());
+        manager.end_native_workload("sa3", "trainer");
+        assert!(manager.native_mutation_blocker("foundation").is_some());
+        manager.end_native_workload("foundation", "converter");
+        assert!(manager.native_mutation_blocker("sa3").is_none());
+    }
+
+    #[test]
+    fn preparing_native_does_not_replace_the_python_environment_path() {
+        let mut manager = shared_native_manager();
+        manager
+            .services
+            .iter_mut()
+            .find(|svc| svc.id == "sa3")
+            .unwrap()
+            .runtime = ServiceRuntime::Python;
+        let python = manager.env_dir_for("sa3").unwrap();
+        let candidate = manager.get_native_build_info("sa3").unwrap();
+        assert_eq!(python, PathBuf::from("C:/test-runtime/services/sa3/env"));
+        assert_eq!(
+            candidate.env_dir,
+            PathBuf::from("C:/test-runtime/services/sa3/native")
+        );
+        assert_eq!(candidate.runtime, ServiceRuntime::Native);
+        assert_eq!(manager.env_dir_for("sa3").unwrap(), python);
+        assert!(candidate
+            .service_env
+            .iter()
+            .any(|(key, value)| key == "SA3_PORT" && value == "18006"));
+    }
 
     fn health(interval_seconds: u64, startup_grace_seconds: u64) -> HealthCheck {
         HealthCheck {

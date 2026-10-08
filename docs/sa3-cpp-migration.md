@@ -92,14 +92,14 @@ training parity. Do not treat either as a migration validation marker.
 
 ## Shared install design for three services
 
-The current native installer uses `services/<id>/native`. Before adding Jerry
-or Foundation as native services, introduce a bundle identity (e.g. `sa3`) so
-one version/backend installation supplies separate `sa3-server` and `sat-server`
-processes. Track consumers independently. Serialize bundle install/update/removal
-and block replacement while any consumer or training process uses its binaries.
-Retain service-specific ports, settings and model directories. Share the CUDA
-pack across all GGML projects; keep Yuey's ggml DLLs in its own bundle because
-its ABI/version need not match SA3's.
+The native installer supports `services/<bundle>/native` alongside the existing
+service-specific path. The SA3 bundle supplies separate `sa3-server` and
+`sat-server` processes with one version/backend installation. Consumer state
+and bundle reservations are tracked independently; Jerry and Foundation still
+need their own native manifest and API/model integration. Retain service-specific
+ports, settings and model directories. Share the CUDA pack across all GGML
+projects; keep Yuey's ggml DLLs in its own bundle because its ABI/version need
+not match SA3's.
 
 For SA3 initial defaults, use an unquantized DiT on supported hardware, guided
 by measurements on the RTX 5070 Laptop. Do not interpret "full precision" as
@@ -133,6 +133,51 @@ selection for smaller hardware and validate training with the chosen base.
    retired Python source. UV cache cleanup remains explicit and optional because
    other Python services still consume it.
 
+## Shared runtime preparation implemented
+
+The manifest now pins the published v0.1.1 core, CUDA and Vulkan archives once
+in `nativeBundles.sa3`. A service references this bundle and supplies its own
+executable, arguments and native environment overrides. SA3 remains selected as
+a Python service while its native candidate can be prepared beside it. Jerry
+and Foundation are not wired to the bundle yet; tests exercise their future
+shared paths and reservations without changing their active manifests.
+
+Storage settings provides **prepare SA3 runtime** with build/download progress,
+failure details and the installed version/backend. Pending storage restart
+blocks preparation. Prepared native runtimes appear separately from Python
+environments in storage maintenance, while a shared bundle is counted once.
+Its stamp keeps the shared CUDA pack protected even before native switchover.
+
+Native installs now probe the staging candidate before swapping it into place.
+A failed probe preserves the installed runtime. Install/removal operations
+serialize shared package mutations; a bundle cannot be installed or removed
+while a native consumer, registered trainer/converter, or consumer build uses
+it. The workload reservations still need connecting to the native training and
+conversion process lifecycle when those host commands are implemented.
+
+The production installer was exercised headlessly with the published archives,
+without a package/build override, in an isolated validation root:
+`artifacts/sa3-migration/runtime`. It verified all hashes, installed the shared
+`cudart-12.8` pack, selected CUDA automatically, and probed the RTX 5070 Laptop
+GPU (7.9 GiB) successfully. The bundle includes SA3/SAT servers, trainer and
+adapter converter. The active Python installation was not changed. This
+release's `--props` does not include a precision recommendation; the candidate
+explicitly selects F16 DiT, F16 text and F32 AE pending model measurements.
+
+Reproduce the explicit package validation from `control-center/src-tauri`:
+
+```powershell
+$env:GARY4LOCAL_SA3_SMOKE_ROOT = 'C:/dev/gary-localhost-installer/artifacts/sa3-migration/runtime'
+cargo test --lib installs_published_sa3_bundle -- --ignored --nocapture
+```
+
+The regular Rust suite passed 111 tests (two explicit network/GPU checks
+ignored). The published install test separately passed. Three offline release
+pin tests ensure updating a bundle leaves consumers and unrelated package pins
+unchanged and refuses an incomplete checksum set without writing. Frontend
+checks/build passed. Native model setup, client shim, training integration and
+destructive migration remain outstanding.
+
 ## First host validation dataset
 
 The user selected `~/Downloads/koan_dset`, resolved on this laptop to
@@ -153,9 +198,9 @@ missing-model job failure without downloading weights. A separate tiny real-mode
 CPU continuation smoke check passed using existing small-music GGUFs: native
 48 kHz resampling, exact output length, measured splice metadata, and both normal
 and consume polling. It is a transport check, not audio-quality validation.
-No GPU inference/training,
-native switchover, destructive cleanup, release publication or release pinning
-has been performed in this slice.
+The subsequent preparation slice pins and probes the published v0.1.1 bundle
+as described above. No GPU model inference/training, native switchover,
+destructive cleanup or release publication has been performed yet.
 
 - Fresh/default/legacy/custom roots; pending restart; HF overrides; redirected
   paths; low disk; interrupted downloads; retry; partial cleanup failures.

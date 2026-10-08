@@ -823,7 +823,11 @@
     })();
 
     const unlisten = listen<ServiceInfo[]>("services-updated", (event) => {
+      const finishedBuild = event.payload.some((service) =>
+        !service.build_status?.building && services.find((previous) => previous.id === service.id)?.build_status?.building,
+      );
       services = event.payload;
+      if (storageModalOpen && finishedBuild) void loadServiceEnvs();
     });
 
     // When "Rebuild All" is running, the backend tells us which service to focus on

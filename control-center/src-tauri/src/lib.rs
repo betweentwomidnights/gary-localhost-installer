@@ -5900,6 +5900,7 @@ pub fn run() {
             delete_hf_token,
             get_runtime_storage_info,
             get_sa3_migration_preview,
+            prepare_sa3_native_runtime,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -9489,6 +9490,35 @@ async fn get_sa3_migration_preview(
         .map_err(|error| format!("SA3 migration scan failed: {error}"))
 }
 
+/// Prepare the verified bundle while the legacy service remains selected.
+/// No Python environment, original model or adapter is removed here.
+#[tauri::command]
+async fn prepare_sa3_native_runtime(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<native_runtime::NativeRuntimeInfo, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(
+            "Restart to use your chosen storage before installing SA3's runtime.".to_string(),
+        );
+    }
+    let info = {
+        let mut mgr = manager.lock().await;
+        let info = mgr.get_native_build_info("sa3")?;
+        mgr.set_build_started("sa3", info.total_steps());
+        info
+    };
+    let result = native_runtime::install(info, manager.inner().clone(), app_handle.clone()).await;
+    {
+        let mut mgr = manager.lock().await;
+        mgr.set_build_done("sa3", result.as_ref().err().cloned());
+        let _ = app_handle.emit("services-updated", mgr.get_service_info());
+    }
+    result?;
+    get_native_runtime_info("sa3".to_string(), manager).await
+}
+
 fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {
     let uv_cache_path = storage::uv_cache_dir(active_root);
     RuntimeCacheInfo {
@@ -9535,34 +9565,56 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
     // six environments walks tens of GB, and every other command -- including
     // the status poll that keeps the UI alive -- waits on this same mutex.
     let (pending, runtimes_root, native_building): (
-        Vec<(String, String, bool, Option<std::path::PathBuf>, Option<String>)>,
+        Vec<(
+            String,
+            String,
+            bool,
+            Option<std::path::PathBuf>,
+            Option<String>,
+        )>,
         std::path::PathBuf,
         bool,
     ) = {
         let mgr = svc_mgr.lock().await;
-        let pending = mgr
-            .get_service_info()
-            .into_iter()
-            .map(|info| {
-                let env_path = mgr.env_dir_for(&info.id);
-                let native = mgr.is_native(&info.id);
-                let blocked = if mgr.is_running(&info.id) {
-                    Some(format!("stop {} first", info.display_name))
-                } else if mgr.is_building(&info.id) {
-                    Some(format!(
-                        "{} is installing its {}",
-                        info.display_name,
-                        if native { "runtime" } else { "environment" }
-                    ))
-                } else {
-                    None
-                };
-                (info.id, info.display_name, native, env_path, blocked)
-            })
-            .collect::<Vec<_>>();
-        let native_building = pending
-            .iter()
-            .any(|(id, _, native, _, _)| *native && mgr.is_building(id));
+        let mut pending = Vec::new();
+        for info in mgr.get_service_info() {
+            let env_path = mgr.env_dir_for(&info.id);
+            let native = mgr.is_native(&info.id);
+            let blocked = if native {
+                mgr.native_mutation_blocker(&info.id)
+            } else if mgr.is_running(&info.id) {
+                Some(format!("stop {} first", info.display_name))
+            } else if mgr.is_building(&info.id) {
+                Some(format!(
+                    "{} is installing its {}",
+                    info.display_name,
+                    if native { "runtime" } else { "environment" }
+                ))
+            } else {
+                None
+            };
+            pending.push((
+                info.id.clone(),
+                info.display_name.clone(),
+                native,
+                env_path,
+                blocked,
+            ));
+            if !native {
+                if let Some(dir) = mgr.native_dir_for(&info.id) {
+                    pending.push((
+                        format!("native:{}", info.id),
+                        format!("{} C++ runtime (prepared)", info.display_name),
+                        true,
+                        Some(dir),
+                        mgr.native_mutation_blocker(&info.id),
+                    ));
+                }
+            }
+        }
+        let native_building = pending.iter().any(|(id, _, native, _, _)| {
+            *native && mgr.is_building(id.strip_prefix("native:").unwrap_or(id))
+        });
         (pending, mgr.native_runtimes_root(), native_building)
     };
 
@@ -9573,7 +9625,11 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             .map(|(service_id, display_name, native, env_path, blocked)| {
                 let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
                 let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
-                let missing = if *native { "no runtime installed" } else { "no environment installed" };
+                let missing = if *native {
+                    "no runtime installed"
+                } else {
+                    "no environment installed"
+                };
                 let blocked_reason = blocked
                     .clone()
                     .or_else(|| (!present).then(|| missing.to_string()));
@@ -9592,6 +9648,7 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             })
             .collect();
 
+        envs = merge_native_environment_rows(envs);
         // Shared runtimes, one row each. One can go once no installed native
         // service uses it, e.g. the CUDA pack after the last CUDA runtime is
         // removed, or after a switch to Vulkan.
@@ -9607,15 +9664,14 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             .unwrap_or_default();
         shared.sort();
         for name in shared {
-            let used_by: Vec<&str> = pending
+            let used_by: Vec<&str> = envs
                 .iter()
-                .filter(|(_, _, native, env_path, _)| {
-                    *native
-                        && env_path.as_deref().is_some_and(|dir| {
-                            native_runtime::installed_runtimes(dir).contains(&name)
-                        })
+                .filter(|env| {
+                    env.kind == "native"
+                        && native_runtime::installed_runtimes(Path::new(&env.env_path))
+                            .contains(&name)
                 })
-                .map(|(_, display_name, _, _, _)| display_name.as_str())
+                .map(|env| env.display_name.as_str())
                 .collect();
             let blocked_reason = if !used_by.is_empty() {
                 Some(format!("used by {}", used_by.join(", ")))
@@ -9641,6 +9697,24 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
     .unwrap_or_default()
 }
 
+fn merge_native_environment_rows(rows: Vec<ServiceEnvInfo>) -> Vec<ServiceEnvInfo> {
+    let mut merged: Vec<ServiceEnvInfo> = Vec::new();
+    for row in rows {
+        if row.kind == "native" {
+            if let Some(existing) = merged
+                .iter_mut()
+                .find(|existing| existing.kind == "native" && existing.env_path == row.env_path)
+            {
+                existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                existing.blocked_reason = existing.blocked_reason.take().or(row.blocked_reason);
+                continue;
+            }
+        }
+        merged.push(row);
+    }
+    merged
+}
+
 /// A shared runtime's name as the storage list shows it.
 fn shared_runtime_label(name: &str) -> String {
     match name.strip_prefix("cudart-") {
@@ -9651,12 +9725,44 @@ fn shared_runtime_label(name: &str) -> String {
 
 #[cfg(test)]
 mod shared_runtime_tests {
-    use super::shared_runtime_label;
+    use super::{merge_native_environment_rows, shared_runtime_label, ServiceEnvInfo};
+
+    #[test]
+    fn shared_bundle_rows_count_once_and_keep_any_consumer_blocker() {
+        let row = ServiceEnvInfo {
+            service_id: "sa3".to_string(),
+            display_name: "SA3".to_string(),
+            kind: "native".to_string(),
+            env_path: "services/sa3/native".to_string(),
+            env_bytes: 1024,
+            present: true,
+            blocked_reason: None,
+        };
+        let mut other = row.clone();
+        other.service_id = "stable-audio".to_string();
+        other.display_name = "Jerry".to_string();
+        other.blocked_reason = Some("Jerry is running".to_string());
+        let mut python = row.clone();
+        python.kind = "python".to_string();
+        python.env_path = "services/sa3/env".to_string();
+        let rows = merge_native_environment_rows(vec![row, other, python]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].env_bytes, 1024);
+        assert_eq!(rows[0].display_name, "SA3 / Jerry");
+        assert_eq!(rows[0].blocked_reason.as_deref(), Some("Jerry is running"));
+        assert_eq!(rows[1].kind, "python");
+    }
 
     #[test]
     fn a_shared_runtime_reads_as_what_it_is() {
-        assert_eq!(shared_runtime_label("cudart-12.8"), "CUDA 12.8 runtime (shared)");
-        assert_eq!(shared_runtime_label("something-else"), "something-else (shared)");
+        assert_eq!(
+            shared_runtime_label("cudart-12.8"),
+            "CUDA 12.8 runtime (shared)"
+        );
+        assert_eq!(
+            shared_runtime_label("something-else"),
+            "something-else (shared)"
+        );
     }
 }
 
@@ -9667,6 +9773,7 @@ async fn remove_shared_runtime(
     name: &str,
     svc_mgr: tauri::State<'_, ManagerState>,
 ) -> Result<ServiceEnvRemovalResult, String> {
+    let _mutation_guard = native_runtime::mutation_guard().await;
     if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
         return Err(format!("{name} is not a runtime name"));
     }
@@ -9756,6 +9863,41 @@ async fn remove_service_env(
 ) -> Result<ServiceEnvRemovalResult, String> {
     if let Some(name) = service_id.strip_prefix("runtime:") {
         return remove_shared_runtime(&service_id, name, svc_mgr).await;
+    }
+    let native_id = service_id
+        .strip_prefix("native:")
+        .unwrap_or(&service_id)
+        .to_string();
+    let native = service_id.starts_with("native:") || svc_mgr.lock().await.is_native(&native_id);
+    if native {
+        let _mutation_guard = native_runtime::mutation_guard().await;
+        let (path, root) = {
+            let mut mgr = svc_mgr.lock().await;
+            let path = mgr
+                .native_dir_for(&native_id)
+                .ok_or_else(|| format!("Unknown native service: {native_id}"))?;
+            if let Some(reason) = mgr.native_mutation_blocker(&native_id) {
+                return Err(format!("Cannot remove this shared runtime: {reason}."));
+            }
+            mgr.set_build_started(&native_id, 1);
+            (path, mgr.managed_services_root())
+        };
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let bytes = path_size(&path);
+            remove_managed_path(&path, &root).map(|_| bytes)
+        })
+        .await
+        .map_err(|error| format!("Runtime removal failed: {error}"))
+        .and_then(|result| result);
+        svc_mgr
+            .lock()
+            .await
+            .set_build_done(&native_id, result.as_ref().err().cloned());
+        return Ok(ServiceEnvRemovalResult {
+            service_id,
+            removed_bytes: result?,
+            environments: collect_service_envs(svc_mgr.inner()).await,
+        });
     }
     let (env_path, managed_root) = {
         let mgr = svc_mgr.lock().await;

@@ -1,5 +1,18 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount } from "svelte";
+
+  interface NativeRuntimeInfo {
+    installed: boolean;
+    version: string | null;
+    backend: string | null;
+    fallbackReason: string | null;
+  }
+  interface ServiceStatus {
+    id: string;
+    build_status: { building: boolean; step_label: string } | null;
+  }
 
   interface MigrationItem {
     label: string;
@@ -22,6 +35,50 @@
   let preview: MigrationPreview | null = $state(null);
   let busy = $state(false);
   let error: string | null = $state(null);
+  let runtime: NativeRuntimeInfo | null = $state(null);
+  let preparing = $state(false);
+  let serviceBuilding = $state(false);
+  let preparationStep = $state("");
+  let preparationError: string | null = $state(null);
+
+  function updateBuild(services: ServiceStatus[]) {
+    const status = services.find((service) => service.id === "sa3")?.build_status;
+    serviceBuilding = status?.building ?? false;
+    preparationStep = status?.step_label ?? "";
+  }
+
+  async function refreshRuntime() {
+    runtime = await invoke<NativeRuntimeInfo>("get_native_runtime_info", { serviceId: "sa3" });
+  }
+
+  onMount(() => {
+    let disposed = false;
+    const unlisten = listen<ServiceStatus[]>("services-updated", (event) => {
+      if (disposed) return;
+      const wasBuilding = serviceBuilding;
+      updateBuild(event.payload);
+      if (wasBuilding && !serviceBuilding) {
+        void refreshRuntime().catch((cause) => { preparationError = String(cause); });
+      }
+    });
+    void Promise.all([refreshRuntime(), invoke<ServiceStatus[]>("get_services").then((services) => {
+      if (!disposed) updateBuild(services);
+    })]).catch((cause) => { if (!disposed) preparationError = String(cause); });
+    return () => { disposed = true; void unlisten.then((stop) => stop()); };
+  });
+
+  async function prepareRuntime() {
+    preparing = true;
+    preparationError = null;
+    preparationStep = "Preparing SA3 runtime...";
+    try {
+      runtime = await invoke<NativeRuntimeInfo>("prepare_sa3_native_runtime");
+    } catch (cause) {
+      preparationError = String(cause);
+    } finally {
+      preparing = false;
+    }
+  }
 
   function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
@@ -54,6 +111,24 @@
     </button>
   </div>
   <p class="note">Migration will be available after native inference, LoRA conversion and training are validated. This preview only reads your storage.</p>
+  <div class="preparation">
+    <div class="heading">
+      <div>
+        <h3>Prepare the C++ runtime</h3>
+        <p>Download and verify the shared SA3 runtime using your detected GPU. Your Python service and models stay available.</p>
+      </div>
+      <button type="button" onclick={prepareRuntime} disabled={preparing || serviceBuilding || pendingRestart}>
+        {preparing || serviceBuilding ? "preparing..." : runtime?.installed ? "verify / reinstall runtime" : "prepare SA3 runtime"}
+      </button>
+    </div>
+    {#if preparing || serviceBuilding}
+      <p class="note" role="status">{preparationStep}</p>
+    {:else if runtime?.installed}
+      <p class="note" role="status">Runtime prepared: {runtime.version ?? "local build"}, {runtime.backend ?? "auto"}. Model setup and service migration are the next steps.</p>
+      {#if runtime.fallbackReason}<p class="note">{runtime.fallbackReason}</p>{/if}
+    {/if}
+    {#if preparationError}<p class="error" role="alert">{preparationError}</p>{/if}
+  </div>
   {#if pendingRestart}
     <p class="note">Restart to use your chosen storage folder before scanning.</p>
   {:else if preview}
@@ -99,6 +174,7 @@
   .path:hover { text-decoration: underline; }
   .label { font-size: 11px; color: var(--text-secondary, #aaa); margin-top: 10px; }
   .summary { margin-top: 12px; font-size: 14px; }
+  .preparation { margin: 16px 0; }
   .entry { margin-top: 12px; font-size: 12px; }
   details { margin-top: 16px; font-size: 12px; }
   summary { cursor: pointer; }

@@ -1,4 +1,29 @@
 {
+  "nativeBundles": {
+    "sa3": {
+      "version": "v0.1.1",
+      "platforms": {
+        "windows-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.1/sa3-v0.1.1-windows-x64-core.zip",
+            "sha256": "14c4cf01f847059bddf1b380d83c46255ca4df5c239a9b4cf86f850b13626020"
+          },
+          "backends": {
+            "cuda": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.1/sa3-v0.1.1-windows-x64-cuda.zip",
+              "sha256": "591c2277b1d18b6a548d08d0da9223b4d6b134646687d923d9d82de5988d4891",
+              "requires": ["cudart-12.8"]
+            },
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.1/sa3-v0.1.1-windows-x64-vulkan.zip",
+              "sha256": "fb0d66ddf79ab144cbf771112a80006fcf5dab59de7295827062294f46fc90a4"
+            }
+          },
+          "prefer": ["cuda", "vulkan"]
+        }
+      }
+    }
+  },
   "version": "2.0",
   "services": [
     {
@@ -109,6 +134,18 @@
     },
     {
       "id": "sa3",
+      "native": {
+        "bundle": "sa3",
+        "executable": "sa3-server.exe",
+        "args": ["--model", "medium", "--encoding", "f16", "--t5-encoding", "f16", "--ae-encoding", "f32"],
+        "env": {
+          "SA3_PORT": "18006",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/sa3",
+          "SA3_ADAPTERS_DIR": "${GARY_RUNTIME}/sa3/native-loras",
+          "SA3_SOURCE_LORAS_DIR": "${GARY_RUNTIME}/sa3/loras"
+        }
+      },
       "displayName": "sa3 (stable audio 3)",
       "description": "Text-to-audio generation and editing with Stable Audio 3",
       "port": 8006,
