@@ -1073,7 +1073,6 @@
     pendingRestart={storageInfo?.pendingRestart ?? true}
     onReveal={revealStoragePath}
     onClose={() => sa3MigrationOpen = false}
-    onTrain={() => { sa3MigrationOpen = false; showSa3LoraTraining(); }}
   />
   <Sa3LoraTrainingModal
     open={sa3LoraTrainingModalOpen}

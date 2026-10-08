@@ -21,6 +21,7 @@ pub struct Sa3MigrationPreview {
     pub hf_hub_cache: String,
     pub cleanup_candidates: Vec<MigrationItem>,
     pub legacy_runtime_present: bool,
+    pub training_base_present: bool,
     pub estimated_cleanup_bytes: u64,
     pub preserved_paths: Vec<MigrationItem>,
     pub warnings: Vec<String>,
@@ -37,12 +38,21 @@ fn item(label: &str, path: &Path, kind: &'static str) -> MigrationItem {
     }
 }
 
+pub fn native_training_base_present(active_root: &Path) -> bool {
+    let models = crate::sa3_models::models_dir(active_root);
+    ["F16", "Q4_K_M"].iter().any(|encoding| {
+        crate::sa3_models::component(&format!("sa3-native::medium-base-{encoding}"))
+            .is_some_and(|component| crate::sa3_models::present(component, &models))
+    })
+}
+
 pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     let mut result = Sa3MigrationPreview {
         active_root: active_root.to_string_lossy().to_string(),
         hf_hub_cache: hf_hub.to_string_lossy().to_string(),
         cleanup_candidates: Vec::new(),
         legacy_runtime_present: false,
+        training_base_present: native_training_base_present(active_root),
         estimated_cleanup_bytes: 0,
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
@@ -79,12 +89,13 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     // Bundled source alone does not mean a user installed the Python service.
     // Keep unknown/inaccessible paths conservative; cleanup safety is still
     // decided independently below by canonical ownership and protection checks.
-    result.legacy_runtime_present = candidates.iter().any(|(_, path, _)| {
-        match std::fs::symlink_metadata(path) {
-            Ok(_) => true,
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
-    });
+    result.legacy_runtime_present =
+        candidates
+            .iter()
+            .any(|(_, path, _)| match std::fs::symlink_metadata(path) {
+                Ok(_) => true,
+                Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+            });
     let code = crate::sa3_code::status(active_root);
     result.warnings.extend(code.warnings);
     for path in &code.candidates {
@@ -561,6 +572,32 @@ pub async fn verify_native(
     }
     child.kill().await.map_err(|error| error.to_string())?;
     child.wait().await.map_err(|error| error.to_string())?;
+    // A capability flag alone does not prove that this machine can train or
+    // publish checkpoints. Exercise a tiny isolated dataset when a base exists.
+    for training_encoding in ["Q4_K_M", "F16"] {
+        let component =
+            crate::sa3_models::component(&format!("sa3-native::medium-base-{training_encoding}"))
+                .unwrap();
+        if crate::sa3_models::present(component, &models) {
+            for file in &component.files {
+                progress(&format!("Verifying training model {}...", file.filename));
+                if crate::native_runtime::sha256_file(&models.join(&file.filename)).await?
+                    != file.sha256
+                {
+                    return Err("Native training base failed verification; prepare it again".into());
+                }
+            }
+            verify_training(
+                root,
+                installed,
+                runtime_path.as_deref(),
+                training_encoding,
+                &progress,
+            )
+            .await?;
+            break;
+        }
+    }
     Ok(crate::sa3_runtime::Selection {
         schema_version: 1,
         encoding: encoding.into(),
@@ -578,10 +615,235 @@ pub async fn verify_native(
     })
 }
 
+async fn verify_training(
+    root: &Path,
+    installed: &crate::native_runtime::NativeInstall,
+    runtime_path: Option<&std::ffi::OsStr>,
+    encoding: &str,
+    progress: &impl Fn(&str),
+) -> Result<(), String> {
+    use std::io::Read;
+    let checks = crate::sa3_training::checked_folder(root, &["sa3", "migration-checks"])?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let dir = checks.join(format!("training-{nonce}"));
+    std::fs::create_dir(&dir).map_err(|error| error.to_string())?;
+    let dataset = dir.join("dataset");
+    std::fs::create_dir(&dataset).map_err(|error| error.to_string())?;
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: 44100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut wav = hound::WavWriter::create(dataset.join("check.wav"), spec)
+        .map_err(|error| error.to_string())?;
+    for frame in 0..44100 {
+        let sample =
+            ((frame as f64 * 220.0 * std::f64::consts::TAU / 44100.0).sin() * 1600.0) as i16;
+        for _ in 0..2 {
+            wav.write_sample(sample)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    wav.finalize().map_err(|error| error.to_string())?;
+    std::fs::write(dataset.join("check.txt"), "a quiet synthetic tone")
+        .map_err(|error| error.to_string())?;
+    let output = dir.join("run");
+    let status = dir.join("progress.json");
+    let models = crate::sa3_models::models_dir(root);
+    let log_path = dir.join("training.log");
+    let log = std::fs::File::create(&log_path).map_err(|error| error.to_string())?;
+    let mut command = tokio::process::Command::new(installed.dir.join("sa3-train.exe"));
+    command
+        .args([
+            "--model",
+            "medium",
+            "--device",
+            &installed.backend,
+            "--encoding",
+            encoding,
+            "--t5-encoding",
+            "f16",
+            "--ae-encoding",
+            "f32",
+            "--steps",
+            "2",
+            "--rank",
+            "16",
+            "--adapter-type",
+            "dora-rows",
+            "--batch-size",
+            "1",
+            "--checkpoint-every",
+            "1",
+            "--duration",
+            "1",
+            "--lora-scope",
+            "core",
+            "--target-latent-rms",
+            "0",
+        ])
+        .arg("--dataset")
+        .arg(&dataset)
+        .arg("--models-dir")
+        .arg(&models)
+        .arg("--out")
+        .arg(&output)
+        .arg("--progress-file")
+        .arg(&status)
+        .current_dir(&installed.dir)
+        .stdout(log.try_clone().map_err(|error| error.to_string())?)
+        .stderr(log)
+        .kill_on_drop(true);
+    for (flag, id, needle) in [
+        ("--tok", "sa3-native::text".to_string(), "vocab"),
+        ("--t5", "sa3-native::text".to_string(), "encoder"),
+        ("--same", "sa3-native::medium-decoder".to_string(), "same-l"),
+        (
+            "--cond",
+            "sa3-native::medium-decoder".to_string(),
+            "conditioner",
+        ),
+        (
+            "--dit",
+            format!("sa3-native::medium-base-{encoding}"),
+            "dit",
+        ),
+    ] {
+        let component =
+            crate::sa3_models::component(&id).ok_or("Missing training check component")?;
+        let file = component
+            .files
+            .iter()
+            .find(|file| file.filename.contains(needle))
+            .ok_or("Missing training check file")?;
+        command.arg(flag).arg(models.join(&file.filename));
+    }
+    if let Some(path) = runtime_path {
+        command.env("PATH", path);
+    }
+    crate::workload_job::configure_tokio_command(&mut command);
+    progress("Testing native training and checkpoint saving with a synthetic sample...");
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    let mut last_message = String::new();
+    let exit = loop {
+        if let Some(exit) = child.try_wait().map_err(|error| error.to_string())? {
+            break exit;
+        }
+        if let Ok(state) = crate::sa3_training::read_progress(&status) {
+            let message = format!(
+                "Checking training: {} (step {}/2)...",
+                state.phase, state.step
+            );
+            if message != last_message {
+                progress(&message);
+                last_message = message;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Native training check timed out; inspect {}",
+                log_path.display()
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    if !exit.success() {
+        return Err(format!(
+            "Native training check failed with {exit}; inspect {}",
+            log_path.display()
+        ));
+    }
+    let state = crate::sa3_training::read_progress(&status)?;
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&status).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if state.status != "completed"
+        || state.step != 2
+        || !metrics["loss"]
+            .as_f64()
+            .is_some_and(|loss| loss.is_finite() && loss >= 0.0)
+    {
+        return Err("Native training check did not finish two finite updates".into());
+    }
+    let boundary = output.canonicalize().map_err(|error| error.to_string())?;
+    for file in [
+        &state.final_adapter,
+        &state.adapter_checkpoint,
+        &state.state_checkpoint,
+    ] {
+        let path = Path::new(file)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if path.parent() != Some(boundary.as_path()) {
+            return Err("Training check checkpoint escaped its private output".into());
+        }
+        let mut header = [0u8; 4];
+        std::fs::File::open(&path)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .map_err(|error| error.to_string())?;
+        if &header != b"GGUF" {
+            return Err("Training check did not save valid GGUF checkpoints".into());
+        }
+    }
+    // Successful checks must not accumulate hundreds of MB of throwaway LoRAs.
+    // Keep the log and progress report; retain all artifacts when validation fails.
+    let private_boundary = dir.canonicalize().map_err(|error| error.to_string())?;
+    for temporary in [&dataset, &output] {
+        let resolved = temporary
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if resolved.parent() != Some(private_boundary.as_path()) {
+            return Err("Training check cleanup escaped its private folder".into());
+        }
+        std::fs::remove_dir_all(&resolved)
+            .map_err(|error| format!("Cannot remove temporary training check files: {error}"))?;
+    }
+    progress("Native training, progress updates and checkpoint saving passed.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::preview;
     use std::path::{Path, PathBuf};
+
+    #[tokio::test]
+    #[ignore = "runs the automatic two-step migration training check on real CUDA models"]
+    async fn real_automatic_training_check() {
+        let root = PathBuf::from(std::env::var_os("GARY4LOCAL_AUTOCHECK_ROOT").unwrap());
+        assert!(
+            root.to_string_lossy().contains("artifacts"),
+            "Use an isolated artifact profile"
+        );
+        let installed = crate::native_runtime::NativeInstall {
+            dir: PathBuf::from(std::env::var_os("GARY4LOCAL_AUTOCHECK_NATIVE").unwrap()),
+            backend: "cuda".into(),
+            runtimes: vec!["cudart-12.8".into()],
+            version: Some("v0.1.1".into()),
+            fallback_reason: None,
+        };
+        let runtime_path = crate::native_runtime::path_with_runtimes(&root, &installed.runtimes);
+        for encoding in ["Q4_K_M", "F16"] {
+            super::verify_training(
+                &root,
+                &installed,
+                runtime_path.as_deref(),
+                encoding,
+                &|message| println!("{encoding}: {message}"),
+            )
+            .await
+            .unwrap();
+        }
+    }
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -766,8 +1028,10 @@ mod tests {
         let server = if packaged {
             root.join("services/sa3/native/sa3-server.exe")
         } else {
-            PathBuf::from(std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY")
-                .expect("compatible server required"))
+            PathBuf::from(
+                std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY")
+                    .expect("compatible server required"),
+            )
         };
         let target = crate::sa3_models::checked_models_dir(&root).unwrap();
         for id in crate::sa3_models::preparation_ids("F16", None).unwrap() {
@@ -783,7 +1047,8 @@ mod tests {
         std::fs::create_dir_all(original.parent().unwrap()).unwrap();
         std::fs::write(&original, b"preserved Python environment").unwrap();
         let mut manifest: crate::manifest::Manifest =
-            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .unwrap();
         manifest.resolve_native_bundles().unwrap();
         let defs = manifest.services;
         let native = defs
@@ -814,10 +1079,14 @@ mod tests {
             );
             std::fs::copy(source, crate::sa3_decoder::source_path(&root)).unwrap();
             assert!(
-                crate::sa3_decoder::prepare(&root, &installed.dir.join("sa3-lora-convert.exe"), None)
-                    .await
-                    .unwrap()
-                    .prepared
+                crate::sa3_decoder::prepare(
+                    &root,
+                    &installed.dir.join("sa3-lora-convert.exe"),
+                    None
+                )
+                .await
+                .unwrap()
+                .prepared
             );
         }
         let env = if packaged {
@@ -903,8 +1172,10 @@ mod tests {
                 .expect("existing isolated activation profile required"),
         );
         assert!(crate::sa3_runtime::read(&root).unwrap().is_some());
-        assert!(std::env::var_os("GARY4LOCAL_NATIVE_DIR_SA3").is_some()
-            || root.join("services/sa3/native/gary-native.json").is_file());
+        assert!(
+            std::env::var_os("GARY4LOCAL_NATIVE_DIR_SA3").is_some()
+                || root.join("services/sa3/native/gary-native.json").is_file()
+        );
         let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let private = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let public_port = public.local_addr().unwrap().port();
@@ -933,7 +1204,8 @@ mod tests {
         let default_prompts = root.join("sa3/prompts/defaults.json");
         let previous_defaults = std::fs::read(&default_prompts).ok();
         manager.start("sa3").unwrap();
-        let defaults: serde_json::Value = serde_json::from_slice(&std::fs::read(&default_prompts).unwrap()).unwrap();
+        let defaults: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&default_prompts).unwrap()).unwrap();
         if let Some(previous) = previous_defaults {
             assert_eq!(std::fs::read(&default_prompts).unwrap(), previous);
         } else {

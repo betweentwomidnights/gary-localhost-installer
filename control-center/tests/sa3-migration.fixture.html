@@ -17,7 +17,7 @@ document.body.append(audit);
 commands.push = function(...entries) { audit.textContent += entries.map(entry=>JSON.stringify(entry)).join('\n')+'\n'; return Array.prototype.push.apply(this,entries); };
 const legacy = scenario !== 'fresh';
 const items = [{label:'SA3 Python environment',path:root+'/services/sa3/env',bytes:7*1024**3,kind:'environment'},{label:'SA3 PyTorch weights',path:root+'/models/huggingface/hub/models--stabilityai--stable-audio-3-medium',bytes:4*1024**3,kind:'weights'}];
-const preview = () => ({activeRoot:root,hfHubCache:root+'/models/huggingface/hub',legacyRuntimePresent:legacy && !cleaned,cleanupCandidates:legacy && !cleaned?items:[],estimatedCleanupBytes:legacy && !cleaned?11*1024**3:0,preservedPaths:[{label:'LoRAs, prompts and training jobs',path:root+'/sa3',bytes:0,kind:null}],warnings:scenario==='warning'?['Preserving redirected SA3 cleanup target; review it manually.']:[],nativeSelection:selection,cleanupToken:'fixture-review-token'});
+const preview = () => ({activeRoot:root,hfHubCache:root+'/models/huggingface/hub',legacyRuntimePresent:legacy && !cleaned,trainingBasePresent:legacy,cleanupCandidates:legacy && !cleaned?items:[],estimatedCleanupBytes:legacy && !cleaned?11*1024**3:0,preservedPaths:[{label:'LoRAs, prompts and training jobs',path:root+'/sa3',bytes:0,kind:null}],warnings:scenario==='warning'?['Preserving redirected SA3 cleanup target; review it manually.']:[],nativeSelection:selection,cleanupToken:'fixture-review-token'});
 const ids=['sa3-native::text','sa3-native::medium-decoder','sa3-native::medium-F16','sa3-native::medium-base-Q4_K_M'];
 let callback=0;
 window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:()=>{},invoke:async(command,args)=>{
@@ -29,16 +29,20 @@ window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:
  case 'get_services':return [{id:'sa3',runtime:selection?'native':'python',status:running?'running':'stopped',build_status:null}];
  case 'get_sa3_native_model_catalog':return ids.map(id=>({id,label:id,files:[{bytes:1024**3}]}));
  case 'get_sa3_native_decoder_state':return {enabled:scenario==='decoder'};
+ case 'get_download_progress':return [{model_id:'sa3-native::text',progress:0.35,status:'downloading',message:'Downloading text-encoder.gguf: 1.0/3.0 GB',error:null}];
  case 'stop_service':running=false;return;
  case 'prepare_sa3_native_runtime':return {};
  case 'prepare_sa3_native_models':
    if(args.waitForCompletion!==true) throw new Error('Wizard must wait for model completion');
-   await new Promise(resolve=>setTimeout(resolve,350));
+   if(scenario==='progress') await new Promise(resolve=>setTimeout(resolve,15000));
+   else await new Promise(resolve=>setTimeout(resolve,350));
    if(scenario==='download-error'&&!failedOnce){failedOnce=true;throw new Error('Fixture download failed; retry is available.');}
    return ids;
  case 'prepare_sa3_native_decoder':return {};
  case 'prepare_sa3_native_loras':return {entries:scenario==='lora-error'?[{name:'koan',nativePath:null,error:'Fixture adapter conversion failed'}]:[]};
- case 'activate_sa3_native_runtime':selection={encoding:args.encoding,verifiedRelease:'main-compat-preview',cleanupComplete:false,cleanupErrors:[]};return selection;
+ case 'activate_sa3_native_runtime':
+   if(scenario==='check-error')throw new Error('Automatic training check failed; Python files were preserved.');
+   selection={encoding:args.encoding,verifiedRelease:'main-compat-preview',cleanupComplete:false,cleanupErrors:[]};return selection;
  case 'cleanup_sa3_legacy_installation':
    if(running)throw new Error('SA3 must be stopped');
    if(args.reviewToken!=='fixture-review-token')throw new Error('Missing reviewed cleanup token');
@@ -48,5 +52,5 @@ window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:
 }};
 window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
 mount(ServiceRow,{target:document.getElementById('app'),props:{service:{id:'sa3',display_name:'sa3 (stable audio 3)',port:8006,status:'stopped',env_exists:true,runtime:'python',build_status:null,pid:null,error:null,native_backend:null,native_update_available:false,native_fallback_reason:null,start_blocker:null},selected:true,onSelect:()=>{},hasModels:true,hasSa3Loras:true,hasSa3LoraTraining:true,hasSa3Migration:true,onMigrateSa3Runtime:()=>{}}});
-mount(Sa3MigrationModal,{target:document.getElementById('app'),props:{open:true,pendingRestart:scenario==='pending',onReveal:()=>{},onClose:()=>commands.push({command:'fixture-close'}),onTrain:()=>commands.push({command:'fixture-train'})}});
+mount(Sa3MigrationModal,{target:document.getElementById('app'),props:{open:true,pendingRestart:scenario==='pending',onReveal:()=>{},onClose:()=>commands.push({command:'fixture-close'})}});
 </script></body></html>

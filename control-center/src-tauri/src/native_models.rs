@@ -139,11 +139,11 @@ async fn transfer_pinned_files(
         let mut file_progress = |received: u64, _: Option<u64>| {
             progress(
                 done + received.min(file.bytes),
-                &format!(
-                    "{label} {:.1}/{:.1} GB",
-                    received as f64 / 1e9,
-                    file.bytes as f64 / 1e9
-                ),
+                &if received >= file.bytes {
+                    format!("Verifying checksum for {label}")
+                } else {
+                    format!("Downloading {label}: {:.1}/{:.1} GB", received as f64 / 1e9, file.bytes as f64 / 1e9)
+                },
             );
         };
         download_verified(

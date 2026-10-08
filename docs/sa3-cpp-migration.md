@@ -11,12 +11,19 @@ The guided popup replaces the migration controls previously embedded in Storage:
 
 1. **Prepare and switch:** one action stops SA3 if needed, detects the backend,
    installs or reuses the shared native runtime, prepares model files, converts
-   registered LoRAs, verifies native generation and selects C++ for this profile.
+   registered LoRAs, then runs automatic checks before selecting C++ for this profile.
    F16 inference is the default; CUDA cards with at most 9 GiB use the existing
-   Q4 training recommendation. Precision and training options are expandable.
-2. **Test in Gary:** close the popup to exercise generation, LoRAs and training.
-   Reopening resumes here from the persisted native selection. Acknowledgment
-   of client validation is required before reviewing cleanup.
+   Q4 training recommendation. An existing PyTorch or native training base is
+   detected automatically and its GGUF replacement included; there is no training
+   download toggle. Inference precision remains an expandable option.
+2. **Automatic checks:** verify the server/trainer contracts, hashes, registered
+   adapters and real generation. When a training base exists, run two rank-16
+   training updates on a generated one-second sample and validate finite loss,
+   progress publication and GGUF adapter/state checkpoints. The sample and its
+   checkpoints are discarded on success; diagnostics remain under
+   `sa3/migration-checks`. No user dataset, job history or LoRA registration is
+   modified. Failure preserves Python and blocks the cleanup stage. Reopening an
+   incomplete native migration offers **check and finish migration**.
 3. **Clean up:** show a concise space/preservation summary with expandable paths.
    The explicit final action stops SA3, revalidates native operation and removes
    only files bound to the current storage review token. Storage warnings block
@@ -27,15 +34,32 @@ waits for downloads and release of the model mutation reservation before adapter
 conversion. Existing model-management callers keep asynchronous preparation.
 Fresh profiles with no reviewed legacy files finish without invoking deletion.
 The shared UV cache remains a separate action in Storage.
+Model preparation shows the active file, transfer/checksum phase, weighted overall
+progress, prepared bytes and elapsed time. Live events have a polling fallback.
+Cleanup refuses to retire a detected PyTorch training base until a native base
+is prepared, then repeats the native checks before deletion.
 
 `control-center/tests/sa3-migration.fixture.html` exercises the popup with strict
 mock commands and no filesystem mutations. With Vite running, open
 `/tests/sa3-migration.fixture.html?case=legacy`; additional cases are `fresh`,
 `native`, `warning`, `pending`, `download-error`, `lora-error`, `decoder`,
-`partial` and `complete`. Browser checks covered the automatic command sequence,
-validation gate, review token, download retry, failed adapter conversion, storage
+`partial`, `complete`, `progress` and `check-error`. Browser checks covered the automatic command sequence,
+automatic-check failure gate, review token, download retry, failed adapter conversion, storage
 warnings, restart requirement, native/completed resume and enabled decoder fix.
-The frontend checks and build pass; 172 regular Rust tests pass (14 ignored).
+The frontend checks and build pass; 172 regular Rust tests pass (15 ignored).
+The real automatic training check passed on the RTX 5070 Laptop with both Q4 and
+F16 bases, taking about 14 seconds per base and retaining only small diagnostics.
+
+### Windows trainer progress publication
+
+A production training run completed 21 updates before `MoveFileExW` failed with
+Windows error 5 while replacing its progress JSON. The main-based upstream
+compatibility branch now retries transient access/sharing/lock violations for up
+to two seconds while preserving the previous complete report. A regression test
+holds a real Windows reader handle without delete sharing: it reproduces error 5
+before the fix and passes afterward. Persistent failures still surface an error
+and remove the staging file. The clean native package at `78dc51a` passes all 46
+CTests and staged contract checks; no envelope/layer-filter WIP is included.
 
 Earlier sections below record implementation milestones and their UI at the time.
 

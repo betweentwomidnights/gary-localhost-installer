@@ -9812,8 +9812,19 @@ async fn get_sa3_migration_preview(
 ) -> Result<sa3_migration::Sa3MigrationPreview, String> {
     let root = repo_root.inner().clone();
     // Use the model manager's effective cache, including legacy HF overrides.
-    let hub = model_mgr.lock().await.hf_hub_cache_dir();
-    tauri::async_runtime::spawn_blocking(move || sa3_migration::preview(&root, &hub))
+    let (hub, legacy_training) = {
+        let models = model_mgr.lock().await;
+        let legacy_training = models.get_sa3_models().iter().any(|model| {
+            model.id == "stabilityai/stable-audio-3-medium-base"
+                && matches!(model.status, model_manager::ModelStatus::Downloaded)
+        });
+        (models.hf_hub_cache_dir(), legacy_training)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut preview = sa3_migration::preview(&root, &hub);
+        preview.training_base_present |= legacy_training;
+        preview
+    })
         .await
         .map_err(|error| format!("SA3 migration scan failed: {error}"))
 }
@@ -9868,12 +9879,19 @@ async fn cleanup_sa3_legacy_installation(
             return Err(format!("Cannot clean up SA3: {blocker}"));
         }
         let models = model_mgr.lock().await;
-        if models
-            .get_sa3_models()
+        let sa3_models = models.get_sa3_models();
+        if sa3_models
             .iter()
             .any(|model| models.is_downloading(&model.id))
         {
             return Err("Wait for SA3 model downloads to finish before cleanup.".into());
+        }
+        let legacy_training = sa3_models.iter().any(|model| {
+            model.id == "stabilityai/stable-audio-3-medium-base"
+                && matches!(model.status, model_manager::ModelStatus::Downloaded)
+        });
+        if legacy_training && !sa3_migration::native_training_base_present(repo_root.inner()) {
+            return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
         }
         let hub = models.hf_hub_cache_dir();
         sa3_cleanup::validate_review(repo_root.inner(), &hub, &review_token)?;
