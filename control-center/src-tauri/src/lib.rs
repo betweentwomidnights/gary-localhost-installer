@@ -6,6 +6,7 @@ mod sa3_adapter;
 mod sa3_analysis;
 mod sa3_decoder;
 mod sa3_cleanup;
+mod sa3_code;
 mod sa3_loras;
 mod sa3_gguf;
 mod sa3_migration;
@@ -1102,6 +1103,19 @@ mod bundle_root_tests {
             std::fs::read(installed.join("api.py")).unwrap(),
             b"new bundled code"
         );
+        // An upgrade from before ownership inventories can have an identical
+        // bundle stamp. Seed its manifest without recopying edited source.
+        let inventory = runtime.join("sa3/legacy-code-inventory.json");
+        std::fs::remove_file(&inventory).unwrap();
+        std::fs::write(installed.join("api.py"), b"user-edited source").unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert_eq!(
+            std::fs::read(installed.join("api.py")).unwrap(),
+            b"user-edited source"
+        );
+        assert_eq!(crate::sa3_code::status(&runtime).retained.len(), 1);
+        let ownership = std::fs::read(&inventory).unwrap();
+        std::fs::remove_file(&inventory).unwrap();
         std::fs::remove_file(installed.join("api.py")).unwrap();
         std::fs::write(installed.join("custom-notes.txt"), b"user asset").unwrap();
         let mut selection = selection;
@@ -1134,6 +1148,7 @@ mod bundle_root_tests {
         .unwrap();
         super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
         assert!(installed.join("custom-notes.txt").is_file());
+        assert_eq!(std::fs::read(inventory).unwrap(), ownership);
         assert!(runtime.join("services/manifests/services.json").is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1158,11 +1173,14 @@ mod bundle_root_tests {
         std::fs::create_dir_all(installed.join("native")).unwrap();
         std::fs::write(installed.join("native").join("yue2-server.exe"), b"exe").unwrap();
         std::fs::write(installed.join("stale.txt"), "from an older bundle").unwrap();
+        std::fs::create_dir_all(installed.join(".venv/Scripts")).unwrap();
+        std::fs::write(installed.join(".venv/Scripts/python.exe"), b"alternate Python environment").unwrap();
 
         super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
 
         assert!(installed.join("native").join("yue2-server.exe").is_file());
         assert!(installed.join("README.md").is_file());
+        assert_eq!(std::fs::read(installed.join(".venv/Scripts/python.exe")).unwrap(), b"alternate Python environment");
         assert!(!installed.join("stale.txt").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1301,6 +1319,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     // of a Python service's `env`.
     const PRESERVED_RUNTIME_NAMES: &[&str] = &[
         "env",
+        ".venv",
         native_runtime::NATIVE_DIR,
         "checkpoints",
         ".cache",
@@ -1314,22 +1333,30 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     let desired_stamp = compute_bundle_sync_stamp(bundle_root)?;
     let current_stamp = std::fs::read_to_string(&stamp_path).ok();
 
-    if current_stamp.as_deref() == Some(desired_stamp.as_str())
-        && runtime_services
-            .join("manifests")
-            .join("services.json")
-            .exists()
-    {
-        log::info!("Runtime services already match bundled resources");
-        return Ok(());
-    }
-
     // Once cleanup begins, future bundles must not recreate retired Python
     // code or clear native/custom assets, including after interrupted cleanup.
     // Before cleanup, retain Python resource refresh for optional legacy training.
     let sa3_retired = sa3_runtime::read(runtime_root)?.is_some_and(|selection| {
         selection.cleanup_complete || !selection.cleanup_errors.is_empty()
     });
+    if sa3_retired {
+        // Earlier native profiles may have retired their environment before
+        // code ownership was recorded. Seeding metadata never recopies code.
+        sa3_code::record_bundle(bundle_root, runtime_root, true)?;
+    }
+
+    if current_stamp.as_deref() == Some(desired_stamp.as_str())
+        && runtime_services
+            .join("manifests")
+            .join("services.json")
+            .exists()
+    {
+        if !sa3_retired {
+            sa3_code::record_bundle(bundle_root, runtime_root, true)?;
+        }
+        log::info!("Runtime services already match bundled resources");
+        return Ok(());
+    }
 
     log::info!(
         "Refreshing runtime services at {} from bundled resources {}",
@@ -1395,6 +1422,10 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
                 format!("Cannot copy {} to {}: {}", src.display(), dst.display(), e)
             })?;
         }
+    }
+
+    if !sa3_retired {
+        sa3_code::record_bundle(bundle_root, runtime_root, false)?;
     }
 
     std::fs::write(&stamp_path, desired_stamp)

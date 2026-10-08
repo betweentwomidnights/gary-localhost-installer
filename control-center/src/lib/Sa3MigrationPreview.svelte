@@ -21,6 +21,7 @@
     label: string;
     path: string;
     bytes: number;
+    kind: "code" | "environment" | "weights" | null;
   }
   interface MigrationPreview {
     activeRoot: string;
@@ -123,10 +124,14 @@
     }
   }
 
+  const codeCandidates = $derived.by((): MigrationItem[] => preview?.cleanupCandidates.filter((entry) => entry.kind === "code") ?? []);
+  const otherCandidates = $derived.by((): MigrationItem[] => preview?.cleanupCandidates.filter((entry) => entry.kind !== "code") ?? []);
+
   async function cleanup() {
     if (!preview || !selection || !validatedClient) return;
-    const paths = preview.cleanupCandidates.map((entry) => `${entry.label}: ${entry.path}`).join("\n");
-    if (!window.confirm(`Retire these SA3 Python files from ${preview.activeRoot}?\n\n${paths || "No legacy files remain."}\n\nEstimated size: ${formatBytes(preview.estimatedCleanupBytes)}. This removal cannot be undone. Native verification runs again before cleanup.`)) return;
+    const paths = otherCandidates.map((entry) => `${entry.label}: ${entry.path}`).join("\n");
+    const codeSummary = codeCandidates.length ? `\n\n${codeCandidates.length} unchanged bundled Python files listed in the review under ${preview.activeRoot}/services/sa3.` : "";
+    if (!window.confirm(`Retire these SA3 Python files from ${preview.activeRoot}?\n\n${paths || (codeCandidates.length ? "Bundled Python source only." : "No legacy files remain.")}${codeSummary}\n\nEstimated size: ${formatBytes(preview.estimatedCleanupBytes)}. This removal cannot be undone. Native verification runs again before cleanup.`)) return;
     cleaning = true; error = null; activationMessage = null;
     activationProgress = "Verifying the native runtime before cleanup...";
     try {
@@ -209,14 +214,23 @@
     <button class="path" type="button" onclick={() => preview && onReveal(preview.activeRoot)}>{preview.activeRoot}</button>
     <div class="label">effective Hugging Face cache</div>
     <button class="path" type="button" onclick={() => preview && onReveal(preview.hfHubCache)}>{preview.hfHubCache}</button>
-    {#each preview.cleanupCandidates as entry (entry.path)}
+    <div class="cleanup-list">
+    {#each otherCandidates as entry (entry.path)}
       <div class="entry">
         <div class="entry-heading"><span>{entry.label}</span><span>{formatBytes(entry.bytes)}</span></div>
         <button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button>
       </div>
-    {:else}
-      <p class="note">No legacy SA3 environments or model caches found in this storage profile.</p>
     {/each}
+    {#if codeCandidates.length}
+      <details>
+        <summary>{codeCandidates.length} unchanged bundled Python source files · {formatBytes(codeCandidates.reduce((sum, entry) => sum + entry.bytes, 0))}</summary>
+        {#each codeCandidates as entry (entry.path)}
+          <div class="entry"><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>
+        {/each}
+      </details>
+    {/if}
+    {#if !preview.cleanupCandidates.length}<p class="note">No reviewed legacy SA3 environments, code or model caches found in this storage profile.</p>{/if}
+    </div>
     <details>
       <summary>Preserved through migration</summary>
       {#each preview.preservedPaths as entry (entry.path)}
@@ -233,7 +247,7 @@
     {#if selection && (!selection.cleanupComplete || preview.cleanupCandidates.length > 0)}
       <div class="preparation">
         <h3>Retire the SA3 Python installation</h3>
-        <p>Removes the reviewed SA3 Python environments and PyTorch weight repositories. Original LoRAs, checkpoints, prompts, native models, shared runtimes and other services are preserved. SA3 service scripts are retained while migration is being validated.</p>
+        <p>Removes the reviewed SA3 Python environments, unchanged bundled Python code and PyTorch weight repositories. Original LoRAs, checkpoints, prompts, native models, shared runtimes and other services are preserved. Edited or unrecognized service files, settings and developer source checkouts are kept.</p>
         <label class="confirmation"><input type="checkbox" bind:checked={validatedClient} disabled={cleaning} /> I have tested native generation and my LoRAs in Gary, including training where needed.</label>
         <button type="button" onclick={cleanup} disabled={cleaning || activating || preparing || serviceBuilding || serviceRunning || busy || pendingRestart || !validatedClient || preview.warnings.length > 0}>{cleaning ? "verifying and cleaning up..." : "clean up reviewed Python files"}</button>
         {#if cleaning}<p class="note" role="status">{activationProgress}</p>{/if}
@@ -258,6 +272,7 @@
   label { font-size: 12px; }
   select { margin: 6px 0 6px 8px; background: var(--bg-secondary, #222); border: 1px solid var(--border, #444); color: inherit; padding: 6px; border-radius: 6px; }
   .entry { margin-top: 12px; font-size: 12px; }
+  .cleanup-list { max-height: 320px; overflow: auto; }
   details { margin-top: 16px; font-size: 12px; }
   summary { cursor: pointer; }
   .preserved-path { margin-top: 3px; color: var(--text-secondary, #aaa); overflow-wrap: anywhere; }

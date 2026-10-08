@@ -11,6 +11,7 @@ pub struct MigrationItem {
     pub label: String,
     pub path: String,
     pub bytes: u64,
+    pub kind: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,11 +27,12 @@ pub struct Sa3MigrationPreview {
     pub cleanup_token: String,
 }
 
-fn item(label: &str, path: &Path) -> MigrationItem {
+fn item(label: &str, path: &Path, kind: &'static str) -> MigrationItem {
     MigrationItem {
         label: label.to_string(),
         path: path.to_string_lossy().to_string(),
         bytes: crate::path_size(path),
+        kind: Some(kind),
     }
 }
 
@@ -50,7 +52,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         Err(error) => result.warnings.push(error),
     }
     let service = active_root.join("services").join("sa3");
-    let candidates = [
+    let mut candidates = vec![
         (
             "SA3 Python environment",
             service.join("env"),
@@ -72,6 +74,19 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
             hf_hub.to_path_buf(),
         ),
     ];
+    let code = crate::sa3_code::status(active_root);
+    result.warnings.extend(code.warnings);
+    for path in &code.candidates {
+        candidates.push(("SA3 bundled Python source", path.clone(), service.clone()));
+    }
+    for path in &code.retained {
+        result.preserved_paths.push(MigrationItem {
+            label: "Edited Python code or developer checkout (preserved)".into(),
+            path: path.to_string_lossy().into(),
+            bytes: 0,
+            kind: None,
+        });
+    }
     let protected = active_root.join("sa3");
     let mut protected_paths = vec![
         protected.clone(),
@@ -212,7 +227,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
 
         match crate::resolve_managed_path(&path, &owner) {
             Ok(Some(canonical)) => {
-                if canonical.parent() != owner.canonicalize().ok().as_deref()
+                if (!code.candidates.contains(&path) && canonical.parent() != owner.canonicalize().ok().as_deref())
                     || canonical.file_name() != path.file_name()
                 {
                     result.warnings.push(format!("Preserving redirected SA3 cleanup target {}; review it manually.", path.display()));
@@ -227,7 +242,8 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
                         "Preserving {} because it overlaps SA3 user data or native runtime files.", path.display()
                     ));
                 } else if !seen.contains(&canonical) {
-                    result.cleanup_candidates.push(item(label, &path));
+                    let kind = if code.candidates.contains(&path) { "code" } else if owner == service { "environment" } else { "weights" };
+                    result.cleanup_candidates.push(item(label, &path, kind));
                     seen.push(canonical);
                 }
             }
@@ -247,7 +263,10 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     // they cannot contribute to the space reclaimed by this migration.
     for (label, path) in [
         ("LoRAs, prompts, training jobs and checkpoints", protected),
-        ("SA3 service code and helper scripts", service),
+        (
+            "SA3 native runtime, settings and unrecognized service files",
+            service,
+        ),
         (
             "Shared CUDA and other native runtimes",
             active_root.join("native-runtimes"),
@@ -265,6 +284,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
             label: label.to_string(),
             path: path.to_string_lossy().to_string(),
             bytes: 0,
+            kind: None,
         });
     }
     use sha2::{Digest, Sha256};
@@ -280,6 +300,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
                 active_root.canonicalize().ok(),
                 hf_hub.canonicalize().ok(),
                 identities,
+                code.review_identity,
                 &result.warnings,
             ))
             .unwrap()
@@ -710,8 +731,7 @@ mod tests {
         std::fs::create_dir_all(original.parent().unwrap()).unwrap();
         std::fs::write(&original, b"preserved Python environment").unwrap();
         let mut manifest: crate::manifest::Manifest =
-            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
-                .unwrap();
+            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let defs = manifest.services;
         let native = defs
@@ -737,14 +757,10 @@ mod tests {
             );
             std::fs::copy(source, crate::sa3_decoder::source_path(&root)).unwrap();
             assert!(
-                crate::sa3_decoder::prepare(
-                    &root,
-                    &installed.dir.join("sa3-lora-convert.exe"),
-                    None
-                )
-                .await
-                .unwrap()
-                .prepared
+                crate::sa3_decoder::prepare(&root, &installed.dir.join("sa3-lora-convert.exe"), None)
+                    .await
+                    .unwrap()
+                    .prepared
             );
         }
         let env = vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())];
@@ -778,11 +794,29 @@ mod tests {
             let legacy = hub.join("models--stabilityai--stable-audio-3-medium/weights.fixture");
             std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
             std::fs::write(&legacy, b"owned legacy weight fixture").unwrap();
+            let mut copied_code = Vec::new();
+            if let Some(bundle) = std::env::var_os("GARY4LOCAL_SA3_SMOKE_CODE_BUNDLE") {
+                let bundle = PathBuf::from(bundle);
+                crate::sa3_code::record_bundle(&bundle, &root, false).unwrap();
+                for dest in crate::sa3_code::recorded_paths(&root).unwrap() {
+                    let relative = dest.strip_prefix(&root).unwrap();
+                    let source = bundle.join(relative);
+                    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                    std::fs::copy(&source, &dest).unwrap();
+                    copied_code.push((source, dest));
+                }
+                assert!(!copied_code.is_empty());
+                assert!(crate::sa3_code::status(&root).warnings.is_empty());
+            }
             let reviewed = super::preview(&root, &hub);
             assert!(reviewed.warnings.is_empty(), "{:?}", reviewed.warnings);
             let result = crate::sa3_cleanup::run(&root, &hub, &reviewed.cleanup_token).unwrap();
             assert!(result.selection.cleanup_complete);
-            assert_eq!(result.removed_paths.len(), 2);
+            assert_eq!(result.removed_paths.len(), 2 + copied_code.len());
+            for (source, dest) in &copied_code {
+                assert!(source.is_file(), "original repository source must survive");
+                assert!(!dest.exists(), "owned installed source must retire");
+            }
             assert!(!original.exists());
             assert!(!legacy.exists());
             assert!(crate::sa3_models::present(
@@ -795,6 +829,7 @@ mod tests {
             manager.refresh_sa3_native_selection().unwrap();
             assert!(manager.is_native("sa3"));
             println!("PASS reviewed fixture cleanup after real native verification; models, decoder and native selection preserved");
+            println!("PASS {} checksummed installed Python source files retired; original repository sources retained", copied_code.len());
         }
     }
 

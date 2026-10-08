@@ -731,8 +731,8 @@ require manual review; nested directory junctions are removed without following
 their targets. Catalog source/configuration paths, training checkpoints,
 unfinished native jobs' datasets/custom prompt configurations, native artifacts,
 other services, unrelated repositories and shared CUDA/UV caches are preserved.
-SA3 service source/scripts are retained in this slice; their retirement and
-bundled-resource refresh behavior still need the remaining native onboarding work.
+The initial transaction retained SA3 service source/scripts; the owned-code
+retirement and bundled-resource refresh safeguards are described below.
 
 The profile selection acts as a durable cleanup journal: an incomplete marker is
 saved before the first deletion and after each target; failures are recorded,
@@ -820,5 +820,47 @@ cleanup retains normal Python code refresh for optional legacy trainer use.
 Invalid native selection metadata rejects a refresh instead of guessing whether
 the profile should be overwritten. The regression test covers ordinary refresh,
 interrupted retirement, completed retirement, preserved custom/native files and
-a subsequent bundle without Python resources. Existing Python source retirement
-itself remains pending; this safeguard prevents restored code from undoing it.
+a subsequent bundle without Python resources. Owned Python source retirement
+now uses this safeguard as described below.
+
+
+## Retire owned Python source safely
+
+Production bundle refresh records SA3 Python file paths, sizes and SHA-256 hashes
+in `sa3/legacy-code-inventory.json`. Same-stamp upgrades seed a missing inventory
+without recopying or overwriting edited source. Already-retired profiles may also
+seed missing ownership metadata without restoring code. The inventory covers bundled
+Python scripts/packages and requirements, excluding settings, prompt JSON,
+licenses/docs, native files, environments and unknown files. Once retirement
+starts, app updates preserve the original inventory and skip SA3 resource copying.
+Developer Git checkouts retain their source files even with an inventory.
+
+Migration preview includes unchanged owned code files in the reclaim estimate,
+with an expandable file list in Storage. Edited source and developer files appear
+under preserved paths. Cleanup binds its review to ownership metadata as well as
+canonical paths; changes to code or the ownership inventory require rescanning.
+Only matching recorded files pass the same fresh protection/ownership checks and
+durable per-target journal used for environments and model caches. Directory
+redirects, registered caption paths and model/adapter source protections remain
+blocking. Unknown files, configuration and generated caches are preserved;
+cleanup never recursively removes a Python package directory merely by name.
+
+Tests cover stale code/ownership reviews, content changing during cleanup,
+locked-file partial success/retry, path traversal/native-file inventory rejection,
+Windows package junctions, caption protection, custom files, developer sources,
+and same-stamp seeding without overwriting user edits. In
+`artifacts/sa3-migration/profile-cleanup-code-smoke-1`, actual trainer/analyzer
+probes, pinned model hashing and decoder-corrected CUDA generation passed before
+activation and reviewed fixture cleanup. The transaction removed the isolated
+Python environment, owned model-cache fixture and all 83 copied/checksummed
+Python source files (160.87s total). Original repository sources, native weights,
+decoder and persistent selection were preserved. Actual user environments were
+not removed.
+
+The cleaned profile then passed production ServiceManager startup, public adapter
+load/readiness and stop with both Python and owned service scripts absent (3.97s).
+Regular Rust validation passed 165 tests (13 hardware/download smokes excluded);
+frontend checks reported zero errors/warnings and the production build passed.
+
+Bundle refresh also preserves alternate `.venv` environments alongside `env`,
+so an update cannot remove them before the reviewed migration transaction.
