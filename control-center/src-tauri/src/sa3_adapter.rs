@@ -822,6 +822,7 @@ impl AdapterListener {
         listener
             .set_nonblocking(true)
             .map_err(|error| error.to_string())?;
+        crate::sa3_prompts::ensure_defaults(&registry_root)?;
         let mut state = AdapterState::new(native_port, uploads)?;
         state.defaults = defaults;
         state.registry_root = Some(registry_root);

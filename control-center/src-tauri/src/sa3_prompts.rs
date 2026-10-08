@@ -5,6 +5,36 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// New native profiles get the same bundled dice pool as Python. Existing
+/// user-edited defaults are preserved, including an intentionally empty pool.
+pub fn ensure_defaults(root: &Path) -> Result<(), String> {
+    let dir = crate::sa3_training::checked_folder(root, &["sa3", "prompts"])?;
+    let path = dir.join("defaults.json");
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {
+            if !path.is_file() {
+                return Err("Default prompt pool must be a file".into());
+            }
+            if path
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+                .parent()
+                != Some(dir.as_path())
+            {
+                return Err("Default prompt pool escapes managed storage".into());
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let defaults: serde_json::Value =
+                serde_json::from_str(include_str!("../../../services/sa3/prompts/defaults.json"))
+                    .map_err(|error| error.to_string())?;
+            crate::sa3_training::save_with_policy(&path, &defaults, false)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub fn prompt_from_caption(text: &str) -> String {
     static LABELED: OnceLock<Regex> = OnceLock::new();
     static BARE: OnceLock<Regex> = OnceLock::new();
@@ -126,6 +156,24 @@ pub fn build(root: &Path, name: &str, dataset: &Path, force: bool) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_profiles_seed_defaults_and_preserve_user_edits() {
+        let root = std::env::temp_dir().join(format!("sa3-defaults-{}", std::process::id()));
+        ensure_defaults(&root).unwrap();
+        let path = root.join("sa3/prompts/defaults.json");
+        let defaults: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(!defaults["dice"]["generic"].as_array().unwrap().is_empty());
+        let edited = br#"{"dice":{"generic":["my prompt"]}}"#;
+        std::fs::write(&path, edited).unwrap();
+        ensure_defaults(&root).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), edited);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(ensure_defaults(&root).unwrap_err().contains("file"));
+        crate::remove_managed_path(&root, &std::env::temp_dir()).unwrap();
+    }
+
     #[test]
     fn preserves_legacy_caption_cleanup() {
         for (input, expected) in [

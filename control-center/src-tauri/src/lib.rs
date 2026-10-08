@@ -7,6 +7,7 @@ mod sa3_analysis;
 mod sa3_decoder;
 mod sa3_cleanup;
 mod sa3_loras;
+mod sa3_gguf;
 mod sa3_migration;
 mod sa3_models;
 mod sa3_prompts;
@@ -5907,6 +5908,8 @@ pub fn run() {
             prepare_sa3_native_models,
             get_sa3_native_model_catalog,
             get_sa3_native_lora_state,
+            import_sa3_native_lora,
+            update_sa3_native_lora,
             get_sa3_native_decoder_state,
             prepare_sa3_native_decoder,
             prepare_sa3_native_loras,
@@ -8030,56 +8033,106 @@ mod sa3_lora_checkpoint_tests {
     }
 }
 
+/// Existing Python catalog controls also affect native conversion and cleanup
+/// protections. Serialize both sets of controls and retain their workload lease
+/// until all file writes complete, including errors from prompt generation.
+async fn edit_sa3_lora_registry<T>(
+    root: &Path,
+    manager: &ManagerState,
+    operation: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    if storage::storage_info(root).pending_restart {
+        return Err("Restart before editing adapters in your selected storage.".into());
+    }
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "SA3 training or migration is already starting")?;
+    if matches!(
+        read_sa3_lora_training_state().status.as_str(),
+        "starting" | "running"
+    ) || matches!(
+        read_sa3_autolabel_state().status.as_str(),
+        "starting" | "running"
+    ) {
+        return Err("Wait for SA3 training and dataset jobs before editing adapters.".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let _registry = sa3_loras::registry_edit_guard()?;
+    {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot edit SA3 adapters: {blocker}"));
+        }
+        services.begin_native_workload("sa3", "legacy-lora-edit", "SA3 adapter registry update")?;
+    }
+    let result = operation.await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "legacy-lora-edit");
+    result
+}
+
 #[tauri::command]
 async fn upsert_sa3_lora(
     name: String,
     checkpoint_path: String,
     prompts_path: Option<String>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name = sanitize_lora_name(&name)
-        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
-    let checkpoint_file = PathBuf::from(checkpoint_path.trim());
-    if !looks_like_sa3_lora_checkpoint(&checkpoint_file) {
-        return Err(format!(
-            "{} does not look like an SA3 LoRA checkpoint file",
-            checkpoint_file.display()
-        ));
-    }
-
-    let normalized_prompts_path = prompts_path
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let prompts_dir = normalized_prompts_path.as_ref().map(PathBuf::from);
-    if let Some(prompts_dir) = prompts_dir.as_ref() {
-        if !prompts_dir.is_dir() {
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name = sanitize_lora_name(&name).ok_or_else(|| {
+            "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string()
+        })?;
+        if sa3_loras::read_catalog(repo_root.inner())?
+            .get(&normalized_name)
+            .is_some_and(|entry| entry.native_only)
+        {
+            return Err("This name belongs to a native LoRA; choose a different name.".into());
+        }
+        let checkpoint_file = PathBuf::from(checkpoint_path.trim());
+        if !looks_like_sa3_lora_checkpoint(&checkpoint_file) {
             return Err(format!(
-                "{} is not a valid prompts/source folder",
-                prompts_dir.display()
+                "{} does not look like an SA3 LoRA checkpoint file",
+                checkpoint_file.display()
             ));
         }
-    }
 
-    let mut catalog = read_sa3_lora_catalog()?;
-    let strength = catalog
-        .get(&normalized_name)
-        .map(|entry| entry.strength)
-        .unwrap_or_else(default_lora_scale);
-    catalog.insert(
-        normalized_name,
-        Sa3LoraCatalogEntry {
-            path: checkpoint_file.to_string_lossy().to_string(),
-            prompts_path: normalized_prompts_path,
-            strength,
-            training_job_id: None,
-            training_checkpoints: Vec::new(),
-            selected_training_step: None,
-        },
-    );
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    // Adapters are baked into the pipeline at load time, so a running SA3 service
-    // would keep serving the old adapter until restarted. Ask it to re-apply.
+        let normalized_prompts_path = prompts_path
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let prompts_dir = normalized_prompts_path.as_ref().map(PathBuf::from);
+        if let Some(prompts_dir) = prompts_dir.as_ref() {
+            if !prompts_dir.is_dir() {
+                return Err(format!(
+                    "{} is not a valid prompts/source folder",
+                    prompts_dir.display()
+                ));
+            }
+        }
+
+        let mut catalog = read_sa3_lora_catalog()?;
+        let strength = catalog
+            .get(&normalized_name)
+            .map(|entry| entry.strength)
+            .unwrap_or_else(default_lora_scale);
+        catalog.insert(
+            normalized_name,
+            Sa3LoraCatalogEntry {
+                path: checkpoint_file.to_string_lossy().to_string(),
+                prompts_path: normalized_prompts_path,
+                strength,
+                training_job_id: None,
+                training_checkpoints: Vec::new(),
+                selected_training_step: None,
+            },
+        );
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8089,52 +8142,55 @@ async fn activate_sa3_lora_checkpoint(
     name: String,
     step: u32,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name =
-        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
-    let mut catalog = read_sa3_lora_catalog()?;
-    let checkpoint = {
-        let entry = catalog
-            .get(&normalized_name)
-            .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
-        if entry.training_job_id.is_none() || entry.training_checkpoints.is_empty() {
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name =
+            sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+        let mut catalog = read_sa3_lora_catalog()?;
+        let checkpoint = {
+            let entry = catalog
+                .get(&normalized_name)
+                .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+            if entry.training_job_id.is_none() || entry.training_checkpoints.is_empty() {
+                return Err(format!(
+                    "LoRA '{}' was not registered by Gary's SA3 trainer",
+                    normalized_name
+                ));
+            }
+            entry
+                .training_checkpoints
+                .iter()
+                .find(|checkpoint| checkpoint.step == step)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "Training checkpoint step {} is not registered for '{}'",
+                        step, normalized_name
+                    )
+                })?
+        };
+
+        let source = PathBuf::from(&checkpoint.path);
+        if !looks_like_sa3_lora_checkpoint(&source) {
             return Err(format!(
-                "LoRA '{}' was not registered by Gary's SA3 trainer",
-                normalized_name
+                "Training checkpoint {} is missing or invalid",
+                source.display()
             ));
         }
-        entry
-            .training_checkpoints
-            .iter()
-            .find(|checkpoint| checkpoint.step == step)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "Training checkpoint step {} is not registered for '{}'",
-                    step, normalized_name
-                )
-            })?
-    };
 
-    let source = PathBuf::from(&checkpoint.path);
-    if !looks_like_sa3_lora_checkpoint(&source) {
-        return Err(format!(
-            "Training checkpoint {} is missing or invalid",
-            source.display()
-        ));
-    }
+        let managed_path = sa3_lora_dir().join(format!("{}.safetensors", normalized_name));
+        install_managed_sa3_checkpoint(&source, &managed_path)?;
 
-    let managed_path = sa3_lora_dir().join(format!("{}.safetensors", normalized_name));
-    install_managed_sa3_checkpoint(&source, &managed_path)?;
-
-    if let Some(entry) = catalog.get_mut(&normalized_name) {
-        entry.path = managed_path.to_string_lossy().to_string();
-        entry.selected_training_step = Some(checkpoint.step);
-    }
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    // Adapters are baked into the pipeline at load time, so a running SA3 service
-    // would keep serving the old adapter until restarted. Ask it to re-apply.
+        if let Some(entry) = catalog.get_mut(&normalized_name) {
+            entry.path = managed_path.to_string_lossy().to_string();
+            entry.selected_training_step = Some(checkpoint.step);
+        }
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8143,15 +8199,18 @@ async fn activate_sa3_lora_checkpoint(
 async fn remove_sa3_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name =
-        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
-    let mut catalog = read_sa3_lora_catalog()?;
-    catalog.remove(&normalized_name);
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    // Adapters are baked into the pipeline at load time, so a running SA3 service
-    // would keep serving the old adapter until restarted. Ask it to re-apply.
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name =
+            sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+        let mut catalog = read_sa3_lora_catalog()?;
+        catalog.remove(&normalized_name);
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8525,66 +8584,71 @@ fn sa3_current_job_matches(job_id: &str) -> bool {
 async fn delete_sa3_trained_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name =
-        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
-    let mut catalog = read_sa3_lora_catalog()?;
-    let entry = catalog
-        .get(&normalized_name)
-        .cloned()
-        .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
-    let job_id = entry.training_job_id.as_deref().ok_or_else(|| {
-        format!(
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name =
+            sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+        let mut catalog = read_sa3_lora_catalog()?;
+        let entry = catalog
+            .get(&normalized_name)
+            .cloned()
+            .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+        let job_id = entry.training_job_id.as_deref().ok_or_else(|| {
+            format!(
             "LoRA '{}' was not created by Gary's SA3 trainer; only its registration can be removed",
             normalized_name
         )
-    })?;
+        })?;
 
-    let current_state = read_sa3_lora_training_state();
-    if current_state.job_id.as_deref() == Some(job_id)
-        && matches!(current_state.status.as_str(), "starting" | "running")
-    {
-        return Err(format!(
-            "Cannot delete '{}' while its training job is running",
-            normalized_name
-        ));
-    }
+        let current_state = read_sa3_lora_training_state();
+        if current_state.job_id.as_deref() == Some(job_id)
+            && matches!(current_state.status.as_str(), "starting" | "running")
+        {
+            return Err(format!(
+                "Cannot delete '{}' while its training job is running",
+                normalized_name
+            ));
+        }
 
-    let managed_root = sa3_runtime_dir();
-    if !managed_root.exists() {
-        return Err(format!(
-            "Gary's SA3 runtime storage is missing at {}",
-            managed_root.display()
-        ));
-    }
+        let managed_root = sa3_runtime_dir();
+        if !managed_root.exists() {
+            return Err(format!(
+                "Gary's SA3 runtime storage is missing at {}",
+                managed_root.display()
+            ));
+        }
 
-    let mut artifact_paths = std::collections::BTreeSet::new();
-    artifact_paths.insert(PathBuf::from(&entry.path));
-    artifact_paths.extend(
-        entry
-            .training_checkpoints
-            .iter()
-            .map(|checkpoint| PathBuf::from(&checkpoint.path)),
-    );
-    artifact_paths.insert(sa3_prompt_file_path(&normalized_name));
-    artifact_paths.insert(sa3_training_logs_dir().join(format!("{}.log", job_id)));
-    artifact_paths.insert(sa3_training_jobs_dir().join(job_id));
-    if sa3_current_job_matches(job_id) {
-        artifact_paths.insert(sa3_training_current_job_path());
-    }
+        let mut artifact_paths = std::collections::BTreeSet::new();
+        artifact_paths.insert(PathBuf::from(&entry.path));
+        artifact_paths.extend(
+            entry
+                .training_checkpoints
+                .iter()
+                .map(|checkpoint| PathBuf::from(&checkpoint.path)),
+        );
+        artifact_paths.insert(sa3_prompt_file_path(&normalized_name));
+        artifact_paths.insert(sa3_training_logs_dir().join(format!("{}.log", job_id)));
+        artifact_paths.insert(sa3_training_jobs_dir().join(job_id));
+        if sa3_current_job_matches(job_id) {
+            artifact_paths.insert(sa3_training_current_job_path());
+        }
 
-    // Validate every existing artifact before deleting the first one. This keeps
-    // a malformed catalog from causing a partial cleanup before safety refuses it.
-    for path in &artifact_paths {
-        resolve_managed_path(path, &managed_root)?;
-    }
-    for path in artifact_paths {
-        remove_managed_path(&path, &managed_root)?;
-    }
+        // Validate every existing artifact before deleting the first one. This keeps
+        // a malformed catalog from causing a partial cleanup before safety refuses it.
+        for path in &artifact_paths {
+            resolve_managed_path(path, &managed_root)?;
+        }
+        for path in artifact_paths {
+            remove_managed_path(&path, &managed_root)?;
+        }
 
-    catalog.remove(&normalized_name);
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
+        catalog.remove(&normalized_name);
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8592,42 +8656,46 @@ async fn delete_sa3_trained_lora(
 #[tauri::command]
 async fn build_sa3_lora_prompts(
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3PromptsBuildResult, String> {
-    let initial_state = build_sa3_lora_state(repo_root.inner())?;
-    let mut sources = BTreeMap::new();
-    for entry in &initial_state.entries {
-        if entry.registered && entry.caption_count > 0 {
-            if let Some(path) = &entry.resolved_prompts_path {
-                sources.insert(entry.name.clone(), PathBuf::from(path));
+    edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let initial_state = build_sa3_lora_state(repo_root.inner())?;
+        let mut sources = BTreeMap::new();
+        for entry in &initial_state.entries {
+            if entry.registered && entry.caption_count > 0 {
+                if let Some(path) = &entry.resolved_prompts_path {
+                    sources.insert(entry.name.clone(), PathBuf::from(path));
+                }
             }
         }
-    }
-    for entry in sa3_loras::state(repo_root.inner())?.entries {
-        if let Some(path) = entry.prompts_path {
-            sources.insert(entry.name, PathBuf::from(path));
+        for entry in sa3_loras::state(repo_root.inner())?.entries {
+            if let Some(path) = entry.prompts_path {
+                sources.insert(entry.name, PathBuf::from(path));
+            }
         }
-    }
-    let root = repo_root.inner().clone();
-    let outputs = tauri::async_runtime::spawn_blocking(move || {
-        sources
-            .into_iter()
-            .map(|(name, dataset)| sa3_prompts::build(&root, &name, &dataset, true))
-            .collect::<Result<Vec<_>, String>>()
+        let root = repo_root.inner().clone();
+        let outputs = tauri::async_runtime::spawn_blocking(move || {
+            sources
+                .into_iter()
+                .map(|(name, dataset)| sa3_prompts::build(&root, &name, &dataset, true))
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        let outputs = if outputs.is_empty() {
+            vec!["No registered SA3 LoRAs with txt sidecars were found.".into()]
+        } else {
+            outputs
+        };
+
+        ensure_default_sa3_prompts(repo_root.inner())?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(Sa3PromptsBuildResult {
+            state,
+            output: outputs.join("\n"),
+        })
     })
     .await
-    .map_err(|error| error.to_string())??;
-    let outputs = if outputs.is_empty() {
-        vec!["No registered SA3 LoRAs with txt sidecars were found.".into()]
-    } else {
-        outputs
-    };
-
-    ensure_default_sa3_prompts(repo_root.inner())?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    Ok(Sa3PromptsBuildResult {
-        state,
-        output: outputs.join("\n"),
-    })
 }
 
 #[tauri::command]
@@ -9114,7 +9182,7 @@ fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
 fn sa3_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String> {
     let catalog = read_sa3_lora_catalog()?;
     let native = sa3_loras::state(&gary4juce_runtime_root())?;
-    let names: Vec<_> = catalog.keys().cloned().chain(native.entries.into_iter().map(|entry| entry.name)).collect();
+    let names: Vec<_> = ["none", "default", "defaults"].into_iter().map(str::to_string).chain(catalog.keys().cloned()).chain(native.entries.into_iter().map(|entry| entry.name)).collect();
     lora_name_availability(name, names.iter())
 }
 
@@ -9858,6 +9926,98 @@ async fn get_sa3_native_lora_state(
         .map_err(|error| format!("Cannot read native SA3 adapters: {error}"))?
 }
 
+#[tauri::command]
+async fn import_sa3_native_lora(
+    name: String,
+    checkpoint_path: String,
+    config_path: Option<String>,
+    prompts_path: Option<String>,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart before importing adapters into your selected storage.".into());
+    }
+    let name = sanitize_lora_name(&name).ok_or("Invalid native adapter name")?;
+    let source = PathBuf::from(checkpoint_path.trim());
+    let config = config_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let dataset = prompts_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let (converter, runtime_path) = {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot import SA3 adapter: {blocker}"));
+        }
+        let tools = if source
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+        {
+            (None, None)
+        } else {
+            let (def, dir) = services
+                .native_service("sa3")
+                .ok_or("SA3 has no native runtime")?;
+            let installed = native_runtime::installed("sa3", &dir, &def.executable)
+                .ok_or("Prepare the native runtime before converting this adapter")?;
+            (
+                Some(installed.dir.join("sa3-lora-convert.exe")),
+                native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
+            )
+        };
+        services.begin_native_workload("sa3", "lora-import", "SA3 adapter import")?;
+        tools
+    };
+    let result = sa3_loras::import_adapter(
+        repo_root.inner(),
+        &name,
+        &source,
+        config.as_deref(),
+        dataset.as_deref(),
+        converter.as_deref(),
+        runtime_path.as_deref(),
+    )
+    .await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "lora-import");
+    if let Ok(state) = &result {
+        let _ = app_handle.emit("sa3-native-loras-updated", state);
+    }
+    result
+}
+
+#[tauri::command]
+async fn update_sa3_native_lora(
+    name: String,
+    change: sa3_loras::Change,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart before editing adapters in your selected storage.".into());
+    }
+    {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot edit SA3 adapter: {blocker}"));
+        }
+        services.begin_native_workload("sa3", "lora-edit", "SA3 adapter registry update")?;
+    }
+    let result = sa3_loras::apply_change(repo_root.inner(), &name, change).await;
+    manager.lock().await.end_native_workload("sa3", "lora-edit");
+    if let Ok(state) = &result {
+        let _ = app_handle.emit("sa3-native-loras-updated", state);
+    }
+    result
+}
 #[tauri::command]
 async fn select_sa3_native_checkpoint(
     name: String,

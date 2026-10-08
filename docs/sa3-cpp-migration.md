@@ -757,3 +757,53 @@ executable present (4.74s). The same smoke supports both cleaned and uncleaned
 profiles and verifies the expected legacy environment state. Regular Rust
 validation passed 152 tests (12 hardware/download smokes excluded); frontend type
 checks reported zero errors/warnings and the production build passed.
+
+
+## Native adapter imports and management
+
+After selecting C++, the LoRA manager imports GGUF, safetensors and legacy CKPT
+adapters into the native registry. GGUF import needs no Python or converter;
+safetensors uses the native converter, with explicit JSON, embedded metadata or
+a matching JSON sidecar. CKPT uses the same safe export/cache path as migration,
+so a previously unexported CKPT still requires the existing Python environment.
+The importer accepts creative DiT adapters; decoder correction stays in Models.
+A bounded GGUF reader checks adapter identity, metadata/tensor-table limits,
+scalar payload bounds and alignment before registration. Native ggml remains
+responsible for quantized tensor decoding and model/shape compatibility.
+
+Imports create checksummed, immutable managed copies without modifying their
+sources. Native-only catalog entries survive legacy catalog refreshes; duplicate
+names and the client aliases `none`, `default` and `defaults` are rejected for
+new imports/training. A legacy form also refuses to replace a native-only name.
+Caption datasets are optional and produce the existing Rust prompt dice pool,
+preserving previously edited pools unless explicitly rebuilt. Native startup
+seeds the bundled default pool when missing, preserving existing user edits.
+
+Per-adapter controls save suggested menu strength, rebuild caption prompts and
+unregister native entries. Unregistering keeps source files, prepared copies,
+prompt pools and raw training history for recovery/re-import. Permanent deletion
+and native adapter storage accounting remain separate follow-up work. Legacy
+source entries retain their existing removal/checkpoint controls, now serialized
+with native preparation and cleanup, with pending-storage-restart and active-job
+checks. Service startup waits for adapter imports, edits, conversion and checkpoint
+selection to finish. The UI disables changes while native SA3 is running.
+
+`artifacts/sa3-migration/native-import-smoke-1` passed actual Medium GGUF and
+Small safetensors imports using the published converter, source checksums,
+42 Koan caption prompts, persisted suggested strength, verification and
+non-destructive unregister with no Python environment. The registered Medium
+adapter then passed all four public Gary routes on CUDA with Medium F16 and
+autoencoder F32 in `artifacts/sa3-migration/adapter-cuda-native-import-smoke-1`
+(37.69s): exact audio lengths, uint64 seed recall, normal/consume metadata,
+prompt/menu access, lifecycle, incompatible-model filtering, and a non-silent
+12-second, 20-step sample. An unregistered converted adapter stayed out of the menu.
+These short training/import runs establish mechanism, not adaptation quality.
+The final import implementation was rerun successfully in `native-import-smoke-2`
+(32.11s) after adding exclusive staging-file reservation and operation guards.
+
+The previously cleaned isolated profile passed production ServiceManager startup,
+load/readiness and stop without Python (4.98s), including default-prompt creation
+or preservation. Regular Rust validation passed 156 tests (13 hardware/download
+smokes excluded), Svelte checks reported zero errors/warnings, and the production
+frontend build passed. GUI/gary4juce interaction and joint listening/training
+validation remain outstanding; the real tests use production Rust paths headlessly.

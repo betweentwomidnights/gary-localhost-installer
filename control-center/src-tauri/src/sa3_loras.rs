@@ -27,11 +27,46 @@ pub struct LegacyExport {
 }
 
 static PREPARATION: Mutex<()> = Mutex::const_new(());
+
+/// Legacy registry edits share the native converter's reservation so an edit
+/// cannot race conversion, imported metadata, or a cleanup protection scan.
+pub fn registry_edit_guard() -> Result<tokio::sync::MutexGuard<'static, ()>, String> {
+    PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running".into())
+}
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static NEXT_STAGE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum Change {
+    Strength { value: f64 },
+    Remove,
+    BuildPrompts,
+}
+
+pub async fn apply_change(
+    root: &Path,
+    name: &str,
+    change: Change,
+) -> Result<NativeLoraState, String> {
+    if crate::sanitize_lora_name(name).as_deref() != Some(name) {
+        return Err("Invalid native adapter name".into());
+    }
+    match change {
+        Change::Strength { value } => set_strength(root, name, value).await,
+        Change::Remove => remove_entry(root, name).await,
+        Change::BuildPrompts => build_prompts(root, name).await,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeLora {
+    #[serde(default)]
+    pub native_only: bool,
     pub name: String,
     pub source_path: String,
     pub config_path: Option<String>,
@@ -159,13 +194,7 @@ fn validate_gguf(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<PathBuf, String> {
-    let _reservation = PREPARATION
-        .try_lock()
-        .map_err(|_| "Native adapter preparation is already running")?;
-    if crate::sanitize_lora_name(name).as_deref() != Some(name) {
-        return Err("Invalid native adapter name".into());
-    }
+async fn copy_native(root: &Path, name: &str, source: &Path) -> Result<(PathBuf, String), String> {
     validate_gguf(source)?;
     let hash = sha256_file(source).await?;
     let dir = checked_adapters_dir(root)?;
@@ -176,6 +205,11 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
             std::process::id(),
             NEXT_STAGE.fetch_add(1, Ordering::Relaxed)
         ));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&stage)
+            .map_err(|error| format!("Cannot reserve adapter copy: {error}"))?;
         let _cleanup = ConversionStage {
             path: stage.clone(),
             boundary: dir.clone(),
@@ -184,13 +218,27 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
             .await
             .map_err(|error| error.to_string())?;
         if sha256_file(&stage).await? != hash {
-            return Err("Trained adapter changed during registration".into());
+            return Err("Adapter changed during registration".into());
         }
         if dest.exists() {
             crate::remove_managed_path(&dest, &dir)?;
         }
         std::fs::rename(stage, &dest).map_err(|error| error.to_string())?;
     }
+    if sha256_file(source).await? != hash {
+        return Err("Adapter source changed during registration".into());
+    }
+    Ok((dest, hash))
+}
+
+pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<PathBuf, String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    if crate::sanitize_lora_name(name).as_deref() != Some(name) {
+        return Err("Invalid native adapter name".into());
+    }
+    let (dest, hash) = copy_native(root, name, source).await?;
     let mut entries = read_catalog(root)?;
     let previous = entries.get(name);
     let strength = previous.map_or(1.0, |entry| entry.strength);
@@ -202,6 +250,7 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
     entries.insert(
         name.into(),
         NativeLora {
+            native_only: true,
             name: name.into(),
             source_path: source.to_string_lossy().into(),
             config_path: None,
@@ -219,6 +268,204 @@ pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<
     );
     save_catalog(root, &entries)?;
     Ok(dest)
+}
+
+pub async fn import_adapter(
+    root: &Path,
+    name: &str,
+    source: &Path,
+    config: Option<&Path>,
+    dataset: Option<&Path>,
+    converter: Option<&Path>,
+    runtime_path: Option<&std::ffi::OsStr>,
+) -> Result<NativeLoraState, String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    if crate::sanitize_lora_name(name).as_deref() != Some(name)
+        || ["none", "default", "defaults"].contains(&name)
+    {
+        return Err("Invalid native adapter name".into());
+    }
+    if state(root)?.entries.iter().any(|entry| entry.name == name) {
+        return Err(format!(
+            "LoRA '{name}' already exists; choose a different name."
+        ));
+    }
+    let source = source
+        .canonicalize()
+        .map_err(|error| format!("Cannot read adapter: {error}"))?;
+    if !source.is_file() {
+        return Err("Choose an adapter file".into());
+    }
+    let extension = source
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    if !["gguf", "safetensors", "ckpt"].contains(&extension.as_str()) {
+        return Err("Choose a GGUF, safetensors or CKPT LoRA adapter".into());
+    }
+    let dataset = dataset
+        .map(|path| path.canonicalize().map_err(|error| error.to_string()))
+        .transpose()?;
+    if dataset.as_ref().is_some_and(|path| !path.is_dir()) {
+        return Err("Choose a dataset folder for captions".into());
+    }
+    let config = config
+        .map(|path| path.canonicalize().map_err(|error| error.to_string()))
+        .transpose()?;
+    if config.as_ref().is_some_and(|path| !path.is_file()) {
+        return Err("Choose a LoRA JSON configuration file".into());
+    }
+    let mut entry = NativeLora {
+        native_only: true,
+        name: name.into(),
+        source_path: source.to_string_lossy().into(),
+        config_path: config.as_ref().map(|path| path.to_string_lossy().into()),
+        source_sha256: None,
+        config_sha256: None,
+        converter_sha256: None,
+        native_path: None,
+        native_sha256: None,
+        strength: 1.0,
+        error: None,
+        prompts_path: dataset.as_ref().map(|path| path.to_string_lossy().into()),
+        training_checkpoints: Vec::new(),
+        legacy_export: None,
+    };
+    if extension == "gguf" {
+        if config.is_some() {
+            return Err(
+                "GGUF adapters carry their own configuration; leave the JSON field empty.".into(),
+            );
+        }
+        crate::sa3_gguf::creative_adapter(&source)?;
+        let (native, hash) = copy_native(root, name, &source).await?;
+        crate::sa3_gguf::creative_adapter(&native)?;
+        entry.native_path = Some(native.to_string_lossy().into());
+        entry.source_sha256 = Some(hash.clone());
+        entry.native_sha256 = Some(hash);
+    } else {
+        let converter =
+            converter.ok_or("Prepare the native runtime before converting this adapter")?;
+        let source_hash = sha256_file(&source).await?;
+        let input = if extension == "ckpt" {
+            export_legacy_checkpoint(root, &mut entry, &source, &source_hash).await?
+        } else {
+            source.clone()
+        };
+        let mut exported = entry.clone();
+        exported.source_path = input.to_string_lossy().into();
+        let config = config_for_source(&exported)?;
+        let configuration = match config {
+            Some(path) => serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(path).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?,
+            None => embedded_lora_config(&input)?.ok_or("Adapter has no LoRA configuration")?,
+        };
+        if configuration
+            .get("target")
+            .and_then(|value| value.as_str())
+            .unwrap_or("dit")
+            != "dit"
+        {
+            return Err(
+                "Creative LoRAs must target the DiT. Prepare decoder correction in SA3 Models."
+                    .into(),
+            );
+        }
+        convert_one(
+            root,
+            &mut entry,
+            converter,
+            &sha256_file(converter).await?,
+            runtime_path,
+        )
+        .await?;
+        crate::sa3_gguf::creative_adapter(Path::new(entry.native_path.as_ref().unwrap()))?;
+    }
+    if let Some(dataset) = &dataset {
+        crate::sa3_prompts::build(root, name, dataset, false)?;
+    }
+    let mut entries = read_catalog(root)?;
+    entries.insert(name.into(), entry);
+    save_catalog(root, &entries)?;
+    drop(_reservation);
+    state(root)
+}
+
+/// A native-only registry removal preserves every source, prepared revision,
+/// prompt pool and raw training checkpoint for later re-import or recovery.
+pub async fn remove_entry(root: &Path, name: &str) -> Result<NativeLoraState, String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    let mut entries = read_catalog(root)?;
+    if crate::read_sa3_lora_catalog_from(&root.join("sa3/lora_catalog.json"))?.contains_key(name) {
+        return Err("This adapter comes from the legacy registry. Remove its source entry in the legacy LoRA list.".into());
+    }
+    if entries.remove(name).is_none() {
+        return Err("Native LoRA is not registered".into());
+    }
+    save_catalog(root, &entries)?;
+    drop(_reservation);
+    state(root)
+}
+
+pub async fn set_strength(
+    root: &Path,
+    name: &str,
+    strength: f64,
+) -> Result<NativeLoraState, String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    if !strength.is_finite() || !(-4.0..=4.0).contains(&strength) {
+        return Err("Choose a finite suggested strength between -4 and 4".into());
+    }
+    let mut entries = read_catalog(root)?;
+    let mut legacy = crate::read_sa3_lora_catalog_from(&root.join("sa3/lora_catalog.json"))?;
+    if let Some(entry) = legacy.get_mut(name) {
+        entry.strength = strength;
+        let dir = crate::sa3_training::checked_folder(root, &["sa3"])?;
+        let path = dir.join("lora_catalog.json");
+        if path
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .parent()
+            != Some(dir.as_path())
+        {
+            return Err("Legacy LoRA catalog escapes managed storage".into());
+        }
+        crate::sa3_training::save(&path, &legacy)?;
+    } else {
+        entries
+            .get_mut(name)
+            .ok_or("Native LoRA is not registered")?
+            .strength = strength;
+        save_catalog(root, &entries)?;
+    }
+    drop(_reservation);
+    state(root)
+}
+
+pub async fn build_prompts(root: &Path, name: &str) -> Result<NativeLoraState, String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    let entry = state(root)?
+        .entries
+        .into_iter()
+        .find(|entry| entry.name == name)
+        .ok_or("Native LoRA is not registered")?;
+    let dataset = entry
+        .prompts_path
+        .ok_or("No caption dataset is associated with this adapter")?;
+    crate::sa3_prompts::build(root, name, Path::new(&dataset), true)?;
+    drop(_reservation);
+    state(root)
 }
 
 fn checked_adapters_dir(root: &Path) -> Result<PathBuf, String> {
@@ -266,9 +513,10 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
     if root.join("sa3/lora_catalog.json").exists() {
         entries.retain(|name, entry| {
             legacy.contains_key(name)
+                || entry.native_only
                 || Path::new(&entry.source_path)
                     .extension()
-                    .is_some_and(|ext| ext == "gguf")
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
         });
     }
     for (name, source) in legacy {
@@ -277,7 +525,11 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
                 "Legacy LoRA '{name}' needs a valid native registry name before preparation."
             ));
         }
+        if entries.get(&name).is_some_and(|entry| entry.native_only) {
+            return Err(format!("LoRA '{name}' exists in both native and legacy catalogs; rename one source entry before continuing."));
+        }
         let entry = entries.entry(name.clone()).or_insert_with(|| NativeLora {
+            native_only: false,
             name,
             source_path: source.path.clone(),
             config_path: None,
@@ -307,7 +559,7 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
     for entry in entries.values_mut() {
         if Path::new(&entry.source_path)
             .extension()
-            .is_some_and(|ext| ext == "gguf")
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
         {
             entry.training_checkpoints = crate::sa3_training::checkpoints(root, &entry.name)?;
         }
@@ -681,22 +933,21 @@ async fn convert_one(
 ) -> Result<(), String> {
     if Path::new(&entry.source_path)
         .extension()
-        .is_some_and(|ext| ext == "gguf")
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
     {
         let source = Path::new(&entry.source_path);
-        validate_gguf(source)?;
-        let hash = sha256_file(source).await?;
-        if entry.source_sha256.as_deref() != Some(&hash)
-            || entry
-                .native_path
-                .as_ref()
-                .is_none_or(|path| !Path::new(path).is_file())
-            || sha256_file(Path::new(entry.native_path.as_ref().unwrap())).await? != hash
-        {
-            return Err(
-                "Native trained adapter needs registration from its training job again.".into(),
-            );
+        if entry.native_only {
+            crate::sa3_gguf::creative_adapter(source)?;
         }
+        let (path, hash) = copy_native(root, &entry.name, source).await?;
+        if entry.native_only {
+            crate::sa3_gguf::creative_adapter(&path)?;
+        }
+        entry.source_sha256 = Some(hash.clone());
+        entry.native_sha256 = Some(hash);
+        entry.native_path = Some(path.to_string_lossy().into());
+        entry.config_sha256 = None;
+        entry.converter_sha256 = None;
         entry.error = None;
         return Ok(());
     }
@@ -1010,6 +1261,7 @@ mod tests {
 
     fn entry(source: &Path) -> NativeLora {
         NativeLora {
+            native_only: false,
             name: "koan".into(),
             source_path: source.to_string_lossy().into(),
             config_path: None,
@@ -1031,6 +1283,201 @@ mod tests {
         let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
         bytes.extend(header);
         std::fs::write(path, bytes).unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_imports_persist_and_manage_copies_without_python_or_source_deletion() {
+        let _test = REGISTRY_TEST.lock().unwrap();
+        let root = root("import-management");
+        let source = root.join("original.GGUF");
+        let source_bytes = crate::sa3_gguf::fixture("sa3-lora", "dit");
+        std::fs::write(&source, &source_bytes).unwrap();
+        let legacy_path = root.join("sa3/lora_catalog.json");
+        std::fs::write(&legacy_path, "{}").unwrap();
+        let dataset = root.join("dataset");
+        std::fs::create_dir_all(&dataset).unwrap();
+        std::fs::write(dataset.join("a.txt"), "drum and bass, 174 bpm, A minor").unwrap();
+        let first = import_adapter(
+            &root,
+            "native-import",
+            &source,
+            None,
+            Some(&dataset),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.entries.len(), 1);
+        let entry = &first.entries[0];
+        assert!(entry.native_only);
+        let native = PathBuf::from(entry.native_path.as_ref().unwrap());
+        let prompts = root.join("sa3/prompts/native-import.json");
+        assert_eq!(std::fs::read(&native).unwrap(), source_bytes);
+        assert!(prompts.is_file());
+        assert!(
+            import_adapter(&root, "native-import", &source, None, None, None, None)
+                .await
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert!(
+            import_adapter(&root, "defaults", &source, None, None, None, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            state(&root).unwrap().entries[0].native_only,
+            "empty legacy catalog must not hide native imports"
+        );
+        let changed = set_strength(&root, "native-import", 0.75).await.unwrap();
+        assert_eq!(changed.entries[0].strength, 0.75);
+        let saved = std::fs::read(catalog_path(&root)).unwrap();
+        for invalid in [f64::NAN, 5.0] {
+            assert!(set_strength(&root, "native-import", invalid).await.is_err());
+        }
+        assert_eq!(std::fs::read(catalog_path(&root)).unwrap(), saved);
+        std::fs::write(&native, b"damaged copy").unwrap();
+        let converter = root.join("converter.fixture");
+        std::fs::write(&converter, b"unused for GGUF").unwrap();
+        let repaired = prepare(&root, &converter, None, |_| {}).await.unwrap();
+        assert!(repaired.entries[0].error.is_none());
+        assert_eq!(std::fs::read(&native).unwrap(), source_bytes);
+        std::fs::write(dataset.join("a.txt"), "new synth pad, 140 bpm").unwrap();
+        build_prompts(&root, "native-import").await.unwrap();
+        let pool: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&prompts).unwrap()).unwrap();
+        assert_eq!(
+            pool["dice"]["instrumental"],
+            serde_json::json!(["new synth pad"])
+        );
+        let legacy_source = root.join("legacy.safetensors");
+        std::fs::write(&legacy_source, b"retained source").unwrap();
+        std::fs::write(
+            &legacy_path,
+            serde_json::json!({"legacy":{"path":legacy_source,"strength":1.0}}).to_string(),
+        )
+        .unwrap();
+        let updated = set_strength(&root, "legacy", 0.4).await.unwrap();
+        assert_eq!(
+            updated
+                .entries
+                .iter()
+                .find(|entry| entry.name == "legacy")
+                .unwrap()
+                .strength,
+            0.4
+        );
+        assert!(remove_entry(&root, "legacy")
+            .await
+            .unwrap_err()
+            .contains("legacy registry"));
+        let raw = root.join("sa3/training/jobs/retained/raw.gguf");
+        std::fs::create_dir_all(raw.parent().unwrap()).unwrap();
+        std::fs::write(&raw, b"checkpoint preserved").unwrap();
+        let removed = remove_entry(&root, "native-import").await.unwrap();
+        assert!(!removed
+            .entries
+            .iter()
+            .any(|entry| entry.name == "native-import"));
+        assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+        assert!(native.is_file());
+        assert!(prompts.is_file());
+        assert!(raw.is_file());
+        assert!(!root.join("services/sa3/env").exists());
+        let decoder = root.join("decoder.gguf");
+        std::fs::write(&decoder, crate::sa3_gguf::fixture("sa3-lora", "decoder")).unwrap();
+        assert!(
+            import_adapter(&root, "decoder", &decoder, None, None, None, None)
+                .await
+                .unwrap_err()
+                .contains("DiT")
+        );
+        crate::remove_managed_path(&root, &std::env::temp_dir()).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires real GGUF/safetensors adapters, native converter and caption dataset"]
+    async fn real_native_import_management_smoke() {
+        let root = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_IMPORT_SMOKE_ROOT").expect("new isolated import root"),
+        );
+        assert!(!root.exists());
+        let gguf = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_IMPORT_GGUF").expect("real native adapter"),
+        );
+        let safetensors = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_LORA_SOURCE").expect("real exported adapter"),
+        );
+        let converter = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_LORA_CONVERTER").expect("native converter"),
+        );
+        let dataset = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_IMPORT_DATASET").expect("caption dataset"),
+        );
+        let hashes = (
+            sha256_file(&gguf).await.unwrap(),
+            sha256_file(&safetensors).await.unwrap(),
+        );
+        crate::sa3_training::checked_folder(&root, &["sa3"]).unwrap();
+        std::fs::write(root.join("sa3/lora_catalog.json"), "{}").unwrap();
+        let imported = import_adapter(
+            &root,
+            "koan-native-import",
+            &gguf,
+            None,
+            Some(&dataset),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported.entries.len(), 1);
+        let first = imported.entries[0].clone();
+        let native = PathBuf::from(first.native_path.unwrap());
+        let imported = import_adapter(
+            &root,
+            "sft-import",
+            &safetensors,
+            None,
+            None,
+            Some(&converter),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported.entries.len(), 2);
+        let sft_native = PathBuf::from(
+            imported
+                .entries
+                .iter()
+                .find(|entry| entry.name == "sft-import")
+                .unwrap()
+                .native_path
+                .as_ref()
+                .unwrap(),
+        );
+        set_strength(&root, "koan-native-import", 0.7)
+            .await
+            .unwrap();
+        let verified = prepare(&root, &converter, None, |_| {}).await.unwrap();
+        assert!(verified.entries.iter().all(|entry| entry.error.is_none()));
+        assert_eq!(sha256_file(&native).await.unwrap(), hashes.0);
+        assert!(!root.join("services/sa3/env").exists());
+        remove_entry(&root, "sft-import").await.unwrap();
+        assert!(sft_native.is_file());
+        assert!(safetensors.is_file());
+        assert_eq!(sha256_file(&gguf).await.unwrap(), hashes.0);
+        assert_eq!(sha256_file(&safetensors).await.unwrap(), hashes.1);
+        let prompts: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("sa3/prompts/koan-native-import.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(!prompts["dice"]["instrumental"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        println!("PASS native GGUF and SFT imports, native-only persistence, suggested strength, prompt pool, verification and non-destructive unregister without Python");
     }
 
     #[test]
@@ -1376,6 +1823,7 @@ mod tests {
             (
                 "legacy".into(),
                 NativeLora {
+                    native_only: false,
                     name: "legacy".into(),
                     source_path: root.join("original.ckpt").to_string_lossy().into(),
                     ..entry(&source)

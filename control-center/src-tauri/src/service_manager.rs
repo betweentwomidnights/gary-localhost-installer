@@ -782,6 +782,26 @@ impl ServiceManager {
     }
 
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
+        if svc.id == "sa3" {
+            if let Some(jobs) = self
+                .native_workloads
+                .get(&self.native_dir(svc).to_string_lossy().to_string())
+            {
+                if let Some((_, label)) = jobs.iter().find(|(job, _)| {
+                    matches!(
+                        job.as_str(),
+                        "legacy-lora-edit"
+                            | "lora-import"
+                            | "lora-edit"
+                            | "checkpoint-selection"
+                            | "lora-preparation"
+                            | "decoder-preparation"
+                    )
+                }) {
+                    return Some(format!("is waiting for {label} to finish"));
+                }
+            }
+        }
         if svc.id == "sa3"
             && self
                 .native_workloads
@@ -1430,6 +1450,34 @@ mod tests {
         assert!(manager.native_mutation_blocker("foundation").is_some());
         manager.end_native_workload("foundation", "converter");
         assert!(manager.native_mutation_blocker("sa3").is_none());
+    }
+
+    #[test]
+    fn adapter_registry_workloads_block_start_until_their_files_are_committed() {
+        let mut manager = shared_native_manager();
+        for job in [
+            "legacy-lora-edit",
+            "lora-import",
+            "lora-edit",
+            "checkpoint-selection",
+            "lora-preparation",
+            "decoder-preparation",
+        ] {
+            manager
+                .begin_native_workload("sa3", job, "SA3 adapter update")
+                .unwrap();
+            for runtime in [ServiceRuntime::Native, ServiceRuntime::Python] {
+                manager
+                    .services
+                    .iter_mut()
+                    .find(|svc| svc.id == "sa3")
+                    .unwrap()
+                    .runtime = runtime;
+                assert!(manager.start("sa3").unwrap_err().contains("adapter update"));
+            }
+            manager.end_native_workload("sa3", job);
+            assert!(!manager.start("sa3").unwrap_err().contains("adapter update"));
+        }
     }
 
     #[test]

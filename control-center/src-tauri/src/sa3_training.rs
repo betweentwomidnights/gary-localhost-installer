@@ -300,7 +300,8 @@ pub(crate) fn checked_folder(root: &Path, folders: &[&str]) -> Result<PathBuf, S
 }
 
 fn validate(options: &Options) -> Result<(), String> {
-    if crate::sanitize_lora_name(&options.name).as_deref() != Some(options.name.as_str())
+    if ["none", "default", "defaults"].contains(&options.name.as_str())
+        || crate::sanitize_lora_name(&options.name).as_deref() != Some(options.name.as_str())
         || !options.dataset.is_dir()
         || options.steps == 0
         || options.steps > i32::MAX as u32
@@ -725,6 +726,7 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_history_keeps_branches_and_selects_only_paired_owned_adapters() {
+        let _test = crate::sa3_loras::REGISTRY_TEST.lock().unwrap();
         let root = std::env::temp_dir().join(format!(
             "gary-native-history-{}",
             NEXT_JOB.fetch_add(1, Ordering::Relaxed)

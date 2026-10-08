@@ -1056,6 +1056,7 @@
     open={sa3LoraModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}
     serviceEnvExists={sa3Service?.env_exists ?? false}
+    pendingRestart={storageInfo?.pendingRestart ?? false}
     onClose={closeSa3Loras}
   />
   <Sa3LoraTrainingModal

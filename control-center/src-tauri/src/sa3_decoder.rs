@@ -154,6 +154,7 @@ pub async fn prepare(
         }
     }
     let mut entry = read(root)?.unwrap_or(NativeLora {
+        native_only: false,
         name: NAME.into(),
         source_path: source.to_string_lossy().into(),
         config_path: None,
@@ -239,6 +240,7 @@ mod tests {
 
     #[test]
     fn creative_adapter_cannot_be_prepared_as_decoder_correction() {
+        let _test = crate::sa3_loras::REGISTRY_TEST.lock().unwrap();
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
             let root = std::env::temp_dir().join(format!("sa3-decoder-target-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
             std::fs::create_dir_all(&root).unwrap();
@@ -246,7 +248,7 @@ mod tests {
             let header = serde_json::to_vec(&json!({"__metadata__":{"lora_config":json!({"target":"dit","rank":16,"alpha":16}).to_string()}})).unwrap();
             let mut bytes = (header.len() as u64).to_le_bytes().to_vec(); bytes.extend(header);
             std::fs::write(&source, &bytes).unwrap();
-            let mut entry = NativeLora { name:NAME.into(), source_path:source.to_string_lossy().into(), config_path:None, source_sha256:None, config_sha256:None, converter_sha256:None, native_path:None, native_sha256:None, strength:1.0, error:None, prompts_path:None, training_checkpoints:vec![], legacy_export:None };
+            let mut entry = NativeLora { native_only: false, name:NAME.into(), source_path:source.to_string_lossy().into(), config_path:None, source_sha256:None, config_sha256:None, converter_sha256:None, native_path:None, native_sha256:None, strength:1.0, error:None, prompts_path:None, training_checkpoints:vec![], legacy_export:None };
             assert!(crate::sa3_loras::prepare_decoder(&root, &mut entry, &root.join("missing-converter.exe"), None).await.unwrap_err().contains("target 'decoder'"));
             assert_eq!(std::fs::read(&source).unwrap(),bytes);
             assert!(!record_path(&root).exists());

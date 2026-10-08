@@ -832,7 +832,15 @@ mod tests {
         assert!(manager.is_native("sa3"));
         drop(public);
         drop(private);
+        let default_prompts = root.join("sa3/prompts/defaults.json");
+        let previous_defaults = std::fs::read(&default_prompts).ok();
         manager.start("sa3").unwrap();
+        let defaults: serde_json::Value = serde_json::from_slice(&std::fs::read(&default_prompts).unwrap()).unwrap();
+        if let Some(previous) = previous_defaults {
+            assert_eq!(std::fs::read(&default_prompts).unwrap(), previous);
+        } else {
+            assert!(!defaults["dice"]["generic"].as_array().unwrap().is_empty());
+        }
         let client = reqwest::Client::builder()
             .pool_max_idle_per_host(0)
             .timeout(std::time::Duration::from_secs(15))
