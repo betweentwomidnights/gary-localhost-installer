@@ -69,6 +69,8 @@ pub struct ServiceManager {
     /// Model preparation may replace weights. Keep launches and native tools
     /// from opening them between the preflight check and the final hash check.
     native_model_mutations: HashMap<String, String>,
+    sa3_selection: Option<crate::sa3_runtime::Selection>,
+    sa3_selection_error: Option<String>,
 }
 
 fn health_check_interval(
@@ -129,7 +131,16 @@ fn filter_successful_health_access_logs(raw: &str) -> String {
 }
 
 impl ServiceManager {
-    pub fn new(services: Vec<ServiceDef>, repo_root: PathBuf) -> Self {
+    pub fn new(mut services: Vec<ServiceDef>, repo_root: PathBuf) -> Self {
+        let (sa3_selection, sa3_selection_error) = match crate::sa3_runtime::read(&repo_root) {
+            Ok(selection) => (selection, None),
+            Err(error) => (None, Some(error)),
+        };
+        if sa3_selection.is_some() || sa3_selection_error.is_some() {
+            if let Some(service) = services.iter_mut().find(|service| service.id == "sa3") {
+                service.runtime = ServiceRuntime::Native;
+            }
+        }
         Self {
             services,
             native_runtimes: HashMap::new(),
@@ -139,6 +150,8 @@ impl ServiceManager {
             build_statuses: HashMap::new(),
             native_workloads: HashMap::new(),
             native_model_mutations: HashMap::new(),
+            sa3_selection,
+            sa3_selection_error,
         }
     }
 
@@ -293,6 +306,20 @@ impl ServiceManager {
         Some((svc.native.clone()?, self.native_dir(svc)))
     }
 
+    pub fn sa3_migration_launch(
+        &self,
+    ) -> Result<(NativeDef, NativeInstall, Vec<(String, String)>), String> {
+        let service = self.find_service("sa3").ok_or("Unknown SA3 service")?;
+        let native = service
+            .native
+            .clone()
+            .ok_or("SA3 has no native runtime definition")?;
+        let installed = self
+            .native_install(service)
+            .ok_or("Prepare the SA3 C++ runtime first")?;
+        Ok((native, installed, self.native_env_template(service)))
+    }
+
     /// The service's env with every template resolved except
     /// `${NATIVE_BACKEND}`, which depends on the runtime installed.
     fn native_env_template(&self, svc: &ServiceDef) -> Vec<(String, String)> {
@@ -327,6 +354,34 @@ impl ServiceManager {
     pub fn is_native(&self, service_id: &str) -> bool {
         self.find_service(service_id)
             .is_some_and(|svc| svc.runtime == ServiceRuntime::Native)
+    }
+
+    /// Called after migration has verified the installed native server. Persist
+    /// the profile choice before cleanup, then update this session's launch path.
+    pub fn activate_native_sa3(
+        &mut self,
+        mut selection: crate::sa3_runtime::Selection,
+    ) -> Result<crate::sa3_runtime::Selection, String> {
+        if self.is_running("sa3") {
+            return Err("Stop SA3 before switching its runtime".into());
+        }
+        if self.native_service("sa3").is_none() {
+            return Err("SA3 has no native runtime definition".into());
+        }
+        if let Some(previous) = &self.sa3_selection {
+            selection.cleanup_complete = previous.cleanup_complete;
+            selection.cleanup_errors = previous.cleanup_errors.clone();
+        }
+        crate::sa3_runtime::save(&self.repo_root, &selection)?;
+        self.services
+            .iter_mut()
+            .find(|service| service.id == "sa3")
+            .unwrap()
+            .runtime = ServiceRuntime::Native;
+        self.sa3_selection = Some(selection.clone());
+        self.sa3_selection_error = None;
+        self.errors.remove("sa3");
+        Ok(selection)
     }
 
     /// Where the shared runtimes native services need are installed.
@@ -722,13 +777,49 @@ impl ServiceManager {
     }
 
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
-        if svc.id == "sa3" && self.native_workloads.get(&self.native_dir(svc).to_string_lossy().to_string())
-            .is_some_and(|jobs| jobs.contains_key("native-training")) {
+        if svc.id == "sa3"
+            && self
+                .native_workloads
+                .get(&self.native_dir(svc).to_string_lossy().to_string())
+                .is_some_and(|jobs| jobs.contains_key("native-migration"))
+        {
+            return Some("is waiting for native migration validation to finish".into());
+        }
+        if svc.id == "sa3" {
+            if let Some(error) = &self.sa3_selection_error {
+                return Some(format!(
+                    "cannot use this profile's native selection: {error}"
+                ));
+            }
+        }
+        if svc.id == "sa3"
+            && self
+                .native_workloads
+                .get(&self.native_dir(svc).to_string_lossy().to_string())
+                .is_some_and(|jobs| jobs.contains_key("native-training"))
+        {
             return Some("is waiting for native training to finish".into());
         }
         if svc.runtime == ServiceRuntime::Native {
             if let Some(label) = self.native_model_mutations.get(&svc.id) {
                 return Some(format!("is waiting for {label} to finish"));
+            }
+            for consumer in self.bundle_consumers(svc) {
+                if self.is_building(&consumer.id) {
+                    return Some(format!(
+                        "is waiting for {}'s install to finish",
+                        consumer.display_name
+                    ));
+                }
+            }
+            if svc.id == "sa3" {
+                let encoding = self
+                    .sa3_selection
+                    .as_ref()
+                    .map_or("F16", |selection| selection.encoding.as_str());
+                if let Some(missing) = crate::sa3_runtime::missing_models(&self.repo_root, encoding) {
+                    return Some(missing);
+                }
             }
         }
         if svc.id == "yuey" {
@@ -803,7 +894,10 @@ impl ServiceManager {
             .map_err(|e| format!("Cannot clone log handle: {}", e))?;
 
         let mut cmd = Command::new(&exe);
-        cmd.args(&native.args)
+        let args = if svc.id == "sa3" {
+            crate::sa3_runtime::launch_args(&native.args, self.sa3_selection.as_ref().map_or("F16", |selection| selection.encoding.as_str()))?
+        } else { native.args.clone() };
+        cmd.args(&args)
             .current_dir(&install.dir)
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_file_err));
@@ -1198,6 +1292,62 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_profile_selection_survives_restart_and_corruption_never_falls_back_to_python() {
+        let root = std::env::temp_dir().join(format!(
+            "gary-sa3-manager-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let defs = manifest.services;
+        let original = root.join("services/sa3/env/Scripts/python.exe");
+        std::fs::create_dir_all(original.parent().unwrap()).unwrap();
+        std::fs::write(&original, b"preserved").unwrap();
+        let mut manager = ServiceManager::new(defs.clone(), root.clone());
+        assert!(!manager.is_native("sa3"));
+        manager
+            .activate_native_sa3(crate::sa3_runtime::Selection {
+                schema_version: 1,
+                encoding: "Q4_K_M".into(),
+                verified_release: "0.1.2".into(),
+                backend: "cuda".into(),
+                activated_at: 1,
+                cleanup_complete: false,
+                cleanup_errors: vec!["locked old environment".into()],
+            })
+            .unwrap();
+        assert!(manager.is_native("sa3"));
+        assert!(!manager.is_native("stable-audio"));
+        let restarted = ServiceManager::new(defs.clone(), root.clone());
+        assert!(restarted.is_native("sa3"));
+        assert!(restarted
+            .get_service_info()
+            .iter()
+            .find(|service| service.id == "sa3")
+            .unwrap()
+            .start_blocker
+            .as_deref()
+            .unwrap()
+            .contains("native models"));
+        let fresh = ServiceManager::new(defs.clone(), root.join("other-profile"));
+        assert!(!fresh.is_native("sa3"));
+        std::fs::write(crate::sa3_runtime::selection_path(&root), "{}").unwrap();
+        let mut corrupted = ServiceManager::new(defs, root.clone());
+        assert!(corrupted.is_native("sa3"));
+        assert!(corrupted
+            .start("sa3")
+            .unwrap_err()
+            .contains("native selection"));
+        assert_eq!(std::fs::read(&original).unwrap(), b"preserved");
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
 
     fn shared_native_manager() -> ServiceManager {
         let mut manifest: crate::manifest::Manifest =

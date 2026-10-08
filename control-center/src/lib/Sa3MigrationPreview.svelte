@@ -14,6 +14,7 @@
   interface ServiceStatus {
     id: string;
     build_status: { building: boolean; step_label: string } | null;
+    status: string;
   }
 
   interface MigrationItem {
@@ -28,7 +29,9 @@
     estimatedCleanupBytes: number;
     preservedPaths: MigrationItem[];
     warnings: string[];
+    nativeSelection: { encoding: string; verifiedRelease: string; cleanupComplete: boolean } | null;
   }
+  type NativeSelection = NonNullable<MigrationPreview["nativeSelection"]>;
 
   let { pendingRestart, onReveal }: {
     pendingRestart: boolean;
@@ -42,8 +45,17 @@
   let serviceBuilding = $state(false);
   let preparationStep = $state("");
   let preparationError: string | null = $state(null);
+  let activating = $state(false);
+  let serviceRunning = $state(false);
+  let activeEncoding = $state("F16");
+  let encodingTouched = $state(false);
+  let selection: NativeSelection | null = $state(null);
+  let activationMessage: string | null = $state(null);
+  let activationProgress = $state("");
 
   function updateBuild(services: ServiceStatus[]) {
+    const service = services.find((service) => service.id === "sa3");
+    serviceRunning = ["running", "starting", "unhealthy"].includes(service?.status ?? "");
     const status = services.find((service) => service.id === "sa3")?.build_status;
     serviceBuilding = status?.building ?? false;
     preparationStep = status?.step_label ?? "";
@@ -63,10 +75,16 @@
         void refreshRuntime().catch((cause) => { preparationError = String(cause); });
       }
     });
+    const migrationListener = listen<string>("sa3-native-migration-progress", (event) => { if (!disposed) activationProgress = event.payload; });
     void Promise.all([refreshRuntime(), invoke<ServiceStatus[]>("get_services").then((services) => {
       if (!disposed) updateBuild(services);
     })]).catch((cause) => { if (!disposed) preparationError = String(cause); });
-    return () => { disposed = true; void unlisten.then((stop) => stop()); };
+    void invoke<NativeSelection | null>("get_sa3_native_runtime_selection").then((saved) => {
+      if (disposed) return;
+      selection = saved;
+      if (saved && !encodingTouched) activeEncoding = saved.encoding;
+    }).catch((cause) => { if (!disposed) error = String(cause); });
+    return () => { disposed = true; void unlisten.then((stop) => stop()); void migrationListener.then((stop) => stop()); };
   });
 
   async function prepareRuntime() {
@@ -94,11 +112,25 @@
     preview = null;
     try {
       preview = await invoke<MigrationPreview>("get_sa3_migration_preview");
+      selection = preview.nativeSelection;
     } catch (cause) {
       error = String(cause);
     } finally {
       busy = false;
     }
+  }
+
+  async function activate() {
+    activating = true;
+    error = null;
+    activationMessage = null;
+    activationProgress = "Checking prepared runtime and models...";
+    try {
+      selection = await invoke<NativeSelection>("activate_sa3_native_runtime", { encoding: activeEncoding });
+      activationMessage = "C++ selected for this storage profile. Python files are preserved until cleanup.";
+      await scan();
+    } catch (cause) { error = String(cause); }
+    finally { activating = false; }
   }
 </script>
 
@@ -112,7 +144,7 @@
       {busy ? "scanning..." : preview ? "rescan SA3" : "preview SA3 cleanup"}
     </button>
   </div>
-  <p class="note">Migration will be available after native inference, LoRA conversion and training are validated. This preview only reads your storage.</p>
+  <p class="note">Prepare the runtime, models and adapters, then verify and select C++ for this storage profile. Cleanup follows separately after all migration gaps are resolved.</p>
   <div class="preparation">
     <div class="heading">
       <div>
@@ -133,6 +165,21 @@
   </div>
   <Sa3NativeModels {pendingRestart} />
   <Sa3NativeLoras {pendingRestart} />
+  <div class="preparation">
+    <div class="heading">
+      <div><h3>Use the C++ runtime</h3><p>Checks trainer capabilities, verifies model and adapter files, and tests native generation before switching SA3.</p></div>
+      <button type="button" onclick={activate} disabled={activating || preparing || serviceBuilding || busy || pendingRestart || serviceRunning || !runtime?.installed}>{activating ? "validating and switching..." : "verify and select C++"}</button>
+    </div>
+    <label>Inference model precision
+      <select bind:value={activeEncoding} disabled={activating || pendingRestart} onchange={() => encodingTouched = true}>
+        <option value="F16">F16</option><option value="Q8_0">Q8_0</option><option value="Q5_K_M">Q5_K_M</option><option value="Q4_K_M">Q4_K_M</option>
+      </select>
+    </label>
+    <p class="note">Choose a prepared model. Training base precision is selected separately. Stop SA3 before switching.</p>
+    {#if activating}<p class="note" role="status">{activationProgress}</p>{/if}
+    {#if selection}<p class="note" role="status">C++ selected: {selection.encoding}, release {selection.verifiedRelease}. {selection.cleanupComplete ? "Legacy cleanup completed." : "Legacy cleanup pending."}</p>{/if}
+    {#if activationMessage}<p class="note" role="status">{activationMessage}</p>{/if}
+  </div>
   {#if pendingRestart}
     <p class="note">Restart to use your chosen storage folder before scanning.</p>
   {:else if preview}
@@ -179,6 +226,8 @@
   .label { font-size: 11px; color: var(--text-secondary, #aaa); margin-top: 10px; }
   .summary { margin-top: 12px; font-size: 14px; }
   .preparation { margin: 16px 0; }
+  label { font-size: 12px; }
+  select { margin: 6px 0 6px 8px; background: var(--bg-secondary, #222); border: 1px solid var(--border, #444); color: inherit; padding: 6px; border-radius: 6px; }
   .entry { margin-top: 12px; font-size: 12px; }
   details { margin-top: 16px; font-size: 12px; }
   summary { cursor: pointer; }

@@ -475,6 +475,7 @@ impl AdapterState {
             upstream: format!("http://127.0.0.1:{port}"),
             uploads,
             client: reqwest::Client::builder()
+                .no_proxy()
                 .timeout(Duration::from_secs(30))
                 // Native model loads can exceed cpp-httplib's short keep-alive
                 // timeout. Fresh loopback connections avoid stale pooled sockets.

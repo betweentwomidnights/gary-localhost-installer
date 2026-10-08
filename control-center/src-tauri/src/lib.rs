@@ -7,6 +7,7 @@ mod sa3_loras;
 mod sa3_migration;
 mod sa3_models;
 mod sa3_prompts;
+mod sa3_runtime;
 mod sa3_training;
 mod service_manager;
 mod storage;
@@ -5921,6 +5922,8 @@ pub fn run() {
             delete_hf_token,
             get_runtime_storage_info,
             get_sa3_migration_preview,
+            activate_sa3_native_runtime,
+            get_sa3_native_runtime_selection,
             prepare_sa3_native_runtime,
             prepare_sa3_native_models,
             get_sa3_native_model_catalog,
@@ -9665,6 +9668,72 @@ async fn get_sa3_migration_preview(
     tauri::async_runtime::spawn_blocking(move || sa3_migration::preview(&root, &hub))
         .await
         .map_err(|error| format!("SA3 migration scan failed: {error}"))
+}
+
+#[tauri::command]
+fn get_sa3_native_runtime_selection(
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<Option<sa3_runtime::Selection>, String> {
+    sa3_runtime::read(repo_root.inner())
+}
+
+#[tauri::command]
+async fn activate_sa3_native_runtime(
+    encoding: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_runtime::Selection, String> {
+    if sa3_use_decoder_lora_enabled() {
+        return Err("Your SA3 decoder squeak-fix adapter is enabled. Native decoder-adapter preparation must be integrated before switching; your current selection and Python files are preserved.".into());
+    }
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before switching SA3".into());
+    }
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "SA3 training or migration is already starting")?;
+    if matches!(
+        read_sa3_lora_training_state().status.as_str(),
+        "starting" | "running"
+    ) {
+        return Err("Wait for SA3 training to finish before switching its runtime".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let (native, installed, env) = {
+        let mut services = manager.lock().await;
+        if services.is_running("sa3") {
+            return Err("Stop SA3 before switching to C++".into());
+        }
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot switch SA3: {blocker}"));
+        }
+        let plan = services.sa3_migration_launch()?;
+        services.begin_native_workload("sa3", "native-migration", "SA3 migration validation")?;
+        services.set_build_started("sa3", 1);
+        plan
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    let checked = sa3_migration::verify_native(
+        repo_root.inner(),
+        &native,
+        &installed,
+        &env,
+        &encoding,
+        |message| {
+            let _ = app_handle.emit("sa3-native-migration-progress", message);
+        },
+    )
+    .await;
+    let result = {
+        let mut services = manager.lock().await;
+        let result = checked.and_then(|selection| services.activate_native_sa3(selection));
+        services.end_native_workload("sa3", "native-migration");
+        services.set_build_done("sa3", result.as_ref().err().cloned());
+        result
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    result
 }
 
 /// Prepare the verified bundle while the legacy service remains selected.

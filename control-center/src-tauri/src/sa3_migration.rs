@@ -1,9 +1,9 @@
-//! Read-only inventory for SA3's move from PyTorch to the native runtime.
-//! This is deliberately separate from cleanup: installation, API parity and
-//! LoRA conversion must be validated before any of these paths can be retired.
+//! Inventory and native validation for SA3's move from PyTorch.
+//! Verification and activation preserve old files. Cleanup remains a separate
+//! transaction after runtime and adapter requirements have been satisfied.
 
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +22,7 @@ pub struct Sa3MigrationPreview {
     pub estimated_cleanup_bytes: u64,
     pub preserved_paths: Vec<MigrationItem>,
     pub warnings: Vec<String>,
+    pub native_selection: Option<crate::sa3_runtime::Selection>,
 }
 
 fn item(label: &str, path: &Path) -> MigrationItem {
@@ -40,7 +41,12 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         estimated_cleanup_bytes: 0,
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
+        native_selection: None,
     };
+    match crate::sa3_runtime::read(active_root) {
+        Ok(selection) => result.native_selection = selection,
+        Err(error) => result.warnings.push(error),
+    }
     let service = active_root.join("services").join("sa3");
     let candidates = [
         (
@@ -65,17 +71,71 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         ),
     ];
     let protected = active_root.join("sa3");
+    let mut protected_paths = vec![
+        protected.clone(),
+        active_root.join("models/sa3"),
+        active_root.join("native-runtimes"),
+        service.join("native"),
+    ];
+    if let Ok(catalog) =
+        crate::read_sa3_lora_catalog_from(&active_root.join("sa3/lora_catalog.json"))
+    {
+        for entry in catalog.values() {
+            protected_paths.push(PathBuf::from(&entry.path));
+            if let Some(path) = &entry.prompts_path {
+                protected_paths.push(PathBuf::from(path));
+            }
+            for checkpoint in &entry.training_checkpoints {
+                protected_paths.push(PathBuf::from(&checkpoint.path));
+            }
+        }
+    } else {
+        result.warnings.push("Cannot read the legacy SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
+    }
+    if let Ok(catalog) = crate::sa3_loras::read_catalog(active_root) {
+        for entry in catalog.values() {
+            protected_paths.push(PathBuf::from(&entry.source_path));
+            if let Some(path) = &entry.config_path {
+                protected_paths.push(PathBuf::from(path));
+            }
+        }
+    } else {
+        result.warnings.push("Cannot read the native SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
+    }
+    for id in [
+        "gary",
+        "melodyflow",
+        "stable-audio",
+        "carey",
+        "foundation",
+        "yuey",
+    ] {
+        protected_paths.push(active_root.join("services").join(id));
+    }
+    if let Ok(entries) = std::fs::read_dir(hf_hub) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if ![
+                "models--stabilityai--stable-audio-3-medium",
+                "models--stabilityai--stable-audio-3-medium-base",
+            ]
+            .contains(&name.to_string_lossy().as_ref())
+            {
+                protected_paths.push(entry.path());
+            }
+        }
+    }
     let mut seen = Vec::new();
     for (label, path, owner) in candidates {
         match crate::resolve_managed_path(&path, &owner) {
             Ok(Some(canonical)) => {
                 // A redirected cache or environment must never turn the
                 // proposed cleanup into removal of user-owned SA3 artifacts.
-                if crate::path_is_inside(&canonical, &protected)
-                    || crate::path_is_inside(&protected, &canonical)
+                if protected_paths.iter().any(|protected| crate::path_is_inside(&canonical, protected)
+                    || crate::path_is_inside(protected, &canonical))
                 {
                     result.warnings.push(format!(
-                        "Preserving {} because it overlaps SA3 user data.", path.display()
+                        "Preserving {} because it overlaps SA3 user data or native runtime files.", path.display()
                     ));
                 } else if !seen.contains(&canonical) {
                     result.cleanup_candidates.push(item(label, &path));
@@ -119,6 +179,252 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         });
     }
     result
+}
+
+/// Verify the actual installed tools and selected weights while Python remains
+/// selected. The probe owns a private server; no client port or old file changes.
+pub async fn verify_native(
+    root: &Path,
+    native: &crate::manifest::NativeDef,
+    installed: &crate::native_runtime::NativeInstall,
+    template: &[(String, String)],
+    encoding: &str,
+    progress: impl Fn(&str),
+) -> Result<crate::sa3_runtime::Selection, String> {
+    use serde_json::{json, Value};
+    use std::time::{Duration, Instant};
+    let runtime_path = crate::native_runtime::path_with_runtimes(root, &installed.runtimes);
+    progress("Checking native trainer capabilities...");
+    crate::sa3_training::probe(
+        &installed.dir.join("sa3-train.exe"),
+        runtime_path.as_deref(),
+    )
+    .await?;
+    let models = crate::sa3_models::models_dir(root);
+    for id in crate::sa3_models::preparation_ids(encoding, None)? {
+        let component = crate::sa3_models::component(&id).unwrap();
+        if !crate::sa3_models::present(component, &models) {
+            return Err(format!("Prepare {} before migration", component.label));
+        }
+        for file in &component.files {
+            progress(&format!("Verifying {}...", file.filename));
+            if crate::native_runtime::sha256_file(&models.join(&file.filename)).await?
+                != file.sha256
+            {
+                return Err(format!(
+                    "Native model {} failed verification; prepare it again",
+                    file.filename
+                ));
+            }
+        }
+    }
+    for entry in crate::sa3_loras::state(root)?.entries {
+        progress(&format!("Verifying LoRA '{}'...", entry.name));
+        let path = entry
+            .native_path
+            .as_deref()
+            .filter(|_| entry.error.is_none())
+            .ok_or_else(|| {
+                format!(
+                    "Prepare LoRA '{}' before migration: {}",
+                    entry.name,
+                    entry.error.as_deref().unwrap_or("native copy missing")
+                )
+            })?;
+        if crate::native_runtime::sha256_file(Path::new(path))
+            .await?
+            .as_str()
+            != entry.native_sha256.as_deref().unwrap_or("")
+            || crate::native_runtime::sha256_file(Path::new(&entry.source_path))
+                .await?
+                .as_str()
+                != entry.source_sha256.as_deref().unwrap_or("")
+        {
+            return Err(format!(
+                "LoRA '{}' changed since preparation; prepare it again",
+                entry.name
+            ));
+        }
+        if let Some(path) = &entry.config_path {
+            if crate::native_runtime::sha256_file(Path::new(path))
+                .await?
+                .as_str()
+                != entry.config_sha256.as_deref().unwrap_or("")
+            {
+                return Err(format!(
+                    "LoRA '{}' configuration changed since preparation; prepare it again",
+                    entry.name
+                ));
+            }
+        }
+    }
+    progress("Starting the private native test server...");
+    let dir = crate::sa3_training::checked_folder(root, &["sa3", "migration-checks"])?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let log = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(format!("server-{nonce}.log")))
+        .map_err(|error| error.to_string())?;
+    let reservation = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|error| error.to_string())?;
+    let port = reservation
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    let mut command = tokio::process::Command::new(installed.dir.join(&native.executable));
+    crate::hide_console_window(&mut command);
+    command
+        .args(crate::sa3_runtime::launch_args(&native.args, encoding)?)
+        .arg("--port")
+        .arg(port.to_string())
+        .current_dir(&installed.dir)
+        .envs(crate::native_runtime::launch_env(
+            template,
+            &installed.backend,
+        ))
+        .stdout(log.try_clone().map_err(|error| error.to_string())?)
+        .stderr(log)
+        .kill_on_drop(true);
+    if let Some(path) = &runtime_path {
+        command.env("PATH", path);
+    }
+    crate::workload_job::configure_tokio_command(&mut command);
+    drop(reservation);
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .pool_max_idle_per_host(0)
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let base = format!("http://127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let health: Value = loop {
+        if let Some(exit) = child.try_wait().map_err(|error| error.to_string())? {
+            return Err(format!(
+                "Native SA3 migration check exited with {exit}; inspect migration-checks logs"
+            ));
+        }
+        if let Ok(response) = client.get(format!("{base}/health")).send().await {
+            if response.status().is_success() {
+                break response.json().await.map_err(|error| error.to_string())?;
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "Native SA3 migration check did not start; inspect migration-checks logs".into(),
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    for capability in [
+        "fixed_prefix",
+        "request_splice",
+        "conditioning_duration",
+        "model_lifecycle",
+    ] {
+        if health["capabilities"][capability] != true {
+            return Err(format!("Installed SA3 runtime lacks {capability}; prepare a compatible release before migration"));
+        }
+    }
+    progress("Loading the selected native model...");
+    client
+        .post(format!("{base}/load"))
+        .timeout(Duration::from_secs(180))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Native SA3 model load failed: {error}"))?;
+    client
+        .get(format!("{base}/ready"))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Native SA3 model is not ready: {error}"))?;
+    progress("Testing native generation...");
+    let submitted: Value = client.post(format!("{base}/generate")).json(&json!({"prompt":"a soft instrumental tone","duration":0.25,"crop_duration":0.25,"steps":1,"seed":42,"keep_models":false,"loras":[]})).send().await.map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
+    let id = submitted["session_id"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        })
+        .ok_or("Native SA3 returned an invalid migration-check job")?;
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        let completed: Value = client
+            .get(format!("{base}/poll_status/{id}"))
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .json()
+            .await
+            .map_err(|error| error.to_string())?;
+        match completed["status"].as_str() {
+            Some("completed") => {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(
+                        completed["audio_data"]
+                            .as_str()
+                            .ok_or("Native SA3 check returned no audio")?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                let reader = hound::WavReader::new(std::io::Cursor::new(bytes))
+                    .map_err(|error| error.to_string())?;
+                if reader.spec().sample_rate != 44100
+                    || reader.spec().channels != 2
+                    || reader.duration() != 11025
+                {
+                    return Err("Native SA3 check returned unexpected audio geometry".into());
+                }
+                break;
+            }
+            Some("failed") => {
+                return Err(format!(
+                    "Native SA3 generation check failed: {}",
+                    completed["error"]
+                ))
+            }
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            return Err("Native SA3 generation check timed out".into());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    child.kill().await.map_err(|error| error.to_string())?;
+    child.wait().await.map_err(|error| error.to_string())?;
+    Ok(crate::sa3_runtime::Selection {
+        schema_version: 1,
+        encoding: encoding.into(),
+        verified_release: installed
+            .version
+            .clone()
+            .unwrap_or_else(|| "development".into()),
+        backend: installed.backend.clone(),
+        activated_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        cleanup_complete: false,
+        cleanup_errors: Vec::new(),
+    })
 }
 
 #[cfg(test)]
@@ -212,5 +518,215 @@ mod tests {
         assert!(result.cleanup_candidates.is_empty());
         assert_eq!(result.warnings.len(), 1);
         assert!(model.exists());
+    }
+
+    #[test]
+    fn cleanup_preview_preserves_original_loras_inside_an_owned_model_cache() {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("runtime");
+        let hub = root.join("models/huggingface/hub");
+        let source = fixture.write("runtime/models/huggingface/hub/models--stabilityai--stable-audio-3-medium/adapter.safetensors");
+        let catalog = fixture.write("runtime/sa3/lora_catalog.json");
+        std::fs::write(
+            &catalog,
+            serde_json::json!({"original":{"path":source,"strength":1}}).to_string(),
+        )
+        .unwrap();
+        let result = preview(&root, &hub);
+        assert!(result.cleanup_candidates.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(source.is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_environment_redirected_into_the_native_bundle_is_preserved() {
+        use std::os::windows::process::CommandExt;
+        let fixture = Fixture::new();
+        let native = fixture.write("runtime/services/sa3/native/sa3-server.exe");
+        let root = fixture.0.join("runtime");
+        let env = root.join("services/sa3/env");
+        let output = std::process::Command::new("cmd")
+            .raw_arg(format!(
+                "/c mklink /J \"{}\" \"{}\"",
+                env.to_string_lossy().replace('/', "\\"),
+                native
+                    .parent()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('/', "\\")
+            ))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result = preview(&root, &root.join("models/huggingface/hub"));
+        assert!(result.cleanup_candidates.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(native.is_file());
+    }
+
+    #[tokio::test]
+    #[ignore = "verifies compatible real tools and existing model GGUFs before profile activation"]
+    async fn real_native_runtime_verification_keeps_python_until_activation() {
+        let root = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_MIGRATION_SMOKE_ROOT")
+                .expect("new isolated root required"),
+        );
+        assert!(!root.exists());
+        let source_models = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_SMOKE_MODELS").expect("model folder required"),
+        );
+        let server = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY").expect("compatible server required"),
+        );
+        let target = crate::sa3_models::checked_models_dir(&root).unwrap();
+        for id in crate::sa3_models::preparation_ids("F16", None).unwrap() {
+            for file in &crate::sa3_models::component(&id).unwrap().files {
+                std::fs::hard_link(
+                    source_models.join(&file.filename),
+                    target.join(&file.filename),
+                )
+                .unwrap();
+            }
+        }
+        let original = root.join("services/sa3/env/Scripts/python.exe");
+        std::fs::create_dir_all(original.parent().unwrap()).unwrap();
+        std::fs::write(&original, b"preserved Python environment").unwrap();
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let defs = manifest.services;
+        let native = defs
+            .iter()
+            .find(|service| service.id == "sa3")
+            .unwrap()
+            .native
+            .clone()
+            .unwrap();
+        let installed = crate::native_runtime::NativeInstall {
+            dir: server.parent().unwrap().into(),
+            backend: "cuda".into(),
+            runtimes: Vec::new(),
+            version: None,
+            fallback_reason: None,
+        };
+        let env = vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())];
+        let selection = super::verify_native(&root, &native, &installed, &env, "F16", |message| {
+            println!("{message}")
+        })
+        .await
+        .unwrap();
+        assert!(
+            !crate::sa3_runtime::selection_path(&root).exists(),
+            "verification must not commit the runtime choice"
+        );
+        let mut manager = crate::service_manager::ServiceManager::new(defs.clone(), root.clone());
+        assert!(!manager.is_native("sa3"));
+        manager.activate_native_sa3(selection).unwrap();
+        assert!(manager.is_native("sa3"));
+        assert!(crate::service_manager::ServiceManager::new(defs, root).is_native("sa3"));
+        assert_eq!(
+            std::fs::read(original).unwrap(),
+            b"preserved Python environment"
+        );
+        println!("PASS native trainer/server/model verification and persistent profile activation; Python preserved");
+    }
+
+    #[tokio::test]
+    #[ignore = "launches an already activated isolated profile through ServiceManager with a native developer override"]
+    async fn real_native_selected_profile_launches_through_service_manager() {
+        let root = PathBuf::from(
+            std::env::var_os("GARY4LOCAL_SA3_MIGRATION_SMOKE_ROOT")
+                .expect("existing isolated activation profile required"),
+        );
+        assert!(crate::sa3_runtime::read(&root).unwrap().is_some());
+        assert!(std::env::var_os("GARY4LOCAL_NATIVE_DIR_SA3").is_some());
+        let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let private = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let public_port = public.local_addr().unwrap().port();
+        let private_port = private.local_addr().unwrap().port();
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let sa3 = manifest
+            .services
+            .iter_mut()
+            .find(|service| service.id == "sa3")
+            .unwrap();
+        sa3.port = public_port;
+        sa3.native
+            .as_mut()
+            .unwrap()
+            .env
+            .insert("SA3_PORT".into(), private_port.to_string());
+        let mut manager =
+            crate::service_manager::ServiceManager::new(manifest.services, root.clone());
+        manager.set_native_runtimes(manifest.native_runtimes);
+        assert!(manager.is_native("sa3"));
+        drop(public);
+        drop(private);
+        manager.start("sa3").unwrap();
+        let client = reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap();
+        let base = format!("http://127.0.0.1:{public_port}");
+        let checked: Result<serde_json::Value, String> = async {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            loop {
+                if client
+                    .get(format!("{base}/health"))
+                    .send()
+                    .await
+                    .is_ok_and(|response| response.status().is_success())
+                {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err("managed native service did not start".into());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            client
+                .post(format!("{base}/load"))
+                .timeout(std::time::Duration::from_secs(180))
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?;
+            client
+                .get(format!("{base}/ready"))
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?;
+            client
+                .get(format!("{base}/health"))
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .json()
+                .await
+                .map_err(|error| error.to_string())
+        }
+        .await;
+        manager.stop("sa3").unwrap();
+        let health = checked.unwrap();
+        assert_eq!(health["encoding"], "f16");
+        assert_eq!(health["model_loaded"], true);
+        assert_eq!(
+            std::fs::read(root.join("services/sa3/env/Scripts/python.exe")).unwrap(),
+            b"preserved Python environment"
+        );
+        println!("PASS selected native profile started/stopped through production ServiceManager, public adapter load/readiness, and Python preservation");
     }
 }

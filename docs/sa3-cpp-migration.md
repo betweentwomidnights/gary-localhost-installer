@@ -533,6 +533,52 @@ use local compatibility tools with the published CUDA backend/runtime pack.
 Desktop/gary4juce interaction and an unmodified compatible release installation
 remain required before cleanup.
 
+## Profile runtime activation
+
+Storage now offers **verify and select C++** for a prepared inference precision.
+Activation reserves the bundle and blocks SA3 launch, rebuild, removal and
+training launch while it checks the native trainer control schema, hashes the
+selected inference/text/decoder files against the pinned model catalog, and
+rechecks registered adapter sources, configuration sidecars and native copies.
+It then launches a private native server, requires the four compatibility
+capabilities, loads the model, checks readiness, and verifies a tiny real
+generation's audio geometry. Progress identifies each file and validation phase.
+Errors preserve the prior runtime selection and all Python files.
+
+Successful verification atomically stores `sa3/native-runtime.json` within the
+active storage profile, then updates the service manager to use native launch.
+The selected DiT precision overrides the manifest's initial F16 argument while
+T5/decoder precision stays independent. Other service runtime choices and other
+storage profiles remain unchanged. A restart restores that choice. Corrupt,
+inaccessible or redirected selection files block SA3 instead of silently
+restoring Python. Changing precision preserves previous cleanup status.
+
+An enabled decoder squeak-fix setting currently blocks activation until its
+native conversion/selection is integrated. Unprepared legacy adapters also
+block activation. Published v0.1.1 lacks the required trainer/server controls,
+so the button reports that a compatible release is needed; this slice does not
+claim v0.1.1 is a migration-ready package.
+
+The read-only cleanup inventory now also excludes canonical paths overlapping
+the native bundle, native models/shared packs, other services or HF cache
+repositories, and original adapters/configurations/checkpoints referenced by
+the catalogs. Tests include a real Windows junction that redirects the old
+environment into the native bundle and an original adapter inside a candidate
+PyTorch repository. Both are preserved.
+
+Two live CUDA checks passed under
+`artifacts/sa3-migration/profile-activation-smoke-1`: full model verification,
+private generation and persisted activation left the original Python marker
+unchanged; a later service-manager launch used the saved native choice and
+passed public adapter load/readiness before stopping. They use the local
+compatibility build, a developer override and isolated storage, rather than
+a published compatible package or the user's live desktop profile.
+
+141 regular Rust tests pass, with nine explicit integration tests excluded.
+Frontend checks/build pass. The cleanup transaction, legacy checkpoint export,
+native decoder adapter integration, Python helper retirement, published-package
+validation and joint desktop/client validation remain outstanding.
+
 ## Validation before enabling cleanup
 
 First-slice checks completed: four Rust inventory tests passed, `npm run check`
