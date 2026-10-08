@@ -27,6 +27,7 @@
     activeRoot: string;
     hfHubCache: string;
     cleanupCandidates: MigrationItem[];
+    legacyRuntimePresent: boolean;
     estimatedCleanupBytes: number;
     preservedPaths: MigrationItem[];
     warnings: string[];
@@ -83,11 +84,7 @@
     void Promise.all([refreshRuntime(), invoke<ServiceStatus[]>("get_services").then((services) => {
       if (!disposed) updateBuild(services);
     })]).catch((cause) => { if (!disposed) preparationError = String(cause); });
-    void invoke<NativeSelection | null>("get_sa3_native_runtime_selection").then((saved) => {
-      if (disposed) return;
-      selection = saved;
-      if (saved && !encodingTouched) activeEncoding = saved.encoding;
-    }).catch((cause) => { if (!disposed) error = String(cause); });
+    void scan();
     return () => { disposed = true; void unlisten.then((stop) => stop()); void migrationListener.then((stop) => stop()); };
   });
 
@@ -117,6 +114,7 @@
     try {
       preview = await invoke<MigrationPreview>("get_sa3_migration_preview");
       selection = preview.nativeSelection;
+      if (selection && !encodingTouched) activeEncoding = selection.encoding;
     } catch (cause) {
       error = String(cause);
     } finally {
@@ -145,13 +143,14 @@
   }
 
   async function activate() {
+    validatedClient = false;
     activating = true;
     error = null;
     activationMessage = null;
     activationProgress = "Checking prepared runtime and models...";
     try {
       selection = await invoke<NativeSelection>("activate_sa3_native_runtime", { encoding: activeEncoding });
-      activationMessage = "C++ selected for this storage profile. Python files are preserved until cleanup.";
+      activationMessage = "C++ selected for this storage profile.";
       await scan();
     } catch (cause) { error = String(cause); }
     finally { activating = false; }
@@ -161,19 +160,22 @@
 <section aria-labelledby="sa3-migration-title">
   <div class="heading">
     <div>
-      <h3 id="sa3-migration-title">SA3 native migration preflight</h3>
-      <p>Review the storage used by the current SA3 Python installation.</p>
+      <h3 id="sa3-migration-title">{preview?.legacyRuntimePresent ? "Migrate SA3 to C++" : "SA3 C++ setup"}</h3>
+      {#if busy}<p role="status">Checking SA3 storage...</p>
+      {:else if preview?.legacyRuntimePresent}<p>Prepare C++ alongside your existing SA3 Python installation.</p>
+      {:else if preview}<p>No SA3 Python environment or PyTorch weights were found in this storage profile.</p>
+      {:else}<p>Prepare the native runtime and models for this storage profile.</p>{/if}
     </div>
     <button type="button" onclick={scan} disabled={busy || cleaning || activating || pendingRestart}>
-      {busy ? "scanning..." : preview ? "rescan SA3" : "preview SA3 cleanup"}
+      {busy ? "checking..." : "rescan SA3 storage"}
     </button>
   </div>
-  <p class="note">Prepare the runtime, models and adapters, then verify and select C++ for this storage profile. Test generation and your LoRAs before retiring Python.</p>
+  <p class="note">Prepare the runtime, models and adapters, then verify and select C++ for this storage profile.{#if preview?.legacyRuntimePresent} Test generation and your LoRAs before retiring Python.{/if}</p>
   <div class="preparation">
     <div class="heading">
       <div>
         <h3>Prepare the C++ runtime</h3>
-        <p>Download and verify the shared SA3 runtime using your detected GPU. Your Python service and models stay available.</p>
+        <p>Download and verify the shared SA3 runtime using your detected GPU.{#if preview?.legacyRuntimePresent} Your Python service and models stay available.{/if}</p>
       </div>
       <button type="button" onclick={prepareRuntime} disabled={preparing || serviceBuilding || cleaning || pendingRestart}>
         {preparing || serviceBuilding ? "preparing..." : runtime?.installed ? "verify / reinstall runtime" : "prepare SA3 runtime"}
@@ -182,7 +184,7 @@
     {#if preparing || serviceBuilding}
       <p class="note" role="status">{preparationStep}</p>
     {:else if runtime?.installed}
-      <p class="note" role="status">Runtime prepared: {runtime.version ?? "local build"}, {runtime.backend ?? "auto"}. Model setup and service migration are the next steps.</p>
+      <p class="note" role="status">Runtime prepared: {runtime.version ?? "local build"}, {runtime.backend ?? "auto"}. Prepare your models, then verify and select C++.</p>
       {#if runtime.fallbackReason}<p class="note">{runtime.fallbackReason}</p>{/if}
     {/if}
     {#if preparationError}<p class="error" role="alert">{preparationError}</p>{/if}
@@ -191,7 +193,7 @@
   <Sa3NativeLoras {pendingRestart} />
   <div class="preparation">
     <div class="heading">
-      <div><h3>Use the C++ runtime</h3><p>Checks trainer capabilities, verifies model and adapter files, and tests native generation before switching SA3.</p></div>
+      <div><h3>Use the C++ runtime</h3><p>Checks server, training and audio analysis support, verifies model and adapter files, and tests native generation before selecting C++.</p></div>
       <button type="button" onclick={activate} disabled={activating || preparing || serviceBuilding || busy || pendingRestart || serviceRunning || !runtime?.installed}>{activating ? "validating and switching..." : "verify and select C++"}</button>
     </div>
     <label>Inference model precision
@@ -201,14 +203,17 @@
     </label>
     <p class="note">Choose a prepared model. Training base precision is selected separately. Stop SA3 before switching.</p>
     {#if activating}<p class="note" role="status">{activationProgress}</p>{/if}
-    {#if selection}<p class="note" role="status">C++ selected: {selection.encoding}, release {selection.verifiedRelease}. {selection.cleanupComplete ? "Legacy cleanup completed." : "Legacy cleanup pending."}</p>{/if}
+    {#if selection}<p class="note" role="status">C++ selected: {selection.encoding}, release {selection.verifiedRelease}. {selection.cleanupComplete ? "Legacy cleanup completed." : preview?.legacyRuntimePresent ? "Legacy cleanup pending." : preview ? "No Python runtime cleanup is needed." : "Checking legacy storage."}</p>{/if}
     {#if selection}{#each selection.cleanupErrors ?? [] as issue}<p class="note">{issue}</p>{/each}{/if}
     {#if activationMessage}<p class="note" role="status">{activationMessage}</p>{/if}
   </div>
   {#if pendingRestart}
     <p class="note">Restart to use your chosen storage folder before scanning.</p>
   {:else if preview}
-    <div class="summary">{formatBytes(preview.estimatedCleanupBytes)} in potential cleanup</div>
+    {#each preview.warnings as warning}<p class="error">{warning}</p>{/each}
+    <details open={preview.legacyRuntimePresent}>
+    <summary>{preview.legacyRuntimePresent ? "Review legacy SA3 cleanup" : preview.cleanupCandidates.length ? "Optional bundled Python source cleanup" : "Storage details"}</summary>
+    {#if preview.cleanupCandidates.length}<div class="summary">{formatBytes(preview.estimatedCleanupBytes)} in potential cleanup</div>{/if}
     <p class="note">Estimates include cached weight copies and may differ from disk space recovered. Old storage profiles use the existing cleanup section below.</p>
     <div class="label">active storage</div>
     <button class="path" type="button" onclick={() => preview && onReveal(preview.activeRoot)}>{preview.activeRoot}</button>
@@ -241,18 +246,16 @@
       {/each}
       <p class="note">Settings, tokens, external datasets and other services stay in place. The UV cache is shared by Python services; clearing it remains a separate storage action.</p>
     </details>
-    {#each preview.warnings as warning}
-      <p class="error">{warning}</p>
-    {/each}
-    {#if selection && (!selection.cleanupComplete || preview.cleanupCandidates.length > 0)}
+    {#if selection && (preview.cleanupCandidates.length > 0 || preview.legacyRuntimePresent || selection.cleanupErrors.length > 0)}
       <div class="preparation">
-        <h3>Retire the SA3 Python installation</h3>
+        <h3>{preview.legacyRuntimePresent ? "Retire the SA3 Python installation" : "Remove reviewed bundled Python source"}</h3>
         <p>Removes the reviewed SA3 Python environments, unchanged bundled Python code and PyTorch weight repositories. Original LoRAs, checkpoints, prompts, native models, shared runtimes and other services are preserved. Edited or unrecognized service files, settings and developer source checkouts are kept.</p>
         <label class="confirmation"><input type="checkbox" bind:checked={validatedClient} disabled={cleaning} /> I have tested native generation and my LoRAs in Gary, including training where needed.</label>
         <button type="button" onclick={cleanup} disabled={cleaning || activating || preparing || serviceBuilding || serviceRunning || busy || pendingRestart || !validatedClient || preview.warnings.length > 0}>{cleaning ? "verifying and cleaning up..." : "clean up reviewed Python files"}</button>
         {#if cleaning}<p class="note" role="status">{activationProgress}</p>{/if}
       </div>
     {/if}
+    </details>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>

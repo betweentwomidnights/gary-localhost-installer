@@ -20,6 +20,7 @@ pub struct Sa3MigrationPreview {
     pub active_root: String,
     pub hf_hub_cache: String,
     pub cleanup_candidates: Vec<MigrationItem>,
+    pub legacy_runtime_present: bool,
     pub estimated_cleanup_bytes: u64,
     pub preserved_paths: Vec<MigrationItem>,
     pub warnings: Vec<String>,
@@ -41,6 +42,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         active_root: active_root.to_string_lossy().to_string(),
         hf_hub_cache: hf_hub.to_string_lossy().to_string(),
         cleanup_candidates: Vec::new(),
+        legacy_runtime_present: false,
         estimated_cleanup_bytes: 0,
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
@@ -74,6 +76,15 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
             hf_hub.to_path_buf(),
         ),
     ];
+    // Bundled source alone does not mean a user installed the Python service.
+    // Keep unknown/inaccessible paths conservative; cleanup safety is still
+    // decided independently below by canonical ownership and protection checks.
+    result.legacy_runtime_present = candidates.iter().any(|(_, path, _)| {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => true,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    });
     let code = crate::sa3_code::status(active_root);
     result.warnings.extend(code.warnings);
     for path in &code.candidates {
@@ -603,7 +614,27 @@ mod tests {
         let result = preview(&fixture.0, &fixture.0.join("models/huggingface/hub"));
         assert!(result.cleanup_candidates.is_empty());
         assert_eq!(result.estimated_cleanup_bytes, 0);
+        assert!(!result.legacy_runtime_present);
         assert!(!fixture.0.exists());
+    }
+
+    #[test]
+    fn bundled_code_and_native_assets_do_not_require_python_runtime_migration() {
+        let fixture = Fixture::new();
+        let code = fixture.write("runtime/services/sa3/requirements.txt");
+        fixture.write("runtime/services/sa3/native/sa3-server.exe");
+        fixture.write("runtime/models/sa3/native.gguf");
+        fixture.write("other-profile/services/sa3/env/Scripts/python.exe");
+        let root = fixture.0.join("runtime");
+        crate::sa3_code::record_bundle(&root, &root, false).unwrap();
+        let result = preview(&root, &root.join("models/huggingface/hub"));
+        assert!(!result.legacy_runtime_present);
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.cleanup_candidates.len(), 1);
+        assert_eq!(result.cleanup_candidates[0].kind, Some("code"));
+        assert!(code.is_file());
+        fixture.write("runtime/services/sa3/.venv/Scripts/python.exe");
+        assert!(preview(&root, &root.join("models/huggingface/hub")).legacy_runtime_present);
     }
 
     #[test]
@@ -626,6 +657,7 @@ mod tests {
         let root = fixture.0.join("runtime");
         let result = preview(&root, &root.join("models/huggingface/hub"));
         assert_eq!(result.cleanup_candidates.len(), 2);
+        assert!(result.legacy_runtime_present);
         assert_eq!(result.estimated_cleanup_bytes, 8);
         for path in keep.iter().chain([&env, &model]) {
             assert!(path.is_file());
@@ -647,6 +679,7 @@ mod tests {
             model.parent().unwrap()
         );
         assert!(model.exists());
+        assert!(result.legacy_runtime_present);
     }
 
     #[test]
@@ -707,6 +740,7 @@ mod tests {
         assert!(result.cleanup_candidates.is_empty());
         assert_eq!(result.warnings.len(), 1);
         assert!(native.is_file());
+        assert!(result.legacy_runtime_present);
     }
 
     #[tokio::test]

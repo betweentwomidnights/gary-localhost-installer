@@ -904,3 +904,31 @@ offline controls, pinned F16 component hashes, private server load/readiness,
 CUDA generation and persistent profile activation succeeded. The test used the
 existing published CUDA backend plus shared CUDA runtime, not a newly built GPU
 release archive. The isolated Python environment fixture remained intact.
+
+## Distinguish native setup from Python migration
+
+The Storage panel now scans the active profile on opening. A Python environment
+(`env` or `.venv`) or either effective PyTorch model repository identifies an
+existing runtime to migrate. Source files shipped with the app, native weights,
+native binaries and other storage profiles do not imply that Python was
+installed. Inaccessible/redirected environment or cache paths remain
+conservative and retain the existing inventory warnings and cleanup blocks.
+
+Profiles without these Python assets see **SA3 C++ setup** and no mandatory
+runtime-cleanup message. Owned bundled source remains an optional, collapsed
+review rather than a migration requirement. Existing environments/caches keep
+the expanded reviewed retirement flow. Warnings remain visible outside the
+collapsed review. Selecting a runtime again resets the client-validation
+acknowledgment before any subsequent cleanup.
+
+Validation passed 167 regular Rust tests (14 explicit hardware/download tests
+excluded), Svelte checks with zero errors/warnings, and the production frontend
+build. Browser checks used a mock Tauri fixture, with no runtime writes: fresh
+activation, source-only optional review, existing Python paths, acknowledgment
+reset, redirected-path blocking even after acknowledgment, and pending-restart
+gates. The fresh layout screenshot is
+`artifacts/sa3-migration/onboarding-fresh-preview.jpg`; the temporary fixture
+source is archived alongside it. These checks complement the real headless
+CUDA tests; actual Gary client interaction remains joint validation work.
+The published-runtime pin and default Python manifest remain unchanged until
+a compatible release is published and verified.
