@@ -124,5 +124,19 @@
         "bytes": 1009176288
       }
     ]
+  },
+  {
+    "id": "sa3-native::decoder-correction",
+    "label": "Optional decoder squeak fix source",
+    "description": "Pinned SAME-L decoder adapter, converted into a separate native copy before enabling correction.",
+    "files": [
+      {
+        "repo": "thepatch/same-l-decoder-lora",
+        "revision": "92d4f0d1187f95038fa1b4271c6942135b39c430",
+        "filename": "squeakfix_v3.safetensors",
+        "sha256": "99942d64e822138fc67445d3c664f31c714ca62cf5d9a21b20ba33a41d9e99ed",
+        "bytes": 11278296
+      }
+    ]
   }
 ]

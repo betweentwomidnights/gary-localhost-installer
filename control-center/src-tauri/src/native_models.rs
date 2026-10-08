@@ -37,7 +37,7 @@ impl PinnedHfFile {
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
             || !safe_part(&self.filename)
-            || !self.filename.ends_with(".gguf")
+            || !(self.filename.ends_with(".gguf") || self.filename.ends_with(".safetensors"))
             || !is_sha256(&self.sha256)
             || self.bytes == 0
         {

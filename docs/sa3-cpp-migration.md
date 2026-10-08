@@ -675,3 +675,37 @@ destructive cleanup and release publication remain outstanding.
 - Run the same API contract suite against the published native release, not
   only the local branch. Broader CUDA/Vulkan/Metal trainer validation upstream
   supports this work but does not replace host integration validation.
+
+
+## Native optional decoder correction
+
+The host now prepares a pinned `squeakfix_v3.safetensors` source from
+`thepatch/same-l-decoder-lora` revision
+`92d4f0d1187f95038fa1b4271c6942135b39c430` (SHA-256
+`99942d64e822138fc67445d3c664f31c714ca62cf5d9a21b20ba33a41d9e99ed`).
+Its native GGUF uses the existing published converter and immutable adapter
+cache, with a separate `sa3/native-decoder/adapter.json` record. It stays out
+of the creative LoRA registry/menu. When enabled, the Gary wrapper and private
+migration verification append the decoder adapter independently of creative
+selection, including `lora: none`. Source/native/configuration checksums are
+verified before admitting the request. The runtime start reports missing
+preparation instead of losing the user's enabled correction setting.
+
+Models includes optional source download and native conversion/verification;
+the existing decoder switch reads native readiness after profile migration.
+Explicit `SA3_DECODER_LORA_PATH` is supported without modifying its source.
+A custom repository/filename requires an explicit local path rather than
+silently substituting the pinned default. Cleanup inventory protects original
+source/configuration paths and the separate native record.
+
+`artifacts/decoder-smoke-1` passed published-converter conversion, source hash,
+cache reuse/repair, incorrect source rejection and auxiliary request composition.
+`artifacts/decoder-adapter-smoke-3` passed all four public Gary routes on CUDA
+with Medium F16/autoencoder F32, using correction alone for generate/continue
+and correction plus the Q4-trained Koan creative adapter for loop/transform.
+The server log confirms one/two admitted adapters respectively. A 12-second,
+20-step creative+decoder sample, seed/crop/consume metadata, prompt pools,
+lifecycle and incompatible creative-model filtering also passed (27.36s).
+This validates integration; correction/training audio quality still needs
+joint listening through gary4juce. Basic decoder routing already exists in
+sa3.cpp, so no new upstream change was needed for this feature.

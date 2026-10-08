@@ -21,6 +21,7 @@
     message: string;
     error: string | null;
   }
+  interface DecoderState { enabled: boolean; sourcePresent: boolean; prepared: boolean; error: string | null; }
 
   let { pendingRestart = false }: { pendingRestart?: boolean } = $props();
   let catalog: Component[] = $state([]);
@@ -28,6 +29,9 @@
   let progress: Progress[] = $state([]);
   let encoding = $state("F16");
   let includeTraining = $state(true);
+  let includeDecoder = $state(false);
+  let decoderTouched = $state(false);
+  let decoder: DecoderState | null = $state(null);
   let trainingBase = $state("F16");
   let trainingBaseTouched = $state(false);
   let busy = $state(false);
@@ -40,6 +44,7 @@
     "sa3-native::medium-decoder",
     `sa3-native::medium-${encoding}`,
     ...(includeTraining ? [`sa3-native::medium-base-${trainingBase}`] : []),
+    ...(includeDecoder ? ["sa3-native::decoder-correction"] : []),
   ]);
   const selected = $derived(catalog.filter((entry) => selectedIds.includes(entry.id)));
   const downloading = $derived(models.some((model) => model.id.startsWith("sa3-native::") && model.status === "downloading"));
@@ -53,9 +58,17 @@
   onMount(() => {
     let disposed = false;
     const listeners = [
-      listen<Model[]>("models-updated", (event) => { if (!disposed) models = event.payload; }),
+      listen<Model[]>("models-updated", (event) => { if (!disposed) { models = event.payload; void refreshDecoder(); } }),
       listen<Progress[]>("download-progress", (event) => { if (!disposed) progress = event.payload; }),
+      listen<DecoderState>("sa3-native-decoder-updated", (event) => { if (!disposed) decoder = event.payload; }),
     ];
+    async function refreshDecoder() {
+      try {
+        const state = await invoke<DecoderState>("get_sa3_native_decoder_state");
+        if (!disposed) { decoder = state; if (!decoderTouched && state.enabled) includeDecoder = true; }
+      } catch (cause) { if (!disposed) error = String(cause); }
+    }
+    void refreshDecoder();
     void Promise.all([
       invoke<Component[]>("get_sa3_native_model_catalog"),
       invoke<Model[]>("get_models"),
@@ -77,7 +90,7 @@
     error = null;
     message = null;
     try {
-      await invoke("prepare_sa3_native_models", { encoding, trainingBase: includeTraining ? trainingBase : null });
+      await invoke("prepare_sa3_native_models", { encoding, trainingBase: includeTraining ? trainingBase : null, includeDecoder });
       message = "Preparing your selected model components. Existing files are verified and reused.";
       models = await invoke<Model[]>("get_models");
     } catch (cause) {
@@ -85,6 +98,15 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function prepareDecoder() {
+    busy = true; error = null; message = null;
+    try {
+      decoder = await invoke<DecoderState>("prepare_sa3_native_decoder");
+      message = "Native decoder correction is prepared. Enable it with the decoder squeak fix switch.";
+    } catch (cause) { error = String(cause); }
+    finally { busy = false; }
   }
 
   async function remove(entry: Component) {
@@ -117,6 +139,7 @@
       </select>
     </label>
     <label class="checkbox"><input type="checkbox" bind:checked={includeTraining} disabled={busy || downloading || pendingRestart} /> Include LoRA training base</label>
+    <label class="checkbox"><input type="checkbox" bind:checked={includeDecoder} onchange={() => decoderTouched = true} disabled={busy || downloading || pendingRestart || decoder?.enabled} /> Include optional decoder squeak fix</label>
     {#if includeTraining}
       <label>Training precision
         <select bind:value={trainingBase} disabled={busy || downloading || pendingRestart} onchange={() => trainingBaseTouched = true}>
@@ -148,7 +171,14 @@
     </div>
   {/each}
   {#if ready}<p role="status">Selected components are present. Preparing verifies their checksums again.</p>{/if}
-  <p>Model preparation keeps your current SA3 service available. Service migration will follow inference and training validation.</p>
+  {#if includeDecoder || decoder?.sourcePresent || decoder?.enabled}
+    <div class="component">
+      <p>Decoder squeak fix: {decoder?.prepared ? "native copy prepared" : "native copy needs preparation"}. Stop SA3 before converting the source. Your creative LoRAs remain separately selectable.</p>
+      <button type="button" onclick={prepareDecoder} disabled={busy || downloading || removing !== null || pendingRestart || !decoder?.sourcePresent}>{decoder?.prepared ? "verify native decoder fix" : "prepare native decoder fix"}</button>
+      {#if decoder?.error}<p>{decoder.error}</p>{/if}
+    </div>
+  {/if}
+  <p>Model preparation uses your selected storage folder. Verify and switch runtimes in Storage after preparing the components and adapters.</p>
   {#if message}<p role="status">{message}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>

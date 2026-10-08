@@ -408,6 +408,7 @@ pub struct AdapterState {
     defaults: Map<String, Value>,
     registry_root: Option<PathBuf>,
     default_lora: Option<String>,
+    decoder_correction: bool,
 }
 
 struct AvailableLoras {
@@ -486,6 +487,7 @@ impl AdapterState {
             defaults: Map::new(),
             registry_root: None,
             default_lora: None,
+            decoder_correction: false,
         })
     }
 
@@ -645,6 +647,14 @@ impl AdapterState {
         }
         if let Err(reply) = self.map_requested_loras(&mut translated.native).await {
             return reply;
+        }
+        if self.decoder_correction {
+            let Some(root) = &self.registry_root else {
+                return failure(StatusCode::SERVICE_UNAVAILABLE, "Decoder correction registry is missing");
+            };
+            if let Err(error) = crate::sa3_decoder::append_request(root, true, &mut translated.native).await {
+                return failure(StatusCode::SERVICE_UNAVAILABLE, error);
+            }
         }
         let upload = if let Some(audio) = translated.audio.take() {
             if let Err(error) = tokio::fs::create_dir_all(&self.uploads).await {
@@ -815,6 +825,7 @@ impl AdapterListener {
         let mut state = AdapterState::new(native_port, uploads)?;
         state.defaults = defaults;
         state.registry_root = Some(registry_root);
+        state.decoder_correction = crate::sa3_use_decoder_lora_enabled();
         state.default_lora = default_lora
             .filter(|name| !name.trim().is_empty())
             .map(|name| name.trim().to_ascii_lowercase());
@@ -851,6 +862,7 @@ async fn continue_audio(State(state): State<AdapterState>, Json(body): Json<Valu
 async fn health(State(state): State<AdapterState>) -> Reply {
     match state.request(reqwest::Method::GET, "/health", None).await {
         Ok((status, mut body)) => {
+            body["decoder_lora_enabled"] = json!(state.decoder_correction);
             body["model_loaded"] = body["loaded"].clone();
             body["model_loading"] = body.get("loading").cloned().unwrap_or(json!(false));
             body["model_error"] = body.get("error").cloned().unwrap_or(Value::Null);
@@ -1278,6 +1290,7 @@ mod tests {
             let mut native = command.spawn().unwrap();
             let mut state = AdapterState::new(native_port, root.join("uploads")).unwrap();
             state.registry_root = registry.clone();
+            state.decoder_correction = std::env::var("GARY4LOCAL_SA3_SMOKE_DECODER").is_ok_and(|value| value == "1");
             let deadline = Instant::now() + Duration::from_secs(20);
             loop {
                 assert!(native.try_wait().unwrap().is_none(), "server exited; inspect native-server.log");
@@ -1308,6 +1321,7 @@ mod tests {
             let loaded:Value = client.post(format!("{base}/load")).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
             assert_eq!(loaded["status"],"loaded");
             let health:Value = client.get(format!("{base}/health")).send().await.unwrap().json().await.unwrap();
+            assert_eq!(health["decoder_lora_enabled"], std::env::var("GARY4LOCAL_SA3_SMOKE_DECODER").is_ok_and(|value| value == "1"));
             assert_eq!(health["model_loaded"],true,"unexpected health: {health}"); assert_eq!(health["model_loading"],false); assert!(health["model_error"].is_null());
             assert_eq!(client.get(format!("{base}/ready")).send().await.unwrap().status(),StatusCode::OK);
             for (route, mut body, expected_samples) in [
@@ -1318,7 +1332,7 @@ mod tests {
                     "continuation_mode":"latent_prefix","mask_overlap":0.1,"splice_gain_match":false}),22050),
             ] {
                 body["prompt"] = json!("a soft tone"); body["steps"] = json!(1); body["seed"] = json!(4294967295u64);
-                if registry.is_some() { body["lora"] = json!("default"); body["lora_strength"] = json!(0.8); }
+                if registry.is_some() { body["lora"] = json!(if std::env::var("GARY4LOCAL_SA3_SMOKE_DECODER").is_ok_and(|value| value == "1") && matches!(route, "generate" | "continue") { "none" } else { "default" }); body["lora_strength"] = json!(0.8); }
                 body["peak_normalize_db"] = Value::Null; body["limiter_ceiling_db"] = Value::Null;
                 let response = client.post(format!("http://127.0.0.1:{port}/{route}")).json(&body).send().await.unwrap();
                 let status = response.status(); let submitted:Value = response.json().await.unwrap();

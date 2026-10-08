@@ -102,6 +102,18 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     } else {
         result.warnings.push("Cannot read the native SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
     }
+    match crate::sa3_decoder::read(active_root) {
+        Ok(Some(entry)) => {
+            protected_paths.push(PathBuf::from(&entry.source_path));
+            if let Some(path) = entry.config_path {
+                protected_paths.push(PathBuf::from(path));
+            }
+        }
+        Err(error) => result
+            .warnings
+            .push(format!("Cannot safely inspect decoder correction: {error}")),
+        Ok(None) => {}
+    }
     for id in [
         "gary",
         "melodyflow",
@@ -189,6 +201,7 @@ pub async fn verify_native(
     installed: &crate::native_runtime::NativeInstall,
     template: &[(String, String)],
     encoding: &str,
+    decoder_enabled: bool,
     progress: impl Fn(&str),
 ) -> Result<crate::sa3_runtime::Selection, String> {
     use serde_json::{json, Value};
@@ -346,7 +359,19 @@ pub async fn verify_native(
         .error_for_status()
         .map_err(|error| format!("Native SA3 model is not ready: {error}"))?;
     progress("Testing native generation...");
-    let submitted: Value = client.post(format!("{base}/generate")).json(&json!({"prompt":"a soft instrumental tone","duration":0.25,"crop_duration":0.25,"steps":1,"seed":42,"keep_models":false,"loras":[]})).send().await.map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
+    let mut request = json!({"prompt":"a soft instrumental tone","duration":0.25,"crop_duration":0.25,"steps":1,"seed":42,"keep_models":false,"loras":[]});
+    crate::sa3_decoder::append_request(root, decoder_enabled, &mut request).await?;
+    let submitted: Value = client
+        .post(format!("{base}/generate"))
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json()
+        .await
+        .map_err(|error| error.to_string())?;
     let id = submitted["session_id"]
         .as_str()
         .filter(|id| {
@@ -609,11 +634,12 @@ mod tests {
             fallback_reason: None,
         };
         let env = vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())];
-        let selection = super::verify_native(&root, &native, &installed, &env, "F16", |message| {
-            println!("{message}")
-        })
-        .await
-        .unwrap();
+        let selection =
+            super::verify_native(&root, &native, &installed, &env, "F16", false, |message| {
+                println!("{message}")
+            })
+            .await
+            .unwrap();
         assert!(
             !crate::sa3_runtime::selection_path(&root).exists(),
             "verification must not commit the runtime choice"

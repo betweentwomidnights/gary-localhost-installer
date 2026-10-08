@@ -820,6 +820,11 @@ impl ServiceManager {
                 if let Some(missing) = crate::sa3_runtime::missing_models(&self.repo_root, encoding) {
                     return Some(missing);
                 }
+                if crate::sa3_use_decoder_lora_enabled() {
+                    if let Some(blocker) = crate::sa3_decoder::blocker(&self.repo_root) {
+                        return Some(blocker);
+                    }
+                }
             }
         }
         if svc.id == "yuey" {

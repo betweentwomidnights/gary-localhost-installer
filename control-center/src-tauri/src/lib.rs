@@ -4,6 +4,7 @@ mod native_models;
 mod native_runtime;
 mod sa3_adapter;
 mod sa3_analysis;
+mod sa3_decoder;
 mod sa3_loras;
 mod sa3_migration;
 mod sa3_models;
@@ -5903,6 +5904,8 @@ pub fn run() {
             prepare_sa3_native_models,
             get_sa3_native_model_catalog,
             get_sa3_native_lora_state,
+            get_sa3_native_decoder_state,
+            prepare_sa3_native_decoder,
             prepare_sa3_native_loras,
             select_sa3_native_checkpoint,
             get_sa3_native_resume_options,
@@ -9634,9 +9637,7 @@ async fn activate_sa3_native_runtime(
     manager: tauri::State<'_, ManagerState>,
     app_handle: tauri::AppHandle,
 ) -> Result<sa3_runtime::Selection, String> {
-    if sa3_use_decoder_lora_enabled() {
-        return Err("Your SA3 decoder squeak-fix adapter is enabled. Native decoder-adapter preparation must be integrated before switching; your current selection and Python files are preserved.".into());
-    }
+    let decoder_enabled = sa3_use_decoder_lora_enabled();
     if storage::storage_info(repo_root.inner()).pending_restart {
         return Err("Restart to use your chosen storage before switching SA3".into());
     }
@@ -9670,6 +9671,7 @@ async fn activate_sa3_native_runtime(
         &installed,
         &env,
         &encoding,
+        decoder_enabled,
         |message| {
             let _ = app_handle.emit("sa3-native-migration-progress", message);
         },
@@ -9677,7 +9679,12 @@ async fn activate_sa3_native_runtime(
     .await;
     let result = {
         let mut services = manager.lock().await;
-        let result = checked.and_then(|selection| services.activate_native_sa3(selection));
+        let result = checked.and_then(|selection| {
+            if decoder_enabled != sa3_use_decoder_lora_enabled() {
+                return Err("Decoder correction changed during migration validation; retry with the current setting.".into());
+            }
+            services.activate_native_sa3(selection)
+        });
         services.end_native_workload("sa3", "native-migration");
         services.set_build_done("sa3", result.as_ref().err().cloned());
         result
@@ -9781,6 +9788,54 @@ async fn get_sa3_native_resume_options(
 }
 
 #[tauri::command]
+fn get_sa3_native_decoder_state(repo_root: tauri::State<'_, PathBuf>) -> sa3_decoder::State {
+    sa3_decoder::state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn prepare_sa3_native_decoder(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_decoder::State, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(
+            "Restart to use your selected storage before preparing decoder correction.".into(),
+        );
+    }
+    let (converter, runtime_path) = {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot prepare decoder correction: {blocker}."));
+        }
+        let (def, dir) = services
+            .native_service("sa3")
+            .ok_or("SA3 has no native runtime")?;
+        let installed = native_runtime::installed("sa3", &dir, &def.executable)
+            .ok_or("Prepare SA3's native runtime first")?;
+        services.begin_native_workload(
+            "sa3",
+            "decoder-preparation",
+            "SA3 decoder correction preparation",
+        )?;
+        (
+            installed.dir.join("sa3-lora-convert.exe"),
+            native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
+        )
+    };
+    let result = sa3_decoder::prepare(repo_root.inner(), &converter, runtime_path.as_deref()).await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "decoder-preparation");
+    let _ = app_handle.emit(
+        "sa3-native-decoder-updated",
+        sa3_decoder::state(repo_root.inner()),
+    );
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    result
+}
+#[tauri::command]
 async fn prepare_sa3_native_loras(
     repo_root: tauri::State<'_, PathBuf>,
     manager: tauri::State<'_, ManagerState>,
@@ -9833,6 +9888,7 @@ async fn prepare_sa3_native_loras(
 async fn prepare_sa3_native_models(
     encoding: String,
     training_base: Option<String>,
+    include_decoder: Option<bool>,
     repo_root: tauri::State<'_, PathBuf>,
     model_mgr: tauri::State<'_, ModelState>,
     svc_mgr: tauri::State<'_, ManagerState>,
@@ -9841,7 +9897,10 @@ async fn prepare_sa3_native_models(
     if storage::storage_info(repo_root.inner()).pending_restart {
         return Err("Restart to use your chosen storage before preparing SA3 models.".into());
     }
-    let ids = sa3_models::preparation_ids(&encoding, training_base.as_deref())?;
+    let mut ids = sa3_models::preparation_ids(&encoding, training_base.as_deref())?;
+    if include_decoder.unwrap_or(false) || sa3_use_decoder_lora_enabled() {
+        ids.push(sa3_decoder::MODEL_ID.into());
+    }
     let mut services = svc_mgr.lock().await;
     if services.is_native("sa3") {
         if let Some(blocker) = services.native_mutation_blocker("sa3") {

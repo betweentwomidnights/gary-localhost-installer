@@ -107,7 +107,7 @@ pub fn read_catalog(root: &Path) -> Result<BTreeMap<String, NativeLora>, String>
 
 /// Catalog paths are local managed files, never arbitrary paths supplied to the
 /// native server. Reject external paths even when the referenced file is absent.
-fn checked_native_path(root: &Path, path: &Path) -> Result<(), String> {
+pub(crate) fn checked_native_path(root: &Path, path: &Path) -> Result<(), String> {
     let boundary = root.canonicalize().map_err(|error| error.to_string())?;
     let dir = adapters_dir(root)
         .canonicalize()
@@ -328,7 +328,7 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
     })
 }
 
-fn embedded_config(path: &Path) -> Result<bool, String> {
+pub(crate) fn embedded_lora_config(path: &Path) -> Result<Option<serde_json::Value>, String> {
     let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     let mut prefix = [0u8; 8];
     file.read_exact(&mut prefix)
@@ -342,9 +342,18 @@ fn embedded_config(path: &Path) -> Result<bool, String> {
         .map_err(|error| format!("Truncated safetensors header: {error}"))?;
     let header: serde_json::Value =
         serde_json::from_slice(&header).map_err(|error| error.to_string())?;
-    Ok(header
+    header
         .pointer("/__metadata__/lora_config")
-        .is_some_and(|value| value.is_string()))
+        .and_then(|value| value.as_str())
+        .map(|config| {
+            serde_json::from_str(config)
+                .map_err(|error| format!("Invalid embedded LoRA configuration: {error}"))
+        })
+        .transpose()
+}
+
+fn embedded_config(path: &Path) -> Result<bool, String> {
+    Ok(embedded_lora_config(path)?.is_some())
 }
 
 fn config_for_source(entry: &NativeLora) -> Result<Option<PathBuf>, String> {
@@ -858,6 +867,63 @@ async fn convert_one(
     entry.native_path = Some(dest.to_string_lossy().into());
     entry.native_sha256 = Some(native_hash);
     entry.error = None;
+    Ok(())
+}
+
+/// Auxiliary autoencoder adapters use the same immutable conversion machinery,
+/// but remain outside the creative LoRA registry.
+pub async fn prepare_decoder(
+    root: &Path,
+    entry: &mut NativeLora,
+    converter: &Path,
+    runtime_path: Option<&std::ffi::OsStr>,
+) -> Result<(), String> {
+    let _reservation = PREPARATION
+        .try_lock()
+        .map_err(|_| "Native adapter preparation is already running")?;
+    let source = Path::new(&entry.source_path)
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let source_hash = sha256_file(&source).await?;
+    let input = if source
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ckpt"))
+    {
+        export_legacy_checkpoint(root, entry, &source, &source_hash).await?
+    } else {
+        source.clone()
+    };
+    let mut exported = entry.clone();
+    exported.source_path = input.to_string_lossy().into();
+    let config = config_for_source(&exported)?;
+    let (config_value, config_hash) = if let Some(path) = config {
+        (
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(&path).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?,
+            Some(sha256_file(&path).await?),
+        )
+    } else {
+        (
+            embedded_lora_config(&input)?.ok_or("Decoder adapter has no configuration")?,
+            None,
+        )
+    };
+    if config_value["target"] != "decoder" {
+        return Err("The decoder correction adapter must declare target 'decoder'.".into());
+    }
+    convert_one(
+        root,
+        entry,
+        converter,
+        &sha256_file(converter).await?,
+        runtime_path,
+    )
+    .await?;
+    if entry.source_sha256.as_deref() != Some(&source_hash) || entry.config_sha256 != config_hash {
+        return Err("Decoder source changed during preparation; prepare it again.".into());
+    }
     Ok(())
 }
 
