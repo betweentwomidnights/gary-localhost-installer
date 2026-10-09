@@ -36,8 +36,9 @@
     recommendedEncoding: string | null;
   }
 
-  let { serviceId, onBack }: {
+  let { serviceId, serviceRuntime = "python", onBack }: {
     serviceId: string;
+    serviceRuntime?: "python" | "native";
     onBack: () => void;
   } = $props();
 
@@ -105,9 +106,16 @@
     try {
       await invoke("download_model", { modelId, serviceId });
       await loadModels();
+      await loadProgress();
     } catch (e) {
       console.error("Download failed:", e);
+      modelActionError = e instanceof Error ? e.message : String(e);
     }
+  }
+
+  async function loadProgress() {
+    const downloads = await invoke<DownloadProgress[]>("get_download_progress");
+    progress = new Map(downloads.map((download) => [download.model_id, download]));
   }
 
   function formatBytes(bytes: number): string {
@@ -187,6 +195,7 @@
   onMount(() => {
     loadModels();
     loadYueyState();
+    void loadProgress().catch((error) => console.error("Failed to load download progress:", error));
 
     const unlistenModels = listen<ModelEntry[]>("models-updated", (event) => {
       models = event.payload;
@@ -200,18 +209,17 @@
       progress = newMap;
     });
 
+    let polling = false;
     const pollTimer = setInterval(async () => {
+      if (polling) return;
+      polling = true;
       try {
-        const prog = await invoke<DownloadProgress[]>("get_download_progress");
-        const newMap = new Map<string, DownloadProgress>();
-        for (const p of prog) {
-          newMap.set(p.model_id, p);
-        }
-        progress = newMap;
+        await loadProgress();
         await loadModels();
         // A finished tier download can change which tier yuey launches with.
         await loadYueyState();
       } catch (_) {}
+      finally { polling = false; }
     }, 3000);
 
     return () => {
@@ -223,7 +231,7 @@
 
   // Filter models belonging to this service
   let serviceModels = $derived(
-    models.filter((m) => m.service === serviceId)
+    models.filter((m) => m.service === serviceId && (!isSa3 || serviceRuntime !== "native" || m.id.startsWith("sa3-native::")))
   );
 
   // For Jerry: separate base models from finetune checkpoints
@@ -452,7 +460,8 @@
       </div>
 
     {:else if isSa3}
-      <Sa3NativeModels />
+      <Sa3NativeModels models={serviceModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+      {#if serviceRuntime !== "native"}
       <div class="size-group">
         <div class="size-label">Python models and optional components</div>
         <div class="carey-hint">
@@ -504,6 +513,7 @@
         {/each}
       </div>
 
+      {/if}
     {:else if isCarey}
       <!-- Carey: shared components -->
       <div class="size-group">

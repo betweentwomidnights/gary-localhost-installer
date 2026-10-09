@@ -6053,6 +6053,7 @@ pub fn run() {
             cleanup_sa3_legacy_installation,
             get_sa3_training_runtime_availability,
             get_sa3_native_runtime_selection,
+            select_sa3_native_model,
             prepare_sa3_native_runtime,
             prepare_sa3_native_models,
             get_sa3_native_model_catalog,
@@ -9881,6 +9882,24 @@ fn get_sa3_native_runtime_selection(
     repo_root: tauri::State<'_, PathBuf>,
 ) -> Result<Option<sa3_runtime::Selection>, String> {
     sa3_runtime::read(repo_root.inner())
+}
+
+#[tauri::command]
+async fn select_sa3_native_model(
+    encoding: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_runtime::Selection, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your selected storage before changing the SA3 model.".into());
+    }
+    let _launch = sa3_training::LAUNCH.try_lock()
+        .map_err(|_| "Wait for SA3 training or migration to finish starting.")?;
+    let selection = manager.lock().await.select_sa3_native_model(&encoding)?;
+    emit_status(manager.inner(), &app_handle).await;
+    let _ = app_handle.emit("sa3-native-model-selected", &selection);
+    Ok(selection)
 }
 
 #[tauri::command]

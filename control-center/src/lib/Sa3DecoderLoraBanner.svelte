@@ -70,7 +70,7 @@
 
   async function toggleDecoderLora(nextEnabled: boolean) {
     if (nextEnabled && !downloaded) {
-      message = nativeRuntime ? "prepare the native decoder fix in sa3 models first." : "download the decoder fix first, then this switch will wake up.";
+      message = nativeRuntime ? "download and install the decoder fix in sa3 models first." : "download the decoder fix first, then this switch will wake up.";
       return;
     }
 
@@ -143,7 +143,7 @@
     <div class="warning-row">
       <span>
         {#if nativeRuntime}
-          prepare the native decoder fix in sa3's model list before enabling it.
+          download and install the decoder fix in sa3's model list before enabling it.
           {#if nativeError}{nativeError}{/if}
         {:else}
           download the decoder fix from sa3's model list before enabling it.

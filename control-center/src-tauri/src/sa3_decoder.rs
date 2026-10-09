@@ -91,7 +91,7 @@ pub fn blocker(root: &Path) -> Option<String> {
     match read(root) {
         Err(error) => Some(error),
         Ok(None) => {
-            Some("needs prepared native decoder correction; prepare it in SA3 Models".into())
+            Some("needs native decoder correction; download and install it in SA3 Models".into())
         }
         Ok(Some(entry)) => {
             let selected = source_path(root).canonicalize();

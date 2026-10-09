@@ -120,6 +120,42 @@ weight bytes were reclaimed. Safe ownership-based retirement of staged Python
 training weights remains a cleanup gap; no staged files were deleted during
 this audit.
 
+### Native runtime and model controls
+
+SA3's log panel now uses the same backend dropdown component as Yuey. It saves
+the per-service preference (`auto`, or an offered backend such as CUDA/Vulkan),
+shows the installed backend/device and offers runtime reinstall when the chosen
+backend differs. Running services must be stopped before reinstall; existing
+bundle/shared-runtime reservations continue to protect training and native tools.
+
+Once the profile selects C++, SA3 Models filters out all legacy Python model
+rows and excludes them from its download count/size. Unmigrated Python profiles
+retain their existing model downloads. The native model interface follows Yuey's
+shared-component, generation-tier and optional-training-base rows, with Download,
+Retry, progress, remove, default/recommended and active indicators. Progress loads
+immediately when opening the panel, and fallback polls cannot overlap. The
+optional decoder correction remains a small adapter with native conversion and
+no Python dependency. The old prepare/verify model action and download-selection
+checkboxes are removed from model management; the migration wizard keeps its
+internal preparation commands.
+
+Shared model files remain the verified F16 text encoder/tokenizer and F32
+autoencoder/conditioner. Only the DiT generation tiers vary (F16, Q8_0, Q5_K_M,
+Q4_K_M); training has separate F16/Q4_K_M bases. An F16 autoencoder is not selected
+without separate weight/decoder-correction validation. Choosing a downloaded
+generation tier updates the profile selection without rerunning migration or
+changing cleanup status. The backend rejects missing components, an unselected
+native profile, pending storage restart, running services and native workload or
+model mutations. Selection and launch use the same persisted encoding.
+
+Strict browser checks cover native/legacy inventories, Vulkan preference,
+download/progress/retry, active-tier switching and training-blocked switching.
+A real-file smoke hard-linked the production GGUFs into an isolated temporary
+profile and confirmed selection, restart persistence, completed-cleanup
+preservation and missing-tier rejection without changing production settings or
+weights. Regular Rust checks now pass 176 tests (16 ignored); frontend checks
+report no errors/warnings.
+
 ## Runtime baseline and ownership
 
 The latest published sa3.cpp release inspected is

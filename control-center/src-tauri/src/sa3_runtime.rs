@@ -172,7 +172,7 @@ pub fn missing_models(root: &Path, encoding: &str) -> Option<String> {
                 .map(|component| component.label.as_str())
                 .collect();
             (!missing.is_empty())
-                .then(|| format!("needs prepared native models: {}", missing.join(", ")))
+                .then(|| format!("needs downloaded native models: {}", missing.join(", ")))
         }
     }
 }

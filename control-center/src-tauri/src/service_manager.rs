@@ -475,6 +475,25 @@ impl ServiceManager {
         Ok(selection)
     }
 
+    /// Choose downloaded generation weights without repeating migration or cleanup.
+    pub fn select_sa3_native_model(&mut self, encoding: &str) -> Result<crate::sa3_runtime::Selection, String> {
+        let ids = crate::sa3_models::preparation_ids(encoding, None)?;
+        if let Some(blocker) = self.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot change the SA3 model: {blocker}."));
+        }
+        let mut selection = self.sa3_selection.clone()
+            .ok_or("Migrate SA3 to C++ before selecting a generation tier.")?;
+        let dir = crate::sa3_models::models_dir(&self.repo_root);
+        for id in ids {
+            let component = crate::sa3_models::component(&id).ok_or("Unknown SA3 model")?;
+            if !crate::sa3_models::present(component, &dir) {
+                return Err(format!("Download {} before using this generation tier.", component.label));
+            }
+        }
+        selection.encoding = encoding.to_string();
+        self.activate_native_sa3(selection)
+    }
+
     /// Where the shared runtimes native services need are installed.
     pub fn native_runtimes_root(&self) -> PathBuf {
         native_runtime::runtimes_root(&self.repo_root)
@@ -1419,6 +1438,61 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sa3_model_choice_rejects_missing_weights_and_busy_runtime_without_changing_profile() {
+        let root = std::env::temp_dir().join(format!("gary-sa3-tier-{}", std::process::id()));
+        let selection = crate::sa3_runtime::Selection {
+            schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.1".into(),
+            backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![],
+        };
+        crate::sa3_runtime::save(&root, &selection).unwrap();
+        let before = std::fs::read(crate::sa3_runtime::selection_path(&root)).unwrap();
+        let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let mut manager = ServiceManager::new(manifest.services, root.clone());
+        assert!(manager.select_sa3_native_model("Q8_0").unwrap_err().contains("Download"));
+        assert!(manager.select_sa3_native_model("../../bad").is_err());
+        manager.begin_native_workload("sa3", "trainer", "SA3 training").unwrap();
+        assert!(manager.select_sa3_native_model("F16").unwrap_err().contains("SA3 training"));
+        assert_eq!(std::fs::read(crate::sa3_runtime::selection_path(&root)).unwrap(), before);
+        assert!(manager.get_service_info().iter().find(|service| service.id == "sa3").unwrap().sa3_migration_complete);
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    #[ignore = "uses real downloaded GGUFs in an isolated profile; set GARY4LOCAL_SA3_TIER_SMOKE_MODELS"]
+    fn real_sa3_generation_tier_choice_preserves_completed_cleanup() {
+        let source = PathBuf::from(std::env::var("GARY4LOCAL_SA3_TIER_SMOKE_MODELS").unwrap());
+        let root = std::env::temp_dir().join(format!("gary-sa3-real-tier-{}", std::process::id()));
+        assert!(!root.exists());
+        let dir = crate::sa3_models::checked_models_dir(&root).unwrap();
+        for id in crate::sa3_models::preparation_ids("F16", None).unwrap() {
+            for file in &crate::sa3_models::component(&id).unwrap().files {
+                std::fs::hard_link(source.join(&file.filename), dir.join(&file.filename)).unwrap();
+            }
+        }
+        crate::sa3_runtime::save(&root, &crate::sa3_runtime::Selection {
+            schema_version: 1, encoding: "Q8_0".into(), verified_release: "v0.1.1".into(),
+            backend: "cuda".into(), activated_at: 123, cleanup_complete: true, cleanup_errors: vec![],
+        }).unwrap();
+        let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let defs = manifest.services;
+        let mut manager = ServiceManager::new(defs.clone(), root.clone());
+        let selection = manager.select_sa3_native_model("F16").unwrap();
+        assert_eq!(selection.encoding, "F16");
+        assert!(selection.cleanup_complete && selection.cleanup_errors.is_empty());
+        assert_eq!(selection.activated_at, 123);
+        let restarted = ServiceManager::new(defs, root.clone());
+        assert_eq!(restarted.sa3_selection.as_ref().unwrap().encoding, "F16");
+        assert!(restarted.get_service_info().iter().find(|service| service.id == "sa3").unwrap().sa3_migration_complete);
+        assert!(crate::sa3_runtime::missing_models(&root, "F16").is_none());
+        assert!(manager.select_sa3_native_model("Q8_0").is_err());
+        assert_eq!(crate::sa3_runtime::read(&root).unwrap().unwrap().encoding, "F16");
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        println!("PASS real F16 model selection, restart persistence, cleanup preservation and rejection of missing Q8 weights; production profile unchanged");
+    }
 
     #[test]
     fn native_profile_selection_survives_restart_and_corruption_never_falls_back_to_python() {
