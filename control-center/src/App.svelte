@@ -47,6 +47,7 @@
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
+    sa3_migration_complete: boolean;
   }
 
   interface Sa3LoudnessSettings {

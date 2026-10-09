@@ -30,6 +30,8 @@ pub struct ServiceInfo {
     /// Why the service cannot start yet (e.g. its models are missing), shown
     /// in place of a start that would only fail its first request.
     pub start_blocker: Option<String>,
+    /// SA3's native migration and reviewed Python cleanup have finished.
+    pub sa3_migration_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -701,6 +703,11 @@ impl ServiceManager {
                     native_fallback_reason: native_install
                         .and_then(|install| install.fallback_reason),
                     start_blocker: self.start_blocker(svc),
+                    sa3_migration_complete: svc.id == "sa3"
+                        && svc.runtime == ServiceRuntime::Native
+                        && self.sa3_selection.as_ref().is_some_and(|selection| {
+                            selection.cleanup_complete && selection.cleanup_errors.is_empty()
+                        }),
                 }
             })
             .collect()

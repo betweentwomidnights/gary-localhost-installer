@@ -34,6 +34,11 @@ waits for downloads and release of the model mutation reservation before adapter
 conversion. Existing model-management callers keep asynchronous preparation.
 Fresh profiles with no reviewed legacy files finish without invoking deletion.
 The shared UV cache remains a separate action in Storage.
+The main service row hides **migrate runtime** once the active profile records
+completed native migration/cleanup with no cleanup errors. Incomplete or failed
+cleanup keeps the entry point available. This state travels with normal service
+updates, so completion hides the button immediately and survives app restarts;
+other storage profiles retain their own migration status.
 Model preparation shows the active file, transfer/checksum phase, weighted overall
 progress, prepared bytes and elapsed time. Live events have a polling fallback.
 Cleanup refuses to retire a detected PyTorch training base until a native base

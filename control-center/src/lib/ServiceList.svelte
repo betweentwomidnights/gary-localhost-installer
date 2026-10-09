@@ -25,6 +25,7 @@
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
+    sa3_migration_complete: boolean;
   }
 
   let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateSa3Runtime }: {
@@ -72,7 +73,7 @@
       onManageSa3Loras={onManageSa3Loras}
       hasSa3LoraTraining={service.id === "sa3" && hfTokenConfigured}
       onTrainSa3Lora={onTrainSa3Lora}
-      hasSa3Migration={service.id === "sa3"}
+      hasSa3Migration={service.id === "sa3" && !service.sa3_migration_complete}
       {onMigrateSa3Runtime}
     />
   {/each}
