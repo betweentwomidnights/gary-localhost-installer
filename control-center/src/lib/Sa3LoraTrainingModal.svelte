@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import Sa3DatasetSidecarModal from "./Sa3DatasetSidecarModal.svelte";
@@ -72,6 +72,8 @@
   let isLogAutoScrolling = false;
   let isSelectingLog = false;
   let shouldRevealLog = false;
+  let stateReadPending = false;
+  let stateActionVersion = 0;
 
   let formName = $state("");
   let nameNotice = $state<string | null>(null);
@@ -258,15 +260,21 @@
   }
 
   async function loadTrainingState() {
+    if (stateReadPending || starting || cancelling) return;
+    stateReadPending = true;
+    const version = stateActionVersion;
     try {
       const previousStatus = trainingState.status;
-      trainingState = await invoke<Sa3LoraTrainingState>("get_sa3_lora_training_state");
+      const state = await invoke<Sa3LoraTrainingState>("get_sa3_lora_training_state");
+      // A slow poll must not replace a newer launch/cancellation response.
+      if (!open || version !== stateActionVersion) return;
+      trainingState = state;
       if (previousStatus !== trainingState.status && !["starting", "running"].includes(trainingState.status)) {
         nativeHistory = (await invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state")).entries;
       }
     } catch (e) {
-      error = describeError(e);
-    }
+      if (open && version === stateActionVersion) error = describeError(e);
+    } finally { stateReadPending = false; }
   }
 
   async function pickDatasetFolder() {
@@ -285,6 +293,7 @@
   }
 
   async function startTraining() {
+    stateActionVersion++;
     starting = true;
     error = null;
     autoScrollLog = true;
@@ -317,6 +326,7 @@
   }
 
   async function cancelTraining() {
+    stateActionVersion++;
     cancelling = true;
     error = null;
     try {
@@ -363,7 +373,9 @@
   $effect(() => {
     if (!open) return;
     void invoke<{ pythonAvailable:boolean }>("get_sa3_training_runtime_availability").then((availability) => pythonAvailable = availability.pythonAvailable).catch((cause) => error = describeError(cause));
-    void loadTrainingState();
+    // Only opening the modal initializes it. Reading trainingState inside this
+    // async function before its first await must not subscribe this effect.
+    untrack(() => void loadTrainingState());
     void invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state").then((state) => nativeHistory = state.entries).catch((cause) => error = describeError(cause));
     void invoke<Sa3TrainingHardware & { installed: boolean }>("get_native_runtime_info", { serviceId: "sa3" })
       .then((info) => {
@@ -451,7 +463,7 @@
         <label class="field"><span>Runtime</span>
           <select bind:value={trainer} disabled={isTraining || starting || loadingResume} onchange={() => resumeCheckpoint = ""}>
             <option value="python" disabled={!pythonAvailable}>Python{pythonAvailable ? "" : " — not installed"}</option>
-            <option value="native">C++ — migration validation</option>
+            <option value="native">C++</option>
           </select>
         </label>
         {#if trainer === "native"}
@@ -463,9 +475,9 @@
         {/if}
       </div>
       {#if trainer === "native"}
-        <div class="body">Prepare native models in storage settings first. C++ training requires a release with progress and cooperative cancellation support. Originals, datasets and the Python service are preserved.</div>
+        <div class="body">Prepare training models from SA3 → Models. Training saves checkpoints in your storage folder and leaves the source audio and text sidecars unchanged.</div>
         {#if smallCudaGpu && fullTrack}<div class="body">Q4_K_M is recommended for full-track training on this GPU. F16 may exceed available GPU memory and run much slower. Generation model precision is selected separately.</div>{/if}
-        {#if !nativeInstalled}<div class="warning">Prepare SA3's C++ runtime in storage settings.</div>{/if}
+        {#if !nativeInstalled}<div class="warning">Use migrate runtime on the SA3 service row to prepare C++.</div>{/if}
         {#if resumeChoices.length && !isTraining}
           <label class="field"><span>Resume native training</span>
             <select bind:value={resumeCheckpoint} disabled={starting || loadingResume} onchange={() => void chooseResume()}>

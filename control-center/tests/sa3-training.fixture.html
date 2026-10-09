@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>SA3 training responsiveness fixture</title></head><body><div id="app"></div><script type="module">
+import {mount} from 'svelte';
+import Sa3LoraTrainingModal from '../src/lib/Sa3LoraTrainingModal.svelte';
+import '../src/styles.css';
+const scenario=new URLSearchParams(location.search).get('case')||'running';
+const commands=[];
+let reads=0,callback=0,cancelled=false;
+const audit=document.createElement('pre');audit.id='fixture-audit';audit.style.cssText='position:fixed;bottom:0;left:0;max-height:60px;overflow:auto;font-size:10px';document.body.append(audit);
+const pending=document.createElement('div');pending.id='fixture-pending';document.body.append(pending);
+const record=(command,args)=>{commands.push({command,args,at:Math.round(performance.now())});audit.textContent=commands.map(x=>JSON.stringify(x)).join('\n');};
+const state=()=>({runtime:'sa3.cpp',resumeCheckpointPath:cancelled?'D:/Gary/sa3/training/jobs/check/run/adapter-step-12.gguf':null,jobId:'native-check',name:'check',status:cancelled?'cancelled':'running',phase:cancelled?'cancelled':'training',message:cancelled?'Native training cancelled at a sample boundary.':'Training with trigger and caption',error:null,pid:cancelled?null:123,childPid:null,runDir:'D:/Gary/sa3/training/jobs/check/run',logPath:'D:/Gary/sa3/training/jobs/check/training.log',cancelPath:'D:/Gary/sa3/training/jobs/check/cancel.requested',finalCheckpointPath:null,currentStep:12,maxSteps:2000,logTail:'epoch 1 step 12 prompt="my-trigger, a bright synthetic tone"\n'});
+window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:()=>{},invoke:async(command,args)=>{
+if(command.startsWith('plugin:event|'))return ++callback;
+record(command,args);
+switch(command){
+case 'get_sa3_lora_training_state':
+  if(++reads>40 && performance.now()<6000)throw new Error('Fixture stopped a training-state polling storm');
+  const snapshot=state();pending.textContent='Reading state: '+reads;
+  await new Promise(resolve=>setTimeout(resolve,scenario==='slow'?4200:25));pending.textContent='No pending state read';return snapshot;
+case 'get_sa3_training_runtime_availability':return {pythonAvailable:false};
+case 'get_sa3_native_lora_state':return {entries:[]};
+case 'get_native_runtime_info':return {installed:true,backend:'cuda',devices:[{backend:'cuda',deviceType:'gpu',memoryTotalBytes:8*1024**3}]};
+case 'get_services':return [{id:'sa3',runtime:'native'}];
+case 'cancel_sa3_lora_training':cancelled=true;return state();
+default:throw new Error('Fixture refuses '+command);
+}}};
+mount(Sa3LoraTrainingModal,{target:document.getElementById('app'),props:{open:true,serviceStatus:'stopped',serviceEnvExists:false,onClose:()=>record('fixture-close',{})}});
+</script></body></html>

@@ -142,9 +142,14 @@
       <label>Name<input bind:value={formName} disabled={blocked} placeholder="my-lora" /></label>
       <label>Adapter file<div class="file-row"><input bind:value={sourcePath} disabled={blocked} placeholder="GGUF, safetensors or CKPT" /><button type="button" disabled={blocked} onclick={() => pickFile("source")}>pick file</button></div></label>
       {#if !/\.gguf$/i.test(sourcePath.trim())}
-        <label>LoRA JSON configuration (optional)<div class="file-row"><input bind:value={configPath} disabled={blocked} placeholder="Embedded metadata or matching sidecar is used automatically" /><button type="button" disabled={blocked} onclick={() => pickFile("config")}>pick JSON</button></div></label>
+        <details>
+          <summary>Advanced import options</summary>
+          <p>Most adapters include their configuration or have a matching JSON sidecar, which Gary detects automatically. Choose a file here only when your safetensors or CKPT export needs a separate model/LoRA configuration for conversion. GGUF adapters do not need one.</p>
+          <label>Model/LoRA configuration JSON (optional)<div class="file-row"><input bind:value={configPath} disabled={blocked} placeholder="Use the configuration supplied with your adapter" /><button type="button" disabled={blocked} onclick={() => pickFile("config")}>pick JSON</button></div></label>
+        </details>
       {/if}
-      <label>Caption dataset (optional)<div class="file-row"><input bind:value={datasetPath} disabled={blocked} /><button type="button" disabled={blocked} onclick={pickDataset}>pick folder</button></div></label>
+      <label>Prompt source folder (optional)<div class="file-row"><input bind:value={datasetPath} disabled={blocked} /><button type="button" disabled={blocked} onclick={pickDataset}>pick folder</button></div></label>
+      <p>Reads text sidecars to build this LoRA's prompt dice for the plugin. A dataset is not required to load an adapter.</p>
       <button type="button" disabled={blocked || !formName.trim() || !sourcePath.trim()} onclick={importAdapter}>import native LoRA</button>
     </div>
   {/if}

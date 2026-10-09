@@ -358,6 +358,16 @@ pub struct Job {
     state: Sa3LoraTrainingState,
 }
 
+fn caption_prompt_config(trigger: &str) -> serde_json::Value {
+    let trigger = trigger.trim();
+    json!({"prompt_config": {
+        "use_tags": true, "use_paths": false, "use_fixed": false,
+        "fixed_text": "", "balance": {"tags": 40}, "tag_keys": ["prompt"],
+        "hide_tag_names": true, "shuffle": false,
+        "trigger": trigger, "trigger_pct": if trigger.is_empty() { 0 } else { 100 }
+    }})
+}
+
 pub async fn start(
     root: &Path,
     executable: &Path,
@@ -509,16 +519,13 @@ pub async fn start(
         }
         _ => unreachable!(),
     }
-    if !options.fixed_prompt.trim().is_empty() {
+    {
         let config = options
             .prompt_config
             .clone()
             .unwrap_or_else(|| job.join("prompt-config.json"));
         if options.prompt_config.is_none() {
-            save(
-                &config,
-                &json!({"prompt_config":{"use_tags":false,"use_paths":false,"use_fixed":true,"fixed_text":options.fixed_prompt.trim(),"balance_fixed":100,"balance_tags":0,"balance_paths":0,"trigger":""}}),
-            )?;
+            save(&config, &caption_prompt_config(&options.fixed_prompt))?;
         }
         command.arg("--prompt-config").arg(&config);
         options.prompt_config = Some(config);
@@ -723,6 +730,23 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_caption_policy_matches_the_python_trigger_contract() {
+        let configured = caption_prompt_config("  my-trigger  ");
+        let policy = &configured["prompt_config"];
+        assert_eq!(policy["tag_keys"], json!(["prompt"]));
+        assert_eq!(policy["use_tags"], true);
+        assert_eq!(policy["use_fixed"], false);
+        assert_eq!(policy["use_paths"], false);
+        assert_eq!(policy["shuffle"], false);
+        assert_eq!(policy["trigger"], "my-trigger");
+        assert_eq!(policy["trigger_pct"], 100);
+        assert_eq!(
+            caption_prompt_config(" ")["prompt_config"]["trigger_pct"],
+            0
+        );
+    }
 
     #[tokio::test]
     async fn checkpoint_history_keeps_branches_and_selects_only_paired_owned_adapters() {
@@ -1033,6 +1057,24 @@ mod tests {
             !dataset.join("latents").exists(),
             "managed pre-encode must not write a cache into the dataset"
         );
+        if !resumed.fixed_prompt.trim().is_empty() {
+            let prefix = format!("prompt=\"{}, ", resumed.fixed_prompt.trim());
+            let mut prompts = 0;
+            for (run, _) in runs(&root, &resumed.name).unwrap() {
+                let log =
+                    std::fs::read_to_string(run.parent().unwrap().join("training.log")).unwrap();
+                for line in log.lines().filter(|line| line.contains(" prompt=")) {
+                    assert!(
+                        line.contains(&prefix),
+                        "trigger must prefix, never replace, the caption: {line}"
+                    );
+                    assert!(!line.ends_with(&format!("prompt=\"{}\"", resumed.fixed_prompt.trim())));
+                    prompts += 1;
+                }
+            }
+            assert!(prompts >= 3, "check prompts before and after resume");
+            println!("PASS {prompts} real training prompts retained caption sidecars after the shared trigger, including resume");
+        }
         println!("PASS native GPU cancellation at step {:?}, resume to {:?}, immutable checkpoints, dataset preservation and native registration",first.current_step,completed.current_step);
     }
 }

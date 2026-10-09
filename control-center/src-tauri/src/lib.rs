@@ -3973,11 +3973,21 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
 }
 
 fn read_text_tail(path: &Path, max_bytes: usize) -> String {
-    let Ok(bytes) = std::fs::read(path) else {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
         return String::new();
     };
-    let start = bytes.len().saturating_sub(max_bytes);
-    String::from_utf8_lossy(&bytes[start..]).to_string()
+    let Ok(length) = file.metadata().map(|metadata| metadata.len()) else {
+        return String::new();
+    };
+    if file.seek(SeekFrom::Start(length.saturating_sub(max_bytes as u64))).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.take(max_bytes as u64).read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn parse_carey_epoch_progress(log_tail: &str) -> Option<(u32, Option<u32>)> {
@@ -4355,29 +4365,58 @@ where
 
 #[cfg(target_os = "windows")]
 fn carey_ace_training_parent_is_running(pid: u32) -> Option<bool> {
-    let mut command = std::process::Command::new("powershell");
-    command.args([
-        "-NoProfile",
-        "-Command",
-        &format!(
-            "$ErrorActionPreference='SilentlyContinue'; if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ '1' }} else {{ '0' }}"
-        ),
-    ]);
-    hide_std_console_window(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    match String::from_utf8_lossy(&output.stdout).trim() {
-        "1" => Some(true),
-        "0" => Some(false),
-        _ => None,
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    // A zero-time process-handle query avoids launching PowerShell for every
+    // status poll. Access-denied/unknown stays conservative during recovery.
+    unsafe {
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            return (GetLastError() == ERROR_INVALID_PARAMETER).then_some(false);
+        }
+        let state = WaitForSingleObject(handle, 0);
+        CloseHandle(handle);
+        match state {
+            WAIT_TIMEOUT => Some(true),
+            WAIT_OBJECT_0 => Some(false),
+            _ => None,
+        }
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn carey_ace_training_parent_is_running(_pid: u32) -> Option<bool> {
     None
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod training_process_status_tests {
+    #[test]
+    fn detects_live_and_exited_processes_without_a_shell_probe() {
+        assert_eq!(super::carey_ace_training_parent_is_running(std::process::id()), Some(true));
+        let mut command = std::process::Command::new("cmd.exe");
+        command.args(["/c", "exit", "259"]);
+        super::hide_std_console_window(&mut command);
+        let mut child = command.spawn().unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(259));
+        // Exit code 259 is also STILL_ACTIVE; the process handle is authoritative.
+        assert_eq!(super::carey_ace_training_parent_is_running(child.id()), Some(false));
+        assert_eq!(super::carey_ace_training_parent_is_running(u32::MAX), Some(false));
+    }
+}
+
+#[cfg(test)]
+mod training_log_tail_tests {
+    #[test]
+    fn reads_only_the_requested_tail_and_handles_a_missing_log() {
+        let path = std::env::temp_dir().join(format!("gary-tail-{}-{}.log", std::process::id(), super::now_epoch_seconds()));
+        let content = format!("{}\nlatest training update\n", "x".repeat(1024 * 1024));
+        std::fs::write(&path, content).unwrap();
+        assert_eq!(super::read_text_tail(&path, 23), "latest training update\n");
+        assert!(super::read_text_tail(&path, 0).is_empty());
+        std::fs::remove_file(&path).unwrap();
+        assert!(super::read_text_tail(&path, 16 * 1024).is_empty());
+    }
 }
 
 fn reconcile_owned_workload_status<F>(
@@ -5199,7 +5238,7 @@ async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app quit: {error}");
     }
-    if let Err(error) = cancel_sa3_lora_training() {
+    if let Err(error) = cancel_sa3_lora_training_impl() {
         log::warn!("Could not cancel SA3 LoRA training during app quit: {error}");
     }
     if let Err(error) = cancel_sa3_autolabel() {
@@ -9285,8 +9324,10 @@ async fn open_sa3_training_reference(reference: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
-    Ok(read_sa3_lora_training_state())
+async fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
+    tauri::async_runtime::spawn_blocking(read_sa3_lora_training_state)
+        .await
+        .map_err(|error| format!("Cannot read SA3 training status: {error}"))
 }
 
 fn sa3_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String> {
@@ -9697,7 +9738,13 @@ async fn start_sa3_lora_training(
 }
 
 #[tauri::command]
-fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
+async fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
+    tauri::async_runtime::spawn_blocking(cancel_sa3_lora_training_impl)
+        .await
+        .map_err(|error| format!("Cannot request SA3 cancellation: {error}"))?
+}
+
+fn cancel_sa3_lora_training_impl() -> Result<Sa3LoraTrainingState, String> {
     let state = read_sa3_lora_training_state();
     if !matches!(state.status.as_str(), "starting" | "running") {
         return Ok(state);
@@ -11050,7 +11097,7 @@ async fn restart_application(
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app restart: {error}");
     }
-    if let Err(error) = cancel_sa3_lora_training() {
+    if let Err(error) = cancel_sa3_lora_training_impl() {
         log::warn!("Could not cancel SA3 LoRA training during app restart: {error}");
     }
     if let Err(error) = cancel_sa3_autolabel() {

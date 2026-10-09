@@ -69,6 +69,52 @@ CTests and staged contract checks; no envelope/layer-filter WIP is included.
 
 Earlier sections below record implementation milestones and their UI at the time.
 
+### Production training feedback and caption parity
+
+The production `native-billie` run was gracefully cancelled at step 1159 using
+the trainer's normal cancellation marker. Its adapter, trainer-state checkpoint,
+registration and original job configuration remain intact. Resuming that job
+keeps its original trigger-only prompt policy; start a new job to use corrected
+captions.
+
+The trainer modal's initialization effect subscribed to `trainingState` through
+a synchronous read before an async function's first await. Each status response
+therefore repeated initialization and queued status/hardware/history requests.
+Initialization now explicitly avoids that dependency, status polls cannot overlap
+or run during launch/cancellation, and late reads cannot replace a newer action's
+response. Status and cancellation commands run off the Tauri UI thread. Windows
+process checks now query a process handle without spawning PowerShell, and log
+tail reads seek directly to a bounded suffix rather than reading the whole log.
+
+The native launcher's shared trigger previously selected a fixed-only prompt.
+New jobs now use the Python trainer's caption policy: prompt sidecars with an
+optional `trigger, caption` prefix, no path or fixed-text mixing. Explicit and
+resumed prompt configurations remain unchanged. A real Q4 CUDA check on the
+RTX 5070 Laptop verified both distinct synthetic sidecars after `check-trigger`,
+graceful cancellation, resume to step 3, immutable checkpoints, dataset
+preservation and final registration (42.82 seconds).
+
+The import UI moves its optional model/LoRA JSON selector into collapsed advanced
+options, explains automatic embedded/sidecar detection and hides it for GGUF.
+The optional prompt source folder explains its role in plugin prompt dice.
+Strict browser fixtures cover normal polling, slow in-flight cancellation,
+log selection and GGUF import without a JSON path while retaining existing entries.
+Regular Rust checks pass 175 tests (15 ignored); Svelte checks report no errors
+or warnings, and the Tauri release build passes. Portable Windows CI at upstream
+`78dc51a` also completed successfully (run `37851255041`).
+
+Read-only production cleanup verification found both SA3 Python environment
+paths absent and neither Medium PyTorch repository in the effective Hugging Face
+cache (`~/.cache/huggingface/hub`). Other model variants and GGUF caches remain.
+However, the Python trainer's separately staged
+`sa3/training/models/sa3-medium/base` still contains six files totaling
+10,439,558,852 logical bytes, including the base and text encoder safetensors.
+The current inventory protects all `sa3/training` data and does not retire this
+staging folder. Deleting the HF cache therefore does not establish that these
+weight bytes were reclaimed. Safe ownership-based retirement of staged Python
+training weights remains a cleanup gap; no staged files were deleted during
+this audit.
+
 ## Runtime baseline and ownership
 
 The latest published sa3.cpp release inspected is
