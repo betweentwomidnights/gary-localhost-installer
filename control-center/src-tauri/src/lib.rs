@@ -6051,7 +6051,6 @@ pub fn run() {
             get_sa3_migration_preview,
             activate_sa3_native_runtime,
             cleanup_sa3_legacy_installation,
-            get_sa3_training_runtime_availability,
             get_sa3_native_runtime_selection,
             select_sa3_native_model,
             prepare_sa3_native_runtime,
@@ -6386,6 +6385,9 @@ async fn run_build(
     manager: Arc<Mutex<ServiceManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    // A queued rebuild-all plan may predate SA3 migration. Never let that
+    // stale Python plan recreate an environment after native activation.
+    manager.lock().await.validate_build_runtime(&build_info)?;
     if build_info.runtime == manifest::ServiceRuntime::Native {
         let service_id = build_info.service_id.clone();
         native_runtime::install(build_info, manager.clone(), handle.clone()).await?;
@@ -9356,6 +9358,17 @@ fn resolve_sa3_lora_layer_scope(
     }
 }
 
+fn resolve_sa3_training_runtime(native_selected: bool, requested: Option<&str>) -> Result<bool, String> {
+    match requested {
+        None => Ok(native_selected),
+        Some("native") if native_selected => Ok(true),
+        Some("python") if !native_selected => Ok(false),
+        Some("python") => Err("SA3 has migrated to C++. Python training is no longer available in this storage profile.".into()),
+        Some("native") => Err("Migrate SA3 to C++ before starting native training.".into()),
+        _ => Err("Unknown SA3 training runtime.".into()),
+    }
+}
+
 #[cfg(test)]
 mod sa3_lora_layer_scope_tests {
     use super::resolve_sa3_lora_layer_scope;
@@ -9376,6 +9389,22 @@ mod sa3_lora_layer_scope_tests {
             (None, Some("seconds_total"))
         );
         assert!(resolve_sa3_lora_layer_scope("mystery").is_err());
+    }
+}
+
+#[cfg(test)]
+mod sa3_training_runtime_tests {
+    use super::resolve_sa3_training_runtime;
+
+    #[test]
+    fn training_follows_the_profile_and_rejects_runtime_overrides() {
+        assert!(!resolve_sa3_training_runtime(false, None).unwrap());
+        assert!(!resolve_sa3_training_runtime(false, Some("python")).unwrap());
+        assert!(resolve_sa3_training_runtime(true, None).unwrap());
+        assert!(resolve_sa3_training_runtime(true, Some("native")).unwrap());
+        assert!(resolve_sa3_training_runtime(true, Some("python")).unwrap_err().contains("migrated"));
+        assert!(resolve_sa3_training_runtime(false, Some("native")).unwrap_err().contains("Migrate"));
+        assert!(resolve_sa3_training_runtime(true, Some("other")).is_err());
     }
 }
 
@@ -9404,12 +9433,7 @@ async fn start_sa3_lora_training(
     let _launch = sa3_training::LAUNCH
         .try_lock()
         .map_err(|_| "A SA3 training launch is already in progress")?;
-    let native = match runtime.as_deref() {
-        Some("native") => true,
-        Some("python") => false,
-        None => manager.lock().await.is_native("sa3"),
-        _ => return Err("Choose the Python or native SA3 trainer".into()),
-    };
+    let native = resolve_sa3_training_runtime(manager.lock().await.is_native("sa3"), runtime.as_deref())?;
     if native {
         if storage::storage_info(repo_root.inner()).pending_restart {
             return Err("Restart before training in your chosen storage folder.".into());
@@ -9900,13 +9924,6 @@ async fn select_sa3_native_model(
     emit_status(manager.inner(), &app_handle).await;
     let _ = app_handle.emit("sa3-native-model-selected", &selection);
     Ok(selection)
-}
-
-#[tauri::command]
-fn get_sa3_training_runtime_availability(
-    repo_root: tauri::State<'_, PathBuf>,
-) -> serde_json::Value {
-    serde_json::json!({"pythonAvailable":repo_root.join("services/sa3/env/Scripts/python.exe").is_file()})
 }
 
 #[tauri::command]

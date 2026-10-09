@@ -1141,6 +1141,14 @@ impl ServiceManager {
         }
     }
 
+    /// Reject Python plans queued before a profile switched to native.
+    pub fn validate_build_runtime(&self, info: &BuildInfo) -> Result<(), String> {
+        if info.runtime == ServiceRuntime::Python && self.is_native(&info.service_id) {
+            return Err(format!("{} uses C++. Its Python environment cannot be rebuilt.", info.service_id));
+        }
+        Ok(())
+    }
+
     /// Get build info needed to launch an async build
     pub fn get_build_info(&self, service_id: &str) -> Result<BuildInfo, String> {
         let svc = self
@@ -1438,6 +1446,40 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrated_profiles_cannot_rebuild_python_even_from_queued_legacy_plans() {
+        let root = std::env::temp_dir().join(format!("gary-sa3-runtime-lock-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let defs = manifest.services;
+        let python = root.join("services/sa3/env/Scripts/python.exe");
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::write(&python, b"leftover legacy environment").unwrap();
+        let mut manager = ServiceManager::new(defs.clone(), root.clone());
+        let queued = manager.get_all_build_infos().into_iter().find(|info| info.service_id == "sa3").unwrap();
+        assert_eq!(queued.runtime, ServiceRuntime::Python);
+        assert!(manager.validate_build_runtime(&queued).is_ok());
+        let candidate = manager.get_native_build_info("sa3").unwrap();
+        assert!(manager.validate_build_runtime(&candidate).is_ok());
+        manager.activate_native_sa3(crate::sa3_runtime::Selection {
+            schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.1".into(),
+            backend: "vulkan".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![],
+        }).unwrap();
+        for selected in [&manager, &ServiceManager::new(defs.clone(), root.clone())] {
+            assert!(selected.validate_build_runtime(&queued).unwrap_err().contains("Python environment cannot be rebuilt"));
+            assert_eq!(selected.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Native);
+            assert_eq!(selected.get_all_build_infos().into_iter().find(|info| info.service_id == "sa3").unwrap().runtime, ServiceRuntime::Native);
+        }
+        let fresh = ServiceManager::new(defs.clone(), root.join("other-storage-profile"));
+        assert_eq!(fresh.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Python);
+        std::fs::write(crate::sa3_runtime::selection_path(&root), "{}").unwrap();
+        let corrupted = ServiceManager::new(defs, root.clone());
+        assert!(corrupted.validate_build_runtime(&queued).is_err());
+        assert_eq!(std::fs::read(&python).unwrap(), b"leftover legacy environment");
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
 
     #[test]
     fn sa3_model_choice_rejects_missing_weights_and_busy_runtime_without_changing_profile() {

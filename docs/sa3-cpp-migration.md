@@ -1196,5 +1196,33 @@ It includes the multi-adapter capacity fix and retains the same ggml/GPU
 backend archives. The review launcher is
 `artifacts/sa3-migration/production-legacy-dora-app-1/launch-production-dora-fix.ps1`;
 after quitting Gary, use it and reinstall the stopped SA3 runtime. Windows and
-signed macOS dry-run CI were dispatched at
+signed macOS dry-run CI passed at
 [run 37883369102](https://github.com/betweentwomidnights/sa3.cpp/actions/runs/37883369102).
+
+## One training runtime per storage profile
+
+The training dialog now follows the service runtime and no longer offers a
+Python/C++ chooser. Migrated profiles retain training-base precision selection;
+unmigrated profiles keep their existing Python trainer until migration.
+Backend training commands reject explicit requests for the other runtime, even
+if a leftover Python environment exists. Runtime reinstall and rebuild-all
+already follow the active profile; an execution-time guard now also rejects a
+Python plan queued before native activation, before it can invoke uv.
+
+Migration deliberately permits a native candidate alongside Python until the
+native checks pass. After activation, Gary starts, trains and reinstalls C++
+only for that storage profile. This policy does not delete manually created
+files or affect Python services such as Jerry/Foundation. Read-only production
+inspection confirmed the SA3 `env` and `.venv` directories absent and completed
+cleanup recorded in the active selection.
+
+All 178 regular Rust tests pass (16 explicit hardware/download smokes excluded).
+Regression coverage includes default/explicit training runtime resolution,
+leftover Python files, queued rebuilds, restart persistence, a different storage
+profile and malformed selection data. Browser fixtures verify native/Python
+request routing without a runtime selector, a missing native installation
+blocking training, single-flight slow polling and responsive cancellation.
+Svelte checks and the desktop release build pass. The new production review
+launcher is `artifacts/sa3-migration/production-profile-trainer-app-1/launch-production-profile-trainer.ps1`;
+quit Gary and reopen with it. Native runtime reinstallation is unnecessary for
+this host-only change.

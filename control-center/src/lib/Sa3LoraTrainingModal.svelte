@@ -35,11 +35,14 @@
   let {
     open,
     serviceStatus,
+    serviceEnvExists,
+    serviceRuntime = "python",
     onClose,
   }: {
     open: boolean;
     serviceStatus: "stopped" | "starting" | "running" | "unhealthy" | "failed";
     serviceEnvExists: boolean;
+    serviceRuntime?: "python" | "native";
     onClose: () => void;
   } = $props();
 
@@ -99,9 +102,7 @@
   // The efficient MLX-compatible scope keeps the seven attention/feed-forward
   // projections in each of the 24 transformer blocks: 7 * 24 = 168 adapters.
   let layerScope = $state("transformer-core");
-  let trainer = $state("python");
-  let pythonAvailable = $state(false);
-  let nativeInstalled = $state(false);
+  let trainer = $derived(serviceRuntime);
   let nativeEncoding = $state("F16");
   let nativeEncodingTouched = $state(false);
   let smallCudaGpu = $state(false);
@@ -269,7 +270,7 @@
       // A slow poll must not replace a newer launch/cancellation response.
       if (!open || version !== stateActionVersion) return;
       trainingState = state;
-      if (previousStatus !== trainingState.status && !["starting", "running"].includes(trainingState.status)) {
+      if (trainer === "native" && previousStatus !== trainingState.status && !["starting", "running"].includes(trainingState.status)) {
         nativeHistory = (await invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state")).entries;
       }
     } catch (e) {
@@ -345,7 +346,7 @@
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
   let canStart = $derived(
     open &&
-      (trainer === "native" ? nativeInstalled : pythonAvailable) &&
+      serviceEnvExists &&
       serviceStatus !== "running" &&
       !starting &&
       !cancelling &&
@@ -372,19 +373,15 @@
 
   $effect(() => {
     if (!open) return;
-    void invoke<{ pythonAvailable:boolean }>("get_sa3_training_runtime_availability").then((availability) => pythonAvailable = availability.pythonAvailable).catch((cause) => error = describeError(cause));
     // Only opening the modal initializes it. Reading trainingState inside this
     // async function before its first await must not subscribe this effect.
     untrack(() => void loadTrainingState());
-    void invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state").then((state) => nativeHistory = state.entries).catch((cause) => error = describeError(cause));
-    void invoke<Sa3TrainingHardware & { installed: boolean }>("get_native_runtime_info", { serviceId: "sa3" })
-      .then((info) => {
-        nativeInstalled = info.installed;
-        smallCudaGpu = recommendQuantizedSa3Training(info);
-      }).catch((cause) => { error = describeError(cause); });
-    void invoke<{ id: string; runtime: string }[]>("get_services").then((services) => {
-      if (services.find((service) => service.id === "sa3")?.runtime === "native") trainer = "native";
-    }).catch((cause) => { error = describeError(cause); });
+    if (trainer === "native") {
+      void invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state").then((state) => nativeHistory = state.entries).catch((cause) => error = describeError(cause));
+      void invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId: "sa3" })
+        .then((info) => smallCudaGpu = recommendQuantizedSa3Training(info))
+        .catch((cause) => { error = describeError(cause); });
+    }
     const timer = window.setInterval(() => {
       void loadTrainingState();
     }, 3000);
@@ -458,26 +455,18 @@
         </div>
       </div>
 
-      <div class="section-label">trainer</div>
-      <div class="form-grid">
-        <label class="field"><span>Runtime</span>
-          <select bind:value={trainer} disabled={isTraining || starting || loadingResume} onchange={() => resumeCheckpoint = ""}>
-            <option value="python" disabled={!pythonAvailable}>Python{pythonAvailable ? "" : " — not installed"}</option>
-            <option value="native">C++</option>
-          </select>
-        </label>
-        {#if trainer === "native"}
+      {#if trainer === "native"}
+        <div class="section-label">trainer</div>
+        <div class="form-grid">
           <label class="field"><span>Training base precision</span>
             <select bind:value={nativeEncoding} disabled={isTraining || starting || loadingResume} onchange={() => nativeEncodingTouched = true}>
               <option value="F16">F16</option><option value="Q4_K_M">Q4_K_M</option>
             </select>
           </label>
-        {/if}
-      </div>
-      {#if trainer === "native"}
-        <div class="body">Prepare training models from SA3 → Models. Training saves checkpoints in your storage folder and leaves the source audio and text sidecars unchanged.</div>
+        </div>
+        <div class="body">Download a training base from SA3 → Models. Training saves checkpoints in your storage folder and leaves the source audio and text sidecars unchanged.</div>
         {#if smallCudaGpu && fullTrack}<div class="body">Q4_K_M is recommended for full-track training on this GPU. F16 may exceed available GPU memory and run much slower. Generation model precision is selected separately.</div>{/if}
-        {#if !nativeInstalled}<div class="warning">Use migrate runtime on the SA3 service row to prepare C++.</div>{/if}
+        {#if !serviceEnvExists}<div class="warning">Reinstall the SA3 runtime from the service row before training.</div>{/if}
         {#if resumeChoices.length && !isTraining}
           <label class="field"><span>Resume native training</span>
             <select bind:value={resumeCheckpoint} disabled={starting || loadingResume} onchange={() => void chooseResume()}>
@@ -488,7 +477,7 @@
           </label>
         {/if}
       {/if}
-      {#if trainer === "python" && !pythonAvailable}
+      {#if trainer === "python" && !serviceEnvExists}
         <div class="warning">build SA3 first so the training environment exists.</div>
       {:else if serviceStatus === "running"}
         <div class="warning">stop SA3 before training. generation keeps the model in VRAM.</div>

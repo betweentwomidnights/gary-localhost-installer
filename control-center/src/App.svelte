@@ -1089,6 +1089,7 @@
     open={sa3LoraTrainingModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}
     serviceEnvExists={sa3Service?.env_exists ?? false}
+    serviceRuntime={sa3Service?.runtime ?? "python"}
     onClose={closeSa3LoraTraining}
   />
 </main>

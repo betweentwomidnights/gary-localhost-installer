@@ -3,6 +3,8 @@ import {mount} from 'svelte';
 import Sa3LoraTrainingModal from '../src/lib/Sa3LoraTrainingModal.svelte';
 import '../src/styles.css';
 const scenario=new URLSearchParams(location.search).get('case')||'running';
+const legacy=scenario.startsWith('legacy');
+const idle=['idle','native-missing','legacy','legacy-missing'].includes(scenario);
 const commands=[];
 let reads=0,callback=0,cancelled=false;
 const audit=document.createElement('pre');audit.id='fixture-audit';audit.style.cssText='position:fixed;bottom:0;left:0;max-height:60px;overflow:auto;font-size:10px';document.body.append(audit);
@@ -15,14 +17,14 @@ record(command,args);
 switch(command){
 case 'get_sa3_lora_training_state':
   if(++reads>40 && performance.now()<6000)throw new Error('Fixture stopped a training-state polling storm');
-  const snapshot=state();pending.textContent='Reading state: '+reads;
+  const snapshot=idle?{...state(),jobId:null,name:null,status:'idle',phase:'idle',logTail:''}:state();pending.textContent='Reading state: '+reads;
   await new Promise(resolve=>setTimeout(resolve,scenario==='slow'?4200:25));pending.textContent='No pending state read';return snapshot;
-case 'get_sa3_training_runtime_availability':return {pythonAvailable:false};
+case 'get_sa3_lora_name_availability':return {normalizedName:args.name,availableName:args.name,available:true};
 case 'get_sa3_native_lora_state':return {entries:[]};
 case 'get_native_runtime_info':return {installed:true,backend:'cuda',devices:[{backend:'cuda',deviceType:'gpu',memoryTotalBytes:8*1024**3}]};
-case 'get_services':return [{id:'sa3',runtime:'native'}];
+case 'start_sa3_lora_training':return {...state(),runtime:args.runtime==='native'?'sa3.cpp':'python'};
 case 'cancel_sa3_lora_training':cancelled=true;return state();
 default:throw new Error('Fixture refuses '+command);
 }}};
-mount(Sa3LoraTrainingModal,{target:document.getElementById('app'),props:{open:true,serviceStatus:'stopped',serviceEnvExists:false,onClose:()=>record('fixture-close',{})}});
+mount(Sa3LoraTrainingModal,{target:document.getElementById('app'),props:{open:true,serviceStatus:'stopped',serviceRuntime:legacy?'python':'native',serviceEnvExists:!scenario.endsWith('missing'),onClose:()=>record('fixture-close',{})}});
 </script></body></html>
