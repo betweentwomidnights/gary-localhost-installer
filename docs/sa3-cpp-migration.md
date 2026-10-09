@@ -1128,3 +1128,41 @@ production ServiceManager start/public-adapter load/readiness/stop passed in
 4.86s using the installed stamp and shared-runtime PATH. Its Python fixture
 remained unchanged. Reinstall reused CUDA in 2.44s and left the runtime stamp's
 timestamp unchanged. Svelte checks again reported zero errors/warnings.
+
+## Multi-adapter Vulkan inference regression
+
+Production testing found that any three full-scope DoRAs could abort with
+`GGML_ASSERT(cgraph->n_nodes < cgraph->size)` during the F16 weight merge.
+Upstream `466c29b` fixes SA3's graph capacity calculation: it now budgets each
+active adapter on each target, instead of a fixed 20 nodes per target. The
+ggml assertion is correct and the submodule remains at
+`60f49e09ce67df544831a357b654318ec2722fb0`; this fix requires no ggml change.
+
+The new regression reproduces the original crash on CPU with 24 weights and
+three DoRAs. After the fix, 1/2/3/4/8-adapter merges match the independent host
+calculation on CPU, CUDA, NVIDIA Vulkan and Intel Vulkan. It covers F16/F32
+bases, ordered DoRA and mixed chains, partial overlap and zero strength. All
+47 native CTests pass. This addresses the merge graph; it does not establish
+an unlimited adapter count for every inference graph or memory configuration.
+
+A clean local package from `466c29b` passed staged contracts and real Vulkan
+HTTP generation with production models and adapters, using a separate server
+on port 18016. Both reported combinations (kev/keygen/native-billie and
+kev/koan/keygen) and a four-adapter blend completed at 30 seconds and four
+sampling steps. Returned WAVs were stereo 44.1 kHz, finite and non-silent.
+The user's running Gary/server and production files were left untouched.
+
+The package is `dist-gary-lora-capacity-fix` in the compatibility checkout,
+with core SHA-256
+`342d02316ae1bc189707c665dac406fb9b60faa1554c3f4b37baa7d3a30d3d62`.
+CUDA, Vulkan and shared CUDA runtime archive hashes match the previous package.
+It remains a local `gpu-smoke`/CUDA `native` build, excludes held layer-filter
+work and is not a published release. Windows and signed macOS release dry-run
+CI were dispatched at [run 37881121415](https://github.com/betweentwomidnights/sa3.cpp/actions/runs/37881121415).
+
+`artifacts/sa3-migration/production-three-lora-app-1/launch-production-lora-fix.ps1`
+reuses the reviewed host executable from `8e54b79`, supplying the new native
+packages. Quit Gary fully, run that launcher, and use **reinstall runtime**
+with SA3 stopped before starting it again. Repeating migration or downloading
+models is unnecessary. Diagnostics and generated WAVs are retained under
+`artifacts/sa3-migration/three-lora-*` and `blend-*.wav`.
