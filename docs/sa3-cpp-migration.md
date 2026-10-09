@@ -1166,3 +1166,35 @@ packages. Quit Gary fully, run that launcher, and use **reinstall runtime**
 with SA3 stopped before starting it again. Repeating migration or downloading
 models is unnecessary. Diagnostics and generated WAVs are retained under
 `artifacts/sa3-migration/three-lora-*` and `blend-*.wav`.
+
+## Legacy PyTorch DoRA labels
+
+The previous Gary trainer wrote `adapter_type: dora` for row-normalized DoRA.
+The native converter copied that name into GGUF metadata, while inference
+recognized `dora-rows`, producing `unknown adapter_type 'dora'`. This affected
+six available migrated exports, including Charlie and the Ratatat variants;
+rank and full-track training were unrelated to the failure.
+
+Upstream `50d8efb` canonicalizes legacy metadata during conversion and resolves
+existing migrated GGUFs during load, before merge/functional-path selection.
+Square-only flattened Gary adapters retain the historical rows default.
+Generic external exports can retain an explicit column axis, with inconsistent
+magnitude shapes rejected rather than silently changing their normalization.
+Existing Gary LoRAs need no retraining, source edits or reimport.
+
+All 48 native CTests pass, including 16 embedded/sidecar, F16/F32, row/column
+conversion/cache/merge cases and square-only legacy defaults. A clean packaged
+Vulkan server generated 30-second, four-step audio with the existing
+`ratatat-16-rank64-fulltrack` GGUF, a canonical reconversion, and a blend with
+kev/keygen. Existing-cache and reconverted outputs were byte-identical.
+Source and existing GGUF hashes still match the production catalog. Test output
+and diagnostics are under `artifacts/sa3-migration/legacy-dora-*`.
+
+The clean local package is `dist-gary-legacy-dora-fix`, core SHA-256
+`fe7ac4819ff18a745e57718181a597f899703073894c51c3c9822e83cdc4dd79`.
+It includes the multi-adapter capacity fix and retains the same ggml/GPU
+backend archives. The review launcher is
+`artifacts/sa3-migration/production-legacy-dora-app-1/launch-production-dora-fix.ps1`;
+after quitting Gary, use it and reinstall the stopped SA3 runtime. Windows and
+signed macOS dry-run CI were dispatched at
+[run 37883369102](https://github.com/betweentwomidnights/sa3.cpp/actions/runs/37883369102).
