@@ -272,7 +272,13 @@
           <details class="storage"><summary>Using your current storage folder</summary><button class="path" type="button" onclick={() => onReveal(preview!.activeRoot)}>{preview.activeRoot}</button><p>PyTorch cache: {preview.hfHubCache}</p></details>
         {/if}
         {#if pendingRestart}<p class="error" role="alert">Restart Gary to use your chosen storage folder before migrating.</p>{/if}
-        {#if working && stage !== "setup"}<p class="progress" role="status">{progress}</p>{/if}
+        {#if working && stage !== "setup"}
+          <div class="cleanup-activity">
+            <p class="progress" role="status">{progress}</p>
+            <progress class="cleanup-bar" aria-label="SA3 cleanup in progress"></progress>
+            <small>{elapsedSeconds}s elapsed · Large folders can take a little while to remove.</small>
+          </div>
+        {/if}
         {#if error}<p class="error" role="alert">{error}</p>{#if !preview}<button type="button" onclick={initialize} disabled={working || loading}>check again</button>{/if}{/if}
       </div>
       <footer>
@@ -285,6 +291,15 @@
 {/if}
 
 <style>
+  .cleanup-activity { margin:16px 0; padding:14px; border:1px solid #555; border-radius:8px; background:#202020; }
+  .cleanup-activity .progress { margin:0 0 10px; }
+  .cleanup-activity small { display:block; margin-top:8px; color:#aaa; }
+  .cleanup-bar { display:block; width:100%; height:8px; border:0; border-radius:4px; overflow:hidden; appearance:none; background:#383838; }
+  .cleanup-bar::-webkit-progress-bar { background:#383838; border-radius:4px; }
+  .cleanup-bar:indeterminate { background:linear-gradient(90deg, #383838 0%, #383838 30%, #df978f 50%, #383838 70%, #383838 100%); background-size:200% 100%; animation:cleanup-activity 1.5s linear infinite; }
+  .cleanup-bar:indeterminate::-webkit-progress-bar { background:transparent; }
+  @keyframes cleanup-activity { from { background-position:100% 0; } to { background-position:-100% 0; } }
+  @media (prefers-reduced-motion: reduce) { .cleanup-bar:indeterminate { animation:none; } }
   .overlay { position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center; padding:24px; }
   .backdrop { position:absolute; inset:0; width:100%; height:100%; border:0; border-radius:0; background:rgba(0,0,0,.65); }
   .modal { position:relative; display:flex; flex-direction:column; width:580px; max-width:100%; max-height:calc(100vh - 48px); background:var(--bg-secondary,#202024); border:1px solid var(--border,#444); border-radius:12px; box-shadow:0 20px 70px #0008; color:var(--text-primary,#eee); outline:none; }

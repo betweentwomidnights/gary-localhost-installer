@@ -1136,7 +1136,7 @@ mod tests {
             }
             let reviewed = super::preview(&root, &hub);
             assert!(reviewed.warnings.is_empty(), "{:?}", reviewed.warnings);
-            let result = crate::sa3_cleanup::run(&root, &hub, &reviewed.cleanup_token).unwrap();
+            let result = crate::sa3_cleanup::run(&root, &hub, &reviewed.cleanup_token, |_| {}).unwrap();
             assert!(result.selection.cleanup_complete);
             assert_eq!(result.removed_paths.len(), 2 + copied_code.len());
             for (source, dest) in &copied_code {

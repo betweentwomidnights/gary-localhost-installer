@@ -30,16 +30,33 @@ pub fn validate_review(root: &Path, hub: &Path, token: &str) -> Result<(), Strin
     Ok(())
 }
 
-pub(crate) fn run(root: &Path, hub: &Path, token: &str) -> Result<ResultInfo, String> {
-    run_with(root, hub, token, crate::remove_managed_path)
+pub(crate) fn run(
+    root: &Path,
+    hub: &Path,
+    token: &str,
+    progress: impl Fn(&str),
+) -> Result<ResultInfo, String> {
+    run_with_progress(root, hub, token, crate::remove_managed_path, progress)
 }
 
+#[cfg(test)]
 fn run_with(
     root: &Path,
     hub: &Path,
     token: &str,
-    mut remove: impl FnMut(&Path, &Path) -> Result<bool, String>,
+    remove: impl FnMut(&Path, &Path) -> Result<bool, String>,
 ) -> Result<ResultInfo, String> {
+    run_with_progress(root, hub, token, remove, |_| {})
+}
+
+fn run_with_progress(
+    root: &Path,
+    hub: &Path,
+    token: &str,
+    mut remove: impl FnMut(&Path, &Path) -> Result<bool, String>,
+    progress: impl Fn(&str),
+) -> Result<ResultInfo, String> {
+    progress("Checking the reviewed Python files before cleanup...");
     validate_review(root, hub, token)?;
     let plan = crate::sa3_migration::preview(root, hub);
     let mut selection = crate::sa3_runtime::read(root)?.ok_or("Native SA3 selection is missing")?;
@@ -73,6 +90,7 @@ fn run_with(
         })
         .collect::<Result<_, _>>()?;
     for (entry, identity) in plan.cleanup_candidates.iter().zip(identities) {
+        progress(&format!("Removing {}...", entry.label));
         let path = Path::new(&entry.path);
         let current = crate::sa3_migration::preview(root, hub);
         if !current.warnings.is_empty()
@@ -118,6 +136,7 @@ fn run_with(
         }
         crate::sa3_runtime::save(root, &result.selection)?;
     }
+    progress("Checking for remaining Python files and saving the cleanup result...");
     let remaining = crate::sa3_migration::preview(root, hub);
     result.errors.extend(remaining.warnings);
     if !remaining.cleanup_candidates.is_empty() && result.errors.is_empty() {
@@ -129,12 +148,20 @@ fn run_with(
         result.errors.is_empty() && remaining.cleanup_candidates.is_empty();
     result.selection.cleanup_errors = result.errors.clone();
     crate::sa3_runtime::save(root, &result.selection)?;
+    progress(if result.selection.cleanup_complete {
+        "Python cleanup complete. SA3 is ready."
+    } else {
+        "Cleanup needs attention. Review the remaining files below."
+    });
     Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn run(root: &Path, hub: &Path, token: &str) -> Result<ResultInfo, String> {
+        super::run(root, hub, token, |_| {})
+    }
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
@@ -198,6 +225,46 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = crate::remove_managed_path(&self.0, &std::env::temp_dir());
+        }
+    }
+
+    #[test]
+    fn cleanup_reports_the_current_item_before_removal_and_distinguishes_partial_failure() {
+        for locked_weights in [false, true] {
+            let fixture = Fixture::new();
+            fixture.write("services/sa3/env/python.exe");
+            let weights = fixture.write("external-hub/models--stabilityai--stable-audio-3-medium/weights");
+            fixture.select();
+            let messages = std::cell::RefCell::new(Vec::<String>::new());
+            let result = run_with_progress(
+                &fixture.0, &fixture.hub(), &fixture.token(),
+                |path, owner| {
+                    // Activity must reach the UI before a potentially slow deletion.
+                    let current = messages.borrow().last().unwrap().clone();
+                    assert!(current.starts_with("Removing SA3 "));
+                    if locked_weights && path == weights.parent().unwrap() {
+                        assert!(current.contains("inference weights"));
+                        Err("weights are locked".into())
+                    } else {
+                        crate::remove_managed_path(path, owner)
+                    }
+                },
+                |message| messages.borrow_mut().push(message.to_string()),
+            ).unwrap();
+            let messages = messages.into_inner();
+            assert!(messages[0].starts_with("Checking the reviewed"));
+            assert!(messages.iter().any(|message| message.contains("Removing SA3 Python environment")));
+            assert!(messages.iter().any(|message| message.contains("Removing SA3 PyTorch inference weights")));
+            assert!(messages.iter().any(|message| message.starts_with("Checking for remaining")));
+            assert_eq!(result.selection.cleanup_complete, !locked_weights);
+            if locked_weights {
+                assert!(weights.exists());
+                assert!(messages.last().unwrap().starts_with("Cleanup needs attention"));
+                assert!(!messages.iter().any(|message| message.starts_with("Python cleanup complete")));
+            } else {
+                assert!(!weights.exists());
+                assert!(messages.last().unwrap().starts_with("Python cleanup complete"));
+            }
         }
     }
 

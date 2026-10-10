@@ -1255,3 +1255,9 @@ legacy environment paths and effective Hugging Face cache. The popup reopens
 native verification and reviewed cleanup; detecting these files does not reset
 the native selection or delete anything. Other profiles, Jerry/Foundation
 environments and bundled Python source alone do not reopen migration.
+
+During reviewed cleanup the popup shows an animated activity bar, elapsed time
+and the current verification/removal step. Cleanup publishes each item before
+its potentially slow deletion and reports the final rescan and saved result.
+The bar remains active while a large environment is removed; it does not claim
+a byte percentage. Cleanup ownership checks and interruption journaling are unchanged.

@@ -10003,8 +10003,11 @@ async fn cleanup_sa3_legacy_installation(
         }
         Ok(_) => {
             let root = repo_root.inner().clone();
+            let cleanup_handle = app_handle.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                sa3_cleanup::run(&root, &hub, &review_token)
+                sa3_cleanup::run(&root, &hub, &review_token, |message| {
+                    let _ = cleanup_handle.emit("sa3-native-migration-progress", message);
+                })
             })
             .await
             .map_err(|error| format!("SA3 cleanup transaction failed: {error}"))
