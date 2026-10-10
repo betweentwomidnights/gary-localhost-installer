@@ -46,6 +46,28 @@ pub fn native_training_base_present(active_root: &Path) -> bool {
     })
 }
 
+fn legacy_runtime_candidates(active_root: &Path, hf_hub: &Path) -> Vec<(&'static str, PathBuf, PathBuf)> {
+    let service = active_root.join("services/sa3");
+    vec![
+        ("SA3 Python environment", service.join("env"), service.clone()),
+        ("SA3 alternate Python environment", service.join(".venv"), service),
+        ("SA3 PyTorch inference weights", hf_hub.join("models--stabilityai--stable-audio-3-medium"), hf_hub.to_path_buf()),
+        ("SA3 PyTorch training base", hf_hub.join("models--stabilityai--stable-audio-3-medium-base"), hf_hub.to_path_buf()),
+    ]
+}
+
+/// A downgrade can recreate legacy files after cleanup was recorded as complete.
+/// Keep this bounded for service-status polling; full inventory runs in preview.
+/// Bundled source alone is not evidence of an installed Python runtime.
+pub fn legacy_runtime_present(active_root: &Path, hf_hub: &Path) -> bool {
+    legacy_runtime_candidates(active_root, hf_hub)
+        .iter()
+        .any(|(_, path, _)| match std::fs::symlink_metadata(path) {
+            Ok(_) => true,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
+}
+
 pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     let mut result = Sa3MigrationPreview {
         active_root: active_root.to_string_lossy().to_string(),
@@ -64,38 +86,11 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         Err(error) => result.warnings.push(error),
     }
     let service = active_root.join("services").join("sa3");
-    let mut candidates = vec![
-        (
-            "SA3 Python environment",
-            service.join("env"),
-            service.clone(),
-        ),
-        (
-            "SA3 alternate Python environment",
-            service.join(".venv"),
-            service.clone(),
-        ),
-        (
-            "SA3 PyTorch inference weights",
-            hf_hub.join("models--stabilityai--stable-audio-3-medium"),
-            hf_hub.to_path_buf(),
-        ),
-        (
-            "SA3 PyTorch training base",
-            hf_hub.join("models--stabilityai--stable-audio-3-medium-base"),
-            hf_hub.to_path_buf(),
-        ),
-    ];
+    let mut candidates = legacy_runtime_candidates(active_root, hf_hub);
     // Bundled source alone does not mean a user installed the Python service.
     // Keep unknown/inaccessible paths conservative; cleanup safety is still
     // decided independently below by canonical ownership and protection checks.
-    result.legacy_runtime_present =
-        candidates
-            .iter()
-            .any(|(_, path, _)| match std::fs::symlink_metadata(path) {
-                Ok(_) => true,
-                Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-            });
+    result.legacy_runtime_present = legacy_runtime_present(active_root, hf_hub);
     let code = crate::sa3_code::status(active_root);
     result.warnings.extend(code.warnings);
     for path in &code.candidates {

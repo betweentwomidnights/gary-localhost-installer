@@ -91,7 +91,9 @@
       trainingBase = recommendQuantizedSa3Training(hardware) ? "Q4_K_M" : "F16";
       includeTraining = storage.trainingBasePresent;
       includeDecoder = decoder.enabled;
-      stage = storage.nativeSelection?.cleanupComplete ? "complete" : "setup";
+      stage = storage.nativeSelection?.cleanupComplete
+        && !storage.nativeSelection.cleanupErrors.length
+        && !storage.legacyRuntimePresent ? "complete" : "setup";
     } catch (cause) { error = String(cause); }
     finally { loading = false; }
   }

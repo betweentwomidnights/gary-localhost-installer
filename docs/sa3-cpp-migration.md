@@ -1247,3 +1247,11 @@ An already migrated profile sees an available runtime update when its installed
 stamp differs from the pin. Stop the affected service/trainer and use runtime
 reinstall/update to install the published package; model or LoRA downloads and
 migration cleanup need not be repeated.
+
+If an older Gary build recreates an SA3 Python environment or PyTorch model
+cache after completed cleanup, the main migration button reappears. Completion
+uses both the saved cleanup result and a bounded check of the active profile's
+legacy environment paths and effective Hugging Face cache. The popup reopens
+native verification and reviewed cleanup; detecting these files does not reset
+the native selection or delete anything. Other profiles, Jerry/Foundation
+environments and bundled Python source alone do not reopen migration.

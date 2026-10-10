@@ -726,7 +726,11 @@ impl ServiceManager {
                         && svc.runtime == ServiceRuntime::Native
                         && self.sa3_selection.as_ref().is_some_and(|selection| {
                             selection.cleanup_complete && selection.cleanup_errors.is_empty()
-                        }),
+                        })
+                        && !crate::sa3_migration::legacy_runtime_present(
+                            &self.repo_root,
+                            &crate::storage::effective_hf_hub_cache_dir(&self.repo_root),
+                        ),
                 }
             })
             .collect()
@@ -1446,6 +1450,44 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recreated_python_files_reopen_migration_without_resetting_native_selection() {
+        let root = std::env::temp_dir().join(format!("gary-sa3-downgrade-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        crate::sa3_runtime::save(&root, &crate::sa3_runtime::Selection {
+            schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.3".into(),
+            backend: "cuda".into(), activated_at: 123, cleanup_complete: true, cleanup_errors: vec![],
+        }).unwrap();
+        let selection_path = crate::sa3_runtime::selection_path(&root);
+        let original = std::fs::read(&selection_path).unwrap();
+        let hub = crate::storage::effective_hf_hub_cache_dir(&root);
+        let complete = |manager: &ServiceManager| manager.get_service_info().into_iter().find(|s| s.id == "sa3").unwrap().sa3_migration_complete;
+        let manager = ServiceManager::new(manifest.services.clone(), root.clone());
+        assert!(complete(&manager));
+        for legacy in [root.join("services/sa3/env"), root.join("services/sa3/.venv"),
+            hub.join("models--stabilityai--stable-audio-3-medium"),
+            hub.join("models--stabilityai--stable-audio-3-medium-base")] {
+            std::fs::create_dir_all(&legacy).unwrap();
+            assert!(!complete(&manager), "recreated {} must reopen migration", legacy.display());
+            let restarted = ServiceManager::new(manifest.services.clone(), root.clone());
+            assert!(!complete(&restarted));
+            assert!(restarted.is_native("sa3"));
+            assert!(crate::sa3_migration::preview(&root, &hub).legacy_runtime_present);
+            assert_eq!(std::fs::read(&selection_path).unwrap(), original);
+            std::fs::remove_dir(&legacy).unwrap();
+            assert!(complete(&manager));
+        }
+        // Another profile and other Python services cannot reopen this migration.
+        std::fs::create_dir_all(root.join("other-profile/services/sa3/env")).unwrap();
+        std::fs::create_dir_all(root.join("services/stable-audio/env")).unwrap();
+        std::fs::write(root.join("services/sa3/api.py"), b"bundled source").unwrap();
+        assert!(complete(&manager));
+        assert_eq!(std::fs::read(&selection_path).unwrap(), original);
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
 
     #[test]
     fn migrated_profiles_cannot_rebuild_python_even_from_queued_legacy_plans() {
