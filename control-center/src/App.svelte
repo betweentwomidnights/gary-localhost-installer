@@ -13,11 +13,13 @@
   import Sa3DecoderLoraBanner from "./lib/Sa3DecoderLoraBanner.svelte";
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import YueyRuntimeBanner from "./lib/YueyRuntimeBanner.svelte";
+  import Sa3RuntimeBanner from "./lib/Sa3RuntimeBanner.svelte";
   import YueyGenerationPanel, { type YueyGenerationSettings } from "./lib/YueyGenerationPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
+  import Sa3MigrationModal from "./lib/Sa3MigrationModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
   import StorageSettingsModal from "./lib/StorageSettingsModal.svelte";
@@ -46,6 +48,7 @@
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
+    sa3_migration_complete: boolean;
   }
 
   interface Sa3LoudnessSettings {
@@ -214,6 +217,7 @@
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
   let storageModalOpen = $state(false);
+  let sa3MigrationOpen = $state(false);
   let storageInfo: RuntimeStorageInfo | null = $state(null);
   let storageBusy = $state(false);
   let storageError: string | null = $state(null);
@@ -315,6 +319,12 @@
 
   function closeSa3LoraTraining() {
     sa3LoraTrainingModalOpen = false;
+  }
+
+  async function showSa3Migration() {
+    selectedServiceId = "sa3";
+    sa3MigrationOpen = true;
+    await loadRuntimeStorageInfo();
   }
 
   function backToLogs() {
@@ -823,7 +833,11 @@
     })();
 
     const unlisten = listen<ServiceInfo[]>("services-updated", (event) => {
+      const finishedBuild = event.payload.some((service) =>
+        !service.build_status?.building && services.find((previous) => previous.id === service.id)?.build_status?.building,
+      );
       services = event.payload;
+      if (storageModalOpen && finishedBuild) void loadServiceEnvs();
     });
 
     // When "Rebuild All" is running, the backend tells us which service to focus on
@@ -903,16 +917,26 @@
         onTrainCareyAce={showCareyAceTraining}
         onManageSa3Loras={showSa3Loras}
         onTrainSa3Lora={showSa3LoraTraining}
+        onMigrateSa3Runtime={showSa3Migration}
       />
     </div>
     <div class="divider"></div>
     <div class="right-panel">
       {#if rightPanel === "models" && modelServiceId}
-        <ModelPanel serviceId={modelServiceId} onBack={backToLogs} />
+        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} onBack={backToLogs} />{/key}
       {:else}
         {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
           <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />
           {#if selectedServiceId === "sa3"}
+            {#if selectedService?.runtime === "native"}
+              <Sa3RuntimeBanner
+                serviceStatus={selectedService.status}
+                nativeBackend={selectedService.native_backend}
+                envExists={selectedService.env_exists}
+                building={selectedService.build_status?.building ?? false}
+                onShowModels={() => showModels("sa3")}
+              />
+            {/if}
             <Sa3DecoderLoraBanner
               enabled={appSettings.sa3UseDecoderLora}
               serviceStatus={selectedService?.status ?? "stopped"}
@@ -1052,12 +1076,20 @@
     open={sa3LoraModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}
     serviceEnvExists={sa3Service?.env_exists ?? false}
+    pendingRestart={storageInfo?.pendingRestart ?? false}
     onClose={closeSa3Loras}
+  />
+  <Sa3MigrationModal
+    open={sa3MigrationOpen}
+    pendingRestart={storageInfo?.pendingRestart ?? true}
+    onReveal={revealStoragePath}
+    onClose={() => sa3MigrationOpen = false}
   />
   <Sa3LoraTrainingModal
     open={sa3LoraTrainingModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}
     serviceEnvExists={sa3Service?.env_exists ?? false}
+    serviceRuntime={sa3Service?.runtime ?? "python"}
     onClose={closeSa3LoraTraining}
   />
 </main>

@@ -2,6 +2,18 @@ mod manifest;
 mod model_manager;
 mod native_models;
 mod native_runtime;
+mod sa3_adapter;
+mod sa3_analysis;
+mod sa3_decoder;
+mod sa3_cleanup;
+mod sa3_code;
+mod sa3_loras;
+mod sa3_gguf;
+mod sa3_migration;
+mod sa3_models;
+mod sa3_prompts;
+mod sa3_runtime;
+mod sa3_training;
 mod service_manager;
 mod storage;
 mod update;
@@ -689,33 +701,7 @@ struct Sa3DatasetSidecarSaveResult {
     entries: Vec<Sa3DatasetSidecarEntry>,
 }
 
-// Mirrors the snake_case JSON that services/sa3/analyze_audio.py prints to stdout.
-#[derive(Debug, Deserialize)]
-struct Sa3AnalyzerOutput {
-    ok: bool,
-    #[serde(default)]
-    bpm: Option<i64>,
-    #[serde(default)]
-    keyscale: String,
-    #[serde(default)]
-    suggestion: String,
-    #[serde(default)]
-    bpm_confidence: Option<f64>,
-    #[serde(default)]
-    key_confidence: Option<f64>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Sa3TrackMetadataSuggestion {
-    bpm: Option<i64>,
-    keyscale: String,
-    suggestion: String,
-    bpm_confidence: Option<f64>,
-    key_confidence: Option<f64>,
-}
+use sa3_analysis::Suggestion as Sa3TrackMetadataSuggestion;
 
 // Mirrors the status.json that services/carey/sa3_autolabel.py writes via update_status.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -754,6 +740,10 @@ struct Sa3AutolabelAvailability {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sa3LoraTrainingState {
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(default)]
+    resume_checkpoint_path: Option<String>,
     #[serde(default)]
     job_id: Option<String>,
     #[serde(default)]
@@ -1084,6 +1074,86 @@ mod bundle_root_tests {
     }
 
     #[test]
+    fn cleaned_sa3_profiles_skip_python_bundle_refresh_and_preserve_custom_assets() {
+        let root = temp_root("retired-sa3-sync-test");
+        let bundle = root.join("bundle");
+        let runtime = root.join("runtime");
+        let source = bundle.join("services/sa3");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(bundle.join("services/manifests")).unwrap();
+        std::fs::write(bundle.join("services/manifests/services.json"), "{}").unwrap();
+        std::fs::write(source.join("api.py"), b"new bundled code").unwrap();
+        let installed = runtime.join("services/sa3");
+        std::fs::create_dir_all(installed.join("native")).unwrap();
+        std::fs::write(installed.join("native/sa3-server.exe"), b"native runtime").unwrap();
+        let selection = crate::sa3_runtime::Selection {
+            schema_version: 1,
+            encoding: "F16".into(),
+            verified_release: "0.1.2".into(),
+            backend: "cuda".into(),
+            activated_at: 1,
+            cleanup_complete: false,
+            cleanup_errors: vec![],
+        };
+        crate::sa3_runtime::save(&runtime, &selection).unwrap();
+        // Before cleanup, retain normal Python resource refresh for optional
+        // legacy trainer use while its environment is still present.
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert_eq!(
+            std::fs::read(installed.join("api.py")).unwrap(),
+            b"new bundled code"
+        );
+        // An upgrade from before ownership inventories can have an identical
+        // bundle stamp. Seed its manifest without recopying edited source.
+        let inventory = runtime.join("sa3/legacy-code-inventory.json");
+        std::fs::remove_file(&inventory).unwrap();
+        std::fs::write(installed.join("api.py"), b"user-edited source").unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert_eq!(
+            std::fs::read(installed.join("api.py")).unwrap(),
+            b"user-edited source"
+        );
+        assert_eq!(crate::sa3_code::status(&runtime).retained.len(), 1);
+        let ownership = std::fs::read(&inventory).unwrap();
+        std::fs::remove_file(&inventory).unwrap();
+        std::fs::remove_file(installed.join("api.py")).unwrap();
+        std::fs::write(installed.join("custom-notes.txt"), b"user asset").unwrap();
+        let mut selection = selection;
+        selection.cleanup_errors = vec!["interrupted cleanup".into()];
+        crate::sa3_runtime::save(&runtime, &selection).unwrap();
+        std::fs::write(
+            bundle.join("services/bundle-stamp.txt"),
+            "changed-after-cleanup",
+        )
+        .unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert!(!installed.join("api.py").exists());
+        assert_eq!(
+            std::fs::read(installed.join("custom-notes.txt")).unwrap(),
+            b"user asset"
+        );
+        assert_eq!(
+            std::fs::read(installed.join("native/sa3-server.exe")).unwrap(),
+            b"native runtime"
+        );
+        selection.cleanup_complete = true;
+        selection.cleanup_errors.clear();
+        crate::sa3_runtime::save(&runtime, &selection).unwrap();
+        // A later release can omit the legacy resource directory completely.
+        std::fs::remove_dir_all(source).unwrap();
+        std::fs::write(
+            bundle.join("services/bundle-stamp.txt"),
+            "no-python-directory",
+        )
+        .unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert!(installed.join("custom-notes.txt").is_file());
+        assert_eq!(std::fs::read(inventory).unwrap(), ownership);
+        assert!(runtime.join("services/manifests/services.json").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn an_app_update_keeps_a_native_runtime_and_refreshes_the_rest() {
         let root = temp_root("native-sync-test");
         let bundle = root.join("bundle");
@@ -1103,11 +1173,14 @@ mod bundle_root_tests {
         std::fs::create_dir_all(installed.join("native")).unwrap();
         std::fs::write(installed.join("native").join("yue2-server.exe"), b"exe").unwrap();
         std::fs::write(installed.join("stale.txt"), "from an older bundle").unwrap();
+        std::fs::create_dir_all(installed.join(".venv/Scripts")).unwrap();
+        std::fs::write(installed.join(".venv/Scripts/python.exe"), b"alternate Python environment").unwrap();
 
         super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
 
         assert!(installed.join("native").join("yue2-server.exe").is_file());
         assert!(installed.join("README.md").is_file());
+        assert_eq!(std::fs::read(installed.join(".venv/Scripts/python.exe")).unwrap(), b"alternate Python environment");
         assert!(!installed.join("stale.txt").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1246,6 +1319,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     // of a Python service's `env`.
     const PRESERVED_RUNTIME_NAMES: &[&str] = &[
         "env",
+        ".venv",
         native_runtime::NATIVE_DIR,
         "checkpoints",
         ".cache",
@@ -1259,12 +1333,27 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     let desired_stamp = compute_bundle_sync_stamp(bundle_root)?;
     let current_stamp = std::fs::read_to_string(&stamp_path).ok();
 
+    // Once cleanup begins, future bundles must not recreate retired Python
+    // code or clear native/custom assets, including after interrupted cleanup.
+    // Before cleanup, retain Python resource refresh for optional legacy training.
+    let sa3_retired = sa3_runtime::read(runtime_root)?.is_some_and(|selection| {
+        selection.cleanup_complete || !selection.cleanup_errors.is_empty()
+    });
+    if sa3_retired {
+        // Earlier native profiles may have retired their environment before
+        // code ownership was recorded. Seeding metadata never recopies code.
+        sa3_code::record_bundle(bundle_root, runtime_root, true)?;
+    }
+
     if current_stamp.as_deref() == Some(desired_stamp.as_str())
         && runtime_services
             .join("manifests")
             .join("services.json")
             .exists()
     {
+        if !sa3_retired {
+            sa3_code::record_bundle(bundle_root, runtime_root, true)?;
+        }
         log::info!("Runtime services already match bundled resources");
         return Ok(());
     }
@@ -1305,13 +1394,19 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if !bundle_names.contains(&name) {
+        if !bundle_names.contains(&name) && !(sa3_retired && name == "sa3") {
             remove_path(&existing)?;
         }
     }
 
     for src in bundle_entries {
         let name = src.file_name().unwrap_or_default().to_os_string();
+        if sa3_retired && name == "sa3" {
+            log::info!(
+                "Preserving retired SA3 native service folder without copying Python resources"
+            );
+            continue;
+        }
         let dst = runtime_services.join(name);
 
         if src.is_dir() {
@@ -1327,6 +1422,10 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
                 format!("Cannot copy {} to {}: {}", src.display(), dst.display(), e)
             })?;
         }
+    }
+
+    if !sa3_retired {
+        sa3_code::record_bundle(bundle_root, runtime_root, false)?;
     }
 
     std::fs::write(&stamp_path, desired_stamp)
@@ -3874,11 +3973,21 @@ fn cleanup_legacy_storage_impl(active_root: &Path) -> LegacyStorageMaintenanceRe
 }
 
 fn read_text_tail(path: &Path, max_bytes: usize) -> String {
-    let Ok(bytes) = std::fs::read(path) else {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
         return String::new();
     };
-    let start = bytes.len().saturating_sub(max_bytes);
-    String::from_utf8_lossy(&bytes[start..]).to_string()
+    let Ok(length) = file.metadata().map(|metadata| metadata.len()) else {
+        return String::new();
+    };
+    if file.seek(SeekFrom::Start(length.saturating_sub(max_bytes as u64))).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.take(max_bytes as u64).read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn parse_carey_epoch_progress(log_tail: &str) -> Option<(u32, Option<u32>)> {
@@ -3935,6 +4044,8 @@ fn read_sa3_training_status_file(path: &Path) -> Sa3LoraTrainingState {
         .ok()
         .and_then(|raw| serde_json::from_str::<Sa3LoraTrainingState>(&raw).ok())
         .unwrap_or_else(|| Sa3LoraTrainingState {
+            runtime: None,
+            resume_checkpoint_path: None,
             job_id: None,
             name: None,
             status: "idle".to_string(),
@@ -4254,29 +4365,58 @@ where
 
 #[cfg(target_os = "windows")]
 fn carey_ace_training_parent_is_running(pid: u32) -> Option<bool> {
-    let mut command = std::process::Command::new("powershell");
-    command.args([
-        "-NoProfile",
-        "-Command",
-        &format!(
-            "$ErrorActionPreference='SilentlyContinue'; if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ '1' }} else {{ '0' }}"
-        ),
-    ]);
-    hide_std_console_window(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    match String::from_utf8_lossy(&output.stdout).trim() {
-        "1" => Some(true),
-        "0" => Some(false),
-        _ => None,
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    // A zero-time process-handle query avoids launching PowerShell for every
+    // status poll. Access-denied/unknown stays conservative during recovery.
+    unsafe {
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            return (GetLastError() == ERROR_INVALID_PARAMETER).then_some(false);
+        }
+        let state = WaitForSingleObject(handle, 0);
+        CloseHandle(handle);
+        match state {
+            WAIT_TIMEOUT => Some(true),
+            WAIT_OBJECT_0 => Some(false),
+            _ => None,
+        }
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn carey_ace_training_parent_is_running(_pid: u32) -> Option<bool> {
     None
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod training_process_status_tests {
+    #[test]
+    fn detects_live_and_exited_processes_without_a_shell_probe() {
+        assert_eq!(super::carey_ace_training_parent_is_running(std::process::id()), Some(true));
+        let mut command = std::process::Command::new("cmd.exe");
+        command.args(["/c", "exit", "259"]);
+        super::hide_std_console_window(&mut command);
+        let mut child = command.spawn().unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(259));
+        // Exit code 259 is also STILL_ACTIVE; the process handle is authoritative.
+        assert_eq!(super::carey_ace_training_parent_is_running(child.id()), Some(false));
+        assert_eq!(super::carey_ace_training_parent_is_running(u32::MAX), Some(false));
+    }
+}
+
+#[cfg(test)]
+mod training_log_tail_tests {
+    #[test]
+    fn reads_only_the_requested_tail_and_handles_a_missing_log() {
+        let path = std::env::temp_dir().join(format!("gary-tail-{}-{}.log", std::process::id(), super::now_epoch_seconds()));
+        let content = format!("{}\nlatest training update\n", "x".repeat(1024 * 1024));
+        std::fs::write(&path, content).unwrap();
+        assert_eq!(super::read_text_tail(&path, 23), "latest training update\n");
+        assert!(super::read_text_tail(&path, 0).is_empty());
+        std::fs::remove_file(&path).unwrap();
+        assert!(super::read_text_tail(&path, 16 * 1024).is_empty());
+    }
 }
 
 fn reconcile_owned_workload_status<F>(
@@ -4787,6 +4927,16 @@ where
     if !matches!(state.status.as_str(), "starting" | "running") {
         return Ok(());
     }
+    if state.runtime.as_deref() == Some("sa3.cpp") {
+        // The app's native monitor owns process exit and adapter registration.
+        // Recovery after an app exit must not invoke Python child discovery or
+        // advertise a CLI result as registered when publication was interrupted.
+        if state.owner_pid.is_some_and(|pid| is_process_running(pid) == Some(false)) {
+            return mark_sa3_lora_training_failed(status_path,
+                "The app that owned native training exited. Saved checkpoint pairs remain available for resume.", state.launcher_pid);
+        }
+        return Ok(());
+    }
     let mut monitored_pids = Vec::new();
     for pid in [state.owner_pid, state.launcher_pid, state.pid]
         .into_iter()
@@ -5088,7 +5238,7 @@ async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app quit: {error}");
     }
-    if let Err(error) = cancel_sa3_lora_training() {
+    if let Err(error) = cancel_sa3_lora_training_impl() {
         log::warn!("Could not cancel SA3 LoRA training during app quit: {error}");
     }
     if let Err(error) = cancel_sa3_autolabel() {
@@ -5898,6 +6048,22 @@ pub fn run() {
             save_hf_token,
             delete_hf_token,
             get_runtime_storage_info,
+            get_sa3_migration_preview,
+            activate_sa3_native_runtime,
+            cleanup_sa3_legacy_installation,
+            get_sa3_native_runtime_selection,
+            select_sa3_native_model,
+            prepare_sa3_native_runtime,
+            prepare_sa3_native_models,
+            get_sa3_native_model_catalog,
+            get_sa3_native_lora_state,
+            import_sa3_native_lora,
+            update_sa3_native_lora,
+            get_sa3_native_decoder_state,
+            prepare_sa3_native_decoder,
+            prepare_sa3_native_loras,
+            select_sa3_native_checkpoint,
+            get_sa3_native_resume_options,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -6219,6 +6385,9 @@ async fn run_build(
     manager: Arc<Mutex<ServiceManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    // A queued rebuild-all plan may predate SA3 migration. Never let that
+    // stale Python plan recreate an environment after native activation.
+    manager.lock().await.validate_build_runtime(&build_info)?;
     if build_info.runtime == manifest::ServiceRuntime::Native {
         let service_id = build_info.service_id.clone();
         native_runtime::install(build_info, manager.clone(), handle.clone()).await?;
@@ -6649,6 +6818,7 @@ async fn get_models(
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
     models.extend(mgr.get_yuey_models());
+    models.extend(mgr.get_sa3_native_models());
     Ok(models)
 }
 
@@ -6662,6 +6832,40 @@ async fn download_model(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     // Native services download GGUFs directly; there is no Python env to borrow.
+    if let Some(component) = sa3_models::component(&model_id) {
+        if storage::storage_info(repo_root.inner()).pending_restart {
+            return Err("Restart to use your chosen storage before preparing SA3 models.".into());
+        }
+        let mut svc_mgr = _svc_mgr.lock().await;
+        if svc_mgr.is_native("sa3") {
+            if let Some(blocker) = svc_mgr.native_mutation_blocker("sa3") {
+                return Err(format!("Cannot prepare SA3 models: {blocker}."));
+            }
+        }
+        let dest_dir = {
+            let mut mgr = model_mgr.lock().await;
+            if mgr.is_downloading(&model_id) {
+                return Err("This model is already downloading.".into());
+            }
+            let dir = sa3_models::checked_models_dir(&mgr.runtime_root())?;
+            svc_mgr.begin_native_model_mutation("sa3", "SA3 model preparation")?;
+            mgr.set_download_started(&model_id);
+            dir
+        };
+        drop(svc_mgr);
+        model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+        let files = component.files.clone();
+        let manager = model_mgr.inner().clone();
+        let services = _svc_mgr.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = native_models::download_pinned_hf_files(
+                model_id, files, dest_dir, manager, app_handle,
+            )
+            .await;
+            services.lock().await.end_native_model_mutation("sa3");
+        });
+        return Ok(());
+    }
     if let Some(files) = model_manager::yuey_files(&model_id) {
         let dest_dir = {
             let mut mgr = model_mgr.lock().await;
@@ -6720,11 +6924,24 @@ async fn download_model(
         ));
     }
 
+    let sa3_legacy_download = [
+        "stabilityai/stable-audio-3-medium",
+        "stabilityai/stable-audio-3-medium-base",
+        "thepatch/same-l-decoder-lora",
+    ]
+    .contains(&model_id.as_str());
     {
+        let mut services = _svc_mgr.lock().await;
         let mut mgr = model_mgr.lock().await;
+        if mgr.is_downloading(&model_id) {
+            return Err("This model is already downloading.".into());
+        }
+        if sa3_legacy_download {
+            services.begin_native_model_mutation("sa3", "SA3 legacy model download")?;
+        }
         mgr.set_download_started(&model_id);
     }
-
+    let download_services = _svc_mgr.inner().clone();
     let mgr_clone = model_mgr.inner().clone();
     let handle = app_handle.clone();
     let root: std::path::PathBuf = repo_root.to_path_buf();
@@ -6761,6 +6978,7 @@ async fn download_model(
     } else {
         tauri::async_runtime::spawn(async move {
             let _ = model_manager::download_model(model_id, python_exe, mgr_clone, handle).await;
+            if sa3_legacy_download { download_services.lock().await.end_native_model_mutation("sa3"); }
         });
     }
 
@@ -6776,6 +6994,53 @@ async fn remove_model(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<ModelRemovalResult, String> {
+    if service_id == "sa3" {
+        if let Some(component) = sa3_models::component(&model_id) {
+            if storage::storage_info(repo_root.inner()).pending_restart {
+                return Err(
+                    "Restart to use your chosen storage before removing SA3 models.".into(),
+                );
+            }
+            // Keep both reservations until the files are removed: a new native
+            // launch, trainer, component download or preparation cannot race us.
+            let services = svc_mgr.lock().await;
+            if services.is_running("sa3") {
+                return Err("Stop SA3 before removing its model.".into());
+            }
+            if let Some(blocker) = services.native_mutation_blocker("sa3") {
+                return Err(format!("Cannot remove SA3 models: {blocker}."));
+            }
+            let mut models = model_mgr.lock().await;
+            if models.is_downloading(&model_id) {
+                return Err("Wait for this model download to finish first.".into());
+            }
+            let root = sa3_models::checked_models_dir(&models.runtime_root())?;
+            let files = component.files.clone();
+            let removed_bytes = tauri::async_runtime::spawn_blocking(move || {
+                let mut removed_bytes = 0;
+                for file in files {
+                    let dest = root.join(file.filename);
+                    for path in [&dest, &native_runtime::partial_path(&dest)] {
+                        let bytes = path_size(path);
+                        if remove_managed_path(path, &root)? {
+                            removed_bytes += bytes;
+                        }
+                    }
+                }
+                Ok::<_, String>(removed_bytes)
+            })
+            .await
+            .map_err(|error| format!("SA3 model removal failed: {error}"))??;
+            models.forget_model_status(&model_id);
+            drop(models);
+            drop(services);
+            model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+            return Ok(ModelRemovalResult {
+                model_id,
+                removed_bytes,
+            });
+        }
+    }
     let is_carey_model = service_id == "carey" && model_id.starts_with("carey::");
     let is_foundation_model =
         service_id == "foundation" && model_id == model_manager::FOUNDATION_MODEL_ID;
@@ -7920,56 +8185,106 @@ mod sa3_lora_checkpoint_tests {
     }
 }
 
+/// Existing Python catalog controls also affect native conversion and cleanup
+/// protections. Serialize both sets of controls and retain their workload lease
+/// until all file writes complete, including errors from prompt generation.
+async fn edit_sa3_lora_registry<T>(
+    root: &Path,
+    manager: &ManagerState,
+    operation: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    if storage::storage_info(root).pending_restart {
+        return Err("Restart before editing adapters in your selected storage.".into());
+    }
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "SA3 training or migration is already starting")?;
+    if matches!(
+        read_sa3_lora_training_state().status.as_str(),
+        "starting" | "running"
+    ) || matches!(
+        read_sa3_autolabel_state().status.as_str(),
+        "starting" | "running"
+    ) {
+        return Err("Wait for SA3 training and dataset jobs before editing adapters.".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let _registry = sa3_loras::registry_edit_guard()?;
+    {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot edit SA3 adapters: {blocker}"));
+        }
+        services.begin_native_workload("sa3", "legacy-lora-edit", "SA3 adapter registry update")?;
+    }
+    let result = operation.await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "legacy-lora-edit");
+    result
+}
+
 #[tauri::command]
 async fn upsert_sa3_lora(
     name: String,
     checkpoint_path: String,
     prompts_path: Option<String>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name = sanitize_lora_name(&name)
-        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
-    let checkpoint_file = PathBuf::from(checkpoint_path.trim());
-    if !looks_like_sa3_lora_checkpoint(&checkpoint_file) {
-        return Err(format!(
-            "{} does not look like an SA3 LoRA checkpoint file",
-            checkpoint_file.display()
-        ));
-    }
-
-    let normalized_prompts_path = prompts_path
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let prompts_dir = normalized_prompts_path.as_ref().map(PathBuf::from);
-    if let Some(prompts_dir) = prompts_dir.as_ref() {
-        if !prompts_dir.is_dir() {
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name = sanitize_lora_name(&name).ok_or_else(|| {
+            "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string()
+        })?;
+        if sa3_loras::read_catalog(repo_root.inner())?
+            .get(&normalized_name)
+            .is_some_and(|entry| entry.native_only)
+        {
+            return Err("This name belongs to a native LoRA; choose a different name.".into());
+        }
+        let checkpoint_file = PathBuf::from(checkpoint_path.trim());
+        if !looks_like_sa3_lora_checkpoint(&checkpoint_file) {
             return Err(format!(
-                "{} is not a valid prompts/source folder",
-                prompts_dir.display()
+                "{} does not look like an SA3 LoRA checkpoint file",
+                checkpoint_file.display()
             ));
         }
-    }
 
-    let mut catalog = read_sa3_lora_catalog()?;
-    let strength = catalog
-        .get(&normalized_name)
-        .map(|entry| entry.strength)
-        .unwrap_or_else(default_lora_scale);
-    catalog.insert(
-        normalized_name,
-        Sa3LoraCatalogEntry {
-            path: checkpoint_file.to_string_lossy().to_string(),
-            prompts_path: normalized_prompts_path,
-            strength,
-            training_job_id: None,
-            training_checkpoints: Vec::new(),
-            selected_training_step: None,
-        },
-    );
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    // Adapters are baked into the pipeline at load time, so a running SA3 service
-    // would keep serving the old adapter until restarted. Ask it to re-apply.
+        let normalized_prompts_path = prompts_path
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let prompts_dir = normalized_prompts_path.as_ref().map(PathBuf::from);
+        if let Some(prompts_dir) = prompts_dir.as_ref() {
+            if !prompts_dir.is_dir() {
+                return Err(format!(
+                    "{} is not a valid prompts/source folder",
+                    prompts_dir.display()
+                ));
+            }
+        }
+
+        let mut catalog = read_sa3_lora_catalog()?;
+        let strength = catalog
+            .get(&normalized_name)
+            .map(|entry| entry.strength)
+            .unwrap_or_else(default_lora_scale);
+        catalog.insert(
+            normalized_name,
+            Sa3LoraCatalogEntry {
+                path: checkpoint_file.to_string_lossy().to_string(),
+                prompts_path: normalized_prompts_path,
+                strength,
+                training_job_id: None,
+                training_checkpoints: Vec::new(),
+                selected_training_step: None,
+            },
+        );
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -7979,52 +8294,55 @@ async fn activate_sa3_lora_checkpoint(
     name: String,
     step: u32,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name =
-        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
-    let mut catalog = read_sa3_lora_catalog()?;
-    let checkpoint = {
-        let entry = catalog
-            .get(&normalized_name)
-            .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
-        if entry.training_job_id.is_none() || entry.training_checkpoints.is_empty() {
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name =
+            sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+        let mut catalog = read_sa3_lora_catalog()?;
+        let checkpoint = {
+            let entry = catalog
+                .get(&normalized_name)
+                .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+            if entry.training_job_id.is_none() || entry.training_checkpoints.is_empty() {
+                return Err(format!(
+                    "LoRA '{}' was not registered by Gary's SA3 trainer",
+                    normalized_name
+                ));
+            }
+            entry
+                .training_checkpoints
+                .iter()
+                .find(|checkpoint| checkpoint.step == step)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "Training checkpoint step {} is not registered for '{}'",
+                        step, normalized_name
+                    )
+                })?
+        };
+
+        let source = PathBuf::from(&checkpoint.path);
+        if !looks_like_sa3_lora_checkpoint(&source) {
             return Err(format!(
-                "LoRA '{}' was not registered by Gary's SA3 trainer",
-                normalized_name
+                "Training checkpoint {} is missing or invalid",
+                source.display()
             ));
         }
-        entry
-            .training_checkpoints
-            .iter()
-            .find(|checkpoint| checkpoint.step == step)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "Training checkpoint step {} is not registered for '{}'",
-                    step, normalized_name
-                )
-            })?
-    };
 
-    let source = PathBuf::from(&checkpoint.path);
-    if !looks_like_sa3_lora_checkpoint(&source) {
-        return Err(format!(
-            "Training checkpoint {} is missing or invalid",
-            source.display()
-        ));
-    }
+        let managed_path = sa3_lora_dir().join(format!("{}.safetensors", normalized_name));
+        install_managed_sa3_checkpoint(&source, &managed_path)?;
 
-    let managed_path = sa3_lora_dir().join(format!("{}.safetensors", normalized_name));
-    install_managed_sa3_checkpoint(&source, &managed_path)?;
-
-    if let Some(entry) = catalog.get_mut(&normalized_name) {
-        entry.path = managed_path.to_string_lossy().to_string();
-        entry.selected_training_step = Some(checkpoint.step);
-    }
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    // Adapters are baked into the pipeline at load time, so a running SA3 service
-    // would keep serving the old adapter until restarted. Ask it to re-apply.
+        if let Some(entry) = catalog.get_mut(&normalized_name) {
+            entry.path = managed_path.to_string_lossy().to_string();
+            entry.selected_training_step = Some(checkpoint.step);
+        }
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8033,15 +8351,18 @@ async fn activate_sa3_lora_checkpoint(
 async fn remove_sa3_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name =
-        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
-    let mut catalog = read_sa3_lora_catalog()?;
-    catalog.remove(&normalized_name);
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    // Adapters are baked into the pipeline at load time, so a running SA3 service
-    // would keep serving the old adapter until restarted. Ask it to re-apply.
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name =
+            sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+        let mut catalog = read_sa3_lora_catalog()?;
+        catalog.remove(&normalized_name);
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8415,66 +8736,71 @@ fn sa3_current_job_matches(job_id: &str) -> bool {
 async fn delete_sa3_trained_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3LoraState, String> {
-    let normalized_name =
-        sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
-    let mut catalog = read_sa3_lora_catalog()?;
-    let entry = catalog
-        .get(&normalized_name)
-        .cloned()
-        .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
-    let job_id = entry.training_job_id.as_deref().ok_or_else(|| {
-        format!(
+    let state = edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let normalized_name =
+            sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
+        let mut catalog = read_sa3_lora_catalog()?;
+        let entry = catalog
+            .get(&normalized_name)
+            .cloned()
+            .ok_or_else(|| format!("LoRA '{}' is not registered", normalized_name))?;
+        let job_id = entry.training_job_id.as_deref().ok_or_else(|| {
+            format!(
             "LoRA '{}' was not created by Gary's SA3 trainer; only its registration can be removed",
             normalized_name
         )
-    })?;
+        })?;
 
-    let current_state = read_sa3_lora_training_state();
-    if current_state.job_id.as_deref() == Some(job_id)
-        && matches!(current_state.status.as_str(), "starting" | "running")
-    {
-        return Err(format!(
-            "Cannot delete '{}' while its training job is running",
-            normalized_name
-        ));
-    }
+        let current_state = read_sa3_lora_training_state();
+        if current_state.job_id.as_deref() == Some(job_id)
+            && matches!(current_state.status.as_str(), "starting" | "running")
+        {
+            return Err(format!(
+                "Cannot delete '{}' while its training job is running",
+                normalized_name
+            ));
+        }
 
-    let managed_root = sa3_runtime_dir();
-    if !managed_root.exists() {
-        return Err(format!(
-            "Gary's SA3 runtime storage is missing at {}",
-            managed_root.display()
-        ));
-    }
+        let managed_root = sa3_runtime_dir();
+        if !managed_root.exists() {
+            return Err(format!(
+                "Gary's SA3 runtime storage is missing at {}",
+                managed_root.display()
+            ));
+        }
 
-    let mut artifact_paths = std::collections::BTreeSet::new();
-    artifact_paths.insert(PathBuf::from(&entry.path));
-    artifact_paths.extend(
-        entry
-            .training_checkpoints
-            .iter()
-            .map(|checkpoint| PathBuf::from(&checkpoint.path)),
-    );
-    artifact_paths.insert(sa3_prompt_file_path(&normalized_name));
-    artifact_paths.insert(sa3_training_logs_dir().join(format!("{}.log", job_id)));
-    artifact_paths.insert(sa3_training_jobs_dir().join(job_id));
-    if sa3_current_job_matches(job_id) {
-        artifact_paths.insert(sa3_training_current_job_path());
-    }
+        let mut artifact_paths = std::collections::BTreeSet::new();
+        artifact_paths.insert(PathBuf::from(&entry.path));
+        artifact_paths.extend(
+            entry
+                .training_checkpoints
+                .iter()
+                .map(|checkpoint| PathBuf::from(&checkpoint.path)),
+        );
+        artifact_paths.insert(sa3_prompt_file_path(&normalized_name));
+        artifact_paths.insert(sa3_training_logs_dir().join(format!("{}.log", job_id)));
+        artifact_paths.insert(sa3_training_jobs_dir().join(job_id));
+        if sa3_current_job_matches(job_id) {
+            artifact_paths.insert(sa3_training_current_job_path());
+        }
 
-    // Validate every existing artifact before deleting the first one. This keeps
-    // a malformed catalog from causing a partial cleanup before safety refuses it.
-    for path in &artifact_paths {
-        resolve_managed_path(path, &managed_root)?;
-    }
-    for path in artifact_paths {
-        remove_managed_path(&path, &managed_root)?;
-    }
+        // Validate every existing artifact before deleting the first one. This keeps
+        // a malformed catalog from causing a partial cleanup before safety refuses it.
+        for path in &artifact_paths {
+            resolve_managed_path(path, &managed_root)?;
+        }
+        for path in artifact_paths {
+            remove_managed_path(&path, &managed_root)?;
+        }
 
-    catalog.remove(&normalized_name);
-    save_sa3_lora_catalog(&catalog)?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
+        catalog.remove(&normalized_name);
+        save_sa3_lora_catalog(&catalog)?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(state)
+    })
+    .await?;
     let _ = try_reload_sa3_admin().await;
     Ok(state)
 }
@@ -8482,78 +8808,46 @@ async fn delete_sa3_trained_lora(
 #[tauri::command]
 async fn build_sa3_lora_prompts(
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3PromptsBuildResult, String> {
-    let initial_state = build_sa3_lora_state(repo_root.inner())?;
-    let python_exe = repo_root
-        .join("services")
-        .join("sa3")
-        .join("env")
-        .join("Scripts")
-        .join("python.exe");
-    if !python_exe.exists() {
-        return Err("SA3 must be built before prompts can be generated.".to_string());
-    }
-
-    let script_path = repo_root
-        .join("services")
-        .join("sa3")
-        .join("build_lora_prompts.py");
-    if !script_path.exists() {
-        return Err(format!("Missing {}", script_path.display()));
-    }
-
-    std::fs::create_dir_all(sa3_prompts_dir())
-        .map_err(|e| format!("Cannot create {}: {}", sa3_prompts_dir().display(), e))?;
-
-    let mut outputs = Vec::new();
-    for entry in &initial_state.entries {
-        if !entry.registered || entry.caption_count == 0 {
-            continue;
+    edit_sa3_lora_registry(repo_root.inner(), manager.inner(), async {
+        let initial_state = build_sa3_lora_state(repo_root.inner())?;
+        let mut sources = BTreeMap::new();
+        for entry in &initial_state.entries {
+            if entry.registered && entry.caption_count > 0 {
+                if let Some(path) = &entry.resolved_prompts_path {
+                    sources.insert(entry.name.clone(), PathBuf::from(path));
+                }
+            }
         }
-        let Some(source_path) = entry.resolved_prompts_path.as_ref() else {
-            continue;
+        for entry in sa3_loras::state(repo_root.inner())?.entries {
+            if let Some(path) = entry.prompts_path {
+                sources.insert(entry.name, PathBuf::from(path));
+            }
+        }
+        let root = repo_root.inner().clone();
+        let outputs = tauri::async_runtime::spawn_blocking(move || {
+            sources
+                .into_iter()
+                .map(|(name, dataset)| sa3_prompts::build(&root, &name, &dataset, true))
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        let outputs = if outputs.is_empty() {
+            vec!["No registered SA3 LoRAs with txt sidecars were found.".into()]
+        } else {
+            outputs
         };
 
-        let mut cmd = tokio::process::Command::new(&python_exe);
-        hide_console_window(&mut cmd);
-        cmd.arg(&script_path)
-            .arg("--name")
-            .arg(&entry.name)
-            .arg("--captions-dir")
-            .arg(source_path)
-            .arg("--out-dir")
-            .arg(sa3_prompts_dir())
-            .arg("--force")
-            .current_dir(repo_root.join("services").join("sa3"));
-
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run build_lora_prompts.py: {}", e))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let combined_output = match (stdout.is_empty(), stderr.is_empty()) {
-            (false, false) => format!("{}\n{}", stdout, stderr),
-            (false, true) => stdout,
-            (true, false) => stderr,
-            (true, true) => format!("{}: no output", entry.name),
-        };
-        if !output.status.success() {
-            return Err(combined_output);
-        }
-        outputs.push(combined_output);
-    }
-
-    if outputs.is_empty() {
-        outputs.push("No registered SA3 LoRAs with txt sidecars were found.".to_string());
-    }
-
-    ensure_default_sa3_prompts(repo_root.inner())?;
-    let state = build_sa3_lora_state(repo_root.inner())?;
-    Ok(Sa3PromptsBuildResult {
-        state,
-        output: outputs.join("\n"),
+        ensure_default_sa3_prompts(repo_root.inner())?;
+        let state = build_sa3_lora_state(repo_root.inner())?;
+        Ok(Sa3PromptsBuildResult {
+            state,
+            output: outputs.join("\n"),
+        })
     })
+    .await
 }
 
 #[tauri::command]
@@ -8574,6 +8868,7 @@ async fn suggest_sa3_track_metadata(
     dataset_path: String,
     audio_path: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<Sa3TrackMetadataSuggestion, String> {
     let root = canonical_sa3_dataset_root(&dataset_path)?;
     let requested = PathBuf::from(audio_path.trim());
@@ -8589,59 +8884,33 @@ async fn suggest_sa3_track_metadata(
         ));
     }
 
-    let python_exe = repo_root
-        .join("services")
-        .join("sa3")
-        .join("env")
-        .join("Scripts")
-        .join("python.exe");
-    if !python_exe.exists() {
-        return Err("SA3 must be built before BPM/key analysis can run.".to_string());
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your selected storage before audio analysis.".into());
     }
-    let script_path = repo_root
-        .join("services")
-        .join("sa3")
-        .join("analyze_audio.py");
-    if !script_path.exists() {
-        return Err(format!("Missing {}", script_path.display()));
+    let workload = sa3_analysis::workload_id();
+    let tool = {
+        let mut services = manager.lock().await;
+        let native_selected = services.is_native("sa3");
+        let tool = services
+            .native_service("sa3")
+            .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
+            .map(|install| install.dir.join("sa3-audio-analyze.exe"))
+            .filter(|path| path.is_file());
+        if tool.is_none() && native_selected {
+            return Err("Prepare a compatible SA3 C++ runtime with native audio analysis before using BPM/key suggestions.".into());
+        }
+        if tool.is_some() {
+            services.begin_native_workload("sa3", &workload, "SA3 audio metadata analysis")?;
+        }
+        tool
+    };
+    if let Some(tool) = tool {
+        let result = sa3_analysis::analyze(repo_root.inner(), &tool, &resolved).await;
+        manager.lock().await.end_native_workload("sa3", &workload);
+        result
+    } else {
+        sa3_analysis::analyze_legacy(repo_root.inner(), &resolved).await
     }
-
-    let mut cmd = tokio::process::Command::new(&python_exe);
-    hide_console_window(&mut cmd);
-    cmd.arg(&script_path)
-        .arg(&resolved)
-        .current_dir(repo_root.join("services").join("sa3"));
-
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run analyze_audio.py: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    // scipy install logs and estimator diagnostics go to stderr; the JSON result is on
-    // stdout. Only fall back to stderr when stdout is empty (a hard crash).
-    if stdout.is_empty() {
-        return Err(if stderr.is_empty() {
-            "BPM/key analysis produced no output.".to_string()
-        } else {
-            stderr
-        });
-    }
-    let parsed: Sa3AnalyzerOutput = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Could not parse analyzer output: {} ({})", e, stdout))?;
-    if !parsed.ok {
-        return Err(parsed
-            .error
-            .unwrap_or_else(|| "BPM/key analysis failed.".to_string()));
-    }
-    Ok(Sa3TrackMetadataSuggestion {
-        bpm: parsed.bpm,
-        keyscale: parsed.keyscale,
-        suggestion: parsed.suggestion,
-        bpm_confidence: parsed.bpm_confidence,
-        key_confidence: parsed.key_confidence,
-    })
 }
 
 fn read_sa3_autolabel_state() -> Sa3AutolabelState {
@@ -9058,13 +9327,17 @@ async fn open_sa3_training_reference(reference: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
-    Ok(read_sa3_lora_training_state())
+async fn get_sa3_lora_training_state() -> Result<Sa3LoraTrainingState, String> {
+    tauri::async_runtime::spawn_blocking(read_sa3_lora_training_state)
+        .await
+        .map_err(|error| format!("Cannot read SA3 training status: {error}"))
 }
 
 fn sa3_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String> {
     let catalog = read_sa3_lora_catalog()?;
-    lora_name_availability(name, catalog.keys())
+    let native = sa3_loras::state(&gary4juce_runtime_root())?;
+    let names: Vec<_> = ["none", "default", "defaults"].into_iter().map(str::to_string).chain(catalog.keys().cloned()).chain(native.entries.into_iter().map(|entry| entry.name)).collect();
+    lora_name_availability(name, names.iter())
 }
 
 #[tauri::command]
@@ -9082,6 +9355,17 @@ fn resolve_sa3_lora_layer_scope(
         "full" => Ok((None, None)),
         "full-no-seconds" => Ok((None, Some("seconds_total"))),
         _ => Err(format!("Unknown SA3 LoRA layer scope: {layer_scope}")),
+    }
+}
+
+fn resolve_sa3_training_runtime(native_selected: bool, requested: Option<&str>) -> Result<bool, String> {
+    match requested {
+        None => Ok(native_selected),
+        Some("native") if native_selected => Ok(true),
+        Some("python") if !native_selected => Ok(false),
+        Some("python") => Err("SA3 has migrated to C++. Python training is no longer available in this storage profile.".into()),
+        Some("native") => Err("Migrate SA3 to C++ before starting native training.".into()),
+        _ => Err("Unknown SA3 training runtime.".into()),
     }
 }
 
@@ -9108,6 +9392,22 @@ mod sa3_lora_layer_scope_tests {
     }
 }
 
+#[cfg(test)]
+mod sa3_training_runtime_tests {
+    use super::resolve_sa3_training_runtime;
+
+    #[test]
+    fn training_follows_the_profile_and_rejects_runtime_overrides() {
+        assert!(!resolve_sa3_training_runtime(false, None).unwrap());
+        assert!(!resolve_sa3_training_runtime(false, Some("python")).unwrap());
+        assert!(resolve_sa3_training_runtime(true, None).unwrap());
+        assert!(resolve_sa3_training_runtime(true, Some("native")).unwrap());
+        assert!(resolve_sa3_training_runtime(true, Some("python")).unwrap_err().contains("migrated"));
+        assert!(resolve_sa3_training_runtime(false, Some("native")).unwrap_err().contains("Migrate"));
+        assert!(resolve_sa3_training_runtime(true, Some("other")).is_err());
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn start_sa3_lora_training(
@@ -9123,8 +9423,102 @@ async fn start_sa3_lora_training(
     loudness_fix_enabled: bool,
     target_latent_rms: f64,
     layer_scope: String,
+    runtime: Option<String>,
+    native_encoding: Option<String>,
+    resume_checkpoint: Option<String>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Sa3LoraTrainingState, String> {
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "A SA3 training launch is already in progress")?;
+    let native = resolve_sa3_training_runtime(manager.lock().await.is_native("sa3"), runtime.as_deref())?;
+    if native {
+        if storage::storage_info(repo_root.inner()).pending_restart {
+            return Err("Restart before training in your chosen storage folder.".into());
+        }
+        let current = read_sa3_lora_training_state();
+        if matches!(current.status.as_str(), "starting" | "running") {
+            return Err("SA3 training is already active".into());
+        }
+        let name = sanitize_lora_name(&name).ok_or("Invalid LoRA name")?;
+        if resume_checkpoint.is_none() {
+            require_available_lora_name(&sa3_lora_name_availability(&name)?)?;
+        }
+        let (exe, backend, path) = {
+            let mut services = manager.lock().await;
+            if services.is_running("sa3") {
+                return Err("Stop SA3 before native training.".into());
+            }
+            if let Some(blocker) = services.native_mutation_blocker("sa3") {
+                return Err(format!("Cannot start native training: {blocker}."));
+            }
+            let (def, dir) = services
+                .native_service("sa3")
+                .ok_or("SA3 has no native runtime")?;
+            let installed = native_runtime::installed("sa3", &dir, &def.executable)
+                .ok_or("Prepare SA3's C++ runtime first.")?;
+            let exe = installed.dir.join("sa3-train.exe");
+            let path = native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes);
+            services.begin_native_workload("sa3", "native-training", "SA3 native training")?;
+            let _ = app_handle.emit("services-updated",services.get_service_info());
+            (exe, installed.backend, path)
+        };
+        let options = sa3_training::Options {
+            name,
+            dataset: PathBuf::from(dataset_path.trim()),
+            fixed_prompt,
+            steps: max_steps,
+            rank,
+            batch_size,
+            checkpoint_every,
+            duration: latent_crop_seconds,
+            learning_rate,
+            target_latent_rms: if loudness_fix_enabled {
+                target_latent_rms
+            } else {
+                0.0
+            },
+            layer_scope,
+            encoding: native_encoding.unwrap_or_else(|| "F16".into()),
+            resume: resume_checkpoint.map(PathBuf::from),
+            prompt_config: None,
+        };
+        let job =
+            match sa3_training::start(repo_root.inner(), &exe, &backend, path.as_deref(), options)
+                .await
+            {
+                Ok(job) => job,
+            Err(error) => {
+                let mut services=manager.lock().await;
+                services.end_native_workload("sa3", "native-training");
+                let _ = app_handle.emit("services-updated",services.get_service_info());
+                return Err(error);
+                }
+            };
+        let initial = job.state();
+        let status_path = job.status_path().to_path_buf();
+        let manager = manager.inner().clone();
+        let root = repo_root.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = job.monitor().await {
+                let _ = mark_sa3_lora_training_failed(&status_path, &error, None);
+            }
+            {
+                let mut services=manager.lock().await;
+                services.end_native_workload("sa3", "native-training");
+                let _ = app_handle.emit("services-updated",services.get_service_info());
+            }
+            if let Ok(state) = sa3_loras::state(&root) {
+                let _ = app_handle.emit("sa3-native-loras-updated", state);
+            }
+        });
+        return Ok(initial);
+    }
+    if resume_checkpoint.is_some() {
+        return Err("Checkpoint resume is currently available for the native trainer.".into());
+    }
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
     require_available_lora_name(&sa3_lora_name_availability(&normalized_name)?)?;
@@ -9369,7 +9763,13 @@ async fn start_sa3_lora_training(
 }
 
 #[tauri::command]
-fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
+async fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
+    tauri::async_runtime::spawn_blocking(cancel_sa3_lora_training_impl)
+        .await
+        .map_err(|error| format!("Cannot request SA3 cancellation: {error}"))?
+}
+
+fn cancel_sa3_lora_training_impl() -> Result<Sa3LoraTrainingState, String> {
     let state = read_sa3_lora_training_state();
     if !matches!(state.status.as_str(), "starting" | "running") {
         return Ok(state);
@@ -9383,6 +9783,9 @@ fn cancel_sa3_lora_training() -> Result<Sa3LoraTrainingState, String> {
     });
     if let Some(path) = cancel_path.as_ref() {
         write_cancel_marker(path)?;
+    }
+    if state.runtime.as_deref() == Some("sa3.cpp") {
+        return Ok(Sa3LoraTrainingState {message:"Cancellation requested; waiting for a sample boundary and checkpoint save.".into(),..state});
     }
 
     let mut pids = Vec::new();
@@ -9474,6 +9877,587 @@ fn get_runtime_storage_info(
     Ok(storage::storage_info(repo_root.inner()))
 }
 
+#[tauri::command]
+async fn get_sa3_migration_preview(
+    repo_root: tauri::State<'_, PathBuf>,
+    model_mgr: tauri::State<'_, ModelState>,
+) -> Result<sa3_migration::Sa3MigrationPreview, String> {
+    let root = repo_root.inner().clone();
+    // Use the model manager's effective cache, including legacy HF overrides.
+    let (hub, legacy_training) = {
+        let models = model_mgr.lock().await;
+        let legacy_training = models.get_sa3_models().iter().any(|model| {
+            model.id == "stabilityai/stable-audio-3-medium-base"
+                && matches!(model.status, model_manager::ModelStatus::Downloaded)
+        });
+        (models.hf_hub_cache_dir(), legacy_training)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut preview = sa3_migration::preview(&root, &hub);
+        preview.training_base_present |= legacy_training;
+        preview
+    })
+        .await
+        .map_err(|error| format!("SA3 migration scan failed: {error}"))
+}
+
+#[tauri::command]
+fn get_sa3_native_runtime_selection(
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<Option<sa3_runtime::Selection>, String> {
+    sa3_runtime::read(repo_root.inner())
+}
+
+#[tauri::command]
+async fn select_sa3_native_model(
+    encoding: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_runtime::Selection, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your selected storage before changing the SA3 model.".into());
+    }
+    let _launch = sa3_training::LAUNCH.try_lock()
+        .map_err(|_| "Wait for SA3 training or migration to finish starting.")?;
+    let selection = manager.lock().await.select_sa3_native_model(&encoding)?;
+    emit_status(manager.inner(), &app_handle).await;
+    let _ = app_handle.emit("sa3-native-model-selected", &selection);
+    Ok(selection)
+}
+
+#[tauri::command]
+async fn cleanup_sa3_legacy_installation(
+    review_token: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    model_mgr: tauri::State<'_, ModelState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_cleanup::ResultInfo, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before cleaning up SA3.".into());
+    }
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "SA3 training or migration is already starting")?;
+    if matches!(
+        read_sa3_lora_training_state().status.as_str(),
+        "starting" | "running"
+    ) || matches!(
+        read_sa3_autolabel_state().status.as_str(),
+        "starting" | "running"
+    ) {
+        return Err("Wait for SA3 training and dataset jobs to finish before cleanup.".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let selection =
+        sa3_runtime::read(repo_root.inner())?.ok_or("Verify and select C++ before cleanup")?;
+    let decoder_enabled = sa3_use_decoder_lora_enabled();
+    let (native, installed, env, hub) = {
+        let mut services = manager.lock().await;
+        if !services.is_native("sa3") || services.is_running("sa3") {
+            return Err("Select C++ and stop SA3 before cleanup.".into());
+        }
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot clean up SA3: {blocker}"));
+        }
+        let models = model_mgr.lock().await;
+        let sa3_models = models.get_sa3_models();
+        if sa3_models
+            .iter()
+            .any(|model| models.is_downloading(&model.id))
+        {
+            return Err("Wait for SA3 model downloads to finish before cleanup.".into());
+        }
+        let legacy_training = sa3_models.iter().any(|model| {
+            model.id == "stabilityai/stable-audio-3-medium-base"
+                && matches!(model.status, model_manager::ModelStatus::Downloaded)
+        });
+        if legacy_training && !sa3_migration::native_training_base_present(repo_root.inner()) {
+            return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
+        }
+        let hub = models.hf_hub_cache_dir();
+        sa3_cleanup::validate_review(repo_root.inner(), &hub, &review_token)?;
+        let (native, installed, env) = services.sa3_migration_launch()?;
+        services.begin_native_workload("sa3", "legacy-cleanup", "SA3 legacy cleanup")?;
+        services.set_build_started("sa3", 1);
+        (native, installed, env, hub)
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    let verified = sa3_migration::verify_native(
+        repo_root.inner(),
+        &native,
+        &installed,
+        &env,
+        &selection.encoding,
+        decoder_enabled,
+        |message| {
+            let _ = app_handle.emit("sa3-native-migration-progress", message);
+        },
+    )
+    .await;
+    let result = match verified {
+        Err(error) => Err(error),
+        Ok(_) if decoder_enabled != sa3_use_decoder_lora_enabled() => {
+            Err("Decoder correction changed during verification; review cleanup again.".into())
+        }
+        Ok(_) => {
+            let root = repo_root.inner().clone();
+            let cleanup_handle = app_handle.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                sa3_cleanup::run(&root, &hub, &review_token, |message| {
+                    let _ = cleanup_handle.emit("sa3-native-migration-progress", message);
+                })
+            })
+            .await
+            .map_err(|error| format!("SA3 cleanup transaction failed: {error}"))
+            .and_then(|result| result)
+        }
+    };
+    {
+        let mut services = manager.lock().await;
+        let _ = services.refresh_sa3_native_selection();
+        services.end_native_workload("sa3", "legacy-cleanup");
+        services.set_build_done("sa3", result.as_ref().err().cloned());
+    }
+    {
+        let mut models = model_mgr.lock().await;
+        for id in [
+            "stabilityai/stable-audio-3-medium",
+            "stabilityai/stable-audio-3-medium-base",
+        ] {
+            models.forget_model_status(id);
+        }
+    }
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    result
+}
+#[tauri::command]
+async fn activate_sa3_native_runtime(
+    encoding: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_runtime::Selection, String> {
+    let decoder_enabled = sa3_use_decoder_lora_enabled();
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before switching SA3".into());
+    }
+    let _launch = sa3_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "SA3 training or migration is already starting")?;
+    if matches!(
+        read_sa3_lora_training_state().status.as_str(),
+        "starting" | "running"
+    ) {
+        return Err("Wait for SA3 training to finish before switching its runtime".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let (native, installed, env) = {
+        let mut services = manager.lock().await;
+        if services.is_running("sa3") {
+            return Err("Stop SA3 before switching to C++".into());
+        }
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot switch SA3: {blocker}"));
+        }
+        let plan = services.sa3_migration_launch()?;
+        services.begin_native_workload("sa3", "native-migration", "SA3 migration validation")?;
+        services.set_build_started("sa3", 1);
+        plan
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    let checked = sa3_migration::verify_native(
+        repo_root.inner(),
+        &native,
+        &installed,
+        &env,
+        &encoding,
+        decoder_enabled,
+        |message| {
+            let _ = app_handle.emit("sa3-native-migration-progress", message);
+        },
+    )
+    .await;
+    let result = {
+        let mut services = manager.lock().await;
+        let result = checked.and_then(|selection| {
+            if decoder_enabled != sa3_use_decoder_lora_enabled() {
+                return Err("Decoder correction changed during migration validation; retry with the current setting.".into());
+            }
+            services.activate_native_sa3(selection)
+        });
+        services.end_native_workload("sa3", "native-migration");
+        services.set_build_done("sa3", result.as_ref().err().cloned());
+        result
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    result
+}
+
+/// Prepare the verified bundle while the legacy service remains selected.
+/// No Python environment, original model or adapter is removed here.
+#[tauri::command]
+async fn prepare_sa3_native_runtime(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<native_runtime::NativeRuntimeInfo, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(
+            "Restart to use your chosen storage before installing SA3's runtime.".to_string(),
+        );
+    }
+    let info = {
+        let mut mgr = manager.lock().await;
+        let info = mgr.get_native_build_info("sa3")?;
+        mgr.set_build_started("sa3", info.total_steps());
+        info
+    };
+    let result = native_runtime::install(info, manager.inner().clone(), app_handle.clone()).await;
+    {
+        let mut mgr = manager.lock().await;
+        mgr.set_build_done("sa3", result.as_ref().err().cloned());
+        let _ = app_handle.emit("services-updated", mgr.get_service_info());
+    }
+    result?;
+    get_native_runtime_info("sa3".to_string(), manager).await
+}
+
+#[tauri::command]
+fn get_sa3_native_model_catalog() -> Vec<sa3_models::Component> {
+    sa3_models::catalog().to_vec()
+}
+
+#[tauri::command]
+async fn get_sa3_native_lora_state(
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || sa3_loras::state(&root))
+        .await
+        .map_err(|error| format!("Cannot read native SA3 adapters: {error}"))?
+}
+
+#[tauri::command]
+async fn import_sa3_native_lora(
+    name: String,
+    checkpoint_path: String,
+    config_path: Option<String>,
+    prompts_path: Option<String>,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart before importing adapters into your selected storage.".into());
+    }
+    let name = sanitize_lora_name(&name).ok_or("Invalid native adapter name")?;
+    let source = PathBuf::from(checkpoint_path.trim());
+    let config = config_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let dataset = prompts_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let (converter, runtime_path) = {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot import SA3 adapter: {blocker}"));
+        }
+        let tools = if source
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+        {
+            (None, None)
+        } else {
+            let (def, dir) = services
+                .native_service("sa3")
+                .ok_or("SA3 has no native runtime")?;
+            let installed = native_runtime::installed("sa3", &dir, &def.executable)
+                .ok_or("Prepare the native runtime before converting this adapter")?;
+            (
+                Some(installed.dir.join("sa3-lora-convert.exe")),
+                native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
+            )
+        };
+        services.begin_native_workload("sa3", "lora-import", "SA3 adapter import")?;
+        tools
+    };
+    let result = sa3_loras::import_adapter(
+        repo_root.inner(),
+        &name,
+        &source,
+        config.as_deref(),
+        dataset.as_deref(),
+        converter.as_deref(),
+        runtime_path.as_deref(),
+    )
+    .await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "lora-import");
+    if let Ok(state) = &result {
+        let _ = app_handle.emit("sa3-native-loras-updated", state);
+    }
+    result
+}
+
+#[tauri::command]
+async fn update_sa3_native_lora(
+    name: String,
+    change: sa3_loras::Change,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart before editing adapters in your selected storage.".into());
+    }
+    {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot edit SA3 adapter: {blocker}"));
+        }
+        services.begin_native_workload("sa3", "lora-edit", "SA3 adapter registry update")?;
+    }
+    let result = sa3_loras::apply_change(repo_root.inner(), &name, change).await;
+    manager.lock().await.end_native_workload("sa3", "lora-edit");
+    if let Ok(state) = &result {
+        let _ = app_handle.emit("sa3-native-loras-updated", state);
+    }
+    result
+}
+#[tauri::command]
+async fn select_sa3_native_checkpoint(
+    name: String,
+    checkpoint: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(
+            "Restart to use your chosen storage before selecting a native checkpoint.".into(),
+        );
+    }
+    {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot select a native checkpoint: {blocker}."));
+        }
+        services.begin_native_workload(
+            "sa3",
+            "checkpoint-selection",
+            "SA3 checkpoint selection",
+        )?;
+    }
+    let result =
+        sa3_training::select_checkpoint(repo_root.inner(), &name, Path::new(&checkpoint)).await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "checkpoint-selection");
+    let state = sa3_loras::state(repo_root.inner())?;
+    let _ = app_handle.emit("sa3-native-loras-updated", &state);
+    result?;
+    Ok(state)
+}
+
+#[tauri::command]
+async fn get_sa3_native_resume_options(
+    name: String,
+    checkpoint: String,
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<sa3_training::Options, String> {
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        sa3_training::resume_options(&root, &name, Path::new(&checkpoint))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn get_sa3_native_decoder_state(repo_root: tauri::State<'_, PathBuf>) -> sa3_decoder::State {
+    sa3_decoder::state(repo_root.inner())
+}
+
+#[tauri::command]
+async fn prepare_sa3_native_decoder(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_decoder::State, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(
+            "Restart to use your selected storage before preparing decoder correction.".into(),
+        );
+    }
+    let (converter, runtime_path) = {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot prepare decoder correction: {blocker}."));
+        }
+        let (def, dir) = services
+            .native_service("sa3")
+            .ok_or("SA3 has no native runtime")?;
+        let installed = native_runtime::installed("sa3", &dir, &def.executable)
+            .ok_or("Prepare SA3's native runtime first")?;
+        services.begin_native_workload(
+            "sa3",
+            "decoder-preparation",
+            "SA3 decoder correction preparation",
+        )?;
+        (
+            installed.dir.join("sa3-lora-convert.exe"),
+            native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
+        )
+    };
+    let result = sa3_decoder::prepare(repo_root.inner(), &converter, runtime_path.as_deref()).await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "decoder-preparation");
+    let _ = app_handle.emit(
+        "sa3-native-decoder-updated",
+        sa3_decoder::state(repo_root.inner()),
+    );
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    result
+}
+#[tauri::command]
+async fn prepare_sa3_native_loras(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<sa3_loras::NativeLoraState, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before preparing SA3 adapters.".into());
+    }
+    let (converter, runtime_path) = {
+        let mut services = manager.lock().await;
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot prepare SA3 adapters: {blocker}."));
+        }
+        let (def, dir) = services
+            .native_service("sa3")
+            .ok_or("SA3 has no native runtime")?;
+        let installed = native_runtime::installed("sa3", &dir, &def.executable)
+            .ok_or("Prepare SA3's C++ runtime before converting its adapters.")?;
+        let converter = installed.dir.join("sa3-lora-convert.exe");
+        if !converter.is_file() {
+            return Err("Installed SA3 runtime has no LoRA converter; reinstall it.".into());
+        }
+        let runtime_path =
+            native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes);
+        services.begin_native_workload("sa3", "lora-preparation", "SA3 adapter preparation")?;
+        (converter, runtime_path)
+    };
+    let result = sa3_loras::prepare(
+        repo_root.inner(),
+        &converter,
+        runtime_path.as_deref(),
+        |state| {
+            let _ = app_handle.emit("sa3-native-loras-updated", state);
+        },
+    )
+    .await;
+    manager
+        .lock()
+        .await
+        .end_native_workload("sa3", "lora-preparation");
+    if let Ok(state) = sa3_loras::state(repo_root.inner()) {
+        let _ = app_handle.emit("sa3-native-loras-updated", state);
+    }
+    result
+}
+
+/// Claim the entire model plan before spawning downloads so repeated clicks,
+/// individual component downloads and managed removal see the same reservation.
+#[tauri::command]
+async fn prepare_sa3_native_models(
+    encoding: String,
+    training_base: Option<String>,
+    include_decoder: Option<bool>,
+    wait_for_completion: Option<bool>,
+    repo_root: tauri::State<'_, PathBuf>,
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before preparing SA3 models.".into());
+    }
+    let mut ids = sa3_models::preparation_ids(&encoding, training_base.as_deref())?;
+    if include_decoder.unwrap_or(false) || sa3_use_decoder_lora_enabled() {
+        ids.push(sa3_decoder::MODEL_ID.into());
+    }
+    let mut services = svc_mgr.lock().await;
+    if services.is_native("sa3") {
+        if let Some(blocker) = services.native_mutation_blocker("sa3") {
+            return Err(format!("Cannot prepare SA3 models: {blocker}."));
+        }
+    }
+    let dest_dir = {
+        let mut mgr = model_mgr.lock().await;
+        if ids.iter().any(|id| mgr.is_downloading(id)) {
+            return Err(
+                "SA3 model preparation is already in progress. Wait for it to finish.".into(),
+            );
+        }
+        let dir = sa3_models::checked_models_dir(&mgr.runtime_root())?;
+        services.begin_native_model_mutation("sa3", "SA3 model preparation")?;
+        for id in &ids {
+            mgr.set_download_started(id);
+        }
+        dir
+    };
+    drop(services);
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    let manager = model_mgr.inner().clone();
+    let services = svc_mgr.inner().clone();
+    let queued = ids.clone();
+    let preparation = async move {
+        let mut errors = Vec::new();
+        for id in queued {
+            let files = sa3_models::component(&id)
+                .expect("validated model plan")
+                .files
+                .clone();
+            if let Err(error) = native_models::download_pinned_hf_files(
+                id,
+                files,
+                dest_dir.clone(),
+                manager.clone(),
+                app_handle.clone(),
+            )
+            .await
+            {
+                errors.push(error);
+            }
+        }
+        services.lock().await.end_native_model_mutation("sa3");
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("\n"))
+        }
+    };
+    if wait_for_completion.unwrap_or(false) {
+        // The guided migration must wait for both downloads and their mutation
+        // reservation to finish before converting adapters or validating SA3.
+        preparation.await?;
+    } else {
+        tauri::async_runtime::spawn(preparation);
+    }
+    Ok(ids)
+}
+
 fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {
     let uv_cache_path = storage::uv_cache_dir(active_root);
     RuntimeCacheInfo {
@@ -9520,34 +10504,56 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
     // six environments walks tens of GB, and every other command -- including
     // the status poll that keeps the UI alive -- waits on this same mutex.
     let (pending, runtimes_root, native_building): (
-        Vec<(String, String, bool, Option<std::path::PathBuf>, Option<String>)>,
+        Vec<(
+            String,
+            String,
+            bool,
+            Option<std::path::PathBuf>,
+            Option<String>,
+        )>,
         std::path::PathBuf,
         bool,
     ) = {
         let mgr = svc_mgr.lock().await;
-        let pending = mgr
-            .get_service_info()
-            .into_iter()
-            .map(|info| {
-                let env_path = mgr.env_dir_for(&info.id);
-                let native = mgr.is_native(&info.id);
-                let blocked = if mgr.is_running(&info.id) {
-                    Some(format!("stop {} first", info.display_name))
-                } else if mgr.is_building(&info.id) {
-                    Some(format!(
-                        "{} is installing its {}",
-                        info.display_name,
-                        if native { "runtime" } else { "environment" }
-                    ))
-                } else {
-                    None
-                };
-                (info.id, info.display_name, native, env_path, blocked)
-            })
-            .collect::<Vec<_>>();
-        let native_building = pending
-            .iter()
-            .any(|(id, _, native, _, _)| *native && mgr.is_building(id));
+        let mut pending = Vec::new();
+        for info in mgr.get_service_info() {
+            let env_path = mgr.env_dir_for(&info.id);
+            let native = mgr.is_native(&info.id);
+            let blocked = if native {
+                mgr.native_mutation_blocker(&info.id)
+            } else if mgr.is_running(&info.id) {
+                Some(format!("stop {} first", info.display_name))
+            } else if mgr.is_building(&info.id) {
+                Some(format!(
+                    "{} is installing its {}",
+                    info.display_name,
+                    if native { "runtime" } else { "environment" }
+                ))
+            } else {
+                None
+            };
+            pending.push((
+                info.id.clone(),
+                info.display_name.clone(),
+                native,
+                env_path,
+                blocked,
+            ));
+            if !native {
+                if let Some(dir) = mgr.native_dir_for(&info.id) {
+                    pending.push((
+                        format!("native:{}", info.id),
+                        format!("{} C++ runtime (prepared)", info.display_name),
+                        true,
+                        Some(dir),
+                        mgr.native_mutation_blocker(&info.id),
+                    ));
+                }
+            }
+        }
+        let native_building = pending.iter().any(|(id, _, native, _, _)| {
+            *native && mgr.is_building(id.strip_prefix("native:").unwrap_or(id))
+        });
         (pending, mgr.native_runtimes_root(), native_building)
     };
 
@@ -9558,7 +10564,11 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             .map(|(service_id, display_name, native, env_path, blocked)| {
                 let env_bytes = env_path.as_deref().map(path_size).unwrap_or(0);
                 let present = env_path.as_deref().map(Path::exists).unwrap_or(false);
-                let missing = if *native { "no runtime installed" } else { "no environment installed" };
+                let missing = if *native {
+                    "no runtime installed"
+                } else {
+                    "no environment installed"
+                };
                 let blocked_reason = blocked
                     .clone()
                     .or_else(|| (!present).then(|| missing.to_string()));
@@ -9577,6 +10587,7 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             })
             .collect();
 
+        envs = merge_native_environment_rows(envs);
         // Shared runtimes, one row each. One can go once no installed native
         // service uses it, e.g. the CUDA pack after the last CUDA runtime is
         // removed, or after a switch to Vulkan.
@@ -9592,15 +10603,14 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
             .unwrap_or_default();
         shared.sort();
         for name in shared {
-            let used_by: Vec<&str> = pending
+            let used_by: Vec<&str> = envs
                 .iter()
-                .filter(|(_, _, native, env_path, _)| {
-                    *native
-                        && env_path.as_deref().is_some_and(|dir| {
-                            native_runtime::installed_runtimes(dir).contains(&name)
-                        })
+                .filter(|env| {
+                    env.kind == "native"
+                        && native_runtime::installed_runtimes(Path::new(&env.env_path))
+                            .contains(&name)
                 })
-                .map(|(_, display_name, _, _, _)| display_name.as_str())
+                .map(|env| env.display_name.as_str())
                 .collect();
             let blocked_reason = if !used_by.is_empty() {
                 Some(format!("used by {}", used_by.join(", ")))
@@ -9626,6 +10636,24 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
     .unwrap_or_default()
 }
 
+fn merge_native_environment_rows(rows: Vec<ServiceEnvInfo>) -> Vec<ServiceEnvInfo> {
+    let mut merged: Vec<ServiceEnvInfo> = Vec::new();
+    for row in rows {
+        if row.kind == "native" {
+            if let Some(existing) = merged
+                .iter_mut()
+                .find(|existing| existing.kind == "native" && existing.env_path == row.env_path)
+            {
+                existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                existing.blocked_reason = existing.blocked_reason.take().or(row.blocked_reason);
+                continue;
+            }
+        }
+        merged.push(row);
+    }
+    merged
+}
+
 /// A shared runtime's name as the storage list shows it.
 fn shared_runtime_label(name: &str) -> String {
     match name.strip_prefix("cudart-") {
@@ -9636,12 +10664,44 @@ fn shared_runtime_label(name: &str) -> String {
 
 #[cfg(test)]
 mod shared_runtime_tests {
-    use super::shared_runtime_label;
+    use super::{merge_native_environment_rows, shared_runtime_label, ServiceEnvInfo};
+
+    #[test]
+    fn shared_bundle_rows_count_once_and_keep_any_consumer_blocker() {
+        let row = ServiceEnvInfo {
+            service_id: "sa3".to_string(),
+            display_name: "SA3".to_string(),
+            kind: "native".to_string(),
+            env_path: "services/sa3/native".to_string(),
+            env_bytes: 1024,
+            present: true,
+            blocked_reason: None,
+        };
+        let mut other = row.clone();
+        other.service_id = "stable-audio".to_string();
+        other.display_name = "Jerry".to_string();
+        other.blocked_reason = Some("Jerry is running".to_string());
+        let mut python = row.clone();
+        python.kind = "python".to_string();
+        python.env_path = "services/sa3/env".to_string();
+        let rows = merge_native_environment_rows(vec![row, other, python]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].env_bytes, 1024);
+        assert_eq!(rows[0].display_name, "SA3 / Jerry");
+        assert_eq!(rows[0].blocked_reason.as_deref(), Some("Jerry is running"));
+        assert_eq!(rows[1].kind, "python");
+    }
 
     #[test]
     fn a_shared_runtime_reads_as_what_it_is() {
-        assert_eq!(shared_runtime_label("cudart-12.8"), "CUDA 12.8 runtime (shared)");
-        assert_eq!(shared_runtime_label("something-else"), "something-else (shared)");
+        assert_eq!(
+            shared_runtime_label("cudart-12.8"),
+            "CUDA 12.8 runtime (shared)"
+        );
+        assert_eq!(
+            shared_runtime_label("something-else"),
+            "something-else (shared)"
+        );
     }
 }
 
@@ -9652,6 +10712,7 @@ async fn remove_shared_runtime(
     name: &str,
     svc_mgr: tauri::State<'_, ManagerState>,
 ) -> Result<ServiceEnvRemovalResult, String> {
+    let _mutation_guard = native_runtime::mutation_guard().await;
     if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
         return Err(format!("{name} is not a runtime name"));
     }
@@ -9741,6 +10802,41 @@ async fn remove_service_env(
 ) -> Result<ServiceEnvRemovalResult, String> {
     if let Some(name) = service_id.strip_prefix("runtime:") {
         return remove_shared_runtime(&service_id, name, svc_mgr).await;
+    }
+    let native_id = service_id
+        .strip_prefix("native:")
+        .unwrap_or(&service_id)
+        .to_string();
+    let native = service_id.starts_with("native:") || svc_mgr.lock().await.is_native(&native_id);
+    if native {
+        let _mutation_guard = native_runtime::mutation_guard().await;
+        let (path, root) = {
+            let mut mgr = svc_mgr.lock().await;
+            let path = mgr
+                .native_dir_for(&native_id)
+                .ok_or_else(|| format!("Unknown native service: {native_id}"))?;
+            if let Some(reason) = mgr.native_mutation_blocker(&native_id) {
+                return Err(format!("Cannot remove this shared runtime: {reason}."));
+            }
+            mgr.set_build_started(&native_id, 1);
+            (path, mgr.managed_services_root())
+        };
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let bytes = path_size(&path);
+            remove_managed_path(&path, &root).map(|_| bytes)
+        })
+        .await
+        .map_err(|error| format!("Runtime removal failed: {error}"))
+        .and_then(|result| result);
+        svc_mgr
+            .lock()
+            .await
+            .set_build_done(&native_id, result.as_ref().err().cloned());
+        return Ok(ServiceEnvRemovalResult {
+            service_id,
+            removed_bytes: result?,
+            environments: collect_service_envs(svc_mgr.inner()).await,
+        });
     }
     let (env_path, managed_root) = {
         let mgr = svc_mgr.lock().await;
@@ -10040,7 +11136,7 @@ async fn restart_application(
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app restart: {error}");
     }
-    if let Err(error) = cancel_sa3_lora_training() {
+    if let Err(error) = cancel_sa3_lora_training_impl() {
         log::warn!("Could not cancel SA3 LoRA training during app restart: {error}");
     }
     if let Err(error) = cancel_sa3_autolabel() {

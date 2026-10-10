@@ -8,9 +8,10 @@ sa3.cpp, audiocraft.cpp and acestep.cpp follow the same pattern as they come
 over. when a service needs something this doesn't cover, change this document
 first, then the repos.
 
-for now yuey is the only native service in gary4local. sa3, foundation-1,
-jerry, gary and carey stay on their pytorch environments until yuey is fully
-validated.
+Yuey pins published v0.2.3. SA3 migration prepares the shared published v0.1.3
+bundle, validates native generation/training and activates it per storage
+profile before cleanup. Both projects use ggml 4ad3b30b and share the existing
+CUDA 12.8 runtime. Foundation-1, Jerry, Gary and Carey still use Python.
 
 ## who owns what
 
@@ -90,7 +91,9 @@ all of them:
   installs leave out. that's what failed yuey's first release dry run.
 - the same ggml fork everywhere (`betweentwomidnights/ggml`), pinned as a
   submodule. each service still ships its own copy of the ggml DLLs in its own
-  folder. nothing is shared between services except the CUDA runtime.
+  folder. A multi-service repo such as sa3.cpp shares its complete bundle among
+  its own consumers; independent projects keep separate ggml copies. The CUDA
+  runtime is shared across projects.
 
 the package script runs the tests with the CPU backend loaded dynamically,
 exactly as it'll be on a user's machine, before it packages anything. the same
@@ -180,6 +183,14 @@ and the shared runtimes sit once at the top level:
 }
 ```
 
+A repo providing several services can define `nativeBundles.<id>` once, with
+`version` and `platforms` in the same format. Its service's `native` block
+references `"bundle": "sa3"` and supplies `executable`, optional `args` and
+`env` overrides. Resolution rejects unsafe/unknown identities and contradictory
+consumer pins. The bundle installs once at `services/<bundle>/native`; consumers
+share its backend and version. A Python service may have a native candidate
+without setting `runtime` to `native`, for preparation before migration.
+
 a `sha256` of `"unpublished"` means nothing has been pinned yet. gary4local
 refuses to install it and says why, rather than downloading something it can't
 check.
@@ -192,13 +203,15 @@ its own order.
 pins are written by a script, never by hand:
 
 ```bash
-node control-center/src-tauri/scripts/pin_native_release.mjs --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.0
+node control-center/src-tauri/scripts/pin_native_release.mjs --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.3
 node control-center/src-tauri/scripts/pin_native_release.mjs --runtime cudart-12.8 --repo betweentwomidnights/gary-localhost-installer --tag runtime-cudart-12.8.1
+node control-center/src-tauri/scripts/pin_native_release.mjs --bundle sa3 --repo betweentwomidnights/sa3.cpp --tag v0.1.3
 ```
 
-both read the release's `SHA256SUMS` and edit the manifest in place, so the
-diff is only the lines that changed. a service pin also sets the service's
-`version`.
+These read the release's `SHA256SUMS` and edit only the selected definition in
+place. Service/bundle pins also update their version. A service that references
+a bundle must be pinned using `--bundle`. `--sums` and `--manifest` allow offline
+fixture checks; run `node --test control-center/src-tauri/scripts/pin_native_release.test.mjs`.
 
 ## how gary4local installs a runtime
 
@@ -217,14 +230,18 @@ diff is only the lines that changed. a service pin also sets the service's
    `--props` with the runtime on `PATH`. the first backend that reports its
    devices wins. if the automatic choice doesn't come up, the next one is tried,
    and the panel says so instead of quietly running somewhere else.
-4. **swaps the staging folder into `services/<id>/native`**, keeping the old
+4. **swaps the successfully probed staging folder into `services/<id>/native`**
+   (or `services/<bundle>/native`), keeping the old
    install until the new one is in place, and writes `gary-native.json` (the
    version, the backend it ended up on, the one that was asked for, and any
    fallback reason) and the `--props` output beside the executable.
 
 an installed runtime whose `gary-native.json` version differs from the
 manifest's shows "update runtime". the executable and its DLLs are locked while
-the service runs, so a rebuild refuses to start until it's stopped.
+the service runs, so a rebuild refuses to start until every consumer is stopped
+and its registered trainer/converter jobs have exited. Installers serialize
+shared package mutations. Storage maintenance counts a bundle once and protects
+the shared CUDA pack while even a prepared bundle requires it.
 
 the binaries aren't code-signed. downloads made by gary4local itself carry no
 Mark of the Web, so SmartScreen doesn't apply, but Smart App Control can still

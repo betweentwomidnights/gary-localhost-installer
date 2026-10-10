@@ -655,6 +655,39 @@ impl ModelManager {
         yuey_models_dir_in(&crate::storage::models_dir(&self.repo_root))
     }
 
+    pub fn get_sa3_native_models(&self) -> Vec<ModelEntry> {
+        let dir = crate::sa3_models::models_dir(&self.repo_root);
+        crate::sa3_models::catalog()
+            .iter()
+            .map(|entry| {
+                let status = match self.downloads.get(&entry.id) {
+                    Some(download)
+                        if matches!(
+                            download.status,
+                            ModelStatus::Downloading | ModelStatus::Failed
+                        ) =>
+                    {
+                        download.status.clone()
+                    }
+                    _ if crate::sa3_models::present(entry, &dir) => ModelStatus::Downloaded,
+                    _ => ModelStatus::Available,
+                };
+                let downloaded_bytes = matches!(status, ModelStatus::Downloaded)
+                    .then(|| entry.files.iter().map(|file| file.bytes).sum());
+                ModelEntry {
+                    id: entry.id.clone(),
+                    display_name: entry.label.clone(),
+                    service: "sa3".into(),
+                    size_category: Some("native".into()),
+                    group: Some(entry.description.clone()),
+                    epoch: None,
+                    status,
+                    downloaded_bytes,
+                }
+            })
+            .collect()
+    }
+
     pub fn get_yuey_models(&self) -> Vec<ModelEntry> {
         let dir = self.yuey_models_dir();
         let entry = |id: String, display_name: String, category: &str, group: &str| {
@@ -2005,6 +2038,7 @@ pub fn emit_model_status_from(mgr: &ModelManager, handle: &tauri::AppHandle) {
     models.extend(mgr.get_carey_models());
     models.extend(mgr.get_foundation_models());
     models.extend(mgr.get_yuey_models());
+    models.extend(mgr.get_sa3_native_models());
     let progress = mgr.get_download_progress();
 
     use tauri::Emitter;

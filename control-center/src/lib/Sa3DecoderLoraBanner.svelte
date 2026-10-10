@@ -29,8 +29,12 @@
   let saving = $state(false);
   let message: string | null = $state(null);
   let modelStatus = $state<ModelStatus>("available");
+  let nativeRuntime = $state(false);
+  let runtimeKnown = $state(false);
+  let nativePrepared = $state(false);
+  let nativeError: string | null = $state(null);
 
-  let downloaded = $derived(modelStatus === "downloaded");
+  let downloaded = $derived(runtimeKnown && (nativeRuntime ? nativePrepared : modelStatus === "downloaded"));
   let canEnable = $derived(downloaded || enabled);
 
   function applyModelStatus(models: ModelEntry[]) {
@@ -45,6 +49,17 @@
     }
   }
 
+  async function loadNativeStatus() {
+    try {
+      const [services, state] = await Promise.all([
+        invoke<{ id: string; runtime: string }[]>("get_services"),
+        invoke<{ prepared: boolean; error: string | null }>("get_sa3_native_decoder_state"),
+      ]);
+      nativeRuntime = services.find((service) => service.id === "sa3")?.runtime === "native";
+      runtimeKnown = true; nativePrepared = state.prepared; nativeError = state.error;
+    } catch (e) { console.warn("Failed to load native decoder status:", e); }
+  }
+
   async function openModelPage() {
     try {
       await invoke("open_url", { url: modelUrl });
@@ -55,7 +70,7 @@
 
   async function toggleDecoderLora(nextEnabled: boolean) {
     if (nextEnabled && !downloaded) {
-      message = "download the decoder fix first, then this switch will wake up.";
+      message = nativeRuntime ? "download and install the decoder fix in sa3 models first." : "download the decoder fix first, then this switch will wake up.";
       return;
     }
 
@@ -87,11 +102,16 @@
 
   onMount(() => {
     void loadModelStatus();
+    void loadNativeStatus();
     const unlistenModels = listen<ModelEntry[]>("models-updated", (event) => {
       applyModelStatus(event.payload);
+      void loadNativeStatus();
     });
+    const listeners = [listen("services-updated", () => { void loadNativeStatus(); }),
+      listen("sa3-native-decoder-updated", () => { void loadNativeStatus(); })];
     return () => {
       unlistenModels.then((fn) => fn());
+      for (const listener of listeners) void listener.then((fn) => fn());
     };
   });
 </script>
@@ -115,15 +135,20 @@
 
   <div class="note">
     stabilizes repeated SAME-L encode/decode passes that can build up transient squeaks.
-    sa3 merges it into the decoder at model load, so generation keeps the stock decode path.
+    {nativeRuntime ? "sa3.cpp applies the prepared adapter to the autoencoder when correction is enabled." : "sa3 merges it into the decoder at model load."}
     <button type="button" class="inline-link" onclick={openModelPage}>view model</button>
   </div>
 
   {#if !downloaded}
     <div class="warning-row">
       <span>
-        download the decoder fix from sa3's model list before enabling it.
-        {#if modelStatus === "downloading"} downloading now... {/if}
+        {#if nativeRuntime}
+          download and install the decoder fix in sa3's model list before enabling it.
+          {#if nativeError}{nativeError}{/if}
+        {:else}
+          download the decoder fix from sa3's model list before enabling it.
+          {#if modelStatus === "downloading"} downloading now... {/if}
+        {/if}
       </span>
       <button type="button" class="mini-btn" onclick={onShowModels}>open models</button>
     </div>

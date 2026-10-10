@@ -11,6 +11,157 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+/// A model artifact pinned with the application, independently of HF's main.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PinnedHfFile {
+    pub repo: String,
+    pub revision: String,
+    pub filename: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+impl PinnedHfFile {
+    pub fn validate(&self) -> Result<(), String> {
+        let parts: Vec<_> = self.repo.split('/').collect();
+        let safe_part = |part: &str| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                && part != "."
+                && part != ".."
+        };
+        if parts.len() != 2
+            || !parts.iter().all(|part| safe_part(part))
+            || self.revision.len() != 40
+            || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
+            || !safe_part(&self.filename)
+            || !(self.filename.ends_with(".gguf") || self.filename.ends_with(".safetensors"))
+            || !is_sha256(&self.sha256)
+            || self.bytes == 0
+        {
+            return Err("Invalid pinned Hugging Face model artifact.".into());
+        }
+        Ok(())
+    }
+
+    fn url(&self) -> String {
+        format!(
+            "https://huggingface.co/{}/resolve/{}/{}",
+            self.repo, self.revision, self.filename
+        )
+    }
+}
+
+fn download_headers() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(token) = crate::read_hf_token() {
+        if let Ok(value) = format!("Bearer {token}").parse() {
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
+    }
+    headers
+}
+
+async fn finish_download(
+    model_id: &str,
+    result: Result<(), String>,
+    manager: &Arc<Mutex<ModelManager>>,
+    handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    let error = result
+        .err()
+        .map(|error| format!("Download failed for {model_id}: {error}"));
+    manager
+        .lock()
+        .await
+        .set_download_done(model_id, error.clone());
+    emit_model_status(manager, handle).await;
+    if let Some(error) = error {
+        log::error!("{error}");
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub async fn download_pinned_hf_files(
+    model_id: String,
+    files: Vec<PinnedHfFile>,
+    dest_dir: PathBuf,
+    manager: Arc<Mutex<ModelManager>>,
+    handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let total: u64 = files.iter().map(|file| file.bytes).sum();
+    let mut last = Instant::now() - Duration::from_secs(1);
+    let mut on_progress = |received: u64, label: &str| {
+        if last.elapsed() < Duration::from_millis(250) && received != total {
+            return;
+        }
+        last = Instant::now();
+        if let Ok(mut mgr) = manager.try_lock() {
+            mgr.set_download_progress(&model_id, received as f64 / total.max(1) as f64, label);
+            emit_model_status_from(&mgr, &handle);
+        }
+    };
+    let result =
+        transfer_pinned_files(&files, &dest_dir, download_headers(), &mut on_progress).await;
+    finish_download(&model_id, result, &manager, &handle).await
+}
+
+async fn transfer_pinned_files(
+    files: &[PinnedHfFile],
+    dest_dir: &std::path::Path,
+    headers: reqwest::header::HeaderMap,
+    progress: &mut (dyn FnMut(u64, &str) + Send),
+) -> Result<(), String> {
+    // Validate the complete plan before creating or replacing any file.
+    for file in files {
+        file.validate()?;
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("cannot create an HTTP client: {error}"))?;
+    let mut done = 0;
+    for (index, file) in files.iter().enumerate() {
+        let dest = dest_dir.join(&file.filename);
+        for path in [&dest, &crate::native_runtime::partial_path(&dest)] {
+            if std::fs::symlink_metadata(path).is_ok_and(|meta| !meta.file_type().is_file()) {
+                return Err(format!(
+                    "Model download destination is not a regular file: {}",
+                    path.display()
+                ));
+            }
+        }
+        let label = format!("{} ({}/{})", file.filename, index + 1, files.len());
+        progress(done, &format!("Verifying {label}"));
+        let mut file_progress = |received: u64, _: Option<u64>| {
+            progress(
+                done + received.min(file.bytes),
+                &if received >= file.bytes {
+                    format!("Verifying checksum for {label}")
+                } else {
+                    format!("Downloading {label}: {:.1}/{:.1} GB", received as f64 / 1e9, file.bytes as f64 / 1e9)
+                },
+            );
+        };
+        download_verified(
+            &client,
+            &file.url(),
+            headers.clone(),
+            &file.sha256,
+            &dest,
+            &mut file_progress,
+        )
+        .await
+        .map_err(friendly_status)?;
+        done += file.bytes;
+        progress(done, &label);
+    }
+    Ok(())
+}
+
 /// Download `files` from `repo` into `dest_dir` and report progress under
 /// `model_id`, as the Python downloaders do.
 pub async fn download_hf_files(
@@ -22,22 +173,7 @@ pub async fn download_hf_files(
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let result = download(&model_id, &repo, &files, &dest_dir, &manager, &handle).await;
-    let error = result
-        .as_ref()
-        .err()
-        .map(|error| format!("Download failed for {model_id}: {error}"));
-    {
-        let mut mgr = manager.lock().await;
-        mgr.set_download_done(&model_id, error.clone());
-    }
-    emit_model_status(&manager, &handle).await;
-    match error {
-        Some(error) => {
-            log::error!("{error}");
-            Err(error)
-        }
-        None => Ok(()),
-    }
+    finish_download(&model_id, result, &manager, &handle).await
 }
 
 /// Per-file size, and the LFS SHA-256 when the file is stored in LFS.
@@ -109,12 +245,7 @@ async fn download(
         .connect_timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| format!("cannot create an HTTP client: {error}"))?;
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(token) = crate::read_hf_token() {
-        if let Ok(value) = format!("Bearer {token}").parse() {
-            headers.insert(reqwest::header::AUTHORIZATION, value);
-        }
-    }
+    let headers = download_headers();
 
     // SHA256SUMS covers every file, LFS or not; the tree API supplies sizes
     // for the progress bar and an LFS hash for repos that publish no sums.
@@ -184,6 +315,104 @@ async fn download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pinned_artifacts_reject_paths_and_mutable_revisions() {
+        let file = crate::sa3_models::catalog()[0].files[0].clone();
+        file.validate().unwrap();
+        let mut invalid = file.clone();
+        invalid.filename = "../user.gguf".into();
+        assert!(invalid.validate().is_err());
+        invalid = file.clone();
+        invalid.revision = "main".into();
+        assert!(invalid.validate().is_err());
+        invalid = file;
+        invalid.sha256 = "not-a-checksum".into();
+        assert!(invalid.validate().is_err());
+    }
+
+    /// Verify the complete pinned catalog against HF and exercise the real
+    /// download/reuse path using only the small conditioner (no UI or Python).
+    #[test]
+    #[ignore]
+    fn downloads_published_sa3_conditioner_and_verifies_catalog() {
+        tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::new();
+            let headers = reqwest::header::HeaderMap::new();
+            let mut trees = HashMap::new();
+            for entry in crate::sa3_models::catalog() {
+                for file in &entry.files {
+                    let key = (&file.repo, &file.revision);
+                    if !trees.contains_key(&key) {
+                        let tree: Vec<serde_json::Value> = client
+                            .get(format!(
+                                "https://huggingface.co/api/models/{}/tree/{}",
+                                file.repo, file.revision
+                            ))
+                            .send()
+                            .await
+                            .unwrap()
+                            .error_for_status()
+                            .unwrap()
+                            .json()
+                            .await
+                            .unwrap();
+                        trees.insert(key, tree);
+                    }
+                    let remote = trees[&key]
+                        .iter()
+                        .find(|remote| remote["path"] == file.filename)
+                        .expect("the pinned revision includes this model file");
+                    assert_eq!(remote["size"].as_u64(), Some(file.bytes));
+                    assert_eq!(
+                        remote.pointer("/lfs/oid").and_then(|value| value.as_str()),
+                        Some(file.sha256.as_str())
+                    );
+                }
+            }
+            let file = crate::sa3_models::component("sa3-native::medium-decoder")
+                .unwrap()
+                .files
+                .iter()
+                .find(|file| file.filename.contains("conditioner"))
+                .unwrap()
+                .clone();
+            let dir = std::env::var_os("GARY4LOCAL_SA3_MODEL_SMOKE_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::temp_dir()
+                        .join(format!("gary-sa3-model-smoke-{}", std::process::id()))
+                });
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut reported = 0;
+            transfer_pinned_files(
+                &[file.clone()],
+                &dir,
+                headers.clone(),
+                &mut |received, _| reported = received,
+            )
+            .await
+            .expect("the published conditioner downloads and verifies");
+            assert_eq!(
+                std::fs::metadata(dir.join(&file.filename)).unwrap().len(),
+                file.bytes
+            );
+            assert_eq!(reported, file.bytes);
+
+            // The existing file is hashed and reused even when the remote URL
+            // cannot supply it. Reuse is based on its hash, not only its length.
+            let mut unavailable = file.clone();
+            unavailable.repo = "invalid/never-fetched".into();
+            transfer_pinned_files(&[unavailable], &dir, headers.clone(), &mut |_, _| {})
+                .await
+                .expect("a verified existing model needs no HTTP request");
+            std::fs::write(dir.join(&file.filename), b"corrupt previous download").unwrap();
+            transfer_pinned_files(&[file], &dir, headers, &mut |_, _| {})
+                .await
+                .expect("a corrupt model is replaced with verified bytes");
+            println!("Verified all SA3 catalog pins; conditioner download, reuse and repair passed at {}", dir.display());
+        });
+    }
 
     /// Talks to Hugging Face, so it only runs when asked:
     /// `cargo test -- --ignored downloads_a_published_yuey_file`

@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>SA3 native models and backend fixture</title></head><body><div id="backend"></div><div id="app"></div><pre id="fixture-audit" hidden></pre><script type="module">
+import {mount} from 'svelte';
+import ModelPanel from '../src/lib/ModelPanel.svelte';
+import Sa3RuntimeBanner from '../src/lib/Sa3RuntimeBanner.svelte';
+import catalog from '../src-tauri/sa3-models.json';
+import '../src/styles.css';
+const scenario=new URLSearchParams(location.search).get('case')||'native';
+let callback=0,preference='auto',active='F16',downloaded=false,requested=false;
+const audit=document.getElementById('fixture-audit');
+const record=(command,args)=>audit.textContent+=JSON.stringify({command,args})+'\n';
+const models=()=>[
+  {id:'stabilityai/stable-audio-3-medium',display_name:'Python Medium weights',service:'sa3',size_category:'model',status:'available',downloaded_bytes:null},
+  ...catalog.map(entry=>({id:entry.id,display_name:entry.label,service:'sa3',size_category:'native',group:entry.description,status:scenario==='progress'&&entry.id==='sa3-native::medium-Q8_0'?'downloading':scenario==='retry'&&entry.id==='sa3-native::medium-Q8_0'&&!requested?'failed':['sa3-native::text','sa3-native::medium-decoder','sa3-native::medium-F16','sa3-native::medium-Q4_K_M','sa3-native::medium-base-Q4_K_M'].includes(entry.id)||downloaded&&entry.id==='sa3-native::medium-Q8_0'?'downloaded':'available',downloaded_bytes:['sa3-native::text','sa3-native::medium-decoder','sa3-native::medium-F16','sa3-native::medium-Q4_K_M','sa3-native::medium-base-Q4_K_M'].includes(entry.id)?entry.files.reduce((sum,file)=>sum+file.bytes,0):null})),
+];
+const progress=()=>scenario==='progress'?[{model_id:'sa3-native::medium-Q8_0',progress:.42,status:'downloading',message:'Downloading stable-audio-3-medium-dit-1.5B-v1.0-Q8_0.gguf (42%)',error:null}]:scenario==='retry'&&!requested?[{model_id:'sa3-native::medium-Q8_0',progress:0,status:'failed',message:'Download failed',error:'Connection interrupted. Retry this download.'}]:[];
+window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:()=>{},invoke:async(command,args)=>{
+if(command.startsWith('plugin:event|'))return ++callback;
+record(command,args);
+switch(command){
+case 'get_models':return models();
+case 'get_download_progress':return progress();
+case 'get_sa3_native_model_catalog':return catalog;
+case 'get_sa3_native_runtime_selection':return scenario==='legacy'?null:{encoding:active,cleanupComplete:true,cleanupErrors:[]};
+case 'get_sa3_native_decoder_state':return {enabled:false,prepared:false,sourcePresent:false,error:null};
+case 'get_native_runtime_info':return {installed:true,devOverride:false,backend:'cuda',version:'v0.1.1',preference,offeredBackends:['cpu','cuda','vulkan'],fallbackReason:null,devices:[{name:'RTX 5070 Laptop',backend:'cuda',deviceType:'gpu',memoryTotalBytes:8*1024**3}]};
+case 'save_app_settings':preference=args.settings.nativeBackends.sa3;return {};
+case 'select_sa3_native_model':if(scenario==='busy')throw 'Cannot change the SA3 model: wait for SA3 training to finish.';active=args.encoding;return {encoding:active,cleanupComplete:true,cleanupErrors:[]};
+case 'download_model':requested=true;downloaded=true;return null;
+case 'rebuild_env':return null;
+default:throw new Error('Fixture refuses '+command);
+}}};
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
+mount(Sa3RuntimeBanner,{target:document.getElementById('backend'),props:{serviceStatus:'stopped',nativeBackend:'cuda',envExists:true,building:false,onShowModels:()=>record('fixture-models',{})}});
+mount(ModelPanel,{target:document.getElementById('app'),props:{serviceId:'sa3',serviceRuntime:scenario==='legacy'?'python':'native',onBack:()=>{}}});
+</script><style>#backend,#app{width:min(800px,100%);margin:auto}#backend{height:110px}#app{height:calc(100% - 110px)}</style></body></html>

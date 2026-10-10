@@ -1,4 +1,29 @@
 {
+  "nativeBundles": {
+    "sa3": {
+      "version": "v0.1.3",
+      "platforms": {
+        "windows-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.3/sa3-v0.1.3-windows-x64-core.zip",
+            "sha256": "77245a74874bb6bd97849ace0098a19ee2186d7b22af8c78fa9040850cc08636"
+          },
+          "backends": {
+            "cuda": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.3/sa3-v0.1.3-windows-x64-cuda.zip",
+              "sha256": "1e57736850aca78ebe01ccf24e518043afd8ab91cdddcd70bd4ded6045fd3cda",
+              "requires": ["cudart-12.8"]
+            },
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.3/sa3-v0.1.3-windows-x64-vulkan.zip",
+              "sha256": "c192d4f11d16c4a1981ccf454dc2b7167e5c3a24c35cf7883cd7523feac172ca"
+            }
+          },
+          "prefer": ["cuda", "vulkan"]
+        }
+      }
+    }
+  },
   "version": "2.0",
   "services": [
     {
@@ -109,6 +134,20 @@
     },
     {
       "id": "sa3",
+      "native": {
+        "bundle": "sa3",
+        "executable": "sa3-server.exe",
+        "args": ["--model", "medium", "--encoding", "f16", "--t5-encoding", "f16", "--ae-encoding", "f32"],
+        "env": {
+          "SA3_PORT": "18006",
+          "SA3_MAX_DURATION": "446",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/sa3",
+          "SA3_ADAPTERS_DIR": "${GARY_RUNTIME}/sa3/native-loras",
+          "SA3_SOURCE_LORAS_DIR": "${GARY_RUNTIME}/sa3/loras",
+          "SA3_PROMPTS_DIR": "${GARY_RUNTIME}/sa3/prompts"
+        }
+      },
       "displayName": "sa3 (stable audio 3)",
       "description": "Text-to-audio generation and editing with Stable Audio 3",
       "port": 8006,
@@ -250,22 +289,22 @@
       "workingDir": "services/yuey",
       "native": {
         "executable": "yue2-server.exe",
-        "version": "v0.2.2",
+        "version": "v0.2.3",
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.2/yuey-v0.2.2-windows-x64-core.zip",
-              "sha256": "8348ce2bb1416053ff1d8e5c54afdbb1cb06443d23b29be6f00461f6b26a9b2c"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.3/yuey-v0.2.3-windows-x64-core.zip",
+              "sha256": "e3d37db910d20578e40e47cd770b5acf7f79be9fecc600b63532450fbc7c3a39"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.2/yuey-v0.2.2-windows-x64-cuda.zip",
-                "sha256": "5acc1ec39d270d73944f7b72887d7c6c377408a56da05be7f3e12140b8fa92fe",
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.3/yuey-v0.2.3-windows-x64-cuda.zip",
+                "sha256": "721033b531ecc79bc82c4d32362349032391f28b8c74e00fc0e12b1dd1d92ba0",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.2/yuey-v0.2.2-windows-x64-vulkan.zip",
-                "sha256": "80499e568dc4d1180bf2f41e97fe7a245ac56c9ec6a4fc5c464246445945f31d"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.3/yuey-v0.2.3-windows-x64-vulkan.zip",
+                "sha256": "49b4acea53e259a2feb1f351018c637b1f01aa8f162f69ef2e32fa5d2d679cba"
               }
             },
             "prefer": ["cuda", "vulkan"]

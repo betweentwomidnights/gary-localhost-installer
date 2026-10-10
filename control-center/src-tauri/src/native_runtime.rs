@@ -9,7 +9,7 @@
 //! and put on PATH for the services that need them.
 
 use crate::manifest::{NativeDef, NativePackage};
-use crate::service_manager::{BuildInfo, ServiceManager};
+use crate::service_manager::{BuildInfo, ServiceInfo, ServiceManager};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -28,6 +28,14 @@ const RUNTIMES_DIR: &str = "native-runtimes";
 const RUNTIME_STAMP_FILE: &str = "gary-runtime.json";
 /// Detect the GPU, fetch the core, fetch the backend, unpack, check it runs.
 pub const INSTALL_STEPS: usize = 5;
+// Shared CUDA packs and verified download files must not be staged/swapped by
+// two service installers concurrently. Build statuses still reserve each
+// consumer's bundle before an install waits here.
+static INSTALL_LOCK: Mutex<()> = Mutex::const_new(());
+
+pub async fn mutation_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    INSTALL_LOCK.lock().await
+}
 
 const NATIVE_APPLICATION_CONTROL_HELP: &str = "Windows got a little overprotective and blocked this service's runtime from starting.\n\nOpen Windows Security -> App & browser control -> Smart App Control settings, temporarily turn Smart App Control off, then install the runtime again. You can turn it back on afterward.";
 
@@ -132,7 +140,9 @@ pub fn runtimes_root(runtime_root: &Path) -> PathBuf {
 /// The shared runtimes an installed native service was set up with, from its
 /// stamp. Empty when nothing is installed there.
 pub fn installed_runtimes(native_dir: &Path) -> Vec<String> {
-    read_stamp(native_dir).map(|stamp| stamp.runtimes).unwrap_or_default()
+    read_stamp(native_dir)
+        .map(|stamp| stamp.runtimes)
+        .unwrap_or_default()
 }
 
 /// The service's env with `${NATIVE_BACKEND}` filled in. Anything still
@@ -363,7 +373,10 @@ pub fn resolve_backends(
         }
     }
     if choices.is_empty() {
-        let found: Vec<&str> = adapters.iter().map(|adapter| adapter.name.as_str()).collect();
+        let found: Vec<&str> = adapters
+            .iter()
+            .map(|adapter| adapter.name.as_str())
+            .collect();
         return Err(format!(
             "this needs an NVIDIA, AMD, or Intel GPU, and none was found (found: {})",
             found.join(", ")
@@ -414,7 +427,7 @@ pub async fn sha256_file(path: &Path) -> Result<String, String> {
     .map_err(|error| format!("checksum task failed: {error}"))?
 }
 
-fn partial_path(dest: &Path) -> PathBuf {
+pub(crate) fn partial_path(dest: &Path) -> PathBuf {
     let name = dest
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -794,14 +807,18 @@ pub fn recommended_encoding(native_dir: &Path) -> Option<String> {
 #[derive(Clone)]
 struct Reporter {
     manager: Arc<Mutex<ServiceManager>>,
-    handle: tauri::AppHandle,
+    event_sink: Option<ServiceEventSink>,
     service_id: String,
 }
+
+type ServiceEventSink = Arc<dyn Fn(Vec<ServiceInfo>) + Send + Sync>;
 
 impl Reporter {
     async fn emit(&self) {
         let info = self.manager.lock().await.get_service_info();
-        let _ = self.handle.emit("services-updated", &info);
+        if let Some(sink) = &self.event_sink {
+            sink(info);
+        }
     }
 
     async fn step(&self, step: usize, label: &str) {
@@ -844,7 +861,9 @@ impl Reporter {
                 mgr.set_build_step(&reporter.service_id, step, &text);
                 let info = mgr.get_service_info();
                 drop(mgr);
-                let _ = reporter.handle.emit("services-updated", &info);
+                if let Some(sink) = &reporter.event_sink {
+                    sink(info);
+                }
             }
         }
     }
@@ -999,6 +1018,14 @@ async fn ensure_runtime(
         return Ok(());
     }
 
+    // The reservation and native launches/tools share the manager lock. Keep
+    // the lease inside the blocking mutation so task cancellation cannot open
+    // a launch race while extraction or directory replacement is still running.
+    let runtime_lease = reporter
+        .manager
+        .lock()
+        .await
+        .begin_shared_runtime_replacement(name)?;
     let archive = fetch(
         reporter,
         client,
@@ -1014,6 +1041,7 @@ async fn ensure_runtime(
     let sha256 = source.sha256.clone();
     let runtime_name = name.to_string();
     tokio::task::spawn_blocking(move || {
+        let _runtime_lease = runtime_lease;
         if staging.exists() {
             std::fs::remove_dir_all(&staging)
                 .map_err(|error| format!("cannot clear {}: {error}", staging.display()))?;
@@ -1034,19 +1062,18 @@ async fn ensure_runtime(
     Ok(())
 }
 
-/// Unpack core plus a backend into a fresh staging folder, stamp it, and
-/// swap it in for whatever was installed before.
+/// Unpack core plus a backend into a fresh staging folder. The caller probes
+/// this candidate before replacing the installed runtime.
 async fn stage(
     core: &Path,
     backend: &Path,
     stamp: &NativeStamp,
     native_dir: &Path,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     let core = core.to_path_buf();
     let backend = backend.to_path_buf();
     let stamp = serde_json::to_string_pretty(stamp)
         .map_err(|error| format!("cannot write the runtime stamp: {error}"))?;
-    let target = native_dir.to_path_buf();
     let staging = native_dir.with_file_name(format!("{NATIVE_DIR}.staging"));
     tokio::task::spawn_blocking(move || {
         if staging.exists() {
@@ -1059,7 +1086,7 @@ async fn stage(
         extract_zip(&backend, &staging)?;
         std::fs::write(staging.join(STAMP_FILE), stamp)
             .map_err(|error| format!("cannot write the runtime stamp: {error}"))?;
-        replace_dir(&staging, &target)
+        Ok(staging)
     })
     .await
     .map_err(|error| format!("unpacking failed: {error}"))?
@@ -1071,9 +1098,21 @@ pub async fn install(
     manager: Arc<Mutex<ServiceManager>>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    let sink: ServiceEventSink = Arc::new(move |info| {
+        let _ = handle.emit("services-updated", &info);
+    });
+    install_reported(info, manager, Some(sink)).await
+}
+
+async fn install_reported(
+    info: BuildInfo,
+    manager: Arc<Mutex<ServiceManager>>,
+    event_sink: Option<ServiceEventSink>,
+) -> Result<(), String> {
+    let _install_lock = INSTALL_LOCK.lock().await;
     let reporter = Reporter {
         manager,
-        handle,
+        event_sink,
         service_id: info.service_id.clone(),
     };
     let mut fetched = Vec::new();
@@ -1163,7 +1202,6 @@ async fn install_inner(
 
     // 3-5. For each candidate in turn: fetch its backend and any shared
     // runtime, unpack it over the core, and check that it came up.
-    let exe = info.env_dir.join(&def.executable);
     let mut failures: Vec<String> = Vec::new();
     for (index, choice) in candidates.iter().enumerate() {
         // resolve_backends only returns published backends.
@@ -1210,13 +1248,18 @@ async fn install_inner(
             fallback_reason: (!failures.is_empty()).then(|| failures.join(" ")),
             runtimes,
         };
-        stage(&core, &backend_archive, &stamp, &info.env_dir).await?;
+        let staging = stage(&core, &backend_archive, &stamp, &info.env_dir).await?;
+        let exe = staging.join(&def.executable);
 
         reporter
             .step(4, &format!("Checking the {} backend...", stamp.backend))
             .await;
         match check(reporter, info, &exe, &stamp).await {
             Ok(props) => {
+                let target = info.env_dir.clone();
+                tokio::task::spawn_blocking(move || replace_dir(&staging, &target))
+                    .await
+                    .map_err(|error| format!("runtime swap failed: {error}"))??;
                 let recommended = props
                     .pointer("/hardware/recommended_encoding")
                     .and_then(|value| value.as_str())
@@ -1455,7 +1498,12 @@ mod tests {
         assert!(local_entry(&older, &pinned, Some("cudart-12.8")).is_some());
         // A different class, or two candidates, is not a match.
         assert!(local_entry(&sums, &pinned, Some("cudart-12.9")).is_none());
-        assert!(local_entry(&sums, &format!("cudart-12.80-{platform}.zip"), Some("cudart-12.80")).is_none());
+        assert!(local_entry(
+            &sums,
+            &format!("cudart-12.80-{platform}.zip"),
+            Some("cudart-12.80")
+        )
+        .is_none());
         let two = parse_sha256sums(&format!(
             "{hash}  cudart-12.8.0-{platform}.zip\n{hash}  cudart-12.8.1-{platform}.zip\n"
         ));
@@ -1495,6 +1543,110 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("gary4local-native-{label}-{unique}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn staging_a_broken_candidate_preserves_the_installed_runtime() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use std::io::Write;
+                let root = temp_dir("failed-probe");
+                let target = root.join("native");
+                std::fs::create_dir_all(&target).unwrap();
+                std::fs::write(target.join("last-good.exe"), b"last good").unwrap();
+                let core = root.join("core.zip");
+                let backend = root.join("backend.zip");
+                for (archive, name) in [(&core, "broken.exe"), (&backend, "backend.dll")] {
+                    let mut writer = zip::ZipWriter::new(std::fs::File::create(archive).unwrap());
+                    writer
+                        .start_file(name, zip::write::SimpleFileOptions::default())
+                        .unwrap();
+                    writer.write_all(b"invalid executable").unwrap();
+                    writer.finish().unwrap();
+                }
+                let stamp = NativeStamp {
+                    version: "candidate".to_string(),
+                    platform: current_platform().to_string(),
+                    backend: "cuda".to_string(),
+                    requested_backend: "auto".to_string(),
+                    fallback_reason: None,
+                    runtimes: Vec::new(),
+                };
+                let staging = stage(&core, &backend, &stamp, &target).await.unwrap();
+                assert_ne!(staging, target);
+                assert!(probe(&staging.join("broken.exe"), &[], None).await.is_err());
+                assert_eq!(
+                    std::fs::read(target.join("last-good.exe")).unwrap(),
+                    b"last good"
+                );
+                assert!(!target.join(STAMP_FILE).exists());
+                assert!(!target.join("broken.exe").exists());
+                std::fs::remove_dir_all(root).unwrap();
+            });
+    }
+
+    /// Exercises the exact production downloader/stager/prober on the host GPU.
+    /// Keep this explicit: it downloads release assets and retains its runtime.
+    #[test]
+    #[ignore = "downloads the published SA3 bundle and requires a supported GPU"]
+    fn installs_published_sa3_bundle() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let root =
+                    PathBuf::from(std::env::var_os("GARY4LOCAL_SA3_SMOKE_ROOT").expect(
+                        "set GARY4LOCAL_SA3_SMOKE_ROOT to an isolated validation directory",
+                    ));
+                assert!(root.is_absolute());
+                let manifest = crate::manifest::load_manifest(
+                    &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../services/manifests/services.json"),
+                )
+                .unwrap();
+                let mut manager = ServiceManager::new(manifest.services, root.clone());
+                manager.set_native_runtimes(manifest.native_runtimes);
+                let info = manager.get_native_build_info("sa3").unwrap();
+                let expected_version = info.native.as_ref().unwrap().version.clone();
+                let native = info.env_dir.clone();
+                manager.set_build_started("sa3", info.total_steps());
+                let manager = Arc::new(Mutex::new(manager));
+                let result = install_reported(info, manager.clone(), None).await;
+                let services = manager.lock().await.get_service_info();
+                println!(
+                    "{}",
+                    services
+                        .iter()
+                        .find(|service| service.id == "sa3")
+                        .unwrap()
+                        .build_status
+                        .as_ref()
+                        .unwrap()
+                        .log
+                );
+                result.unwrap();
+                let install = installed("sa3", &native, "sa3-server.exe").unwrap();
+                assert_eq!(install.version.as_deref(), Some(expected_version.as_str()));
+                for executable in [
+                    "sa3-server.exe",
+                    "sat-server.exe",
+                    "sa3-train.exe",
+                    "sa3-lora-convert.exe",
+                ] {
+                    assert!(native.join(executable).is_file(), "missing {executable}");
+                }
+                let props: serde_json::Value = serde_json::from_str(
+                    &std::fs::read_to_string(native.join(PROPS_FILE)).unwrap(),
+                )
+                .unwrap();
+                assert!(props_has_backend(&props, &install.backend));
+                assert!(!root.join("services/sa3/env").exists());
+                println!("Validated {} at {}", install.backend, native.display());
+            });
     }
 
     #[test]
