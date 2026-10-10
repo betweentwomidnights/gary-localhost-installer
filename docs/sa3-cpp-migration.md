@@ -1226,3 +1226,24 @@ Svelte checks and the desktop release build pass. The new production review
 launcher is `artifacts/sa3-migration/production-profile-trainer-app-1/launch-production-profile-trainer.ps1`;
 quit Gary and reopen with it. Native runtime reinstallation is unnecessary for
 this host-only change.
+
+
+## Published runtime pins: SA3 v0.1.3 and Yuey v0.2.3
+
+The manifest now pins SA3's shared bundle to the published v0.1.3 Windows
+core/CUDA/Vulkan packages and Yuey to published v0.2.3, using each release's
+SHA256SUMS through the normal pinning script. Both use ggml 4ad3b30b. The shared
+CUDA runtime remains cudart-12.8 from runtime-cudart-12.8.1; it is installed once.
+
+SA3 v0.1.3 includes the native host capability, trainer progress/cancellation,
+multi-adapter graph and legacy DoRA fixes validated during migration development.
+It satisfies the migration contract that published v0.1.1 did not. Normal runtime
+installation can now download the compatible native package from its published
+URLs, without GARY4LOCAL_NATIVE_PACKAGE_DIR or executable/backend overrides.
+Per-profile activation and cleanup checks continue to protect existing Python
+installations. Jerry and Foundation still require their separate migration work.
+
+An already migrated profile sees an available runtime update when its installed
+stamp differs from the pin. Stop the affected service/trainer and use runtime
+reinstall/update to install the published package; model or LoRA downloads and
+migration cleanup need not be repeated.

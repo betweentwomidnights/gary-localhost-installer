@@ -8,9 +8,10 @@ sa3.cpp, audiocraft.cpp and acestep.cpp follow the same pattern as they come
 over. when a service needs something this doesn't cover, change this document
 first, then the repos.
 
-Yuey is the active native service. SA3 can now prepare a pinned native bundle
-alongside its Python environment; service migration awaits client and training
-validation. Foundation-1, Jerry, Gary and Carey still use Python.
+Yuey pins published v0.2.3. SA3 migration prepares the shared published v0.1.3
+bundle, validates native generation/training and activates it per storage
+profile before cleanup. Both projects use ggml 4ad3b30b and share the existing
+CUDA 12.8 runtime. Foundation-1, Jerry, Gary and Carey still use Python.
 
 ## who owns what
 
@@ -202,9 +203,9 @@ its own order.
 pins are written by a script, never by hand:
 
 ```bash
-node control-center/src-tauri/scripts/pin_native_release.mjs --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.0
+node control-center/src-tauri/scripts/pin_native_release.mjs --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.3
 node control-center/src-tauri/scripts/pin_native_release.mjs --runtime cudart-12.8 --repo betweentwomidnights/gary-localhost-installer --tag runtime-cudart-12.8.1
-node control-center/src-tauri/scripts/pin_native_release.mjs --bundle sa3 --repo betweentwomidnights/sa3.cpp --tag v0.1.1
+node control-center/src-tauri/scripts/pin_native_release.mjs --bundle sa3 --repo betweentwomidnights/sa3.cpp --tag v0.1.3
 ```
 
 These read the release's `SHA256SUMS` and edit only the selected definition in
