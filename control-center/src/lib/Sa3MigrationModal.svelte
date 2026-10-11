@@ -274,8 +274,8 @@
         {#if pendingRestart}<p class="error" role="alert">Restart Gary to use your chosen storage folder before migrating.</p>{/if}
         {#if working && stage !== "setup"}
           <div class="cleanup-activity">
-            <p class="progress" role="status">{progress}</p>
-            <progress class="cleanup-bar" aria-label="SA3 cleanup in progress"></progress>
+            <p class="progress" role="status"><span class="spinner" aria-hidden="true"></span>{progress}</p>
+            <div class="progress-bar" role="progressbar" aria-label="SA3 cleanup in progress"><div class="progress-fill"></div></div>
             <small>{elapsedSeconds}s elapsed · Large folders can take a little while to remove.</small>
           </div>
         {/if}
@@ -291,15 +291,15 @@
 {/if}
 
 <style>
-  .cleanup-activity { margin:16px 0; padding:14px; border:1px solid #555; border-radius:8px; background:#202020; }
-  .cleanup-activity .progress { margin:0 0 10px; }
-  .cleanup-activity small { display:block; margin-top:8px; color:#aaa; }
-  .cleanup-bar { display:block; width:100%; height:8px; border:0; border-radius:4px; overflow:hidden; appearance:none; background:#383838; }
-  .cleanup-bar::-webkit-progress-bar { background:#383838; border-radius:4px; }
-  .cleanup-bar:indeterminate { background:linear-gradient(90deg, #383838 0%, #383838 30%, #df978f 50%, #383838 70%, #383838 100%); background-size:200% 100%; animation:cleanup-activity 1.5s linear infinite; }
-  .cleanup-bar:indeterminate::-webkit-progress-bar { background:transparent; }
-  @keyframes cleanup-activity { from { background-position:100% 0; } to { background-position:-100% 0; } }
-  @media (prefers-reduced-motion: reduce) { .cleanup-bar:indeterminate { animation:none; } }
+  .cleanup-activity { margin:16px 0; }
+  .cleanup-activity .progress { display:flex; align-items:center; gap:8px; margin:0 0 8px; font:11px var(--font-mono); }
+  .cleanup-activity small { margin-top:8px; color:var(--text-secondary); font-family:var(--font-mono); }
+  .progress-bar { height:4px; background:var(--border); border-radius:2px; overflow:hidden; }
+  .progress-fill { height:100%; width:30%; background:var(--accent); border-radius:2px; animation:cleanup-activity 1.5s ease-in-out infinite; }
+  .spinner { display:inline-block; flex-shrink:0; width:11px; height:11px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:cleanup-spin .7s linear infinite; }
+  @keyframes cleanup-activity { from { transform:translateX(-100%); } to { transform:translateX(334%); } }
+  @keyframes cleanup-spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .progress-fill,.spinner { animation:none; } }
   .overlay { position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center; padding:24px; }
   .backdrop { position:absolute; inset:0; width:100%; height:100%; border:0; border-radius:0; background:rgba(0,0,0,.65); }
   .modal { position:relative; display:flex; flex-direction:column; width:580px; max-width:100%; max-height:calc(100vh - 48px); background:var(--bg-secondary,#202024); border:1px solid var(--border,#444); border-radius:12px; box-shadow:0 20px 70px #0008; color:var(--text-primary,#eee); outline:none; }

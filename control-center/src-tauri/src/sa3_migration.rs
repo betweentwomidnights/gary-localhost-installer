@@ -46,14 +46,58 @@ pub fn native_training_base_present(active_root: &Path) -> bool {
     })
 }
 
-fn legacy_runtime_candidates(active_root: &Path, hf_hub: &Path) -> Vec<(&'static str, PathBuf, PathBuf)> {
+// Exact cache files staged by train_lora_job.py::stage_base_model. Never retire
+// the enclosing training/model directory: it can also hold user-owned files.
+pub(crate) const STAGED_TRAINING_BASE: &str = "sa3/training/models/sa3-medium/base";
+pub(crate) const STAGED_TRAINING_FILES: &[&str] = &[
+    "model_config.json",
+    "model.safetensors",
+    "t5gemma-b-b-ul2/config.json",
+    "t5gemma-b-b-ul2/model.safetensors",
+    "t5gemma-b-b-ul2/tokenizer.json",
+    "t5gemma-b-b-ul2/tokenizer_config.json",
+];
+
+fn path_present(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
+fn staged_training_file(active_root: &Path, path: &Path) -> bool {
+    let base = active_root.join(STAGED_TRAINING_BASE);
+    STAGED_TRAINING_FILES.iter().any(|file| path == base.join(file))
+}
+
+pub(crate) fn staged_training_identity(active_root: &Path, path: &Path) -> Option<(u64, Option<u128>)> {
+    if !staged_training_file(active_root, path) { return None; }
+    std::fs::symlink_metadata(path).ok().map(|metadata| (
+        metadata.len(),
+        metadata.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|time| time.as_nanos()),
+    ))
+}
+
+pub fn legacy_training_base_present(active_root: &Path, hf_hub: &Path) -> bool {
+    path_present(&hf_hub.join("models--stabilityai--stable-audio-3-medium-base"))
+        || STAGED_TRAINING_FILES.iter().any(|file| {
+            path_present(&active_root.join(STAGED_TRAINING_BASE).join(file))
+        })
+}
+
+pub(crate) fn legacy_runtime_candidates(active_root: &Path, hf_hub: &Path) -> Vec<(&'static str, PathBuf, PathBuf)> {
     let service = active_root.join("services/sa3");
-    vec![
+    let mut candidates = vec![
         ("SA3 Python environment", service.join("env"), service.clone()),
         ("SA3 alternate Python environment", service.join(".venv"), service),
         ("SA3 PyTorch inference weights", hf_hub.join("models--stabilityai--stable-audio-3-medium"), hf_hub.to_path_buf()),
         ("SA3 PyTorch training base", hf_hub.join("models--stabilityai--stable-audio-3-medium-base"), hf_hub.to_path_buf()),
-    ]
+    ];
+    let base = active_root.join(STAGED_TRAINING_BASE);
+    candidates.extend(STAGED_TRAINING_FILES.iter().map(|file| {
+        ("SA3 staged PyTorch training base", base.join(file), base.clone())
+    }));
+    candidates
 }
 
 /// A downgrade can recreate legacy files after cleanup was recorded as complete.
@@ -62,10 +106,7 @@ fn legacy_runtime_candidates(active_root: &Path, hf_hub: &Path) -> Vec<(&'static
 pub fn legacy_runtime_present(active_root: &Path, hf_hub: &Path) -> bool {
     legacy_runtime_candidates(active_root, hf_hub)
         .iter()
-        .any(|(_, path, _)| match std::fs::symlink_metadata(path) {
-            Ok(_) => true,
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        })
+        .any(|(_, path, _)| path_present(path))
 }
 
 pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
@@ -74,7 +115,8 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
         hf_hub_cache: hf_hub.to_string_lossy().to_string(),
         cleanup_candidates: Vec::new(),
         legacy_runtime_present: false,
-        training_base_present: native_training_base_present(active_root),
+        training_base_present: native_training_base_present(active_root)
+            || legacy_training_base_present(active_root, hf_hub),
         estimated_cleanup_bytes: 0,
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
@@ -234,6 +276,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     }
     let mut seen = Vec::new();
     for (label, path, owner) in candidates {
+        let staged = staged_training_file(active_root, &path);
         if owner == service && !crate::path_is_inside(&owner, active_root) && path.exists() {
             result.warnings.push(format!(
                 "SA3 service storage redirects outside the active profile: {}",
@@ -244,7 +287,9 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
 
         match crate::resolve_managed_path(&path, &owner) {
             Ok(Some(canonical)) => {
-                if (!code.candidates.contains(&path) && canonical.parent() != owner.canonicalize().ok().as_deref())
+                if (staged && (!std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file())
+                    || active_root.canonicalize().ok().map(|root| root.join(path.strip_prefix(active_root).unwrap())) != Some(canonical.clone())))
+                    || (!staged && !code.candidates.contains(&path) && canonical.parent() != owner.canonicalize().ok().as_deref())
                     || canonical.file_name() != path.file_name()
                 {
                     result.warnings.push(format!("Preserving redirected SA3 cleanup target {}; review it manually.", path.display()));
@@ -252,8 +297,13 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
                 }
                 // A redirected cache or environment must never turn the
                 // proposed cleanup into removal of user-owned SA3 artifacts.
-                if protected_paths.iter().any(|protected| crate::path_is_inside(&canonical, protected)
-                    || crate::path_is_inside(protected, &canonical))
+                if protected_paths.iter().enumerate().any(|(index, protected_path)| {
+                    // This narrow exception covers only the six managed cache
+                    // files. Every catalog/dataset/native protection still applies.
+                    !(staged && index == 0)
+                        && (crate::path_is_inside(&canonical, protected_path)
+                            || crate::path_is_inside(protected_path, &canonical))
+                })
                 {
                     result.warnings.push(format!(
                         "Preserving {} because it overlaps SA3 user data or native runtime files.", path.display()
@@ -308,7 +358,8 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     let identities: Vec<_> = result
         .cleanup_candidates
         .iter()
-        .map(|entry| (&entry.path, Path::new(&entry.path).canonicalize().ok()))
+        .map(|entry| (&entry.path, Path::new(&entry.path).canonicalize().ok(),
+            staged_training_identity(active_root, Path::new(&entry.path))))
         .collect();
     result.cleanup_token = format!(
         "{:x}",
@@ -892,6 +943,68 @@ mod tests {
         assert!(code.is_file());
         fixture.write("runtime/services/sa3/.venv/Scripts/python.exe");
         assert!(preview(&root, &root.join("models/huggingface/hub")).legacy_runtime_present);
+    }
+
+    #[test]
+    fn staged_training_inventory_is_narrow_and_includes_cacheless_training() {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("custom-runtime");
+        let hub = fixture.0.join("external-hub");
+        let base = root.join(super::STAGED_TRAINING_BASE);
+        for file in super::STAGED_TRAINING_FILES {
+            fixture.write(&format!("custom-runtime/{}/{file}", super::STAGED_TRAINING_BASE));
+        }
+        fixture.write(&format!("custom-runtime/{}/user-model.ckpt", super::STAGED_TRAINING_BASE));
+        fixture.write("custom-runtime/sa3/training/jobs/old/checkpoint.safetensors");
+        let result = preview(&root, &hub);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(result.cleanup_candidates.len(), 6);
+        assert!(result.training_base_present && result.legacy_runtime_present);
+        assert_eq!(result.estimated_cleanup_bytes, 24);
+        assert!(result.cleanup_candidates.iter().all(|entry| entry.kind == Some("weights") && Path::new(&entry.path).starts_with(&base)));
+        assert!(!hub.exists());
+        let old_review = result.cleanup_token;
+        std::fs::write(base.join("model.safetensors"), b"changed staged file").unwrap();
+        assert_ne!(preview(&root, &hub).cleanup_token, old_review);
+    }
+
+    #[test]
+    fn staged_training_cleanup_preserves_catalog_sources_and_dataset_overlaps() {
+        for dataset in [false, true] {
+            let fixture = Fixture::new();
+            let root = &fixture.0;
+            let model = fixture.write(&format!("{}/model.safetensors", super::STAGED_TRAINING_BASE));
+            if dataset {
+                let options = fixture.write("sa3/training/jobs/native-job/native-options.json");
+                std::fs::write(options, serde_json::json!({"dataset":root.join("sa3"),"promptConfig":null}).to_string()).unwrap();
+            } else {
+                let catalog = fixture.write("sa3/lora_catalog.json");
+                std::fs::write(catalog, serde_json::json!({"user":{"path":model,"strength":1}}).to_string()).unwrap();
+            }
+            let result = preview(root, &root.join("hub"));
+            assert!(result.cleanup_candidates.is_empty());
+            assert_eq!(result.warnings.len(), 1);
+            assert!(model.is_file());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_training_cache_junction_is_not_followed_even_within_the_profile() {
+        use std::os::windows::process::CommandExt;
+        let fixture = Fixture::new();
+        let model = fixture.write("runtime/sa3/user-models/model.safetensors");
+        let root = fixture.0.join("runtime");
+        let base = root.join(super::STAGED_TRAINING_BASE);
+        std::fs::create_dir_all(base.parent().unwrap()).unwrap();
+        let output = std::process::Command::new("cmd").raw_arg(format!(
+            "/c mklink /J \"{}\" \"{}\"", base.display(), model.parent().unwrap().display()
+        )).output().unwrap();
+        assert!(output.status.success());
+        let result = preview(&root, &root.join("hub"));
+        assert!(result.cleanup_candidates.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(model.is_file());
     }
 
     #[test]

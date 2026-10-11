@@ -117,8 +117,9 @@ However, the Python trainer's separately staged
 The current inventory protects all `sa3/training` data and does not retire this
 staging folder. Deleting the HF cache therefore does not establish that these
 weight bytes were reclaimed. Safe ownership-based retirement of staged Python
-training weights remains a cleanup gap; no staged files were deleted during
-this audit.
+training weights was a cleanup gap at the time of this audit. It is now covered
+by the staged training-base cleanup described below; no production staged files
+were deleted during either audit.
 
 ### Native runtime and model controls
 
@@ -200,7 +201,8 @@ SA3 service code is retained in this slice: prompt building and audio metadata
 analysis also use its Python environment. Auditing/replacing these helpers is
 required before retiring that environment and before deleting bundled code.
 Training model copies under `sa3/training/models` are also retained until their
-ownership and conversion needs have been audited.
+ownership and conversion needs have been audited. This initial limitation is
+resolved for the six cache files staged by Gary's legacy trainer; see below.
 
 ## Compatibility audit against the published API
 
@@ -1261,3 +1263,26 @@ and the current verification/removal step. Cleanup publishes each item before
 its potentially slow deletion and reports the final rescan and saved result.
 The bar remains active while a large environment is removed; it does not claim
 a byte percentage. Cleanup ownership checks and interruption journaling are unchanged.
+
+## Staged training-base cleanup and consistent activity styling
+
+Cleanup now uses the app's accent/border variables, 4 px solid progress track,
+standard 11 px spinner and monospace status styling instead of a separate
+gradient/card treatment.
+
+The legacy trainer's `stage_base_model` hard-links or copies six snapshot files
+into `sa3/training/models/sa3-medium/base`. These can retain approximately 10.44 GB
+of logical weights after the HF repositories are removed. Migration inventories
+only those exact cache files: base model/config and T5Gemma weights/config/tokenizer
+files. It never recursively removes the training/model directories, and keeps
+unrecognized files. Canonical checks reject redirects even within the profile;
+catalog sources, dataset paths, native weights, jobs and checkpoints remain protected.
+File size/modification identity binds the staged-file review and is rechecked
+before deletion, with the existing cleanup interruption/lock journal.
+
+A staged base alone automatically includes the GGUF training replacement and
+automatic training check. Cleanup refuses to proceed without a native training
+base, even when the HF cache is absent. Already migrated profiles rediscover
+remaining staged cache files and offer cleanup again; empty folders alone do not
+reopen migration. Both default and custom storage use the active profile paths
+and its effective HF cache.

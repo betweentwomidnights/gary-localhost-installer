@@ -1481,6 +1481,12 @@ mod tests {
             assert!(complete(&manager));
         }
         // Another profile and other Python services cannot reopen this migration.
+        let staged = root.join(crate::sa3_migration::STAGED_TRAINING_BASE).join("model.safetensors");
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        std::fs::write(&staged, b"recreated training model").unwrap();
+        assert!(!complete(&manager));
+        std::fs::remove_file(&staged).unwrap();
+        assert!(complete(&manager), "empty cache folders must not reopen migration");
         std::fs::create_dir_all(root.join("other-profile/services/sa3/env")).unwrap();
         std::fs::create_dir_all(root.join("services/stable-audio/env")).unwrap();
         std::fs::write(root.join("services/sa3/api.py"), b"bundled source").unwrap();

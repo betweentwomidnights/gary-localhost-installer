@@ -9973,7 +9973,8 @@ async fn cleanup_sa3_legacy_installation(
             model.id == "stabilityai/stable-audio-3-medium-base"
                 && matches!(model.status, model_manager::ModelStatus::Downloaded)
         });
-        if legacy_training && !sa3_migration::native_training_base_present(repo_root.inner()) {
+        if (legacy_training || sa3_migration::legacy_training_base_present(repo_root.inner(), &models.hf_hub_cache_dir()))
+            && !sa3_migration::native_training_base_present(repo_root.inner()) {
             return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
         }
         let hub = models.hf_hub_cache_dir();

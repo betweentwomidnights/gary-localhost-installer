@@ -27,6 +27,11 @@ pub fn validate_review(root: &Path, hub: &Path, token: &str) -> Result<(), Strin
     if current.native_selection.is_none() {
         return Err("Verify and select C++ before retiring the SA3 Python installation.".into());
     }
+    if crate::sa3_migration::legacy_training_base_present(root, hub)
+        && !crate::sa3_migration::native_training_base_present(root)
+    {
+        return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
+    }
     Ok(())
 }
 
@@ -73,23 +78,21 @@ fn run_with_progress(
         selection,
     };
     let service = root.join("services/sa3");
-    let mut allowed = vec![
-        service.join("env"),
-        service.join(".venv"),
-        hub.join("models--stabilityai--stable-audio-3-medium"),
-        hub.join("models--stabilityai--stable-audio-3-medium-base"),
-    ];
-    allowed.extend(crate::sa3_code::recorded_paths(root)?);
-    let identities: Vec<PathBuf> = plan
+    let mut allowed: Vec<(PathBuf, PathBuf)> = crate::sa3_migration::legacy_runtime_candidates(root, hub)
+        .into_iter().map(|(_, path, owner)| (path, owner)).collect();
+    allowed.extend(crate::sa3_code::recorded_paths(root)?.into_iter().map(|path| (path, service.clone())));
+    let identities: Vec<_> = plan
         .cleanup_candidates
         .iter()
         .map(|entry| {
-            Path::new(&entry.path)
+            let path = Path::new(&entry.path);
+            path
                 .canonicalize()
+                .map(|canonical| (canonical, crate::sa3_migration::staged_training_identity(root, path)))
                 .map_err(|error| error.to_string())
         })
         .collect::<Result<_, _>>()?;
-    for (entry, identity) in plan.cleanup_candidates.iter().zip(identities) {
+    for (entry, (identity, staged_identity)) in plan.cleanup_candidates.iter().zip(identities) {
         progress(&format!("Removing {}...", entry.label));
         let path = Path::new(&entry.path);
         let current = crate::sa3_migration::preview(root, hub);
@@ -99,14 +102,11 @@ fn run_with_progress(
                 .iter()
                 .any(|candidate| candidate.path == entry.path)
             || path.canonicalize().ok().as_ref() != Some(&identity)
+            || crate::sa3_migration::staged_training_identity(root, path) != staged_identity
         {
             result.errors.push(format!("Preserved {} because its ownership or protected paths changed; rescan before retrying.", path.display()));
-        } else if let Some(index) = allowed.iter().position(|candidate| candidate == path) {
-            let owner = if index < 2 || index >= 4 {
-                service.as_path()
-            } else {
-                hub
-            };
+        } else if let Some((_, owner)) = allowed.iter().find(|(candidate, _)| candidate == path) {
+            let owner = owner.as_path();
             match crate::resolve_managed_path(path, owner) {
                 Ok(Some(current)) if current == identity => match remove(path, owner) {
                     Ok(true) => {
@@ -266,6 +266,84 @@ mod tests {
                 assert!(messages.last().unwrap().starts_with("Python cleanup complete"));
             }
         }
+    }
+
+    #[test]
+    #[ignore = "uses existing staged PyTorch and GGUF training files as read-only hard-link sources; set GARY4LOCAL_STAGED_BASE_SOURCE and GARY4LOCAL_STAGED_BASE_NATIVE_MODELS"]
+    fn real_staged_training_cleanup_preserves_sources_and_retries_locked_weights() {
+        use crate::sa3_migration::{STAGED_TRAINING_BASE, STAGED_TRAINING_FILES};
+        let source = PathBuf::from(std::env::var_os("GARY4LOCAL_STAGED_BASE_SOURCE").unwrap());
+        let native_models = PathBuf::from(std::env::var_os("GARY4LOCAL_STAGED_BASE_NATIVE_MODELS").unwrap());
+        if let Some(root) = std::env::var_os("GARY4LOCAL_STAGED_BASE_PROFILE").map(PathBuf::from) {
+            assert_eq!(root.join(STAGED_TRAINING_BASE).canonicalize().unwrap(), source.canonicalize().unwrap());
+            let preview = crate::sa3_migration::preview(&root, &crate::storage::effective_hf_hub_cache_dir(&root));
+            assert!(preview.training_base_present && preview.legacy_runtime_present);
+            assert!(preview.warnings.is_empty(), "Read-only source profile warnings: {:?}", preview.warnings);
+            let staged: Vec<_> = preview.cleanup_candidates.iter().filter(|item| Path::new(&item.path).starts_with(&source)).collect();
+            assert_eq!(staged.len(), 6);
+            println!("PASS read-only live-profile preview includes all six staged training files ({} logical bytes) with no warnings", staged.iter().map(|item| item.bytes).sum::<u64>());
+        }
+        let fixture = Fixture::new();
+        assert!(!source.starts_with(&fixture.0) && !native_models.starts_with(&fixture.0));
+        let mut originals = Vec::new();
+        for file in STAGED_TRAINING_FILES {
+            let original = source.join(file);
+            let metadata = std::fs::metadata(&original).unwrap();
+            originals.push((original.clone(), metadata.len(), metadata.modified().unwrap()));
+            let target = fixture.0.join(STAGED_TRAINING_BASE).join(file);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::hard_link(original, target).unwrap();
+        }
+        let keep = [
+            fixture.write(&format!("{STAGED_TRAINING_BASE}/user-model.ckpt")),
+            fixture.write(&format!("{STAGED_TRAINING_BASE}/t5gemma-b-b-ul2/custom.json")),
+            fixture.write("sa3/training/jobs/old/checkpoint.safetensors"),
+            fixture.write("sa3/training/runs/old/training.log"),
+            fixture.write("sa3/datasets/audio.wav"),
+            fixture.write("sa3/loras/user.safetensors"),
+        ];
+        let env = fixture.write("services/sa3/env/python.exe");
+        fixture.select();
+        let preview = crate::sa3_migration::preview(&fixture.0, &fixture.hub());
+        assert!(preview.training_base_present && preview.legacy_runtime_present);
+        assert_eq!(preview.cleanup_candidates.len(), 7);
+        assert!(validate_review(&fixture.0, &fixture.hub(), &preview.cleanup_token).unwrap_err().contains("C++ training model"));
+        let native = crate::sa3_models::component("sa3-native::medium-base-F16").unwrap();
+        let dir = crate::sa3_models::checked_models_dir(&fixture.0).unwrap();
+        for file in &native.files {
+            std::fs::hard_link(native_models.join(&file.filename), dir.join(&file.filename)).unwrap();
+        }
+        let locked = fixture.0.join(STAGED_TRAINING_BASE).join("model.safetensors");
+        let first = run_with(&fixture.0, &fixture.hub(), &fixture.token(), |path, owner| {
+            if path == locked { Err("locked staged training weights".into()) }
+            else { crate::remove_managed_path(path, owner) }
+        }).unwrap();
+        assert!(!first.selection.cleanup_complete && locked.is_file() && !env.exists());
+        assert_eq!(first.errors, ["locked staged training weights"]);
+        let retry = run(&fixture.0, &fixture.hub(), &fixture.token()).unwrap();
+        assert!(retry.selection.cleanup_complete);
+        assert!(!crate::sa3_migration::legacy_runtime_present(&fixture.0, &fixture.hub()));
+        assert!(crate::sa3_migration::preview(&fixture.0, &fixture.hub()).cleanup_candidates.is_empty());
+        for file in STAGED_TRAINING_FILES { assert!(!fixture.0.join(STAGED_TRAINING_BASE).join(file).exists()); }
+        for path in &keep { assert!(path.is_file(), "{}", path.display()); }
+        assert!(crate::sa3_models::present(native, &dir));
+        for (original, bytes, modified) in &originals {
+            let current = std::fs::metadata(original).unwrap();
+            assert_eq!(current.len(), *bytes);
+            assert_eq!(current.modified().unwrap(), *modified);
+        }
+        println!("PASS six staged files ({} logical bytes) included without HF cache; native replacement required; lock journal/retry; original staged/native sources, custom files, jobs, datasets and LoRAs preserved", originals.iter().map(|(_, bytes, _)| bytes).sum::<u64>());
+    }
+
+    #[test]
+    fn staged_training_cleanup_requires_a_native_replacement_before_any_removal() {
+        let fixture = Fixture::new();
+        let env = fixture.write("services/sa3/env/python.exe");
+        let model = fixture.write(&format!("{}/model.safetensors", crate::sa3_migration::STAGED_TRAINING_BASE));
+        fixture.select();
+        assert!(run(&fixture.0, &fixture.hub(), &fixture.token()).unwrap_err().contains("C++ training model"));
+        assert!(env.is_file() && model.is_file());
+        assert!(crate::sa3_migration::preview(&fixture.0, &fixture.hub()).training_base_present);
     }
 
     #[test]
