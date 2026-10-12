@@ -1,4 +1,4 @@
-use crate::manifest::{HealthCheck, NativeDef, NativePackage, ServiceDef, ServiceRuntime};
+use crate::manifest::{HealthCheck, MigrationDef, NativeDef, NativePackage, ServiceDef, ServiceRuntime};
 use crate::native_runtime::{self, NativeInstall, NativeLaunch};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -30,8 +30,9 @@ pub struct ServiceInfo {
     /// Why the service cannot start yet (e.g. its models are missing), shown
     /// in place of a start that would only fail its first request.
     pub start_blocker: Option<String>,
-    /// SA3's native migration and reviewed Python cleanup have finished.
-    pub sa3_migration_complete: bool,
+    /// The service's move to native and its reviewed Python cleanup have both
+    /// finished. Always false for a service with nothing to migrate.
+    pub migration_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,8 +75,9 @@ pub struct ServiceManager {
     native_model_mutations: HashMap<String, String>,
     /// Weak leases expire even if an installer future is cancelled.
     shared_runtime_mutations: HashMap<String, Weak<String>>,
-    sa3_selection: Option<crate::sa3_runtime::Selection>,
-    sa3_selection_error: Option<String>,
+    /// Every service with a `migration` block, keyed by id: whether it has
+    /// switched to native in this profile, and how far cleanup got.
+    migrations: HashMap<String, crate::migration::State>,
     storage_change_pending: bool,
 }
 
@@ -138,14 +140,16 @@ fn filter_successful_health_access_logs(raw: &str) -> String {
 
 impl ServiceManager {
     pub fn new(mut services: Vec<ServiceDef>, repo_root: PathBuf) -> Self {
-        let (sa3_selection, sa3_selection_error) = match crate::sa3_runtime::read(&repo_root) {
-            Ok(selection) => (selection, None),
-            Err(error) => (None, Some(error)),
-        };
-        if sa3_selection.is_some() || sa3_selection_error.is_some() {
-            if let Some(service) = services.iter_mut().find(|service| service.id == "sa3") {
+        // The manifest keeps a migrating service on Python; this profile's
+        // selection is what moves it.
+        let mut migrations = HashMap::new();
+        for service in &mut services {
+            let Some(migration) = service.migration.clone() else { continue };
+            let state = crate::migration::State::load(&repo_root, service, &migration);
+            if state.switched() {
                 service.runtime = ServiceRuntime::Native;
             }
+            migrations.insert(service.id.clone(), state);
         }
         Self {
             services,
@@ -157,8 +161,7 @@ impl ServiceManager {
             native_workloads: HashMap::new(),
             native_model_mutations: HashMap::new(),
             shared_runtime_mutations: HashMap::new(),
-            sa3_selection,
-            sa3_selection_error,
+            migrations,
             storage_change_pending: false,
         }
     }
@@ -427,7 +430,7 @@ impl ServiceManager {
             .as_ref()
             .ok_or_else(|| format!("{} has no native definition", svc.id))?;
         let args = if svc.id == "sa3" {
-            let selected = self.sa3_selection.as_ref().map(|selection| selection.encoding.as_str());
+            let selected = self.selection("sa3").map(|selection| selection.encoding.as_str());
             crate::sa3_runtime::launch_args(&native.args, encoding.or(selected).unwrap_or("F16"))?
         } else {
             native.args.clone()
@@ -480,9 +483,29 @@ impl ServiceManager {
         self.services_dir()
     }
 
+    /// A migrating service's native selection, once it has switched.
+    pub fn selection(&self, service_id: &str) -> Option<&crate::migration::Selection> {
+        self.migrations.get(service_id)?.selection.as_ref()
+    }
+
+    fn migration_def(&self, service_id: &str) -> Result<(ServiceDef, MigrationDef), String> {
+        let svc = self
+            .find_service(service_id)
+            .ok_or_else(|| format!("Unknown service: {service_id}"))?;
+        let migration = svc
+            .migration
+            .clone()
+            .ok_or_else(|| format!("{} cannot migrate to a native runtime", svc.display_name))?;
+        Ok((svc.clone(), migration))
+    }
+
     /// Refresh cleanup journal fields after a transaction without changing the runtime.
-    pub fn refresh_sa3_native_selection(&mut self) -> Result<(), String> {
-        self.sa3_selection = crate::sa3_runtime::read(&self.repo_root)?;
+    pub fn refresh_migration(&mut self, service_id: &str) -> Result<(), String> {
+        let (svc, migration) = self.migration_def(service_id)?;
+        let selection = crate::migration::read(&self.repo_root, &migration, |selection| {
+            crate::migration::check_for(&svc, selection)
+        })?;
+        self.migrations.entry(service_id.to_string()).or_default().selection = selection;
         Ok(())
     }
 
@@ -494,39 +517,43 @@ impl ServiceManager {
 
     /// Called after migration has verified the installed native server. Persist
     /// the profile choice before cleanup, then update this session's launch path.
-    pub fn activate_native_sa3(
+    pub fn activate_native(
         &mut self,
-        mut selection: crate::sa3_runtime::Selection,
-    ) -> Result<crate::sa3_runtime::Selection, String> {
-        if self.is_running("sa3") {
-            return Err("Stop SA3 before switching its runtime".into());
+        service_id: &str,
+        mut selection: crate::migration::Selection,
+    ) -> Result<crate::migration::Selection, String> {
+        let (svc, migration) = self.migration_def(service_id)?;
+        if self.is_running(service_id) {
+            return Err(format!("Stop {} before switching its runtime", svc.display_name));
         }
-        if self.native_service("sa3").is_none() {
-            return Err("SA3 has no native runtime definition".into());
+        if svc.native.is_none() {
+            return Err(format!("{} has no native runtime definition", svc.display_name));
         }
-        if let Some(previous) = &self.sa3_selection {
+        if let Some(previous) = self.selection(service_id) {
             selection.cleanup_complete = previous.cleanup_complete;
             selection.cleanup_errors = previous.cleanup_errors.clone();
         }
-        crate::sa3_runtime::save(&self.repo_root, &selection)?;
-        self.services
-            .iter_mut()
-            .find(|service| service.id == "sa3")
-            .unwrap()
-            .runtime = ServiceRuntime::Native;
-        self.sa3_selection = Some(selection.clone());
-        self.sa3_selection_error = None;
-        self.errors.remove("sa3");
+        crate::migration::save(&self.repo_root, &migration, &selection, |selection| {
+            crate::migration::check_for(&svc, selection)
+        })?;
+        if let Some(service) = self.services.iter_mut().find(|service| service.id == service_id) {
+            service.runtime = ServiceRuntime::Native;
+        }
+        self.migrations.insert(
+            service_id.to_string(),
+            crate::migration::State { selection: Some(selection.clone()), error: None },
+        );
+        self.errors.remove(service_id);
         Ok(selection)
     }
 
     /// Choose downloaded generation weights without repeating migration or cleanup.
-    pub fn select_sa3_native_model(&mut self, encoding: &str) -> Result<crate::sa3_runtime::Selection, String> {
+    pub fn select_sa3_native_model(&mut self, encoding: &str) -> Result<crate::migration::Selection, String> {
         let ids = crate::sa3_models::preparation_ids(encoding, None)?;
         if let Some(blocker) = self.native_mutation_blocker("sa3") {
             return Err(format!("Cannot change the SA3 model: {blocker}."));
         }
-        let mut selection = self.sa3_selection.clone()
+        let mut selection = self.selection("sa3").cloned()
             .ok_or("Migrate SA3 to C++ before selecting a generation tier.")?;
         let dir = crate::sa3_models::models_dir(&self.repo_root);
         for id in ids {
@@ -536,7 +563,7 @@ impl ServiceManager {
             }
         }
         selection.encoding = encoding.to_string();
-        self.activate_native_sa3(selection)
+        self.activate_native("sa3", selection)
     }
 
     /// Where the shared runtimes native services need are installed.
@@ -767,15 +794,9 @@ impl ServiceManager {
                     native_fallback_reason: native_install
                         .and_then(|install| install.fallback_reason),
                     start_blocker: self.start_blocker(svc),
-                    sa3_migration_complete: svc.id == "sa3"
-                        && svc.runtime == ServiceRuntime::Native
-                        && self.sa3_selection.as_ref().is_some_and(|selection| {
-                            selection.cleanup_complete && selection.cleanup_errors.is_empty()
-                        })
-                        && !crate::sa3_migration::legacy_runtime_present(
-                            &self.repo_root,
-                            &crate::storage::effective_hf_hub_cache_dir(&self.repo_root),
-                        ),
+                    migration_complete: svc.runtime == ServiceRuntime::Native
+                        && self.selection(&svc.id).is_some_and(|selection| selection.retired())
+                        && !self.legacy_runtime_present(svc),
                 }
             })
             .collect()
@@ -940,14 +961,24 @@ impl ServiceManager {
         Ok(())
     }
 
+    /// Whether a migrated service's Python files are back, as a downgrade can
+    /// bring them. Bounded for status polling; the full inventory is separate.
+    fn legacy_runtime_present(&self, svc: &ServiceDef) -> bool {
+        match svc.id.as_str() {
+            "sa3" => crate::sa3_migration::legacy_runtime_present(
+                &self.repo_root,
+                &crate::storage::effective_hf_hub_cache_dir(&self.repo_root),
+            ),
+            _ => false,
+        }
+    }
+
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
         if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
+        if let Some(error) = self.migrations.get(&svc.id).and_then(|state| state.error.as_ref()) {
+            return Some(format!("cannot use this profile's native selection: {error}"));
+        }
         if svc.id == "sa3" {
-            if let Some(error) = &self.sa3_selection_error {
-                return Some(format!(
-                    "cannot use this profile's native selection: {error}"
-                ));
-            }
             // Jobs that rewrite what the server would load, or validate it.
             const BLOCKING_JOBS: &[&str] = &[
                 "native-migration",
@@ -983,8 +1014,7 @@ impl ServiceManager {
             }
             if svc.id == "sa3" {
                 let encoding = self
-                    .sa3_selection
-                    .as_ref()
+                    .selection("sa3")
                     .map_or("F16", |selection| selection.encoding.as_str());
                 if let Some(missing) = crate::sa3_runtime::missing_models(&self.repo_root, encoding) {
                     return Some(missing);
@@ -1463,7 +1493,7 @@ mod tests {
         let selection_path = crate::sa3_runtime::selection_path(&root);
         let original = std::fs::read(&selection_path).unwrap();
         let hub = crate::storage::effective_hf_hub_cache_dir(&root);
-        let complete = |manager: &ServiceManager| manager.get_service_info().into_iter().find(|s| s.id == "sa3").unwrap().sa3_migration_complete;
+        let complete = |manager: &ServiceManager| manager.get_service_info().into_iter().find(|s| s.id == "sa3").unwrap().migration_complete;
         let manager = ServiceManager::new(manifest.services.clone(), root.clone());
         assert!(complete(&manager));
         for legacy in [root.join("services/sa3/env"), root.join("services/sa3/.venv"),
@@ -1510,7 +1540,7 @@ mod tests {
         assert!(manager.validate_build_runtime(&queued).is_ok());
         let candidate = manager.get_native_build_info("sa3").unwrap();
         assert!(manager.validate_build_runtime(&candidate).is_ok());
-        manager.activate_native_sa3(crate::sa3_runtime::Selection {
+        manager.activate_native("sa3", crate::sa3_runtime::Selection {
             schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.1".into(),
             backend: "vulkan".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         }).unwrap();
@@ -1525,6 +1555,42 @@ mod tests {
         let corrupted = ServiceManager::new(defs, root.clone());
         assert!(corrupted.validate_build_runtime(&queued).is_err());
         assert_eq!(std::fs::read(&python).unwrap(), b"leftover legacy environment");
+        crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn any_service_with_a_migration_block_switches_from_its_own_selection() {
+        let root = std::env::temp_dir().join(format!("gary-generic-migration-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let mut defs = manifest.services;
+        let foundation = defs.iter_mut().find(|service| service.id == "foundation").unwrap();
+        foundation.migration = Some(MigrationDef { data_dir: "foundation".into() });
+        let info = |manager: &ServiceManager, id: &str| {
+            manager.get_service_info().into_iter().find(|service| service.id == id).unwrap()
+        };
+
+        let untouched = ServiceManager::new(defs.clone(), root.clone());
+        assert!(!untouched.is_native("foundation") && !info(&untouched, "foundation").migration_complete);
+
+        let selection = crate::migration::Selection {
+            schema_version: 1, encoding: "anything".into(), verified_release: "v0.1.0".into(),
+            backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
+        };
+        let def = MigrationDef { data_dir: "foundation".into() };
+        crate::migration::save(&root, &def, &selection, |_| Ok(())).unwrap();
+        let switched = ServiceManager::new(defs.clone(), root.clone());
+        assert!(switched.is_native("foundation"));
+        assert_eq!(switched.selection("foundation").unwrap().verified_release, "v0.1.0");
+        assert!(info(&switched, "foundation").migration_complete);
+        assert!(!switched.is_native("sa3"), "SA3 has its own selection, and none exists");
+
+        std::fs::write(crate::migration::selection_path(&root, &def), "{}").unwrap();
+        let unreadable = ServiceManager::new(defs, root.clone());
+        assert!(unreadable.is_native("foundation"), "an unreadable selection still means it moved");
+        assert!(info(&unreadable, "foundation").start_blocker.unwrap().contains("native selection"));
+        assert!(!info(&unreadable, "sa3").start_blocker.is_some_and(|blocker| blocker.contains("native selection")));
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
     }
 
@@ -1545,7 +1611,7 @@ mod tests {
         manager.begin_native_workload("sa3", "trainer", "SA3 training").unwrap();
         assert!(manager.select_sa3_native_model("F16").unwrap_err().contains("SA3 training"));
         assert_eq!(std::fs::read(crate::sa3_runtime::selection_path(&root)).unwrap(), before);
-        assert!(manager.get_service_info().iter().find(|service| service.id == "sa3").unwrap().sa3_migration_complete);
+        assert!(manager.get_service_info().iter().find(|service| service.id == "sa3").unwrap().migration_complete);
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
     }
 
@@ -1574,8 +1640,8 @@ mod tests {
         assert!(selection.cleanup_complete && selection.cleanup_errors.is_empty());
         assert_eq!(selection.activated_at, 123);
         let restarted = ServiceManager::new(defs, root.clone());
-        assert_eq!(restarted.sa3_selection.as_ref().unwrap().encoding, "F16");
-        assert!(restarted.get_service_info().iter().find(|service| service.id == "sa3").unwrap().sa3_migration_complete);
+        assert_eq!(restarted.selection("sa3").unwrap().encoding, "F16");
+        assert!(restarted.get_service_info().iter().find(|service| service.id == "sa3").unwrap().migration_complete);
         assert!(crate::sa3_runtime::missing_models(&root, "F16").is_none());
         assert!(manager.select_sa3_native_model("Q8_0").is_err());
         assert_eq!(crate::sa3_runtime::read(&root).unwrap().unwrap().encoding, "F16");
@@ -1603,7 +1669,7 @@ mod tests {
         let mut manager = ServiceManager::new(defs.clone(), root.clone());
         assert!(!manager.is_native("sa3"));
         manager
-            .activate_native_sa3(crate::sa3_runtime::Selection {
+            .activate_native("sa3", crate::sa3_runtime::Selection {
                 schema_version: 1,
                 encoding: "Q4_K_M".into(),
                 verified_release: "0.1.2".into(),

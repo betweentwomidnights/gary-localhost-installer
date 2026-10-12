@@ -939,7 +939,7 @@ mod tests {
                 .iter()
                 .find(|s| s.id == "sa3")
                 .unwrap()
-                .sa3_migration_complete
+                .migration_complete
         );
     }
 

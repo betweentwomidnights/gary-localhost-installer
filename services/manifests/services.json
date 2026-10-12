@@ -134,6 +134,9 @@
     },
     {
       "id": "sa3",
+      "migration": {
+        "dataDir": "sa3"
+      },
       "native": {
         "bundle": "sa3",
         "executable": "sa3-server.exe",

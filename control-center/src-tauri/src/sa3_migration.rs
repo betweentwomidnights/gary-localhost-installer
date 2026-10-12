@@ -1376,7 +1376,7 @@ mod tests {
         );
         let mut manager = crate::service_manager::ServiceManager::new(defs.clone(), root.clone());
         assert!(!manager.is_native("sa3"));
-        manager.activate_native_sa3(selection).unwrap();
+        manager.activate_native("sa3", selection).unwrap();
         assert!(manager.is_native("sa3"));
         assert!(crate::service_manager::ServiceManager::new(defs, root.clone()).is_native("sa3"));
         assert_eq!(
@@ -1421,7 +1421,7 @@ mod tests {
             if decoder_enabled {
                 crate::sa3_decoder::verified_path(&root).await.unwrap();
             }
-            manager.refresh_sa3_native_selection().unwrap();
+            manager.refresh_migration("sa3").unwrap();
             assert!(manager.is_native("sa3"));
             println!("PASS reviewed fixture cleanup after real native verification; models, decoder and native selection preserved");
             println!("PASS {} checksummed installed Python source files retired; original repository sources retained", copied_code.len());

@@ -33,9 +33,21 @@ pub struct ServiceDef {
     pub build_steps: Vec<String>,
     #[serde(default)]
     pub native: Option<NativeDef>,
+    /// Present on a Python service that can move to its `native` runtime.
+    #[serde(default)]
+    pub migration: Option<MigrationDef>,
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
     pub health_check: Option<HealthCheck>,
+}
+
+/// How a service moves from its Python environment to a native runtime.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationDef {
+    /// The service's user-data folder in the runtime root. Its native
+    /// selection, the profile's record of the switch, lives here.
+    pub data_dir: String,
 }
 
 /// How a service runs: a Python entry point inside a uv venv, or a prebuilt

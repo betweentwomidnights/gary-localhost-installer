@@ -1,4 +1,5 @@
 mod manifest;
+mod migration;
 mod model_manager;
 mod native_models;
 mod native_runtime;
@@ -1477,9 +1478,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
 /// report the problem itself (ServiceManager keeps it as a start blocker).
 fn sa3_retired_for_sync(runtime_root: &Path) -> bool {
     match sa3_runtime::read(runtime_root) {
-        Ok(selection) => selection.is_some_and(|selection| {
-            selection.cleanup_complete || !selection.cleanup_errors.is_empty()
-        }),
+        Ok(selection) => selection.is_some_and(|selection| selection.cleanup_started()),
         Err(error) => {
             let message = format!(
                 "Preserving the SA3 service folder: cannot read its native selection: {error}"
@@ -10114,7 +10113,7 @@ async fn cleanup_sa3_legacy_installation(
     };
     {
         let mut services = manager.lock().await;
-        let _ = services.refresh_sa3_native_selection();
+        let _ = services.refresh_migration("sa3");
         services.end_native_workload("sa3", "legacy-cleanup");
         services.set_build_done("sa3", result.as_ref().err().cloned());
     }
@@ -10184,7 +10183,7 @@ async fn activate_sa3_native_runtime(
             if decoder_enabled != sa3_use_decoder_lora_enabled() {
                 return Err("Decoder correction changed during migration validation; retry with the current setting.".into());
             }
-            services.activate_native_sa3(selection)
+            services.activate_native("sa3", selection)
         });
         services.end_native_workload("sa3", "native-migration");
         services.set_build_done("sa3", result.as_ref().err().cloned());

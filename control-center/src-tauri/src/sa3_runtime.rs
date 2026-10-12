@@ -1,25 +1,20 @@
 //! The selected SA3 runtime belongs to the active storage profile.
 //! Once selected, interrupted cleanup must never silently restore Python.
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+//! The selection itself is the shared `migration` record; this module keeps
+//! SA3's own checks and the paths its callers already use.
+use crate::manifest::MigrationDef;
+use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Selection {
-    pub schema_version: u32,
-    pub encoding: String,
-    pub verified_release: String,
-    pub backend: String,
-    pub activated_at: u64,
-    #[serde(default)]
-    pub cleanup_complete: bool,
-    #[serde(default)]
-    pub cleanup_errors: Vec<String>,
-    /// What migration verification proved the runtime against; see
-    /// `sa3_migration::runtime_fingerprint`. Absent on older selections, which
-    /// only means the next cleanup verifies the runtime in full again.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_fingerprint: Option<String>,
+pub use crate::migration::Selection;
+
+/// SA3's entry in the manifest names the same folder. SA3-specific callers
+/// that have no manifest at hand use this until they take it from there.
+fn migration_def() -> MigrationDef {
+    MigrationDef { data_dir: "sa3".into() }
+}
+
+fn check(selection: &Selection) -> Result<(), String> {
+    crate::sa3_models::preparation_ids(&selection.encoding, None).map(|_| ())
 }
 
 /// What the client adapter and migration rely on. The offline probe and the
@@ -88,65 +83,17 @@ pub async fn probe_server(
     check_server_info(&info)
 }
 
-pub fn selection_path(root: &Path) -> PathBuf {
-    root.join("sa3/native-runtime.json")
-}
-
-impl Selection {
-    fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1
-            || self.verified_release.is_empty()
-            || !["cuda", "vulkan", "metal", "cpu", "auto"].contains(&self.backend.as_str())
-        {
-            return Err("Invalid or unsupported native SA3 runtime selection".into());
-        }
-        crate::sa3_models::preparation_ids(&self.encoding, None)?;
-        Ok(())
-    }
+#[cfg(test)]
+pub fn selection_path(root: &Path) -> std::path::PathBuf {
+    crate::migration::selection_path(root, &migration_def())
 }
 
 pub fn read(root: &Path) -> Result<Option<Selection>, String> {
-    let path = selection_path(root);
-    match std::fs::symlink_metadata(&path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Cannot inspect native SA3 selection: {error}")),
-    }
-    let boundary = root.canonicalize().map_err(|error| error.to_string())?;
-    let dir = root
-        .join("sa3")
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    if !dir.starts_with(&boundary)
-        || path
-            .canonicalize()
-            .map_err(|error| error.to_string())?
-            .parent()
-            != Some(dir.as_path())
-    {
-        return Err("Native SA3 selection points outside the active storage profile".into());
-    }
-    let selection: Selection =
-        serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
-            .map_err(|error| format!("Cannot read native SA3 selection: {error}"))?;
-    selection.validate()?;
-    Ok(Some(selection))
+    crate::migration::read(root, &migration_def(), check)
 }
 
 pub fn save(root: &Path, selection: &Selection) -> Result<(), String> {
-    selection.validate()?;
-    let dir = crate::sa3_training::checked_folder(root, &["sa3"])?;
-    let path = dir.join("native-runtime.json");
-    if std::fs::symlink_metadata(&path).is_ok()
-        && path
-            .canonicalize()
-            .map_err(|error| error.to_string())?
-            .parent()
-            != Some(dir.as_path())
-    {
-        return Err("Native SA3 selection points outside the active storage profile".into());
-    }
-    crate::sa3_training::save(&path, selection)
+    crate::migration::save(root, &migration_def(), selection, check)
 }
 
 pub fn launch_args(args: &[String], encoding: &str) -> Result<Vec<String>, String> {
@@ -189,6 +136,7 @@ pub fn missing_models(root: &Path, encoding: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     fn selection() -> Selection {
         Selection {
             schema_version: 1,
