@@ -14,7 +14,12 @@ pub struct ResultInfo {
     pub selection: crate::sa3_runtime::Selection,
 }
 
-pub fn validate_review(root: &Path, hub: &Path, token: &str) -> Result<(), String> {
+/// Returns the inventory it checked, so the caller can act on that same plan.
+pub fn validate_review(
+    root: &Path,
+    hub: &Path,
+    token: &str,
+) -> Result<crate::sa3_migration::Sa3MigrationPreview, String> {
     let current = crate::sa3_migration::preview(root, hub);
     if current.cleanup_token != token {
         return Err("SA3 storage changed since review. Rescan and review cleanup again.".into());
@@ -32,7 +37,7 @@ pub fn validate_review(root: &Path, hub: &Path, token: &str) -> Result<(), Strin
     {
         return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
     }
-    Ok(())
+    Ok(current)
 }
 
 pub(crate) fn run(
@@ -62,8 +67,7 @@ fn run_with_progress(
     progress: impl Fn(&str),
 ) -> Result<ResultInfo, String> {
     progress("Checking the reviewed Python files before cleanup...");
-    validate_review(root, hub, token)?;
-    let plan = crate::sa3_migration::preview(root, hub);
+    let plan = validate_review(root, hub, token)?;
     let mut selection = crate::sa3_runtime::read(root)?.ok_or("Native SA3 selection is missing")?;
     // Publish the incomplete state before the first deletion. Following a crash,
     // rescanning discovers remaining paths and retry never changes runtime.
@@ -95,7 +99,7 @@ fn run_with_progress(
     for (entry, (identity, staged_identity)) in plan.cleanup_candidates.iter().zip(identities) {
         progress(&format!("Removing {}...", entry.label));
         let path = Path::new(&entry.path);
-        let current = crate::sa3_migration::preview(root, hub);
+        let current = crate::sa3_migration::recheck(root, hub, path);
         if !current.warnings.is_empty()
             || !current
                 .cleanup_candidates
@@ -387,6 +391,40 @@ mod tests {
             assert!(path.is_file());
         }
         assert_eq!(std::fs::read(&code[0]).unwrap(), b"edited user code");
+    }
+
+    #[test]
+    fn code_edited_during_cleanup_is_still_caught_by_the_per_item_recheck() {
+        let fixture = Fixture::new();
+        let env = fixture.write("services/sa3/env/python.exe");
+        let code = fixture.code();
+        fixture.select();
+        let edited = code[2].clone();
+        let result = run_with(&fixture.0, &fixture.hub(), &fixture.token(), |path, owner| {
+            // The environment goes first; edit a later file after review.
+            if path == env.parent().unwrap() {
+                std::fs::write(&edited, b"edited mid-cleanup").unwrap();
+            }
+            crate::remove_managed_path(path, owner)
+        })
+        .unwrap();
+        assert!(!env.exists() && !code[0].exists() && !code[1].exists());
+        assert_eq!(std::fs::read(&edited).unwrap(), b"edited mid-cleanup");
+        assert!(!result.selection.cleanup_complete);
+        assert!(result.errors.iter().any(|error| error.contains("Preserved")));
+    }
+
+    #[test]
+    fn recheck_classifies_only_the_path_it_was_asked_about() {
+        let fixture = Fixture::new();
+        fixture.write("services/sa3/env/python.exe");
+        let code = fixture.code();
+        let focused = crate::sa3_migration::recheck(&fixture.0, &fixture.hub(), &code[1]);
+        assert_eq!(focused.cleanup_candidates.len(), 1);
+        assert_eq!(Path::new(&focused.cleanup_candidates[0].path), code[1]);
+        assert_eq!(focused.cleanup_candidates[0].bytes, 0);
+        let full = crate::sa3_migration::preview(&fixture.0, &fixture.hub());
+        assert_eq!(full.cleanup_candidates.len(), 4);
     }
 
     #[test]

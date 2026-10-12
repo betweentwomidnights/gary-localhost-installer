@@ -29,11 +29,11 @@ pub struct Sa3MigrationPreview {
     pub cleanup_token: String,
 }
 
-fn item(label: &str, path: &Path, kind: &'static str) -> MigrationItem {
+fn item(label: &str, path: &Path, kind: &'static str, sized: bool) -> MigrationItem {
     MigrationItem {
         label: label.to_string(),
         path: path.to_string_lossy().to_string(),
-        bytes: crate::path_size(path),
+        bytes: if sized { crate::path_size(path) } else { 0 },
         kind: Some(kind),
     }
 }
@@ -110,6 +110,18 @@ pub fn legacy_runtime_present(active_root: &Path, hf_hub: &Path) -> bool {
 }
 
 pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
+    inventory(active_root, hf_hub, None)
+}
+
+/// The same ownership and protection decision as `preview`, for one path.
+/// Cleanup calls this right before each removal, so it skips sizing (a walk of
+/// the whole Python environment) and hashes only that path if it is code.
+/// The full preview still runs before and after the cleanup transaction.
+pub(crate) fn recheck(active_root: &Path, hf_hub: &Path, path: &Path) -> Sa3MigrationPreview {
+    inventory(active_root, hf_hub, Some(path))
+}
+
+fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3MigrationPreview {
     let mut result = Sa3MigrationPreview {
         active_root: active_root.to_string_lossy().to_string(),
         hf_hub_cache: hf_hub.to_string_lossy().to_string(),
@@ -129,11 +141,14 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     }
     let service = active_root.join("services").join("sa3");
     let mut candidates = legacy_runtime_candidates(active_root, hf_hub);
+    if let Some(focus) = focus {
+        candidates.retain(|(_, path, _)| path == focus);
+    }
     // Bundled source alone does not mean a user installed the Python service.
     // Keep unknown/inaccessible paths conservative; cleanup safety is still
     // decided independently below by canonical ownership and protection checks.
     result.legacy_runtime_present = legacy_runtime_present(active_root, hf_hub);
-    let code = crate::sa3_code::status(active_root);
+    let code = crate::sa3_code::status_of(active_root, focus);
     result.warnings.extend(code.warnings);
     for path in &code.candidates {
         candidates.push(("SA3 bundled Python source", path.clone(), service.clone()));
@@ -310,7 +325,7 @@ pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
                     ));
                 } else if !seen.contains(&canonical) {
                     let kind = if code.candidates.contains(&path) { "code" } else if owner == service { "environment" } else { "weights" };
-                    result.cleanup_candidates.push(item(label, &path, kind));
+                    result.cleanup_candidates.push(item(label, &path, kind, focus.is_none()));
                     seen.push(canonical);
                 }
             }

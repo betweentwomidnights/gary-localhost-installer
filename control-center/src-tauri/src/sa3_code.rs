@@ -212,6 +212,13 @@ pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> 
 }
 
 pub fn status(root: &Path) -> Status {
+    status_of(root, None)
+}
+
+/// With `only`, classify just that installed path and skip hashing the rest.
+/// Cleanup re-checks each file right before removing it; hashing every recorded
+/// file for each of them made cleanup quadratic in the size of the bundle.
+pub(crate) fn status_of(root: &Path, only: Option<&Path>) -> Status {
     let mut status = Status::default();
     let inventory = match read(root) {
         Ok(Some(inventory)) => inventory,
@@ -231,6 +238,9 @@ pub fn status(root: &Path) -> Status {
     let owner = service.canonicalize().ok();
     for file in inventory.files {
         let path = service.join(&file.path);
+        if only.is_some_and(|only| only != path) {
+            continue;
+        }
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
