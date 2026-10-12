@@ -10025,7 +10025,7 @@ async fn cleanup_sa3_legacy_installation(
     let selection =
         sa3_runtime::read(repo_root.inner())?.ok_or("Verify and select C++ before cleanup")?;
     let decoder_enabled = sa3_use_decoder_lora_enabled();
-    let (native, installed, env, hub) = {
+    let (native, installed, launch, hub) = {
         let mut services = manager.lock().await;
         if !services.is_native("sa3") || services.is_running("sa3") {
             return Err("Select C++ and stop SA3 before cleanup.".into());
@@ -10051,10 +10051,10 @@ async fn cleanup_sa3_legacy_installation(
         }
         let hub = models.hf_hub_cache_dir();
         sa3_cleanup::validate_review(repo_root.inner(), &hub, &review_token)?;
-        let (native, installed, env) = services.sa3_migration_launch()?;
+        let (native, installed, launch) = services.sa3_migration_launch(&selection.encoding)?;
         services.begin_native_workload("sa3", "legacy-cleanup", "SA3 legacy cleanup")?;
         services.set_build_started("sa3", 1);
-        (native, installed, env, hub)
+        (native, installed, launch, hub)
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     let progress = |message: &str| {
@@ -10080,7 +10080,7 @@ async fn cleanup_sa3_legacy_installation(
             repo_root.inner(),
             &native,
             &installed,
-            &env,
+            &launch,
             &selection.encoding,
             decoder_enabled,
             &progress,
@@ -10152,7 +10152,7 @@ async fn activate_sa3_native_runtime(
         return Err("Wait for SA3 training to finish before switching its runtime".into());
     }
     let _mutation = native_runtime::mutation_guard().await;
-    let (native, installed, env) = {
+    let (native, installed, launch) = {
         let mut services = manager.lock().await;
         if services.is_running("sa3") {
             return Err("Stop SA3 before switching to C++".into());
@@ -10160,7 +10160,7 @@ async fn activate_sa3_native_runtime(
         if let Some(blocker) = services.native_mutation_blocker("sa3") {
             return Err(format!("Cannot switch SA3: {blocker}"));
         }
-        let plan = services.sa3_migration_launch()?;
+        let plan = services.sa3_migration_launch(&encoding)?;
         services.begin_native_workload("sa3", "native-migration", "SA3 migration validation")?;
         services.set_build_started("sa3", 1);
         plan
@@ -10170,7 +10170,7 @@ async fn activate_sa3_native_runtime(
         repo_root.inner(),
         &native,
         &installed,
-        &env,
+        &launch,
         &encoding,
         decoder_enabled,
         |message| {

@@ -411,7 +411,7 @@ pub async fn verify_native(
     root: &Path,
     native: &crate::manifest::NativeDef,
     installed: &crate::native_runtime::NativeInstall,
-    template: &[(String, String)],
+    launch: &crate::native_runtime::NativeLaunch,
     encoding: &str,
     decoder_enabled: bool,
     progress: impl Fn(&str),
@@ -473,23 +473,15 @@ pub async fn verify_native(
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
-    let mut command = tokio::process::Command::new(installed.dir.join(&native.executable));
+    // The service's own launch, with --port overriding the SA3_PORT it sets.
+    let mut command = launch.tokio_command();
     crate::hide_console_window(&mut command);
     command
-        .args(crate::sa3_runtime::launch_args(&native.args, encoding)?)
         .arg("--port")
         .arg(port.to_string())
-        .current_dir(&installed.dir)
-        .envs(crate::native_runtime::launch_env(
-            template,
-            &installed.backend,
-        ))
         .stdout(log.try_clone().map_err(|error| error.to_string())?)
         .stderr(log)
         .kill_on_drop(true);
-    if let Some(path) = &runtime_path {
-        command.env("PATH", path);
-    }
     crate::workload_job::configure_tokio_command(&mut command);
     drop(reservation);
     let mut child = command.spawn().map_err(|error| error.to_string())?;
@@ -1354,17 +1346,24 @@ mod tests {
                 .prepared
             );
         }
-        let env = if packaged {
+        let launch = if packaged {
             let manager = crate::service_manager::ServiceManager::new(defs.clone(), root.clone());
-            manager.sa3_migration_launch().unwrap().2
+            manager.sa3_migration_launch("F16").unwrap().2
         } else {
-            vec![("SA3_MODELS_DIR".into(), target.to_string_lossy().into())]
+            crate::native_runtime::NativeLaunch::new(
+                &root,
+                &native.executable,
+                &installed,
+                crate::sa3_runtime::launch_args(&native.args, "F16").unwrap(),
+                Vec::new(),
+                &[("SA3_MODELS_DIR".into(), target.to_string_lossy().into())],
+            )
         };
         let selection = super::verify_native(
             &root,
             &native,
             &installed,
-            &env,
+            &launch,
             "F16",
             decoder_enabled,
             |message| println!("{message}"),

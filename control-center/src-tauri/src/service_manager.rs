@@ -1,5 +1,5 @@
 use crate::manifest::{HealthCheck, NativeDef, NativePackage, ServiceDef, ServiceRuntime};
-use crate::native_runtime::{self, NativeInstall};
+use crate::native_runtime::{self, NativeInstall, NativeLaunch};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
@@ -396,9 +396,12 @@ impl ServiceManager {
         Some((svc.native.clone()?, self.native_dir(svc)))
     }
 
+    /// What migration verifies: the installed runtime, launched exactly as the
+    /// service would be, but with the generation tier being verified.
     pub fn sa3_migration_launch(
         &self,
-    ) -> Result<(NativeDef, NativeInstall, Vec<(String, String)>), String> {
+        encoding: &str,
+    ) -> Result<(NativeDef, NativeInstall, NativeLaunch), String> {
         let service = self.find_service("sa3").ok_or("Unknown SA3 service")?;
         let native = service
             .native
@@ -407,7 +410,45 @@ impl ServiceManager {
         let installed = self
             .native_install(service)
             .ok_or("Prepare the SA3 C++ runtime first")?;
-        Ok((native, installed, self.native_env_template(service)))
+        let launch = self.native_launch(service, &installed, Some(encoding))?;
+        Ok((native, installed, launch))
+    }
+
+    /// The one place a native service's process is described. `encoding`
+    /// overrides SA3's selected tier, for verifying a tier before selecting it.
+    fn native_launch(
+        &self,
+        svc: &ServiceDef,
+        install: &NativeInstall,
+        encoding: Option<&str>,
+    ) -> Result<NativeLaunch, String> {
+        let native = svc
+            .native
+            .as_ref()
+            .ok_or_else(|| format!("{} has no native definition", svc.id))?;
+        let args = if svc.id == "sa3" {
+            let selected = self.sa3_selection.as_ref().map(|selection| selection.encoding.as_str());
+            crate::sa3_runtime::launch_args(&native.args, encoding.or(selected).unwrap_or("F16"))?
+        } else {
+            native.args.clone()
+        };
+        let mut launch = NativeLaunch::new(
+            &self.repo_root,
+            &native.executable,
+            install,
+            args,
+            crate::storage::runtime_env_vars(&self.repo_root),
+            &self.native_env_template(svc),
+        );
+        if svc.id == "yuey" {
+            if let Some(encoding) = crate::yuey_launch_encoding(&self.models_dir(), &install.dir) {
+                launch.env.push(("YUE2_ENCODING".into(), encoding.into()));
+            }
+            for (key, value) in crate::yuey_generation_env() {
+                launch.env.push((key.into(), value.into()));
+            }
+        }
+        Ok(launch)
     }
 
     /// The service's env with every template resolved except
@@ -965,17 +1006,12 @@ impl ServiceManager {
     /// the backend it was installed for and any shared runtime on PATH.
     /// Only `start` calls this, after `start_blocker` has passed.
     fn start_native(&mut self, svc: &ServiceDef) -> Result<(), String> {
-        let native = svc
-            .native
-            .as_ref()
-            .ok_or_else(|| format!("{} has no native definition", svc.id))?;
         let install = self.native_install(svc).ok_or_else(|| {
             format!(
                 "{}'s runtime is not installed. Install it first.",
                 svc.display_name
             )
         })?;
-        let exe = install.dir.join(&native.executable);
         // The manifest keeps SA3 on Python until migration is validated. When
         // native is selected, preserve the public client port while the C++
         // server serves its unified API on the private native port.
@@ -1013,33 +1049,9 @@ impl ServiceManager {
             .try_clone()
             .map_err(|e| format!("Cannot clone log handle: {}", e))?;
 
-        let mut cmd = Command::new(&exe);
-        let args = if svc.id == "sa3" {
-            crate::sa3_runtime::launch_args(&native.args, self.sa3_selection.as_ref().map_or("F16", |selection| selection.encoding.as_str()))?
-        } else { native.args.clone() };
-        cmd.args(&args)
-            .current_dir(&install.dir)
-            .stdout(Stdio::from(log_file))
+        let mut cmd = self.native_launch(svc, &install, None)?.std_command();
+        cmd.stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_file_err));
-        self.apply_runtime_env(&mut cmd);
-        for (key, value) in
-            native_runtime::launch_env(&self.native_env_template(svc), &install.backend)
-        {
-            cmd.env(key, value);
-        }
-        if let Some(path) = native_runtime::path_with_runtimes(&self.repo_root, &install.runtimes) {
-            cmd.env("PATH", path);
-        }
-
-        if svc.id == "yuey" {
-            if let Some(encoding) = crate::yuey_launch_encoding(&self.models_dir(), &install.dir) {
-                cmd.env("YUE2_ENCODING", encoding);
-            }
-            for (key, value) in crate::yuey_generation_env() {
-                cmd.env(key, value);
-            }
-        }
-
         crate::workload_job::configure_std_command(&mut cmd);
 
         let mut child = cmd

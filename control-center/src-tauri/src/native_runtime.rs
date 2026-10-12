@@ -73,6 +73,63 @@ fn read_stamp(native_dir: &Path) -> Option<NativeStamp> {
     serde_json::from_str(&raw).ok()
 }
 
+/// How a native server process starts: program, arguments, folder and every
+/// environment variable it gets. The service and any private copy started to
+/// verify it are built from the same value, so what a migration proves is what
+/// the service then runs. Callers add only their own output handling, process
+/// group and, for a private copy, its port.
+#[derive(Debug, Clone)]
+pub struct NativeLaunch {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub dir: PathBuf,
+    /// Applied in order, later entries winning.
+    pub env: Vec<(OsString, OsString)>,
+}
+
+impl NativeLaunch {
+    /// `storage_env` is the profile's runtime variables, then the service's
+    /// resolved template with `${NATIVE_BACKEND}` filled in, then PATH with
+    /// the install's shared runtimes ahead of the system's.
+    pub fn new(
+        runtime_root: &Path,
+        executable: &str,
+        install: &NativeInstall,
+        args: Vec<String>,
+        storage_env: Vec<(String, String)>,
+        template: &[(String, String)],
+    ) -> Self {
+        let mut env: Vec<(OsString, OsString)> = storage_env
+            .into_iter()
+            .chain(launch_env(template, &install.backend))
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
+        if let Some(path) = path_with_runtimes(runtime_root, &install.runtimes) {
+            env.push(("PATH".into(), path));
+        }
+        Self {
+            program: install.dir.join(executable),
+            args,
+            dir: install.dir.clone(),
+            env,
+        }
+    }
+
+    pub fn std_command(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(&self.program);
+        command.args(&self.args).current_dir(&self.dir);
+        command.envs(self.env.iter().map(|(key, value)| (key, value)));
+        command
+    }
+
+    pub fn tokio_command(&self) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(&self.program);
+        command.args(&self.args).current_dir(&self.dir);
+        command.envs(self.env.iter().map(|(key, value)| (key, value)));
+        command
+    }
+}
+
 /// A runnable native service: where it is and how to launch it.
 #[derive(Debug, Clone)]
 pub struct NativeInstall {
@@ -1327,6 +1384,45 @@ async fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_native_launch_layers_storage_then_template_then_shared_runtimes() {
+        let root = Path::new(r"C:\profile");
+        let install = NativeInstall {
+            dir: PathBuf::from(r"C:\profile\services\sa3\native"),
+            backend: "vulkan".into(),
+            runtimes: vec!["cudart-12.8".into()],
+            version: Some("v0.1.3".into()),
+            fallback_reason: None,
+        };
+        let launch = NativeLaunch::new(
+            root,
+            "sa3-server.exe",
+            &install,
+            vec!["--encoding".into(), "f16".into()],
+            vec![("HF_HOME".into(), "storage".into()), ("SA3_DEVICE".into(), "storage".into())],
+            &[("SA3_DEVICE".into(), "${NATIVE_BACKEND}".into())],
+        );
+        assert_eq!(launch.program, install.dir.join("sa3-server.exe"));
+        assert_eq!(launch.dir, install.dir);
+        let command = launch.std_command();
+        let env: HashMap<_, _> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(|value| value.to_os_string())))
+            .collect();
+        assert_eq!(env[OsString::from("HF_HOME").as_os_str()], Some("storage".into()));
+        // The service's template overrides the profile's variables...
+        assert_eq!(env[OsString::from("SA3_DEVICE").as_os_str()], Some("vulkan".into()));
+        // ...and PATH, applied last, puts the shared runtimes first.
+        let path = env[OsString::from("PATH").as_os_str()].clone().unwrap();
+        assert!(path.to_string_lossy().starts_with(
+            &runtimes_root(root).join("cudart-12.8").to_string_lossy().to_string()
+        ));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["--encoding", "f16"]
+        );
+    }
 
     fn gpu(name: &str, vendor: GpuVendor) -> GpuAdapter {
         GpuAdapter {
