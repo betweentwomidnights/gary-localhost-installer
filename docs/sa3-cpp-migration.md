@@ -1286,3 +1286,48 @@ base, even when the HF cache is absent. Already migrated profiles rediscover
 remaining staged cache files and offer cleanup again; empty folders alone do not
 reopen migration. Both default and custom storage use the active profile paths
 and its effective HF cache.
+
+## Changing storage after native migration
+
+Choosing a folder or returning to default storage now transfers the native
+installation before committing the startup setting. The transfer covers all
+installed files under `models/sa3` and `models/yuey`, shared `native-runtimes`,
+downloaded `services/*/native` bundles, SA3 adapters/prompts/datasets/history,
+settings and the HF token. Referenced managed sources/datasets elsewhere within
+the old root are included; external paths remain external. Python environments
+are not portable and continue to follow the existing rebuild workflow.
+
+The transfer rewrites managed paths in catalogs and job metadata, preserves
+imported adapter configuration contents/hashes, and copies the native runtime
+selection last. A persistent native profile identity supports moves between
+custom folders and return to default storage. Matching immutable files are
+verified and reused; unrelated profile state or conflicting files fail without
+overwriting user data. Source files remain available for recovery. Storage's
+generic legacy cleanup no longer offers the entire old models directory when
+native SA3/Yuey model folders are present.
+
+Before copying, the host reserves storage mutations, checks active training,
+dataset jobs, installs and downloads, and stops services. The worker runs off the
+UI thread and owns its transfer/model guards through completion even if its
+caller is dropped. Models and tools cannot mutate/start while copying, and
+services remain blocked until restart after the startup root changes.
+
+Canonical checks reject nested/parent destinations and redirected source or
+destination entries, including junctions within the same root. Destination free
+space is checked on Windows. Copying uses temporary files, streaming SHA-256 and
+destination verification; source/destination file identities and the final
+source inventory are rechecked before committing. A destination journal records
+an interrupted large-file partial so retries remove only that owned partial and
+reuse verified completed files. Failure keeps the prior startup setting.
+
+The storage UI shows the current copy/verification phase and an accent-colored
+4 px progress track, and enables restart only after success. Regression tests
+cover native/training/shared-model preservation, native-only adapters and paired
+checkpoints, managed/external datasets, sidecar hashes, repeat/return transfers,
+conflicts, source changes, destination corruption/races, locks, interruption and
+junctions. `tests/storage-transfer.fixture.html` exercises the real storage
+component with simulated progress, success and failure; it never invokes a real
+storage transfer. The ignored real-profile test stages a hard-link snapshot,
+copies/verifies its actual files, validates all native adapter source/config
+hashes and legacy history, and probes the copied native server offline. It never
+changes the original production profile or its storage setting.

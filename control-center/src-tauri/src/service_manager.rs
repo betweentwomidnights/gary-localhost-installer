@@ -76,6 +76,7 @@ pub struct ServiceManager {
     shared_runtime_mutations: HashMap<String, Weak<String>>,
     sa3_selection: Option<crate::sa3_runtime::Selection>,
     sa3_selection_error: Option<String>,
+    storage_change_pending: bool,
 }
 
 fn health_check_interval(
@@ -158,6 +159,7 @@ impl ServiceManager {
             shared_runtime_mutations: HashMap::new(),
             sa3_selection,
             sa3_selection_error,
+            storage_change_pending: false,
         }
     }
 
@@ -282,6 +284,7 @@ impl ServiceManager {
 
     /// Called under the manager lock before reserving an install/removal.
     pub fn native_mutation_blocker(&self, service_id: &str) -> Option<String> {
+        if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
         let svc = self.find_service(service_id)?;
         if let Some(blocker) = self.shared_runtime_blocker(svc) {
             return Some(blocker);
@@ -320,6 +323,7 @@ impl ServiceManager {
         job: &str,
         label: &str,
     ) -> Result<(), String> {
+        if let Some(reason) = self.storage_change_blocker() { return Err(reason); }
         let svc = self
             .find_service(service_id)
             .ok_or_else(|| format!("Unknown service: {service_id}"))?;
@@ -896,6 +900,7 @@ impl ServiceManager {
     }
 
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
+        if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
         if svc.id == "sa3" {
             if let Some(jobs) = self
                 .native_workloads
@@ -1138,6 +1143,22 @@ impl ServiceManager {
         self.build_statuses.values().any(|status| status.building)
     }
 
+    fn storage_change_blocker(&self) -> Option<String> {
+        if crate::storage_transfer::in_progress() { Some("wait for the storage transfer to finish".into()) }
+        else if self.storage_change_pending { Some("restart to use the selected storage".into()) }
+        else { None }
+    }
+
+    pub fn set_storage_change_pending(&mut self, pending: bool) { self.storage_change_pending = pending; }
+
+    pub fn storage_transfer_blocker(&self) -> Option<String> {
+        if self.any_building() { return Some("Wait for runtime installs to finish before changing storage.".into()); }
+        if !self.native_workloads.is_empty() || !self.native_model_mutations.is_empty() || self.shared_runtime_mutations.values().any(|lease| lease.upgrade().is_some()) {
+            return Some("Wait for training, native tools and model preparation to finish before changing storage.".into());
+        }
+        None
+    }
+
     pub fn stop_all(&mut self) {
         let ids: Vec<String> = self.running.keys().cloned().collect();
         for id in ids {
@@ -1155,6 +1176,7 @@ impl ServiceManager {
 
     /// Get build info needed to launch an async build
     pub fn get_build_info(&self, service_id: &str) -> Result<BuildInfo, String> {
+        if let Some(reason) = self.storage_change_blocker() { return Err(reason); }
         let svc = self
             .find_service(service_id)
             .ok_or_else(|| format!("Unknown service: {}", service_id))?;

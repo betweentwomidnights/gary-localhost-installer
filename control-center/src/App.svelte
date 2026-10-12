@@ -220,6 +220,7 @@
   let sa3MigrationOpen = $state(false);
   let storageInfo: RuntimeStorageInfo | null = $state(null);
   let storageBusy = $state(false);
+  let storageTransferProgress = $state<{ message: string; completedBytes: number; totalBytes: number } | null>(null);
   let storageError: string | null = $state(null);
   let storageMaintenanceInfo: LegacyStorageMaintenanceInfo | null = $state(null);
   let storageMaintenanceBusy = $state(false);
@@ -619,29 +620,30 @@
   }
 
   async function saveRuntimeStorageRoot(path: string) {
+    await changeRuntimeStorage("save_runtime_storage_root", { path });
+  }
+
+  async function changeRuntimeStorage(command: string, args?: { path: string }) {
     storageBusy = true;
     storageError = null;
+    storageTransferProgress = { message: "Checking storage…", completedBytes: 0, totalBytes: 0 };
+    let unlisten: (() => void) | undefined;
     try {
-      storageInfo = await invoke<RuntimeStorageInfo>("save_runtime_storage_root", { path });
+      unlisten = await listen<{ message: string; completedBytes: number; totalBytes: number }>("runtime-storage-transfer-progress", (event) => {
+        storageTransferProgress = event.payload;
+      });
+      storageInfo = await invoke<RuntimeStorageInfo>(command, args);
       await loadStorageMaintenanceInfo();
     } catch (e) {
       storageError = formatError(e);
     } finally {
+      unlisten?.();
       storageBusy = false;
     }
   }
 
   async function resetRuntimeStorageRoot() {
-    storageBusy = true;
-    storageError = null;
-    try {
-      storageInfo = await invoke<RuntimeStorageInfo>("reset_runtime_storage_root");
-      await loadStorageMaintenanceInfo();
-    } catch (e) {
-      storageError = formatError(e);
-    } finally {
-      storageBusy = false;
-    }
+    await changeRuntimeStorage("reset_runtime_storage_root");
   }
 
   async function refreshStorageMaintenance() {
@@ -1023,6 +1025,7 @@
     open={storageModalOpen}
     info={storageInfo}
     busy={storageBusy}
+    transferProgress={storageTransferProgress}
     error={storageError}
     maintenanceInfo={storageMaintenanceInfo}
     maintenanceBusy={storageMaintenanceBusy}

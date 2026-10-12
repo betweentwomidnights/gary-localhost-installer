@@ -16,6 +16,7 @@ mod sa3_runtime;
 mod sa3_training;
 mod service_manager;
 mod storage;
+mod storage_transfer;
 mod update;
 mod workload_job;
 
@@ -3061,13 +3062,15 @@ fn build_legacy_cleanup_items(
         "legacy managed Python installs".to_string(),
         legacy_root.join("python"),
     );
-    add_cleanup_item(
-        &mut items,
-        active_root,
-        "legacy-models".to_string(),
-        "legacy runtime models".to_string(),
-        legacy_root.join("models"),
-    );
+    if !storage_transfer::contains_native_models(legacy_root) {
+        add_cleanup_item(
+            &mut items,
+            active_root,
+            "legacy-models".to_string(),
+            "legacy runtime models".to_string(),
+            legacy_root.join("models"),
+        );
+    }
     add_cleanup_item(
         &mut items,
         active_root,
@@ -6832,6 +6835,7 @@ async fn download_model(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     // Native services download GGUFs directly; there is no Python env to borrow.
+    storage::ensure_mutations_allowed(repo_root.inner())?;
     if let Some(component) = sa3_models::component(&model_id) {
         if storage::storage_info(repo_root.inner()).pending_restart {
             return Err("Restart to use your chosen storage before preparing SA3 models.".into());
@@ -6869,6 +6873,7 @@ async fn download_model(
     if let Some(files) = model_manager::yuey_files(&model_id) {
         let dest_dir = {
             let mut mgr = model_mgr.lock().await;
+            storage::ensure_mutations_allowed(repo_root.inner())?;
             if mgr.is_downloading(&model_id) {
                 return Err("This model is already downloading.".to_string());
             }
@@ -6933,6 +6938,7 @@ async fn download_model(
     {
         let mut services = _svc_mgr.lock().await;
         let mut mgr = model_mgr.lock().await;
+        storage::ensure_mutations_allowed(repo_root.inner())?;
         if mgr.is_downloading(&model_id) {
             return Err("This model is already downloading.".into());
         }
@@ -6994,6 +7000,7 @@ async fn remove_model(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<ModelRemovalResult, String> {
+    storage::ensure_mutations_allowed(repo_root.inner())?;
     if service_id == "sa3" {
         if let Some(component) = sa3_models::component(&model_id) {
             if storage::storage_info(repo_root.inner()).pending_restart {
@@ -7112,10 +7119,9 @@ async fn remove_model(
     }
 
     if let Some(files) = yuey_files {
-        let root = {
-            let mgr = model_mgr.lock().await;
-            mgr.yuey_models_dir()
-        };
+        let mut mgr = model_mgr.lock().await;
+        storage::ensure_mutations_allowed(repo_root.inner())?;
+        let root = mgr.yuey_models_dir();
         let mut removed_bytes = 0;
         for file in files {
             let path = root.join(&file);
@@ -7124,10 +7130,8 @@ async fn remove_model(
                 removed_bytes += bytes;
             }
         }
-        {
-            let mut mgr = model_mgr.lock().await;
-            mgr.forget_model_status(&model_id);
-        }
+        mgr.forget_model_status(&model_id);
+        drop(mgr);
         model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
         return Ok(ModelRemovalResult {
             model_id,
@@ -9841,6 +9845,7 @@ fn get_hf_token() -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn save_hf_token(token: String) -> Result<(), String> {
+    storage::ensure_mutations_allowed(&gary4juce_runtime_root())?;
     let path = hf_token_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create config dir: {}", e))?;
@@ -9865,6 +9870,7 @@ fn get_app_settings() -> Result<AppSettings, String> {
 
 #[tauri::command]
 fn save_app_settings(settings: AppSettingsPatch) -> Result<AppSettings, String> {
+    storage::ensure_mutations_allowed(&gary4juce_runtime_root())?;
     let merged = merge_app_settings(settings);
     save_app_settings_file(&merged)?;
     Ok(merged)
@@ -11079,19 +11085,80 @@ mod service_env_removal_tests {
     }
 }
 
-#[tauri::command]
-fn save_runtime_storage_root(
-    path: String,
-    repo_root: tauri::State<'_, std::path::PathBuf>,
+async fn change_runtime_storage(
+    path: Option<String>,
+    root: PathBuf,
+    manager: &ManagerState,
+    models: &ModelState,
+    handle: &tauri::AppHandle,
 ) -> Result<storage::RuntimeStorageInfo, String> {
-    storage::save_runtime_root_config(&path, repo_root.inner())
+    let _transfer = storage_transfer::Guard::acquire()?;
+    let _launch = sa3_training::LAUNCH.try_lock()
+        .map_err(|_| "Wait for SA3 training or migration before changing storage.")?;
+    if [
+        read_sa3_lora_training_state().status,
+        read_sa3_autolabel_state().status,
+        read_carey_ace_lora_training_state().status,
+    ].iter().any(|s| matches!(s.as_str(), "starting" | "running")) {
+        return Err("Wait for training and dataset jobs to finish before changing storage.".into());
+    }
+    let _mutation = native_runtime::mutation_guard().await;
+    let _registry = sa3_loras::registry_edit_guard()?;
+    // Retain the model lock through commit so queued model mutations cannot
+    // change a weight between its copy and the final source inventory check.
+    let mut services = manager.lock().await;
+    if let Some(reason) = services.storage_transfer_blocker() {
+        return Err(reason);
+    }
+    let models = models.clone().lock_owned().await;
+    if models.any_downloading() {
+        return Err("Wait for model downloads to finish before changing storage.".into());
+    }
+    services.stop_all();
+    drop(services);
+    let copy_handle = handle.clone();
+    let copy_manager = manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // The worker owns these guards even if the caller closes its window.
+        let transfer_guard = _transfer;
+        let progress = |progress| {
+            let _ = copy_handle.emit("runtime-storage-transfer-progress", progress);
+        };
+        let result = if let Some(path) = path {
+            storage::save_runtime_root_config(&path, &root, progress)
+        } else {
+            storage::reset_runtime_root_config(&root, progress)
+        };
+        drop(models);
+        let mut services = copy_manager.blocking_lock();
+        if let Ok(info) = &result {
+            services.set_storage_change_pending(info.pending_restart);
+        }
+        drop(transfer_guard);
+        let _ = copy_handle.emit("services-updated", services.get_service_info());
+        result
+    }).await.map_err(|e| format!("Storage transfer failed: {e}"))?
 }
 
 #[tauri::command]
-fn reset_runtime_storage_root(
-    repo_root: tauri::State<'_, std::path::PathBuf>,
+async fn save_runtime_storage_root(
+    path: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    model_mgr: tauri::State<'_, ModelState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<storage::RuntimeStorageInfo, String> {
-    storage::reset_runtime_root_config(repo_root.inner())
+    change_runtime_storage(Some(path), repo_root.inner().clone(), manager.inner(), model_mgr.inner(), &app_handle).await
+}
+
+#[tauri::command]
+async fn reset_runtime_storage_root(
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    model_mgr: tauri::State<'_, ModelState>,
+    app_handle: tauri::AppHandle,
+) -> Result<storage::RuntimeStorageInfo, String> {
+    change_runtime_storage(None, repo_root.inner().clone(), manager.inner(), model_mgr.inner(), &app_handle).await
 }
 
 #[tauri::command]
@@ -11110,6 +11177,7 @@ async fn get_legacy_storage_maintenance_info(
 fn migrate_legacy_loras(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceResult, String> {
+    storage::ensure_mutations_allowed(repo_root.inner())?;
     Ok(migrate_legacy_loras_impl(repo_root.inner()))
 }
 
@@ -11117,6 +11185,7 @@ fn migrate_legacy_loras(
 fn migrate_storage_loras_to_pending_root(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceResult, String> {
+    if storage_transfer::in_progress() { return Err("Wait for the storage transfer to finish.".into()); }
     Ok(migrate_storage_loras_to_pending_root_impl(
         repo_root.inner(),
     ))
@@ -11126,6 +11195,7 @@ fn migrate_storage_loras_to_pending_root(
 fn cleanup_legacy_storage(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceResult, String> {
+    storage::ensure_mutations_allowed(repo_root.inner())?;
     Ok(cleanup_legacy_storage_impl(repo_root.inner()))
 }
 
