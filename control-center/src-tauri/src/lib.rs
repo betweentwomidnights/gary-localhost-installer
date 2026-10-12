@@ -1185,6 +1185,42 @@ mod bundle_root_tests {
         assert!(!installed.join("stale.txt").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn an_unreadable_sa3_selection_still_refreshes_every_other_service() {
+        let root = temp_root("bad-sa3-selection-sync-test");
+        let bundle = root.join("bundle");
+        let runtime = root.join("runtime");
+        let services = bundle.join("services");
+        std::fs::create_dir_all(services.join("manifests")).unwrap();
+        std::fs::create_dir_all(services.join("sa3")).unwrap();
+        std::fs::create_dir_all(services.join("carey")).unwrap();
+        std::fs::write(services.join("manifests/services.json"), "{}").unwrap();
+        std::fs::write(services.join("bundle-stamp.txt"), "new-release").unwrap();
+        std::fs::write(services.join("sa3/api.py"), b"bundled python").unwrap();
+        std::fs::write(services.join("carey/api.py"), b"new carey code").unwrap();
+        let carey = runtime.join("services/carey");
+        std::fs::create_dir_all(&carey).unwrap();
+        std::fs::write(carey.join("api.py"), b"old carey code").unwrap();
+        let sa3 = runtime.join("services/sa3");
+        std::fs::create_dir_all(sa3.join("native")).unwrap();
+        std::fs::write(sa3.join("native/sa3-server.exe"), b"native runtime").unwrap();
+        // Valid JSON naming an encoding this release no longer accepts, the
+        // shape a dropped tier would leave behind.
+        let selection = runtime.join("sa3/native-runtime.json");
+        std::fs::create_dir_all(selection.parent().unwrap()).unwrap();
+        let recorded = br#"{"schemaVersion":1,"encoding":"Q3_K_S","verifiedRelease":"0.1.2","backend":"cuda","activatedAt":1,"cleanupComplete":true,"cleanupErrors":[]}"#;
+        std::fs::write(&selection, recorded).unwrap();
+        assert!(crate::sa3_runtime::read(&runtime).is_err());
+
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+
+        assert_eq!(std::fs::read(carey.join("api.py")).unwrap(), b"new carey code");
+        assert!(!sa3.join("api.py").exists(), "SA3's Python must not be recreated");
+        assert!(sa3.join("native/sa3-server.exe").is_file());
+        assert_eq!(std::fs::read(&selection).unwrap(), recorded);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 fn hide_console_window(cmd: &mut tokio::process::Command) {
@@ -1337,13 +1373,11 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     // Once cleanup begins, future bundles must not recreate retired Python
     // code or clear native/custom assets, including after interrupted cleanup.
     // Before cleanup, retain Python resource refresh for optional legacy training.
-    let sa3_retired = sa3_runtime::read(runtime_root)?.is_some_and(|selection| {
-        selection.cleanup_complete || !selection.cleanup_errors.is_empty()
-    });
+    let sa3_retired = sa3_retired_for_sync(runtime_root);
     if sa3_retired {
         // Earlier native profiles may have retired their environment before
         // code ownership was recorded. Seeding metadata never recopies code.
-        sa3_code::record_bundle(bundle_root, runtime_root, true)?;
+        record_sa3_code_ownership(bundle_root, runtime_root, true);
     }
 
     if current_stamp.as_deref() == Some(desired_stamp.as_str())
@@ -1353,7 +1387,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             .exists()
     {
         if !sa3_retired {
-            sa3_code::record_bundle(bundle_root, runtime_root, true)?;
+            record_sa3_code_ownership(bundle_root, runtime_root, true);
         }
         log::info!("Runtime services already match bundled resources");
         return Ok(());
@@ -1426,13 +1460,44 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     }
 
     if !sa3_retired {
-        sa3_code::record_bundle(bundle_root, runtime_root, false)?;
+        record_sa3_code_ownership(bundle_root, runtime_root, false);
     }
 
     std::fs::write(&stamp_path, desired_stamp)
         .map_err(|e| format!("Cannot write {}: {}", stamp_path.display(), e))?;
 
     Ok(())
+}
+
+/// Whether SA3's service folder is past the point where a bundle may refresh
+/// it. This runs during the sync that refreshes every service, so SA3's own
+/// state must never abort it. An unreadable or invalid selection means a
+/// migration was at least started; preserve the folder and let the service
+/// report the problem itself (ServiceManager keeps it as a start blocker).
+fn sa3_retired_for_sync(runtime_root: &Path) -> bool {
+    match sa3_runtime::read(runtime_root) {
+        Ok(selection) => selection.is_some_and(|selection| {
+            selection.cleanup_complete || !selection.cleanup_errors.is_empty()
+        }),
+        Err(error) => {
+            let message = format!(
+                "Preserving the SA3 service folder: cannot read its native selection: {error}"
+            );
+            log::warn!("{message}");
+            append_startup_diagnostic(&message);
+            true
+        }
+    }
+}
+
+/// Best effort for the same reason. Ownership only ever admits files for
+/// cleanup, so a stale or missing inventory makes cleanup keep more, not less.
+fn record_sa3_code_ownership(bundle_root: &Path, runtime_root: &Path, only_if_missing: bool) {
+    if let Err(error) = sa3_code::record_bundle(bundle_root, runtime_root, only_if_missing) {
+        let message = format!("Cannot record SA3 Python code ownership: {error}");
+        log::warn!("{message}");
+        append_startup_diagnostic(&message);
+    }
 }
 
 /// Read the HF token from our stored file, falling back to system env.
