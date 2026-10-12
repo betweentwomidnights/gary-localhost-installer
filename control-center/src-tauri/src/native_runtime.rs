@@ -605,6 +605,7 @@ async fn probe(
     env: &[(String, String)],
     path: Option<OsString>,
 ) -> Result<serde_json::Value, String> {
+    crate::windows_prerequisites::check()?;
     let mut cmd = tokio::process::Command::new(exe);
     cmd.arg("--props")
         .envs(
@@ -1186,6 +1187,11 @@ async fn install_inner(
         .build()
         .map_err(|error| format!("cannot create an HTTP client: {error}"))?;
     let downloads = crate::storage::cache_dir(&info.runtime_root).join("native-downloads");
+    if let Err(reason) = crate::windows_prerequisites::check() {
+        reporter.log(&format!("{reason}\nInstalling the shared Microsoft Visual C++ prerequisite; Windows may request administrator approval...")).await;
+        crate::windows_prerequisites::ensure(&downloads).await?;
+        reporter.log("Shared Microsoft Visual C++ prerequisite is ready.").await;
+    }
 
     // 2. The core runs anywhere by itself.
     let core_source = package_source(&packages.core, None)?;

@@ -28,6 +28,11 @@ CUDA 12.8 runtime. Foundation-1, Jerry, Gary and Carey still use Python.
 nothing is ever compiled on a user's machine, and nothing is downloaded without
 a hash to check it against.
 
+On Windows, all native services also use the shared Microsoft Visual C++ x64
+prerequisite check/repair described in [Windows VC runtime](windows-vc-runtime.md).
+It is centrally installed by Microsoft's signed installer when missing, rather
+than copied into a service or CUDA package.
+
 ## what a service release contains
 
 one GitHub release per version, tagged `vX.Y.Z`, with these assets:

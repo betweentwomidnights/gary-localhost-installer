@@ -1011,6 +1011,7 @@ impl ServiceManager {
             return Err(format!("{} {blocker}.", svc.display_name));
         }
         let exe = install.dir.join(&native.executable);
+        crate::windows_prerequisites::check()?;
         // The manifest keeps SA3 on Python until migration is validated. When
         // native is selected, preserve the public client port while the C++
         // server serves its unified API on the private native port.

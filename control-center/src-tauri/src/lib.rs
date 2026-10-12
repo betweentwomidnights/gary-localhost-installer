@@ -19,6 +19,7 @@ mod storage;
 mod storage_transfer;
 mod update;
 mod workload_job;
+mod windows_prerequisites;
 
 use model_manager::{carey_component_required_files, ModelManager};
 use serde::{Deserialize, Serialize};
