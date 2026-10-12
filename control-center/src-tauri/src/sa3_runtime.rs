@@ -7,10 +7,27 @@ use std::path::Path;
 
 pub use crate::migration::Selection;
 
-/// SA3's entry in the manifest names the same folder. SA3-specific callers
-/// that have no manifest at hand use this until they take it from there.
-fn migration_def() -> MigrationDef {
-    MigrationDef { data_dir: "sa3".into() }
+/// SA3's `migration` block, from the manifest compiled into this build: the
+/// same file the app installs and runs from. SA3-specific code paths with no
+/// manifest at hand take their migration definition from here.
+fn migration_def() -> &'static MigrationDef {
+    static DEF: std::sync::OnceLock<MigrationDef> = std::sync::OnceLock::new();
+    DEF.get_or_init(|| {
+        let manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .expect("the bundled service manifest parses");
+        manifest
+            .services
+            .into_iter()
+            .find(|service| service.id == "sa3")
+            .and_then(|service| service.migration)
+            .expect("SA3's manifest entry has a migration block")
+    })
+}
+
+/// SA3 as the shared migration engine addresses it.
+pub fn target() -> crate::migration::Target<'static> {
+    crate::migration::Target { id: "sa3", def: migration_def() }
 }
 
 fn check(selection: &Selection) -> Result<(), String> {
@@ -85,15 +102,15 @@ pub async fn probe_server(
 
 #[cfg(test)]
 pub fn selection_path(root: &Path) -> std::path::PathBuf {
-    crate::migration::selection_path(root, &migration_def())
+    crate::migration::selection_path(root, migration_def())
 }
 
 pub fn read(root: &Path) -> Result<Option<Selection>, String> {
-    crate::migration::read(root, &migration_def(), check)
+    crate::migration::read(root, migration_def(), check)
 }
 
 pub fn save(root: &Path, selection: &Selection) -> Result<(), String> {
-    crate::migration::save(root, &migration_def(), selection, check)
+    crate::migration::save(root, migration_def(), selection, check)
 }
 
 pub fn launch_args(args: &[String], encoding: &str) -> Result<Vec<String>, String> {

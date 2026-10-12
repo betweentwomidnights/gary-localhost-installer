@@ -48,6 +48,79 @@ pub struct MigrationDef {
     /// The service's user-data folder in the runtime root. Its native
     /// selection, the profile's record of the switch, lives here.
     pub data_dir: String,
+    /// The short name cleanup uses in what it shows, e.g. "SA3".
+    #[serde(default)]
+    pub label: String,
+    /// How the preview names the data folder it keeps; "<label> user data"
+    /// when absent.
+    #[serde(default)]
+    pub data_label: Option<String>,
+    /// The native models folder under the profile's models directory.
+    #[serde(default)]
+    pub models_dir: Option<String>,
+    /// What the Python install owns and cleanup may remove once the native
+    /// runtime is verified. Nothing outside this is ever a cleanup candidate.
+    #[serde(default)]
+    pub legacy: LegacyDef,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyDef {
+    /// Python environments inside the service folder; the first is the one
+    /// the service builds, the rest are alternates a user may have made.
+    #[serde(default)]
+    pub env_dirs: Vec<String>,
+    /// Hugging Face repositories only the Python service downloads.
+    #[serde(default)]
+    pub hf_repos: Vec<LegacyRepo>,
+    /// Exact files the Python service staged inside its data folder. Only
+    /// these are removed there; the folder itself is user data.
+    #[serde(default)]
+    pub staged: Option<LegacyStaged>,
+    /// Bundled Python source, removable only where unedited.
+    #[serde(default)]
+    pub code: LegacyCode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyRepo {
+    /// e.g. `stabilityai/stable-audio-3-medium`.
+    pub repo: String,
+    pub label: String,
+    /// What it is for, when a native replacement must exist before it goes.
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyStaged {
+    /// Relative to the runtime root, inside the service's data folder.
+    pub dir: String,
+    pub label: String,
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyCode {
+    /// Top-level files of the service folder.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Package folders whose `.py` files the bundle ships.
+    #[serde(default)]
+    pub packages: Vec<String>,
+}
+
+impl LegacyRepo {
+    /// The repository's folder in a Hugging Face hub cache.
+    pub fn cache_dir_name(&self) -> String {
+        format!("models--{}", self.repo.replace('/', "--"))
+    }
 }
 
 /// How a service runs: a Python entry point inside a uv venv, or a prebuilt

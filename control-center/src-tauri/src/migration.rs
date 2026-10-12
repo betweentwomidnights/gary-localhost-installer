@@ -11,6 +11,54 @@ use std::path::{Path, PathBuf};
 
 const SELECTION_FILE: &str = "native-runtime.json";
 
+/// What only a migrating service can answer. The shared inventory and cleanup
+/// engine asks these; everything else it takes from the manifest block.
+pub trait Service {
+    fn target(&self) -> Target<'_>;
+
+    /// The service's contribution to an inventory: its selection, the user
+    /// data its own records point at, and anything it shows as kept.
+    fn extras(&self, root: &Path, hub: &Path) -> crate::migration_inventory::Extras;
+
+    /// Whether `selection.encoding` names one of the service's tiers.
+    fn check_selection(&self, _selection: &Selection) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Why cleanup must not run yet, e.g. a legacy artifact whose native
+    /// replacement has not been prepared.
+    fn cleanup_blocker(&self, _root: &Path, _hub: &Path) -> Option<String> {
+        None
+    }
+}
+
+/// A migrating service as the shared engine sees it: its id, which names its
+/// service folder, and its manifest block.
+#[derive(Debug, Clone, Copy)]
+pub struct Target<'a> {
+    pub id: &'a str,
+    pub def: &'a MigrationDef,
+}
+
+impl<'a> Target<'a> {
+    pub fn service_dir(&self, root: &Path) -> PathBuf {
+        root.join("services").join(self.id)
+    }
+
+    pub fn data_dir(&self, root: &Path) -> PathBuf {
+        root.join(&self.def.data_dir)
+    }
+
+    /// The data folder as path components, for `checked_folder`.
+    pub fn data_folders(&self) -> Vec<&'a str> {
+        self.def.data_dir.split('/').collect()
+    }
+
+    pub fn label(&self) -> &'a str {
+        &self.def.label
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Selection {
@@ -78,13 +126,19 @@ impl State {
     }
 }
 
-/// The service-specific half of validation, until services carry their own
-/// migration hooks. A service with no tiers to check accepts any encoding.
-pub fn check_for(svc: &ServiceDef, selection: &Selection) -> Result<(), String> {
-    match svc.id.as_str() {
-        "sa3" => crate::sa3_models::preparation_ids(&selection.encoding, None).map(|_| ()),
-        _ => Ok(()),
+/// The services that implement their half of a migration, by id. A service
+/// can have a manifest block before it has an implementation here; the shared
+/// parts still work for it, and its selection's encoding goes unchecked.
+pub fn service(id: &str) -> Option<&'static dyn Service> {
+    match id {
+        "sa3" => Some(&crate::sa3_migration::Sa3),
+        _ => None,
     }
+}
+
+/// The service-specific half of validating a selection.
+pub fn check_for(svc: &ServiceDef, selection: &Selection) -> Result<(), String> {
+    service(&svc.id).map_or(Ok(()), |service| service.check_selection(selection))
 }
 
 pub fn selection_path(root: &Path, migration: &MigrationDef) -> PathBuf {

@@ -1,5 +1,9 @@
-//! Installed Python code is removable only with recorded bundle ownership.
-//! Edited/unrecognized files, configuration and developer checkouts survive.
+//! A migrating service's installed Python code is removable only with recorded
+//! bundle ownership: the inventory written when the bundle was copied in.
+//! Edited or unrecognized files, configuration and developer checkouts survive.
+//! Which files count as code is the manifest's `legacy.code`.
+use crate::manifest::LegacyCode;
+use crate::migration::Target;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -32,7 +36,7 @@ pub struct Status {
     pub review_identity: Option<String>,
 }
 
-fn code_path(path: &str) -> bool {
+fn code_path(code: &LegacyCode, path: &str) -> bool {
     let parts: Vec<_> = path.split('/').collect();
     if parts.iter().any(|part| {
         part.is_empty()
@@ -45,22 +49,9 @@ fn code_path(path: &str) -> bool {
         return false;
     }
     if parts.len() == 1 {
-        return [
-            "api.py",
-            "analyze_audio.py",
-            "bpm_analysis.py",
-            "key_analysis.py",
-            "build_lora_prompts.py",
-            "lora_train.py",
-            "lora_train_lightning.py",
-            "train_lora_job.py",
-            "train_memory.py",
-            "setup.py",
-            "requirements.txt",
-        ]
-        .contains(&path);
+        return code.files.iter().any(|file| file == path);
     }
-    ["stable_audio_3", "underfit", "dataset_processing", "tests"].contains(&parts[0])
+    code.packages.iter().any(|package| package == parts[0])
         && path.ends_with(".py")
         && !parts.contains(&"__pycache__")
 }
@@ -87,23 +78,24 @@ fn checksum(path: &Path, expected_bytes: u64) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn inventory_path(root: &Path) -> PathBuf {
-    root.join("sa3").join(INVENTORY)
+fn inventory_path(target: Target, root: &Path) -> PathBuf {
+    target.data_dir(root).join(INVENTORY)
 }
 
-fn read(root: &Path) -> Result<Option<Inventory>, String> {
-    let path = inventory_path(root);
+fn read(target: Target, root: &Path) -> Result<Option<Inventory>, String> {
+    let label = target.label();
+    let path = inventory_path(target, root);
     match std::fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
         Ok(metadata) if metadata.len() > 1024 * 1024 || !metadata.is_file() => {
-            return Err("Invalid SA3 Python code inventory file".into())
+            return Err(format!("Invalid {label} Python code inventory file"))
         }
         _ => {}
     }
     let boundary = root.canonicalize().map_err(|error| error.to_string())?;
-    let dir = root
-        .join("sa3")
+    let dir = target
+        .data_dir(root)
         .canonicalize()
         .map_err(|error| error.to_string())?;
     if !dir.starts_with(&boundary)
@@ -113,7 +105,7 @@ fn read(root: &Path) -> Result<Option<Inventory>, String> {
             .parent()
             != Some(dir.as_path())
     {
-        return Err("SA3 Python code inventory escapes managed storage".into());
+        return Err(format!("{label} Python code inventory escapes managed storage"));
     }
     let mut bytes = Vec::new();
     std::fs::File::open(path)
@@ -122,22 +114,22 @@ fn read(root: &Path) -> Result<Option<Inventory>, String> {
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     if bytes.len() > 1024 * 1024 {
-        return Err("Oversized SA3 Python code inventory".into());
+        return Err(format!("Oversized {label} Python code inventory"));
     }
     let inventory: Inventory = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Invalid SA3 Python code inventory: {error}"))?;
+        .map_err(|error| format!("Invalid {label} Python code inventory: {error}"))?;
     if inventory.schema_version != 1 || inventory.files.len() > 4096 {
-        return Err("Unsupported or oversized SA3 Python code inventory".into());
+        return Err(format!("Unsupported or oversized {label} Python code inventory"));
     }
     let mut names = BTreeSet::new();
     for file in &inventory.files {
-        if !code_path(&file.path)
+        if !code_path(&target.def.legacy.code, &file.path)
             || !names.insert(&file.path)
             || file.bytes > LIMIT
             || file.sha256.len() != 64
             || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
-            return Err("Invalid file in SA3 Python code inventory".into());
+            return Err(format!("Invalid file in {label} Python code inventory"));
         }
     }
     Ok(Some(inventory))
@@ -145,15 +137,27 @@ fn read(root: &Path) -> Result<Option<Inventory>, String> {
 
 /// Used after a bundle copy, or to seed ownership for an older same-stamp
 /// install. Bundle checksums never substitute for edited runtime contents.
-pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> Result<(), String> {
-    if only_if_missing && read(root)?.is_some() {
+pub fn record_bundle(
+    target: Target,
+    bundle_root: &Path,
+    root: &Path,
+    only_if_missing: bool,
+) -> Result<(), String> {
+    if only_if_missing && read(target, root)?.is_some() {
         return Ok(());
     }
-    let source = bundle_root.join("services/sa3");
+    let label = target.label();
+    let source = target.service_dir(bundle_root);
     if !source.is_dir() {
         return Ok(());
     }
-    fn collect(source: &Path, dir: &Path, files: &mut Vec<OwnedFile>) -> Result<(), String> {
+    fn collect(
+        code: &LegacyCode,
+        label: &str,
+        source: &Path,
+        dir: &Path,
+        files: &mut Vec<OwnedFile>,
+    ) -> Result<(), String> {
         for entry in std::fs::read_dir(dir).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
             let kind = entry.file_type().map_err(|error| error.to_string())?;
@@ -166,15 +170,13 @@ pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> 
                 .map_err(|error| error.to_string())?
                 .to_string_lossy()
                 .replace('\\', "/");
-            if kind.is_dir()
-                && ["stable_audio_3", "underfit", "dataset_processing", "tests"]
-                    .contains(&relative.split('/').next().unwrap_or(""))
-            {
-                collect(source, &path, files)?;
-            } else if kind.is_file() && code_path(&relative) {
+            let package = relative.split('/').next().unwrap_or("");
+            if kind.is_dir() && code.packages.iter().any(|known| known == package) {
+                collect(code, label, source, &path, files)?;
+            } else if kind.is_file() && code_path(code, &relative) {
                 let bytes = entry.metadata().map_err(|error| error.to_string())?.len();
                 if bytes > LIMIT {
-                    return Err("Bundled SA3 Python source is oversized".into());
+                    return Err(format!("Bundled {label} Python source is oversized"));
                 }
                 files.push(OwnedFile {
                     path: relative,
@@ -186,12 +188,12 @@ pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> 
         Ok(())
     }
     let mut files = Vec::new();
-    collect(&source, &source, &mut files)?;
+    collect(&target.def.legacy.code, label, &source, &source, &mut files)?;
     files.sort_by(|left, right| left.path.cmp(&right.path));
     if files.len() > 4096 {
-        return Err("Bundled SA3 Python inventory is oversized".into());
+        return Err(format!("Bundled {label} Python inventory is oversized"));
     }
-    let dir = crate::sa3_training::checked_folder(root, &["sa3"])?;
+    let dir = crate::sa3_training::checked_folder(root, &target.data_folders())?;
     let path = dir.join(INVENTORY);
     if path.exists()
         && path
@@ -200,7 +202,7 @@ pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> 
             .parent()
             != Some(dir.as_path())
     {
-        return Err("SA3 Python code inventory escapes managed storage".into());
+        return Err(format!("{label} Python code inventory escapes managed storage"));
     }
     crate::sa3_training::save(
         &path,
@@ -215,9 +217,9 @@ pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> 
 /// skipping the hashing of the rest. Cleanup re-checks each file right before
 /// removing it; hashing every recorded file for each of them made cleanup
 /// quadratic in the size of the bundle.
-pub fn status(root: &Path, only: Option<&Path>) -> Status {
+pub fn status(target: Target, root: &Path, only: Option<&Path>) -> Status {
     let mut status = Status::default();
-    let inventory = match read(root) {
+    let inventory = match read(target, root) {
         Ok(Some(inventory)) => inventory,
         Ok(None) => return status,
         Err(error) => {
@@ -225,7 +227,7 @@ pub fn status(root: &Path, only: Option<&Path>) -> Status {
             return status;
         }
     };
-    let service = root.join("services/sa3");
+    let service = target.service_dir(root);
     status.review_identity = Some(format!(
         "{:x}",
         Sha256::digest(serde_json::to_vec(&inventory).unwrap())
@@ -257,7 +259,8 @@ pub fn status(root: &Path, only: Option<&Path>) -> Status {
             });
         if !valid_path || metadata.file_type().is_symlink() || !metadata.is_file() {
             status.warnings.push(format!(
-                "Preserving redirected SA3 Python file {}; review it manually.",
+                "Preserving redirected {} Python file {}; review it manually.",
+                target.label(),
                 path.display()
             ));
         } else if developer || metadata.len() != file.bytes {
@@ -277,13 +280,14 @@ pub fn status(root: &Path, only: Option<&Path>) -> Status {
 
 /// The cleanup transaction independently recognizes each recorded code path;
 /// it still requires a fresh checksum/protection preview before removal.
-pub fn recorded_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
-    Ok(read(root)?
+pub fn recorded_paths(target: Target, root: &Path) -> Result<Vec<PathBuf>, String> {
+    let service = target.service_dir(root);
+    Ok(read(target, root)?
         .map(|inventory| {
             inventory
                 .files
                 .into_iter()
-                .map(|file| root.join("services/sa3").join(file.path))
+                .map(|file| service.join(file.path))
                 .collect()
         })
         .unwrap_or_default())
@@ -292,6 +296,10 @@ pub fn recorded_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sa3() -> Target<'static> {
+        crate::sa3_runtime::target()
+    }
     #[test]
     fn invalid_inventory_cannot_admit_native_files_for_deletion() {
         let root = std::env::temp_dir().join(format!("sa3-code-invalid-{}", std::process::id()));
@@ -308,10 +316,10 @@ mod tests {
                 .to_string(),
             )
             .unwrap();
-            let result = status(&root, None);
+            let result = status(sa3(), &root, None);
             assert!(!result.warnings.is_empty());
             assert!(result.candidates.is_empty());
-            assert!(recorded_paths(&root).is_err());
+            assert!(recorded_paths(sa3(), &root).is_err());
             assert!(native.is_file());
         }
         crate::remove_managed_path(&root, &std::env::temp_dir()).unwrap();
@@ -332,7 +340,7 @@ mod tests {
         std::fs::write(outside.join("factory.py"), b"bundled source").unwrap();
         let service = runtime.join("services/sa3");
         std::fs::create_dir_all(&service).unwrap();
-        record_bundle(&bundle, &runtime, false).unwrap();
+        record_bundle(sa3(), &bundle, &runtime, false).unwrap();
         let created = std::process::Command::new("cmd")
             .raw_arg(format!(
                 "/c mklink /J \"{}\" \"{}\"",
@@ -342,7 +350,7 @@ mod tests {
             .output()
             .unwrap();
         assert!(created.status.success());
-        let result = status(&runtime, None);
+        let result = status(sa3(), &runtime, None);
         assert!(result.candidates.is_empty());
         assert!(result
             .warnings
@@ -373,17 +381,17 @@ mod tests {
                 std::fs::write(path, b"bundled source").unwrap();
             }
         }
-        record_bundle(&bundle, &runtime, false).unwrap();
-        assert_eq!(status(&runtime, None).candidates.len(), 3);
+        record_bundle(sa3(), &bundle, &runtime, false).unwrap();
+        assert_eq!(status(sa3(), &runtime, None).candidates.len(), 3);
         std::fs::write(runtime.join("services/sa3/api.py"), b"customized code").unwrap();
         std::fs::write(runtime.join("services/sa3/user.py"), b"unrecognized source").unwrap();
-        let result = status(&runtime, None);
+        let result = status(sa3(), &runtime, None);
         assert_eq!(result.candidates.len(), 2);
         assert_eq!(result.retained.len(), 1);
         assert!(result.warnings.is_empty());
         std::fs::write(runtime.join(".git"), b"gitdir: worktree").unwrap();
-        assert!(status(&runtime, None).candidates.is_empty());
-        assert_eq!(status(&runtime, None).retained.len(), 3);
+        assert!(status(sa3(), &runtime, None).candidates.is_empty());
+        assert_eq!(status(sa3(), &runtime, None).retained.len(), 3);
         for path in [
             "../api.py",
             "native/attack.py",
@@ -392,7 +400,7 @@ mod tests {
             "stable_audio_3/a.py:stream",
             "stable_audio_3/config.json",
         ] {
-            assert!(!code_path(path));
+            assert!(!code_path(&sa3().def.legacy.code, path));
         }
         crate::remove_managed_path(&root, &std::env::temp_dir()).unwrap();
     }

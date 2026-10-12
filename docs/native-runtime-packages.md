@@ -296,6 +296,50 @@ for sa3.cpp, audiocraft.cpp and acestep.cpp:
 4. add its manifest entry with `"sha256": "unpublished"`, test it through
    `GARY4LOCAL_NATIVE_PACKAGE_DIR`, then release and pin as above.
 
+### replacing a python service
+
+a service that already ships as python (sa3, foundation-1, stable-audio,
+carey, gary, terry) keeps `"runtime": "python"` in the manifest. users move to
+native one profile at a time, so its entry gets a `migration` block beside
+`native`. the shared engine (`migration_inventory.rs`, `migration_cleanup.rs`,
+`migration_code.rs`) reads that block and does the rest:
+
+```json
+"migration": {
+  "dataDir": "sa3",
+  "label": "SA3",
+  "dataLabel": "LoRAs, prompts, training jobs and checkpoints",
+  "modelsDir": "sa3",
+  "legacy": {
+    "envDirs": ["env", ".venv"],
+    "hfRepos": [
+      {"repo": "stabilityai/stable-audio-3-medium", "label": "PyTorch inference weights"},
+      {"repo": "stabilityai/stable-audio-3-medium-base", "label": "PyTorch training base", "role": "training-base"}
+    ],
+    "staged": {"dir": "sa3/training/models/sa3-medium/base", "label": "staged PyTorch training base",
+               "role": "training-base", "files": ["model_config.json", "..."]},
+    "code": {"files": ["api.py", "..."], "packages": ["stable_audio_3", "..."]}
+  }
+}
+```
+
+- **`dataDir`** is the service's user-data folder. its native selection, the
+  profile's record of the switch, is `<dataDir>/native-runtime.json`, and
+  cleanup never removes anything inside it except `legacy.staged` files.
+- **`legacy`** is everything cleanup may ever remove. nothing outside it is a
+  candidate, and each candidate must still resolve exactly where the block
+  says, without overlapping user data, native files, another service's folder
+  or another model in the hub. code is removed only where it still matches
+  the inventory recorded when the bundle was installed.
+- **`role`** tags a legacy artifact that has a native replacement, so the
+  service can refuse cleanup until the replacement exists.
+
+what the block can't say, the service implements as `migration::Service`:
+its selection's encoding check, user data its own records point at (sa3's
+LoRA catalogs, training datasets, decoder correction), and any cleanup
+blocker. a service with a block and no implementation still gets the shared
+inventory and cleanup; `sa3_migration::Sa3` is the reference.
+
 ## not yet
 
 - **macOS and Linux.** the platform key (`windows-x64`) leaves room for

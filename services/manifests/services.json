@@ -135,7 +135,61 @@
     {
       "id": "sa3",
       "migration": {
-        "dataDir": "sa3"
+        "dataDir": "sa3",
+        "label": "SA3",
+        "dataLabel": "LoRAs, prompts, training jobs and checkpoints",
+        "modelsDir": "sa3",
+        "legacy": {
+          "envDirs": [
+            "env",
+            ".venv"
+          ],
+          "hfRepos": [
+            {
+              "repo": "stabilityai/stable-audio-3-medium",
+              "label": "PyTorch inference weights"
+            },
+            {
+              "repo": "stabilityai/stable-audio-3-medium-base",
+              "label": "PyTorch training base",
+              "role": "training-base"
+            }
+          ],
+          "staged": {
+            "dir": "sa3/training/models/sa3-medium/base",
+            "label": "staged PyTorch training base",
+            "role": "training-base",
+            "files": [
+              "model_config.json",
+              "model.safetensors",
+              "t5gemma-b-b-ul2/config.json",
+              "t5gemma-b-b-ul2/model.safetensors",
+              "t5gemma-b-b-ul2/tokenizer.json",
+              "t5gemma-b-b-ul2/tokenizer_config.json"
+            ]
+          },
+          "code": {
+            "files": [
+              "api.py",
+              "analyze_audio.py",
+              "bpm_analysis.py",
+              "key_analysis.py",
+              "build_lora_prompts.py",
+              "lora_train.py",
+              "lora_train_lightning.py",
+              "train_lora_job.py",
+              "train_memory.py",
+              "setup.py",
+              "requirements.txt"
+            ],
+            "packages": [
+              "stable_audio_3",
+              "underfit",
+              "dataset_processing",
+              "tests"
+            ]
+          }
+        }
       },
       "native": {
         "bundle": "sa3",

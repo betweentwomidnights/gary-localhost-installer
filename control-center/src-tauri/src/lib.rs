@@ -1,5 +1,8 @@
 mod manifest;
 mod migration;
+mod migration_cleanup;
+mod migration_code;
+mod migration_inventory;
 mod model_manager;
 mod native_models;
 mod native_runtime;
@@ -7,7 +10,6 @@ mod sa3_adapter;
 mod sa3_analysis;
 mod sa3_decoder;
 mod sa3_cleanup;
-mod sa3_code;
 mod sa3_loras;
 mod sa3_gguf;
 mod sa3_migration;
@@ -1116,7 +1118,7 @@ mod bundle_root_tests {
             std::fs::read(installed.join("api.py")).unwrap(),
             b"user-edited source"
         );
-        assert_eq!(crate::sa3_code::status(&runtime, None).retained.len(), 1);
+        assert_eq!(crate::migration_code::status(crate::sa3_runtime::target(), &runtime, None).retained.len(), 1);
         let ownership = std::fs::read(&inventory).unwrap();
         std::fs::remove_file(&inventory).unwrap();
         std::fs::remove_file(installed.join("api.py")).unwrap();
@@ -1493,7 +1495,7 @@ fn sa3_retired_for_sync(runtime_root: &Path) -> bool {
 /// Best effort for the same reason. Ownership only ever admits files for
 /// cleanup, so a stale or missing inventory makes cleanup keep more, not less.
 fn record_sa3_code_ownership(bundle_root: &Path, runtime_root: &Path, only_if_missing: bool) {
-    if let Err(error) = sa3_code::record_bundle(bundle_root, runtime_root, only_if_missing) {
+    if let Err(error) = migration_code::record_bundle(sa3_runtime::target(), bundle_root, runtime_root, only_if_missing) {
         let message = format!("Cannot record SA3 Python code ownership: {error}");
         log::warn!("{message}");
         append_startup_diagnostic(&message);
@@ -6994,12 +6996,8 @@ async fn download_model(
         ));
     }
 
-    let sa3_legacy_download = [
-        "stabilityai/stable-audio-3-medium",
-        "stabilityai/stable-audio-3-medium-base",
-        "thepatch/same-l-decoder-lora",
-    ]
-    .contains(&model_id.as_str());
+    let sa3_legacy_download = sa3_migration::legacy_repos(None).contains(&model_id.as_str())
+        || model_id == model_manager::SA3_DECODER_LORA_MODEL_ID;
     {
         let mut services = _svc_mgr.lock().await;
         let mut mgr = model_mgr.lock().await;
@@ -9958,7 +9956,7 @@ async fn get_sa3_migration_preview(
     let (hub, legacy_training) = {
         let models = model_mgr.lock().await;
         let legacy_training = models.get_sa3_models().iter().any(|model| {
-            model.id == "stabilityai/stable-audio-3-medium-base"
+            sa3_migration::legacy_repos(Some("training-base")).contains(&model.id.as_str())
                 && matches!(model.status, model_manager::ModelStatus::Downloaded)
         });
         (models.hf_hub_cache_dir(), legacy_training)
@@ -10041,7 +10039,7 @@ async fn cleanup_sa3_legacy_installation(
             return Err("Wait for SA3 model downloads to finish before cleanup.".into());
         }
         let legacy_training = sa3_models.iter().any(|model| {
-            model.id == "stabilityai/stable-audio-3-medium-base"
+            sa3_migration::legacy_repos(Some("training-base")).contains(&model.id.as_str())
                 && matches!(model.status, model_manager::ModelStatus::Downloaded)
         });
         if (legacy_training || sa3_migration::legacy_training_base_present(repo_root.inner(), &models.hf_hub_cache_dir()))
@@ -10119,10 +10117,7 @@ async fn cleanup_sa3_legacy_installation(
     }
     {
         let mut models = model_mgr.lock().await;
-        for id in [
-            "stabilityai/stable-audio-3-medium",
-            "stabilityai/stable-audio-3-medium-base",
-        ] {
+        for id in sa3_migration::legacy_repos(None) {
             models.forget_model_status(id);
         }
     }

@@ -964,13 +964,13 @@ impl ServiceManager {
     /// Whether a migrated service's Python files are back, as a downgrade can
     /// bring them. Bounded for status polling; the full inventory is separate.
     fn legacy_runtime_present(&self, svc: &ServiceDef) -> bool {
-        match svc.id.as_str() {
-            "sa3" => crate::sa3_migration::legacy_runtime_present(
+        svc.migration.as_ref().is_some_and(|def| {
+            crate::migration_inventory::legacy_present(
+                crate::migration::Target { id: &svc.id, def },
                 &self.repo_root,
                 &crate::storage::effective_hf_hub_cache_dir(&self.repo_root),
-            ),
-            _ => false,
-        }
+            )
+        })
     }
 
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
@@ -1566,7 +1566,7 @@ mod tests {
         manifest.resolve_native_bundles().unwrap();
         let mut defs = manifest.services;
         let foundation = defs.iter_mut().find(|service| service.id == "foundation").unwrap();
-        foundation.migration = Some(MigrationDef { data_dir: "foundation".into() });
+        foundation.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "foundation"})).unwrap());
         let info = |manager: &ServiceManager, id: &str| {
             manager.get_service_info().into_iter().find(|service| service.id == id).unwrap()
         };
@@ -1578,7 +1578,7 @@ mod tests {
             schema_version: 1, encoding: "anything".into(), verified_release: "v0.1.0".into(),
             backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         };
-        let def = MigrationDef { data_dir: "foundation".into() };
+        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "foundation"})).unwrap();
         crate::migration::save(&root, &def, &selection, |_| Ok(())).unwrap();
         let switched = ServiceManager::new(defs.clone(), root.clone());
         assert!(switched.is_native("foundation"));

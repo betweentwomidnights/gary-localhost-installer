@@ -1,18 +1,9 @@
-//! Retire reviewed, SA3-owned Python environments, code and weight repositories.
-//! The command verifies native execution and reserves the service before entering
-//! this transaction. The persisted selection journals incomplete cleanup so an
-//! interruption or locked file never causes fallback to Python.
-use serde::Serialize;
-use std::path::{Path, PathBuf};
+//! Retire reviewed, SA3-owned Python environments, code and weight repositories,
+//! through the shared engine in `migration_cleanup`.
+use crate::sa3_migration::Sa3;
+use std::path::Path;
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResultInfo {
-    pub removed_paths: Vec<String>,
-    pub estimated_removed_bytes: u64,
-    pub errors: Vec<String>,
-    pub selection: crate::sa3_runtime::Selection,
-}
+pub use crate::migration_cleanup::ResultInfo;
 
 /// Returns the inventory it checked, so the caller can act on that same plan.
 pub fn validate_review(
@@ -20,24 +11,7 @@ pub fn validate_review(
     hub: &Path,
     token: &str,
 ) -> Result<crate::sa3_migration::Sa3MigrationPreview, String> {
-    let current = crate::sa3_migration::preview(root, hub);
-    if current.cleanup_token != token {
-        return Err("SA3 storage changed since review. Rescan and review cleanup again.".into());
-    }
-    if !current.warnings.is_empty() {
-        return Err(
-            "Resolve the SA3 cleanup inventory warnings before removing Python files.".into(),
-        );
-    }
-    if current.native_selection.is_none() {
-        return Err("Verify and select C++ before retiring the SA3 Python installation.".into());
-    }
-    if crate::sa3_migration::legacy_training_base_present(root, hub)
-        && !crate::sa3_migration::native_training_base_present(root)
-    {
-        return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
-    }
-    Ok(current)
+    crate::migration_cleanup::validate_review(&Sa3, root, hub, token)
 }
 
 pub(crate) fn run(
@@ -46,7 +20,7 @@ pub(crate) fn run(
     token: &str,
     progress: impl Fn(&str),
 ) -> Result<ResultInfo, String> {
-    run_with_progress(root, hub, token, crate::remove_managed_path, progress)
+    crate::migration_cleanup::run(&Sa3, root, hub, token, progress)
 }
 
 #[cfg(test)]
@@ -59,110 +33,21 @@ fn run_with(
     run_with_progress(root, hub, token, remove, |_| {})
 }
 
+#[cfg(test)]
 fn run_with_progress(
     root: &Path,
     hub: &Path,
     token: &str,
-    mut remove: impl FnMut(&Path, &Path) -> Result<bool, String>,
+    remove: impl FnMut(&Path, &Path) -> Result<bool, String>,
     progress: impl Fn(&str),
 ) -> Result<ResultInfo, String> {
-    progress("Checking the reviewed Python files before cleanup...");
-    let plan = validate_review(root, hub, token)?;
-    let mut selection = crate::sa3_runtime::read(root)?.ok_or("Native SA3 selection is missing")?;
-    // Publish the incomplete state before the first deletion. Following a crash,
-    // rescanning discovers remaining paths and retry never changes runtime.
-    selection.cleanup_complete = false;
-    selection.cleanup_errors =
-        vec!["SA3 cleanup was interrupted; review remaining files and retry.".into()];
-    crate::sa3_runtime::save(root, &selection)?;
-    let mut result = ResultInfo {
-        removed_paths: Vec::new(),
-        estimated_removed_bytes: 0,
-        errors: Vec::new(),
-        selection,
-    };
-    let service = root.join("services/sa3");
-    let mut allowed: Vec<(PathBuf, PathBuf)> = crate::sa3_migration::legacy_runtime_candidates(root, hub)
-        .into_iter().map(|(_, path, owner)| (path, owner)).collect();
-    allowed.extend(crate::sa3_code::recorded_paths(root)?.into_iter().map(|path| (path, service.clone())));
-    let identities: Vec<_> = plan
-        .cleanup_candidates
-        .iter()
-        .map(|entry| {
-            let path = Path::new(&entry.path);
-            path
-                .canonicalize()
-                .map(|canonical| (canonical, crate::sa3_migration::staged_training_identity(root, path)))
-                .map_err(|error| error.to_string())
-        })
-        .collect::<Result<_, _>>()?;
-    for (entry, (identity, staged_identity)) in plan.cleanup_candidates.iter().zip(identities) {
-        progress(&format!("Removing {}...", entry.label));
-        let path = Path::new(&entry.path);
-        let current = crate::sa3_migration::recheck(root, hub, path);
-        if !current.warnings.is_empty()
-            || !current
-                .cleanup_candidates
-                .iter()
-                .any(|candidate| candidate.path == entry.path)
-            || path.canonicalize().ok().as_ref() != Some(&identity)
-            || crate::sa3_migration::staged_training_identity(root, path) != staged_identity
-        {
-            result.errors.push(format!("Preserved {} because its ownership or protected paths changed; rescan before retrying.", path.display()));
-        } else if let Some((_, owner)) = allowed.iter().find(|(candidate, _)| candidate == path) {
-            let owner = owner.as_path();
-            match crate::resolve_managed_path(path, owner) {
-                Ok(Some(current)) if current == identity => match remove(path, owner) {
-                    Ok(true) => {
-                        result.removed_paths.push(entry.path.clone());
-                        result.estimated_removed_bytes += entry.bytes;
-                    }
-                    Ok(false) => {}
-                    Err(error) => result.errors.push(error),
-                },
-                _ => result.errors.push(format!(
-                    "Preserved {} because its storage boundary changed.",
-                    path.display()
-                )),
-            }
-        } else {
-            result.errors.push(format!(
-                "Refusing unrecognized cleanup target: {}",
-                path.display()
-            ));
-        }
-        result.selection.cleanup_errors = result.errors.clone();
-        if result.selection.cleanup_errors.is_empty() {
-            result
-                .selection
-                .cleanup_errors
-                .push("SA3 cleanup was interrupted; review remaining files and retry.".into());
-        }
-        crate::sa3_runtime::save(root, &result.selection)?;
-    }
-    progress("Checking for remaining Python files and saving the cleanup result...");
-    let remaining = crate::sa3_migration::preview(root, hub);
-    result.errors.extend(remaining.warnings);
-    if !remaining.cleanup_candidates.is_empty() && result.errors.is_empty() {
-        result
-            .errors
-            .push("Legacy SA3 files remain. Rescan and review cleanup again.".into());
-    }
-    result.selection.cleanup_complete =
-        result.errors.is_empty() && remaining.cleanup_candidates.is_empty();
-    result.selection.cleanup_errors = result.errors.clone();
-    crate::sa3_runtime::save(root, &result.selection)?;
-    progress(if result.selection.cleanup_complete {
-        "Python cleanup complete. SA3 is ready."
-    } else {
-        "Cleanup needs attention. Review the remaining files below."
-    });
-    Ok(result)
+    crate::migration_cleanup::run_with_progress(&Sa3, root, hub, token, remove, progress)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     fn run(root: &Path, hub: &Path, token: &str) -> Result<ResultInfo, String> {
         super::run(root, hub, token, |_| {})
     }
@@ -223,7 +108,7 @@ mod tests {
                 );
                 paths.push(installed);
             }
-            crate::sa3_code::record_bundle(&bundle, &self.0, false).unwrap();
+            crate::migration_code::record_bundle(crate::sa3_runtime::target(), &bundle, &self.0, false).unwrap();
             paths
         }
     }
@@ -469,7 +354,7 @@ mod tests {
             b"new bundled source",
         )
         .unwrap();
-        crate::sa3_code::record_bundle(&fixture.0.join("bundle"), &fixture.0, false).unwrap();
+        crate::migration_code::record_bundle(crate::sa3_runtime::target(), &fixture.0.join("bundle"), &fixture.0, false).unwrap();
         assert_ne!(stale, fixture.token());
         assert!(run(&fixture.0, &fixture.hub(), &stale)
             .unwrap_err()

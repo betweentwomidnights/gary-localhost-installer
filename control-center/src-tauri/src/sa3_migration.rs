@@ -1,41 +1,16 @@
 //! Inventory and native validation for SA3's move from PyTorch.
 //! Verification and activation preserve old files. Cleanup remains a separate
 //! transaction after runtime and adapter requirements have been satisfied.
+//! What SA3's Python install owns is its manifest `legacy` block, applied by
+//! the shared engine in `migration_inventory`; what is SA3's alone is here.
 
-use serde::Serialize;
+use crate::migration_inventory::Extras;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MigrationItem {
-    pub label: String,
-    pub path: String,
-    pub bytes: u64,
-    pub kind: Option<&'static str>,
-}
+pub use crate::migration_inventory::Preview as Sa3MigrationPreview;
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Sa3MigrationPreview {
-    pub active_root: String,
-    pub hf_hub_cache: String,
-    pub cleanup_candidates: Vec<MigrationItem>,
-    pub legacy_runtime_present: bool,
-    pub training_base_present: bool,
-    pub estimated_cleanup_bytes: u64,
-    pub preserved_paths: Vec<MigrationItem>,
-    pub warnings: Vec<String>,
-    pub native_selection: Option<crate::sa3_runtime::Selection>,
-    pub cleanup_token: String,
-}
-
-fn item(label: &str, path: &Path, kind: &'static str, sized: bool) -> MigrationItem {
-    MigrationItem {
-        label: label.to_string(),
-        path: path.to_string_lossy().to_string(),
-        bytes: if sized { crate::path_size(path) } else { 0 },
-        kind: Some(kind),
-    }
+fn target() -> crate::migration::Target<'static> {
+    crate::sa3_runtime::target()
 }
 
 pub fn native_training_base_present(active_root: &Path) -> bool {
@@ -46,9 +21,12 @@ pub fn native_training_base_present(active_root: &Path) -> bool {
     })
 }
 
-// Exact cache files staged by train_lora_job.py::stage_base_model. Never retire
-// the enclosing training/model directory: it can also hold user-owned files.
+/// What SA3's tests expect its manifest to declare as the staged PyTorch
+/// training cache (train_lora_job.py::stage_base_model). A test checks the
+/// manifest still matches, so an edit there cannot silently widen cleanup.
+#[cfg(test)]
 pub(crate) const STAGED_TRAINING_BASE: &str = "sa3/training/models/sa3-medium/base";
+#[cfg(test)]
 pub(crate) const STAGED_TRAINING_FILES: &[&str] = &[
     "model_config.json",
     "model.safetensors",
@@ -58,121 +36,78 @@ pub(crate) const STAGED_TRAINING_FILES: &[&str] = &[
     "t5gemma-b-b-ul2/tokenizer_config.json",
 ];
 
-fn path_present(path: &Path) -> bool {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => true,
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-    }
-}
-
-fn staged_training_file(active_root: &Path, path: &Path) -> bool {
-    let base = active_root.join(STAGED_TRAINING_BASE);
-    STAGED_TRAINING_FILES.iter().any(|file| path == base.join(file))
-}
-
-pub(crate) fn staged_training_identity(active_root: &Path, path: &Path) -> Option<(u64, Option<u128>)> {
-    if !staged_training_file(active_root, path) { return None; }
-    std::fs::symlink_metadata(path).ok().map(|metadata| (
-        metadata.len(),
-        metadata.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|time| time.as_nanos()),
-    ))
+/// SA3's legacy Hugging Face repository ids from its manifest block, or just
+/// those with `role`.
+pub fn legacy_repos(role: Option<&str>) -> Vec<&'static str> {
+    target()
+        .def
+        .legacy
+        .hf_repos
+        .iter()
+        .filter(|repo| role.is_none() || repo.role.as_deref() == role)
+        .map(|repo| repo.repo.as_str())
+        .collect()
 }
 
 pub fn legacy_training_base_present(active_root: &Path, hf_hub: &Path) -> bool {
-    path_present(&hf_hub.join("models--stabilityai--stable-audio-3-medium-base"))
-        || STAGED_TRAINING_FILES.iter().any(|file| {
-            path_present(&active_root.join(STAGED_TRAINING_BASE).join(file))
-        })
+    crate::migration_inventory::role_present(target(), active_root, hf_hub, "training-base")
 }
 
-pub(crate) fn legacy_runtime_candidates(active_root: &Path, hf_hub: &Path) -> Vec<(&'static str, PathBuf, PathBuf)> {
-    let service = active_root.join("services/sa3");
-    let mut candidates = vec![
-        ("SA3 Python environment", service.join("env"), service.clone()),
-        ("SA3 alternate Python environment", service.join(".venv"), service),
-        ("SA3 PyTorch inference weights", hf_hub.join("models--stabilityai--stable-audio-3-medium"), hf_hub.to_path_buf()),
-        ("SA3 PyTorch training base", hf_hub.join("models--stabilityai--stable-audio-3-medium-base"), hf_hub.to_path_buf()),
-    ];
-    let base = active_root.join(STAGED_TRAINING_BASE);
-    candidates.extend(STAGED_TRAINING_FILES.iter().map(|file| {
-        ("SA3 staged PyTorch training base", base.join(file), base.clone())
-    }));
-    candidates
-}
-
-/// A downgrade can recreate legacy files after cleanup was recorded as complete.
-/// Keep this bounded for service-status polling; full inventory runs in preview.
-/// Bundled source alone is not evidence of an installed Python runtime.
+#[cfg(test)]
 pub fn legacy_runtime_present(active_root: &Path, hf_hub: &Path) -> bool {
-    legacy_runtime_candidates(active_root, hf_hub)
-        .iter()
-        .any(|(_, path, _)| path_present(path))
+    crate::migration_inventory::legacy_present(target(), active_root, hf_hub)
 }
 
 pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
-    inventory(active_root, hf_hub, None)
+    crate::migration_inventory::preview(target(), active_root, hf_hub, extras(active_root, hf_hub))
 }
 
-/// The same ownership and protection decision as `preview`, for one path.
-/// Cleanup calls this right before each removal, so it skips sizing (a walk of
-/// the whole Python environment) and hashes only that path if it is code.
-/// The full preview still runs before and after the cleanup transaction.
+/// See `migration_inventory::recheck`.
+#[cfg(test)]
 pub(crate) fn recheck(active_root: &Path, hf_hub: &Path, path: &Path) -> Sa3MigrationPreview {
-    inventory(active_root, hf_hub, Some(path))
+    crate::migration_inventory::recheck(
+        target(),
+        active_root,
+        hf_hub,
+        path,
+        extras(active_root, hf_hub),
+    )
 }
 
-fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3MigrationPreview {
-    let mut result = Sa3MigrationPreview {
-        active_root: active_root.to_string_lossy().to_string(),
-        hf_hub_cache: hf_hub.to_string_lossy().to_string(),
-        cleanup_candidates: Vec::new(),
-        legacy_runtime_present: false,
-        training_base_present: native_training_base_present(active_root)
-            || legacy_training_base_present(active_root, hf_hub),
-        estimated_cleanup_bytes: 0,
-        preserved_paths: Vec::new(),
-        warnings: Vec::new(),
-        native_selection: None,
-        cleanup_token: String::new(),
-    };
-    match crate::sa3_runtime::read(active_root) {
-        Ok(selection) => result.native_selection = selection,
-        Err(error) => result.warnings.push(error),
+/// SA3 as the shared migration engine sees it.
+pub struct Sa3;
+
+impl crate::migration::Service for Sa3 {
+    fn target(&self) -> crate::migration::Target<'_> {
+        target()
     }
-    let service = active_root.join("services").join("sa3");
-    let mut candidates = legacy_runtime_candidates(active_root, hf_hub);
-    if let Some(focus) = focus {
-        candidates.retain(|(_, path, _)| path == focus);
+
+    fn extras(&self, root: &Path, hub: &Path) -> Extras {
+        extras(root, hub)
     }
-    // Bundled source alone does not mean a user installed the Python service.
-    // Keep unknown/inaccessible paths conservative; cleanup safety is still
-    // decided independently below by canonical ownership and protection checks.
-    result.legacy_runtime_present = legacy_runtime_present(active_root, hf_hub);
-    let code = crate::sa3_code::status(active_root, focus);
-    result.warnings.extend(code.warnings);
-    for path in &code.candidates {
-        candidates.push(("SA3 bundled Python source", path.clone(), service.clone()));
+
+    fn check_selection(&self, selection: &crate::migration::Selection) -> Result<(), String> {
+        crate::sa3_models::preparation_ids(&selection.encoding, None).map(|_| ())
     }
-    for path in &code.retained {
-        result.preserved_paths.push(MigrationItem {
-            label: "Edited Python code or developer checkout (preserved)".into(),
-            path: path.to_string_lossy().into(),
-            bytes: 0,
-            kind: None,
-        });
+
+    /// The PyTorch training base may only go once its native replacement is
+    /// on disk; otherwise retiring Python would end SA3 training entirely.
+    fn cleanup_blocker(&self, root: &Path, hub: &Path) -> Option<String> {
+        (legacy_training_base_present(root, hub) && !native_training_base_present(root)).then(|| {
+            "Prepare the C++ training model before removing the existing PyTorch training model."
+                .into()
+        })
     }
-    // SA3's own data root. Kept out of `protected_paths` because the staged
-    // training cache inside it is the one thing cleanup may remove from it;
-    // anything else listed below protects whatever it names, including this
-    // root if, say, a training dataset is the whole folder.
-    let protected = active_root.join("sa3");
-    let mut protected_paths = vec![
-        active_root.join("models/sa3"),
-        active_root.join("native-runtimes"),
-        service.join("native"),
-    ];
+}
+
+/// SA3's contribution to its inventory: its selection, the user data its
+/// catalogs, training history and decoder correction point at, and whether a
+/// training base exists in either form.
+fn extras(root: &Path, hf_hub: &Path) -> Extras {
+    let mut protected_paths = Vec::new();
+    let mut warnings = Vec::new();
     if let Ok(catalog) =
-        crate::read_sa3_lora_catalog_from(&active_root.join("sa3/lora_catalog.json"))
+        crate::read_sa3_lora_catalog_from(&root.join("sa3/lora_catalog.json"))
     {
         for entry in catalog.values() {
             protected_paths.push(PathBuf::from(&entry.path));
@@ -186,9 +121,9 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
             }
         }
     } else {
-        result.warnings.push("Cannot read the legacy SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
+        warnings.push("Cannot read the legacy SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
     }
-    if let Ok(catalog) = crate::sa3_loras::read_catalog(active_root) {
+    if let Ok(catalog) = crate::sa3_loras::read_catalog(root) {
         for entry in catalog.values() {
             protected_paths.push(PathBuf::from(&entry.source_path));
             if let Some(path) = &entry.prompts_path {
@@ -199,19 +134,17 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
             }
         }
     } else {
-        result.warnings.push("Cannot read the native SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
+        warnings.push("Cannot read the native SA3 LoRA catalog; cleanup cannot safely account for its original adapters.".into());
     }
     // Jobs may precede their first registered checkpoint. Preserve their
     // original dataset and custom prompt configuration as well as job files.
-    let jobs = active_root.join("sa3/training/jobs");
+    let jobs = root.join("sa3/training/jobs");
     if jobs.exists() {
         match std::fs::read_dir(&jobs) {
             Ok(entries) => {
                 for entry in entries {
                     let Ok(entry) = entry else {
-                        result
-                            .warnings
-                            .push("Cannot fully inventory SA3 training history.".into());
+                        warnings.push("Cannot fully inventory SA3 training history.".into());
                         continue;
                     };
                     if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
@@ -222,9 +155,7 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
                         continue;
                     }
                     if !crate::path_is_inside(&options, &jobs) {
-                        result
-                            .warnings
-                            .push("SA3 training options redirect outside managed history.".into());
+                        warnings.push("SA3 training options redirect outside managed history.".into());
                         continue;
                     }
                     match std::fs::read(&options)
@@ -235,7 +166,7 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
                             if let Some(dataset) = value["dataset"].as_str() {
                                 protected_paths.push(PathBuf::from(dataset));
                             } else {
-                                result.warnings.push(
+                                warnings.push(
                                     "SA3 native training history has no dataset path.".into(),
                                 );
                             }
@@ -243,18 +174,16 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
                                 protected_paths.push(PathBuf::from(config));
                             }
                         }
-                        None => result.warnings.push(
+                        None => warnings.push(
                             "Cannot safely inspect SA3 native training dataset paths.".into(),
                         ),
                     }
                 }
             }
-            Err(_) => result
-                .warnings
-                .push("Cannot safely inspect SA3 training history.".into()),
+            Err(_) => warnings.push("Cannot safely inspect SA3 training history.".into()),
         }
     }
-    match crate::sa3_decoder::read(active_root) {
+    match crate::sa3_decoder::read(root) {
         Ok(Some(entry)) => {
             protected_paths.push(PathBuf::from(&entry.source_path));
             if let Some(path) = &entry.prompts_path {
@@ -264,145 +193,20 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
                 protected_paths.push(PathBuf::from(path));
             }
         }
-        Err(error) => result
-            .warnings
-            .push(format!("Cannot safely inspect decoder correction: {error}")),
+        Err(error) => warnings.push(format!("Cannot safely inspect decoder correction: {error}")),
         Ok(None) => {}
     }
-    // Everything else under services/ belongs to another service or to the
-    // bundle itself. Read it from disk rather than naming services, so one
-    // added later is protected without anyone remembering to list it here.
-    match std::fs::read_dir(active_root.join("services")) {
-        Ok(entries) => {
-            for entry in entries {
-                match entry {
-                    Ok(entry) if entry.file_name() != "sa3" => protected_paths.push(entry.path()),
-                    Ok(_) => {}
-                    Err(_) => result
-                        .warnings
-                        .push("Cannot fully inventory the other services' folders.".into()),
-                }
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => result
-            .warnings
-            .push("Cannot inspect the other services' folders.".into()),
-    }
-    if let Ok(entries) = std::fs::read_dir(hf_hub) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if ![
-                "models--stabilityai--stable-audio-3-medium",
-                "models--stabilityai--stable-audio-3-medium-base",
-            ]
-            .contains(&name.to_string_lossy().as_ref())
-            {
-                protected_paths.push(entry.path());
-            }
-        }
-    }
-    let mut seen = Vec::new();
-    for (label, path, owner) in candidates {
-        let staged = staged_training_file(active_root, &path);
-        if owner == service && !crate::path_is_inside(&owner, active_root) && path.exists() {
-            result.warnings.push(format!(
-                "SA3 service storage redirects outside the active profile: {}",
-                owner.display()
-            ));
-            continue;
-        }
-
-        match crate::resolve_managed_path(&path, &owner) {
-            Ok(Some(canonical)) => {
-                if (staged && (!std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file())
-                    || active_root.canonicalize().ok().map(|root| root.join(path.strip_prefix(active_root).unwrap())) != Some(canonical.clone())))
-                    || (!staged && !code.candidates.contains(&path) && canonical.parent() != owner.canonicalize().ok().as_deref())
-                    || canonical.file_name() != path.file_name()
-                {
-                    result.warnings.push(format!("Preserving redirected SA3 cleanup target {}; review it manually.", path.display()));
-                    continue;
-                }
-                // A redirected cache or environment must never turn the
-                // proposed cleanup into removal of user-owned SA3 artifacts.
-                let overlaps = |protected_path: &PathBuf| {
-                    crate::path_is_inside(&canonical, protected_path)
-                        || crate::path_is_inside(protected_path, &canonical)
-                };
-                // The six staged cache files are exempt from the sa3 root
-                // alone; every catalog, dataset and native protection applies.
-                if (!staged && overlaps(&protected)) || protected_paths.iter().any(overlaps)
-                {
-                    result.warnings.push(format!(
-                        "Preserving {} because it overlaps SA3 user data or native runtime files.", path.display()
-                    ));
-                } else if !seen.contains(&canonical) {
-                    let kind = if code.candidates.contains(&path) { "code" } else if owner == service { "environment" } else { "weights" };
-                    result.cleanup_candidates.push(item(label, &path, kind, focus.is_none()));
-                    seen.push(canonical);
-                }
-            }
-            Ok(None) => {}
-            Err(_) => result.warnings.push(format!(
-                "Cannot safely inventory {} within {}. Review this redirected or inaccessible path manually.",
-                path.display(), owner.display()
-            )),
-        }
-    }
-    result.estimated_cleanup_bytes = result
-        .cleanup_candidates
-        .iter()
-        .map(|entry| entry.bytes)
-        .sum();
-    // Do not count these recursively: a LoRA checkpoint can be many GB, and
-    // they cannot contribute to the space reclaimed by this migration.
-    for (label, path) in [
-        ("LoRAs, prompts, training jobs and checkpoints", protected),
-        (
-            "SA3 native runtime, settings and unrecognized service files",
-            service,
-        ),
-        (
-            "Shared CUDA and other native runtimes",
-            active_root.join("native-runtimes"),
-        ),
-        (
-            "Native model weights",
-            active_root.join("models").join("sa3"),
-        ),
-        (
-            "Decoder LoRA source for conversion",
+    Extras {
+        selection: crate::sa3_runtime::read(root),
+        protected: protected_paths,
+        preserved: vec![(
+            "Decoder LoRA source for conversion".into(),
             hf_hub.join("models--thepatch--same-l-decoder-lora"),
-        ),
-    ] {
-        result.preserved_paths.push(MigrationItem {
-            label: label.to_string(),
-            path: path.to_string_lossy().to_string(),
-            bytes: 0,
-            kind: None,
-        });
+        )],
+        warnings,
+        training_base_present: native_training_base_present(root)
+            || legacy_training_base_present(root, hf_hub),
     }
-    use sha2::{Digest, Sha256};
-    let identities: Vec<_> = result
-        .cleanup_candidates
-        .iter()
-        .map(|entry| (&entry.path, Path::new(&entry.path).canonicalize().ok(),
-            staged_training_identity(active_root, Path::new(&entry.path))))
-        .collect();
-    result.cleanup_token = format!(
-        "{:x}",
-        Sha256::digest(
-            serde_json::to_vec(&(
-                active_root.canonicalize().ok(),
-                hf_hub.canonicalize().ok(),
-                identities,
-                code.review_identity,
-                &result.warnings,
-            ))
-            .unwrap()
-        )
-    );
-    result
 }
 
 /// Verify the actual installed tools and selected weights while Python remains
@@ -1002,6 +806,41 @@ mod tests {
     }
 
     #[test]
+    fn sa3_manifest_declares_exactly_the_footprint_its_tests_expect() {
+        // Cleanup removes only what the manifest's legacy block names. These
+        // are the paths SA3's cleanup tests were written against; a manifest
+        // edit that widens or renames any of them must be deliberate.
+        let target = super::target();
+        let legacy = &target.def.legacy;
+        assert_eq!(target.def.data_dir, "sa3");
+        assert_eq!(target.def.models_dir.as_deref(), Some("sa3"));
+        assert_eq!(target.label(), "SA3");
+        assert_eq!(legacy.env_dirs, ["env", ".venv"]);
+        let repos: Vec<_> = legacy
+            .hf_repos
+            .iter()
+            .map(|repo| (repo.repo.as_str(), repo.role.as_deref()))
+            .collect();
+        assert_eq!(
+            repos,
+            [
+                ("stabilityai/stable-audio-3-medium", None),
+                ("stabilityai/stable-audio-3-medium-base", Some("training-base")),
+            ]
+        );
+        let staged = legacy.staged.as_ref().unwrap();
+        assert_eq!(staged.dir, super::STAGED_TRAINING_BASE);
+        assert_eq!(staged.files, super::STAGED_TRAINING_FILES);
+        assert_eq!(staged.role.as_deref(), Some("training-base"));
+        assert_eq!(
+            legacy.code.packages,
+            ["stable_audio_3", "underfit", "dataset_processing", "tests"]
+        );
+        assert_eq!(legacy.code.files.len(), 11);
+        assert!(legacy.code.files.iter().all(|file| !file.contains('/')));
+    }
+
+    #[test]
     fn runtime_fingerprint_changes_only_with_what_verification_proved() {
         use super::runtime_fingerprint;
         let fixture = Fixture::new();
@@ -1063,7 +902,7 @@ mod tests {
         fixture.write("runtime/models/sa3/native.gguf");
         fixture.write("other-profile/services/sa3/env/Scripts/python.exe");
         let root = fixture.0.join("runtime");
-        crate::sa3_code::record_bundle(&root, &root, false).unwrap();
+        crate::migration_code::record_bundle(crate::sa3_runtime::target(), &root, &root, false).unwrap();
         let result = preview(&root, &root.join("models/huggingface/hub"));
         assert!(!result.legacy_runtime_present);
         assert!(result.warnings.is_empty());
@@ -1392,8 +1231,8 @@ mod tests {
             let mut copied_code = Vec::new();
             if let Some(bundle) = std::env::var_os("GARY4LOCAL_SA3_SMOKE_CODE_BUNDLE") {
                 let bundle = PathBuf::from(bundle);
-                crate::sa3_code::record_bundle(&bundle, &root, false).unwrap();
-                for dest in crate::sa3_code::recorded_paths(&root).unwrap() {
+                crate::migration_code::record_bundle(crate::sa3_runtime::target(), &bundle, &root, false).unwrap();
+                for dest in crate::migration_code::recorded_paths(crate::sa3_runtime::target(), &root).unwrap() {
                     let relative = dest.strip_prefix(&root).unwrap();
                     let source = bundle.join(relative);
                     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
@@ -1401,7 +1240,7 @@ mod tests {
                     copied_code.push((source, dest));
                 }
                 assert!(!copied_code.is_empty());
-                assert!(crate::sa3_code::status(&root, None).warnings.is_empty());
+                assert!(crate::migration_code::status(crate::sa3_runtime::target(), &root, None).warnings.is_empty());
             }
             let reviewed = super::preview(&root, &hub);
             assert!(reviewed.warnings.is_empty(), "{:?}", reviewed.warnings);
