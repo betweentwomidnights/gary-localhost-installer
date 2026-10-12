@@ -902,47 +902,28 @@ impl ServiceManager {
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
         if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
         if svc.id == "sa3" {
-            if let Some(jobs) = self
-                .native_workloads
-                .get(&self.native_dir(svc).to_string_lossy().to_string())
-            {
-                if let Some((_, label)) = jobs.iter().find(|(job, _)| {
-                    matches!(
-                        job.as_str(),
-                        "legacy-lora-edit"
-                            | "lora-import"
-                            | "lora-edit"
-                            | "checkpoint-selection"
-                            | "lora-preparation"
-                            | "decoder-preparation"
-                    )
-                }) {
-                    return Some(format!("is waiting for {label} to finish"));
-                }
-            }
-        }
-        if svc.id == "sa3"
-            && self
-                .native_workloads
-                .get(&self.native_dir(svc).to_string_lossy().to_string())
-                .is_some_and(|jobs| jobs.contains_key("native-migration"))
-        {
-            return Some("is waiting for native migration validation to finish".into());
-        }
-        if svc.id == "sa3" {
             if let Some(error) = &self.sa3_selection_error {
                 return Some(format!(
                     "cannot use this profile's native selection: {error}"
                 ));
             }
-        }
-        if svc.id == "sa3"
-            && self
-                .native_workloads
-                .get(&self.native_dir(svc).to_string_lossy().to_string())
-                .is_some_and(|jobs| jobs.contains_key("native-training"))
-        {
-            return Some("is waiting for native training to finish".into());
+            // Jobs that rewrite what the server would load, or validate it.
+            const BLOCKING_JOBS: &[&str] = &[
+                "native-migration",
+                "native-training",
+                "legacy-lora-edit",
+                "lora-import",
+                "lora-edit",
+                "checkpoint-selection",
+                "lora-preparation",
+                "decoder-preparation",
+            ];
+            let key = self.native_dir(svc).to_string_lossy().to_string();
+            if let Some(label) = self.native_workloads.get(&key).and_then(|jobs| {
+                BLOCKING_JOBS.iter().find_map(|job| jobs.get(*job))
+            }) {
+                return Some(format!("is waiting for {label} to finish"));
+            }
         }
         if svc.runtime == ServiceRuntime::Native {
             if let Some(blocker) = self.shared_runtime_blocker(svc) {
@@ -982,21 +963,8 @@ impl ServiceManager {
 
     /// Launch a native service's executable from its installed runtime, with
     /// the backend it was installed for and any shared runtime on PATH.
+    /// Only `start` calls this, after `start_blocker` has passed.
     fn start_native(&mut self, svc: &ServiceDef) -> Result<(), String> {
-        if let Some(blocker) = self.shared_runtime_blocker(svc) {
-            return Err(format!("Cannot start {}: {blocker}.", svc.display_name));
-        }
-        if let Some(label) = self.native_model_mutations.get(&svc.id) {
-            return Err(format!("Wait for {label} to finish."));
-        }
-        for consumer in self.bundle_consumers(svc) {
-            if self.is_building(&consumer.id) {
-                return Err(format!(
-                    "Wait for {}'s runtime install to finish.",
-                    consumer.display_name
-                ));
-            }
-        }
         let native = svc
             .native
             .as_ref()
@@ -1007,9 +975,6 @@ impl ServiceManager {
                 svc.display_name
             )
         })?;
-        if let Some(blocker) = self.start_blocker(svc) {
-            return Err(format!("{} {blocker}.", svc.display_name));
-        }
         let exe = install.dir.join(&native.executable);
         // The manifest keeps SA3 on Python until migration is validated. When
         // native is selected, preserve the public client port while the C++

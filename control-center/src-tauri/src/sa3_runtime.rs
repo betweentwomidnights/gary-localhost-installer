@@ -22,6 +22,15 @@ pub struct Selection {
     pub runtime_fingerprint: Option<String>,
 }
 
+/// What the client adapter and migration rely on. The offline probe and the
+/// live /health check during migration both require all of them.
+pub const REQUIRED_CAPABILITIES: &[&str] = &[
+    "fixed_prefix",
+    "request_splice",
+    "conditioning_duration",
+    "model_lifecycle",
+];
+
 // Reject an older or mismatched binary before hashing large models or starting
 // the private validation server. Live /health checks still verify the launched
 // process later; this is the model-free compatibility gate.
@@ -34,12 +43,7 @@ fn check_server_info(info: &serde_json::Value) -> Result<(), String> {
     {
         return Err("Installed SA3 server has an unsupported control contract. Prepare a compatible sa3.cpp release before migration.".into());
     }
-    for capability in [
-        "fixed_prefix",
-        "request_splice",
-        "conditioning_duration",
-        "model_lifecycle",
-    ] {
+    for capability in REQUIRED_CAPABILITIES {
         if info["capabilities"][capability] != true {
             return Err(format!("Installed SA3 server lacks {capability}. Prepare a compatible sa3.cpp release before migration."));
         }

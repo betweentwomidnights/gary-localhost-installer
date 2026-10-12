@@ -161,9 +161,12 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
             kind: None,
         });
     }
+    // SA3's own data root. Kept out of `protected_paths` because the staged
+    // training cache inside it is the one thing cleanup may remove from it;
+    // anything else listed below protects whatever it names, including this
+    // root if, say, a training dataset is the whole folder.
     let protected = active_root.join("sa3");
     let mut protected_paths = vec![
-        protected.clone(),
         active_root.join("models/sa3"),
         active_root.join("native-runtimes"),
         service.join("native"),
@@ -266,15 +269,25 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
             .push(format!("Cannot safely inspect decoder correction: {error}")),
         Ok(None) => {}
     }
-    for id in [
-        "gary",
-        "melodyflow",
-        "stable-audio",
-        "carey",
-        "foundation",
-        "yuey",
-    ] {
-        protected_paths.push(active_root.join("services").join(id));
+    // Everything else under services/ belongs to another service or to the
+    // bundle itself. Read it from disk rather than naming services, so one
+    // added later is protected without anyone remembering to list it here.
+    match std::fs::read_dir(active_root.join("services")) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(entry) if entry.file_name() != "sa3" => protected_paths.push(entry.path()),
+                    Ok(_) => {}
+                    Err(_) => result
+                        .warnings
+                        .push("Cannot fully inventory the other services' folders.".into()),
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => result
+            .warnings
+            .push("Cannot inspect the other services' folders.".into()),
     }
     if let Ok(entries) = std::fs::read_dir(hf_hub) {
         for entry in entries.flatten() {
@@ -312,13 +325,13 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
                 }
                 // A redirected cache or environment must never turn the
                 // proposed cleanup into removal of user-owned SA3 artifacts.
-                if protected_paths.iter().enumerate().any(|(index, protected_path)| {
-                    // This narrow exception covers only the six managed cache
-                    // files. Every catalog/dataset/native protection still applies.
-                    !(staged && index == 0)
-                        && (crate::path_is_inside(&canonical, protected_path)
-                            || crate::path_is_inside(protected_path, &canonical))
-                })
+                let overlaps = |protected_path: &PathBuf| {
+                    crate::path_is_inside(&canonical, protected_path)
+                        || crate::path_is_inside(protected_path, &canonical)
+                };
+                // The six staged cache files are exempt from the sa3 root
+                // alone; every catalog, dataset and native protection applies.
+                if (!staged && overlaps(&protected)) || protected_paths.iter().any(overlaps)
                 {
                     result.warnings.push(format!(
                         "Preserving {} because it overlaps SA3 user data or native runtime files.", path.display()
@@ -510,12 +523,7 @@ pub async fn verify_native(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
-    for capability in [
-        "fixed_prefix",
-        "request_splice",
-        "conditioning_duration",
-        "model_lifecycle",
-    ] {
+    for capability in crate::sa3_runtime::REQUIRED_CAPABILITIES {
         if health["capabilities"][capability] != true {
             return Err(format!("Installed SA3 runtime lacks {capability}; prepare a compatible release before migration"));
         }
@@ -1115,6 +1123,26 @@ mod tests {
             assert_eq!(result.warnings.len(), 1);
             assert!(model.is_file());
         }
+    }
+
+    #[test]
+    fn every_other_service_folder_is_protected_including_unlisted_ones() {
+        let fixture = Fixture::new();
+        let root = &fixture.0;
+        // A hub living inside another service's folder, one that no list in
+        // this module names. SA3's weights there overlap that service.
+        let hub = root.join("services/audiocraft/hub");
+        let weights = fixture.write(
+            "services/audiocraft/hub/models--stabilityai--stable-audio-3-medium/weights",
+        );
+        fixture.write("services/sa3/env/python.exe");
+        let result = preview(root, &hub);
+        assert!(result
+            .cleanup_candidates
+            .iter()
+            .all(|candidate| !Path::new(&candidate.path).starts_with(root.join("services/audiocraft"))));
+        assert!(result.warnings.iter().any(|warning| warning.contains("overlaps")));
+        assert!(weights.is_file());
     }
 
     #[cfg(windows)]
