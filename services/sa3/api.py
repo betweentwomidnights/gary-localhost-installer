@@ -26,6 +26,11 @@ from typing import Any
 
 import soundfile as sf
 import torch
+# Only resampling comes from torchaudio. Audio is decoded with soundfile,
+# because torchaudio.load needs TorchCodec, which the ROCm wheels lack. The
+# ROCm build had dropped `import torchaudio` for that reason, and the one call
+# left behind broke every continuation that needed resampling.
+from torchaudio.functional import resample as resample_audio
 from einops import rearrange
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -969,7 +974,7 @@ def splice_continuation_source(
 
     source = source.to(torch.float32)
     if source_rate != sample_rate:
-        source = torchaudio.functional.resample(source, source_rate, sample_rate)
+        source = resample_audio(source, source_rate, sample_rate)
 
     output_channels = audio.shape[1]
     source_channels = source.shape[1]

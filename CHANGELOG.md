@@ -4,35 +4,7 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
-## v0.4.0-rc.4
-
-yuey now installs [yuey.cpp v0.2.2](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.2),
-fixing the short-score token-budget failure found with two-bar MIDI. after
-updating the app, press `update runtime` on yuey's row; replacing the app alone
-doesn't replace an already installed native runtime.
-
-SA3's default request ceiling and Carey's completion limit are now 380 seconds,
-matching gary4juce's localhost controls. SA3 continuation counts the source and
-added audio against that total. existing explicit SA3_MAX_DURATION overrides
-still apply. this raises the accepted duration, not a guarantee of memory use
-or generation speed on every GPU.
-
-compatible with gary4juce v5.0.0-rc.4.
-
-## v0.4.0-rc.2
-
-yuey now installs [yuey.cpp v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
-with faster continuations and a timing summary for each job. existing installs
-need to press `update runtime` on yuey's row to replace 0.2.0.
-
-the default natural-length ceiling is now 96 seconds, matching the remote
-backend. a natural continuation is limited by the new bars it adds. old preview
-settings carrying the former default of 180 move to 96 once; other chosen
-limits stay. the log pane also has a `copy log` button for reporting slow jobs.
-
-compatible with gary4juce v5.0.0-rc.3.
-
-## v0.4.0
+## v0.4.0 - 2026-10-07
 
 ### yuey, the first native service
 
@@ -69,8 +41,11 @@ it adds). saving restarts yuey. a request that sets one of these itself still
 wins. pre-release installs that saved settings under the old default of 180
 move to 96 once; a ceiling anyone actually chose stays.
 
-yuey is pinned at [v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
-which makes continuation faster. an 8-bar continuation of a 25-second clip went
+yuey is pinned at [v0.2.2](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.2),
+fixing the short-score token-budget failure found with two-bar MIDI. after
+updating the app, press `update runtime` on yuey's row: the app update doesn't
+replace an already installed native runtime. it also includes v0.2.1's faster
+continuations. an 8-bar continuation of a 25-second clip went
 from 46s to 31s on an RTX 5070 Laptop over CUDA, and from 37s to 32s over Vulkan.
 each job also writes a one-line timing summary to yuey's log, and the log pane
 has a "copy log" button, so a slow job can be reported by pasting it.
@@ -82,7 +57,47 @@ runtime" and brought back with "install runtime", and gives each shared runtime
 a row of its own. the CUDA runtime can only be removed once nothing installed
 uses it: after the last CUDA runtime is removed, or after a switch to Vulkan.
 
-compatible with gary4juce v5.0.0.
+### longer local audio
+
+SA3's default request ceiling and Carey's completion limit are now 380 seconds,
+matching gary4juce's localhost controls. SA3 continuation counts source plus
+added audio within that total. explicit `SA3_MAX_DURATION` overrides still
+apply; the longer accepted duration doesn't guarantee speed or memory use on
+every GPU.
+
+the native updater feeds now normalize publication dates to UTC RFC 3339 and
+are checked against the built installer and signature before publication.
+this fixes the download-only fallback encountered in the AMD previews.
+
+compatible with [gary4juce v5.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0).
+
+## v0.4.0-rc.4
+
+yuey now installs [yuey.cpp v0.2.2](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.2),
+fixing the short-score token-budget failure found with two-bar MIDI. after
+updating the app, press `update runtime` on yuey's row; replacing the app alone
+doesn't replace an already installed native runtime.
+
+SA3's default request ceiling and Carey's completion limit are now 380 seconds,
+matching gary4juce's localhost controls. SA3 continuation counts the source and
+added audio against that total. existing explicit SA3_MAX_DURATION overrides
+still apply. this raises the accepted duration, not a guarantee of memory use
+or generation speed on every GPU.
+
+compatible with gary4juce v5.0.0-rc.4.
+
+## v0.4.0-rc.2
+
+yuey now installs [yuey.cpp v0.2.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.2.1),
+with faster continuations and a timing summary for each job. existing installs
+need to press `update runtime` on yuey's row to replace 0.2.0.
+
+the default natural-length ceiling is now 96 seconds, matching the remote
+backend. a natural continuation is limited by the new bars it adds. old preview
+settings carrying the former default of 180 move to 96 once; other chosen
+limits stay. the log pane also has a `copy log` button for reporting slow jobs.
+
+compatible with gary4juce v5.0.0-rc.3.
 
 ## v0.3.2
 

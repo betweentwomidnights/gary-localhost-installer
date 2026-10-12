@@ -1,11 +1,11 @@
 {
-  "version": "0.4.0-rocm.2",
-  "notes": "Yuey 0.2.1 makes continuations faster on Vulkan; use Update runtime after installing this app.\nNatural-length default is now 96 seconds; old preview defaults migrate once.\nCopy log makes reporting slow jobs easier. Compatible with gary4juce v5.0.0-rc.3.",
-  "pub_date": "2026-10-06T07:13:17.0000000+00:00",
-  "platforms": {
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEFXRmN1Z0M0RHNzb1lGQXFqbUordE9uakU1T2dyYVM2M05tY3ZQZVloYkxialg0aGJRVWxCSWJvNktJQ3RSek0rY3RXUFpaaW1YUko0RnhNeHZOSGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMjcwNjAwCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uMl94NjQtc2V0dXAuZXhlCnFJSFNpZ0tRUEYyanBnOVI0TXhVS05VeURRdFVFbDZZZktvU1Ric3J1V3E3RGgwbi9ZMWpjTWlselN0WFhQelpEOHZlcHBscmQzZlJpUzQ2TTJHcEFnPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.2/gary4local-rocm_0.4.0-rocm.2_x64-setup.exe"
-    }
-  }
+    "version":  "0.4.0-rocm.4",
+    "notes":  "Yuey v0.2.2 fixes short MIDI scores. After installing, press Update runtime on Yuey\u0027s row.\nLocal SA3 and Carey accept up to 380 seconds. SA3 continuation includes source plus added audio.\nCompatible with gary4juce v5.0.0-rc.4 for ten-minute stem imports and model-limited selections.",
+    "pub_date":  "2026-10-07T05:35:44.0000000+00:00",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEMxbGJybmdXbFl6S0FtS3RXMjl3bDI2a3h0bk8zUWVWeHMzeDlIL3FtWFN6VVZpcDFzcDMzNUF5S1dEUnJDSHhXd29wN0dBSEZFYU4yQWdrUU5oUUF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMTcwCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uNF94NjQtc2V0dXAuZXhlClhTQWUzakJabkZCVUVMTDR5cENleGlObWR6eUJDMGpwbWd3NXJHcytUV0RJZVF1L1BiaVpWSEpHVUVZVFloYndpanovNTdkTmg2QU9BRjEza1JpSUJnPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.4/gary4local-rocm_0.4.0-rocm.4_x64-setup.exe"
+                                         }
+                  }
 }

@@ -1,12 +1,13 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.3.2",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.3.2/gary4local_0.3.2_x64-setup.exe",
-    "sha256":  "ded982ac562e1b82e2ca4e46e7a52807c08475373544b525536f5613416e1772",
-    "published_at":  "2026-09-11T10:40:22.7139428Z",
+    "latest_version":  "0.4.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0/gary4local_0.4.0_x64-setup.exe",
+    "sha256":  "338046e1d43565388014710c10cbcb9cc93f0376808e05d2f5cf5e01184d866d",
+    "published_at":  "2026-10-07T10:00:36.0000000+00:00",
     "notes":  [
-                  "Foundation-1 can switch between Gary fallback and RoyalCities sampler profiles.",
-                  "Fully cached SA3 models can start while offline without validating the saved Hugging Face token over the network.",
-                  "Compatible with gary4juce v4.0.14."
+                  "YuE2 now runs locally through a native C++/GGML runtime: CUDA on NVIDIA, Vulkan on AMD and Intel.",
+                  "Yuey v0.2.2 fixes short MIDI scores. Existing installs: press Update runtime on Yuey\u0027s row after updating the app.",
+                  "Choose Yuey model tiers and generation defaults; natural length defaults to 96 seconds. Native runtimes appear in storage.",
+                  "Local SA3 and Carey accept 380 seconds. SA3 continuation counts source plus added audio. Compatible with gary4juce v5.0.0."
               ]
 }

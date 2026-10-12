@@ -1,9 +1,12 @@
+import base64
+import io
 import math
 import tempfile
 import types
 import unittest
 from pathlib import Path
 
+import soundfile as sf
 import torch
 
 from api import (
@@ -11,6 +14,7 @@ from api import (
     cached_hf_snapshot_file,
     continuation_mask_bounds,
     continuation_splice_params,
+    decode_audio_data,
     splice_continuation_source,
 )
 
@@ -105,6 +109,41 @@ class ContinuationSpliceTests(unittest.TestCase):
         self.assertEqual(meta["splice_end_seconds"], 0.8)
         self.assertEqual(meta["splice_xfade_applied"], 0.2)
         self.assertEqual(meta["splice_gain"], 1.0)
+
+    def test_source_at_another_rate_is_resampled_before_the_splice(self):
+        # Every other test splices at the output rate, which is how a missing
+        # torchaudio import on the ROCm build went unnoticed: only a source at
+        # a different rate reaches the resampler.
+        generated = torch.zeros(1, 1, 1200)
+        source = torch.full((1, 400), -0.5)
+
+        output, meta = splice_continuation_source(
+            generated,
+            (500, source),
+            mask_start_seconds=0.8,
+            sample_rate=1000,
+            xfade_seconds=0,
+            gain_match=False,
+        )
+
+        self.assertTrue(meta["splice_applied"])
+        self.assertEqual(output.shape, generated.shape)
+        torch.testing.assert_close(
+            output[..., 100:700], torch.full((1, 1, 600), -0.5), atol=1e-3, rtol=0
+        )
+        torch.testing.assert_close(output[..., 800:], generated[..., 800:])
+
+    def test_decodes_uploaded_wav_without_torchaudio_load(self):
+        samples = torch.linspace(-0.5, 0.5, 220).repeat(2, 1)
+        wav = io.BytesIO()
+        sf.write(wav, samples.T.numpy(), 22050, format="WAV", subtype="FLOAT")
+
+        rate, waveform = decode_audio_data(
+            {"audio_data": base64.b64encode(wav.getvalue()).decode("ascii")}
+        )
+
+        self.assertEqual(rate, 22050)
+        torch.testing.assert_close(waveform, samples)
 
     def test_gain_match_is_clamped_and_mono_source_expands_to_stereo(self):
         generated = torch.ones(1, 2, 8)
