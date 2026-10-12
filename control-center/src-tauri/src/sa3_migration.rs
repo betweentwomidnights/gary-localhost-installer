@@ -148,7 +148,7 @@ fn inventory(active_root: &Path, hf_hub: &Path, focus: Option<&Path>) -> Sa3Migr
     // Keep unknown/inaccessible paths conservative; cleanup safety is still
     // decided independently below by canonical ownership and protection checks.
     result.legacy_runtime_present = legacy_runtime_present(active_root, hf_hub);
-    let code = crate::sa3_code::status_of(active_root, focus);
+    let code = crate::sa3_code::status(active_root, focus);
     result.warnings.extend(code.warnings);
     for path in &code.candidates {
         candidates.push(("SA3 bundled Python source", path.clone(), service.clone()));
@@ -1374,7 +1374,7 @@ mod tests {
                     copied_code.push((source, dest));
                 }
                 assert!(!copied_code.is_empty());
-                assert!(crate::sa3_code::status(&root).warnings.is_empty());
+                assert!(crate::sa3_code::status(&root, None).warnings.is_empty());
             }
             let reviewed = super::preview(&root, &hub);
             assert!(reviewed.warnings.is_empty(), "{:?}", reviewed.warnings);

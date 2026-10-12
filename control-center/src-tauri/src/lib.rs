@@ -1115,7 +1115,7 @@ mod bundle_root_tests {
             std::fs::read(installed.join("api.py")).unwrap(),
             b"user-edited source"
         );
-        assert_eq!(crate::sa3_code::status(&runtime).retained.len(), 1);
+        assert_eq!(crate::sa3_code::status(&runtime, None).retained.len(), 1);
         let ownership = std::fs::read(&inventory).unwrap();
         std::fs::remove_file(&inventory).unwrap();
         std::fs::remove_file(installed.join("api.py")).unwrap();

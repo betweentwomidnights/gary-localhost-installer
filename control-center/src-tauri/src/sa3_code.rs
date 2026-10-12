@@ -211,14 +211,11 @@ pub fn record_bundle(bundle_root: &Path, root: &Path, only_if_missing: bool) -> 
     )
 }
 
-pub fn status(root: &Path) -> Status {
-    status_of(root, None)
-}
-
-/// With `only`, classify just that installed path and skip hashing the rest.
-/// Cleanup re-checks each file right before removing it; hashing every recorded
-/// file for each of them made cleanup quadratic in the size of the bundle.
-pub(crate) fn status_of(root: &Path, only: Option<&Path>) -> Status {
+/// Classify every recorded file, or with `only` just that installed path,
+/// skipping the hashing of the rest. Cleanup re-checks each file right before
+/// removing it; hashing every recorded file for each of them made cleanup
+/// quadratic in the size of the bundle.
+pub fn status(root: &Path, only: Option<&Path>) -> Status {
     let mut status = Status::default();
     let inventory = match read(root) {
         Ok(Some(inventory)) => inventory,
@@ -311,7 +308,7 @@ mod tests {
                 .to_string(),
             )
             .unwrap();
-            let result = status(&root);
+            let result = status(&root, None);
             assert!(!result.warnings.is_empty());
             assert!(result.candidates.is_empty());
             assert!(recorded_paths(&root).is_err());
@@ -345,7 +342,7 @@ mod tests {
             .output()
             .unwrap();
         assert!(created.status.success());
-        let result = status(&runtime);
+        let result = status(&runtime, None);
         assert!(result.candidates.is_empty());
         assert!(result
             .warnings
@@ -377,16 +374,16 @@ mod tests {
             }
         }
         record_bundle(&bundle, &runtime, false).unwrap();
-        assert_eq!(status(&runtime).candidates.len(), 3);
+        assert_eq!(status(&runtime, None).candidates.len(), 3);
         std::fs::write(runtime.join("services/sa3/api.py"), b"customized code").unwrap();
         std::fs::write(runtime.join("services/sa3/user.py"), b"unrecognized source").unwrap();
-        let result = status(&runtime);
+        let result = status(&runtime, None);
         assert_eq!(result.candidates.len(), 2);
         assert_eq!(result.retained.len(), 1);
         assert!(result.warnings.is_empty());
         std::fs::write(runtime.join(".git"), b"gitdir: worktree").unwrap();
-        assert!(status(&runtime).candidates.is_empty());
-        assert_eq!(status(&runtime).retained.len(), 3);
+        assert!(status(&runtime, None).candidates.is_empty());
+        assert_eq!(status(&runtime, None).retained.len(), 3);
         for path in [
             "../api.py",
             "native/attack.py",
