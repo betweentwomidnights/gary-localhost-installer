@@ -15,6 +15,11 @@ pub struct Selection {
     pub cleanup_complete: bool,
     #[serde(default)]
     pub cleanup_errors: Vec<String>,
+    /// What migration verification proved the runtime against; see
+    /// `sa3_migration::runtime_fingerprint`. Absent on older selections, which
+    /// only means the next cleanup verifies the runtime in full again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_fingerprint: Option<String>,
 }
 
 // Reject an older or mismatched binary before hashing large models or starting
@@ -189,6 +194,7 @@ mod tests {
             activated_at: 1,
             cleanup_complete: false,
             cleanup_errors: vec!["locked legacy environment".into()],
+            runtime_fingerprint: None,
         }
     }
 

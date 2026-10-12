@@ -1481,7 +1481,7 @@ mod tests {
         manifest.resolve_native_bundles().unwrap();
         crate::sa3_runtime::save(&root, &crate::sa3_runtime::Selection {
             schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.3".into(),
-            backend: "cuda".into(), activated_at: 123, cleanup_complete: true, cleanup_errors: vec![],
+            backend: "cuda".into(), activated_at: 123, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         }).unwrap();
         let selection_path = crate::sa3_runtime::selection_path(&root);
         let original = std::fs::read(&selection_path).unwrap();
@@ -1535,7 +1535,7 @@ mod tests {
         assert!(manager.validate_build_runtime(&candidate).is_ok());
         manager.activate_native_sa3(crate::sa3_runtime::Selection {
             schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.1".into(),
-            backend: "vulkan".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![],
+            backend: "vulkan".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         }).unwrap();
         for selected in [&manager, &ServiceManager::new(defs.clone(), root.clone())] {
             assert!(selected.validate_build_runtime(&queued).unwrap_err().contains("Python environment cannot be rebuilt"));
@@ -1556,7 +1556,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("gary-sa3-tier-{}", std::process::id()));
         let selection = crate::sa3_runtime::Selection {
             schema_version: 1, encoding: "F16".into(), verified_release: "v0.1.1".into(),
-            backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![],
+            backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         };
         crate::sa3_runtime::save(&root, &selection).unwrap();
         let before = std::fs::read(crate::sa3_runtime::selection_path(&root)).unwrap();
@@ -1586,7 +1586,7 @@ mod tests {
         }
         crate::sa3_runtime::save(&root, &crate::sa3_runtime::Selection {
             schema_version: 1, encoding: "Q8_0".into(), verified_release: "v0.1.1".into(),
-            backend: "cuda".into(), activated_at: 123, cleanup_complete: true, cleanup_errors: vec![],
+            backend: "cuda".into(), activated_at: 123, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         }).unwrap();
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
@@ -1634,6 +1634,7 @@ mod tests {
                 activated_at: 1,
                 cleanup_complete: false,
                 cleanup_errors: vec!["locked old environment".into()],
+                runtime_fingerprint: None,
             })
             .unwrap();
         assert!(manager.is_native("sa3"));

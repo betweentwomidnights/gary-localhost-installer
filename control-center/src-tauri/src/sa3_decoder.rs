@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 pub const MODEL_ID: &str = "sa3-native::decoder-correction";
 const NAME: &str = "squeakfix-v3";
 
-fn custom_path() -> Option<PathBuf> {
+pub(crate) fn custom_path() -> Option<PathBuf> {
     std::env::var_os("SA3_DECODER_LORA_PATH")
         .map(|path| path.to_string_lossy().trim().to_string())
         .filter(|path| !path.is_empty())

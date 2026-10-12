@@ -828,6 +828,7 @@ mod tests {
                     activated_at: 123,
                     cleanup_complete: true,
                     cleanup_errors: vec![],
+                    runtime_fingerprint: None,
                 },
             )
             .unwrap();

@@ -195,6 +195,7 @@ mod tests {
                     activated_at: 1,
                     cleanup_complete: false,
                     cleanup_errors: Vec::new(),
+                    runtime_fingerprint: None,
                 },
             )
             .unwrap();

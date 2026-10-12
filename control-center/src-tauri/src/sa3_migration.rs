@@ -405,6 +405,9 @@ pub async fn verify_native(
 ) -> Result<crate::sa3_runtime::Selection, String> {
     use serde_json::{json, Value};
     use std::time::{Duration, Instant};
+    // Taken before any check, so a file that changes while this runs leaves a
+    // fingerprint that no longer matches, never one that wrongly does.
+    let fingerprint = runtime_fingerprint(root, native, installed, encoding, decoder_enabled)?;
     let runtime_path = crate::native_runtime::path_with_runtimes(root, &installed.runtimes);
     progress("Checking native server capabilities...");
     crate::sa3_runtime::probe_server(
@@ -438,37 +441,7 @@ pub async fn verify_native(
             }
         }
     }
-    for entry in crate::sa3_loras::state(root)?.entries {
-        progress(&format!("Verifying LoRA '{}'...", entry.name));
-        let path = entry
-            .native_path
-            .as_deref()
-            .filter(|_| entry.error.is_none())
-            .ok_or_else(|| {
-                format!(
-                    "Prepare LoRA '{}' before migration: {}",
-                    entry.name,
-                    entry.error.as_deref().unwrap_or("native copy missing")
-                )
-            })?;
-        if crate::native_runtime::sha256_file(Path::new(path))
-            .await?
-            .as_str()
-            != entry.native_sha256.as_deref().unwrap_or("")
-            || crate::native_runtime::sha256_file(Path::new(&entry.source_path))
-                .await?
-                .as_str()
-                != entry.source_sha256.as_deref().unwrap_or("")
-        {
-            return Err(format!(
-                "LoRA '{}' changed since preparation; prepare it again",
-                entry.name
-            ));
-        }
-        crate::sa3_loras::verify_legacy_export(root, &entry).await?;
-        crate::sa3_loras::verify_source_config(&entry).await?;
-    }
-    crate::sa3_loras::verify_legacy_history(root).await?;
+    verify_adapters(root, &progress).await?;
     progress("Starting the private native test server...");
     let dir = crate::sa3_training::checked_folder(root, &["sa3", "migration-checks"])?;
     let nonce = std::time::SystemTime::now()
@@ -673,7 +646,104 @@ pub async fn verify_native(
             .as_secs(),
         cleanup_complete: false,
         cleanup_errors: Vec::new(),
+        runtime_fingerprint: Some(fingerprint),
     })
+}
+
+/// Everything that must hold before Python can go and that the runtime proof
+/// does not cover: every prepared adapter still matches its source, and every
+/// legacy .ckpt already has the export only the Python environment can make.
+/// Cleanup always runs this, even when it skips the runtime proof.
+pub async fn verify_adapters(root: &Path, progress: &impl Fn(&str)) -> Result<(), String> {
+    for entry in crate::sa3_loras::state(root)?.entries {
+        progress(&format!("Verifying LoRA '{}'...", entry.name));
+        let path = entry
+            .native_path
+            .as_deref()
+            .filter(|_| entry.error.is_none())
+            .ok_or_else(|| {
+                format!(
+                    "Prepare LoRA '{}' before migration: {}",
+                    entry.name,
+                    entry.error.as_deref().unwrap_or("native copy missing")
+                )
+            })?;
+        if crate::native_runtime::sha256_file(Path::new(path))
+            .await?
+            .as_str()
+            != entry.native_sha256.as_deref().unwrap_or("")
+            || crate::native_runtime::sha256_file(Path::new(&entry.source_path))
+                .await?
+                .as_str()
+                != entry.source_sha256.as_deref().unwrap_or("")
+        {
+            return Err(format!(
+                "LoRA '{}' changed since preparation; prepare it again",
+                entry.name
+            ));
+        }
+        crate::sa3_loras::verify_legacy_export(root, &entry).await?;
+        crate::sa3_loras::verify_source_config(&entry).await?;
+    }
+    crate::sa3_loras::verify_legacy_history(root).await
+}
+
+/// Size and modification time of everything `verify_native` proved the C++
+/// runtime against: its executables, the selected generation tier, any
+/// training base and the decoder correction, plus release, backend and
+/// settings. Metadata only, so recomputing it hashes nothing. Cleanup compares
+/// it with the one recorded at activation and repeats the full proof (model
+/// hashing, a private generation and a training run) only when it differs.
+pub fn runtime_fingerprint(
+    root: &Path,
+    native: &crate::manifest::NativeDef,
+    installed: &crate::native_runtime::NativeInstall,
+    encoding: &str,
+    decoder_enabled: bool,
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    fn stamp(path: &Path) -> (String, Option<(u64, u128)>) {
+        let metadata = std::fs::metadata(path).ok().and_then(|metadata| {
+            let modified = metadata.modified().ok()?;
+            let nanos = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+            Some((metadata.len(), nanos))
+        });
+        (path.to_string_lossy().into_owned(), metadata)
+    }
+    let mut files = Vec::new();
+    for executable in [native.executable.as_str(), "sa3-train.exe", "sa3-audio-analyze.exe"] {
+        files.push(stamp(&installed.dir.join(executable)));
+    }
+    let models = crate::sa3_models::models_dir(root);
+    let mut ids = crate::sa3_models::preparation_ids(encoding, None)?;
+    ids.extend(["Q4_K_M", "F16"].map(|tier| format!("sa3-native::medium-base-{tier}")));
+    for id in ids {
+        let component = crate::sa3_models::component(&id).ok_or("Unknown SA3 model")?;
+        for file in &component.files {
+            files.push(stamp(&models.join(&file.filename)));
+        }
+    }
+    let decoder = if decoder_enabled {
+        crate::sa3_decoder::read(root)?.map(|entry| {
+            let native = entry.native_path.as_deref().map(|path| stamp(Path::new(path)));
+            let source = stamp(Path::new(&entry.source_path));
+            (source, native, entry.source_sha256, entry.native_sha256)
+        })
+    } else {
+        None
+    };
+    let identity = (
+        1u32,
+        &installed.version,
+        &installed.backend,
+        encoding,
+        decoder_enabled,
+        crate::sa3_decoder::custom_path().is_some(),
+        files,
+        decoder,
+    );
+    let bytes = serde_json::to_vec(&identity).map_err(|error| error.to_string())?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 async fn verify_training(
@@ -929,6 +999,50 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn runtime_fingerprint_changes_only_with_what_verification_proved() {
+        use super::runtime_fingerprint;
+        let fixture = Fixture::new();
+        let native: crate::manifest::NativeDef =
+            serde_json::from_value(serde_json::json!({"executable": "sa3-server.exe"})).unwrap();
+        for executable in ["sa3-server.exe", "sa3-train.exe", "sa3-audio-analyze.exe"] {
+            fixture.write(&format!("services/sa3/native/{executable}"));
+        }
+        let installed = crate::native_runtime::NativeInstall {
+            dir: fixture.0.join("services/sa3/native"),
+            backend: "cuda".into(),
+            runtimes: vec!["cudart-12.8".into()],
+            version: Some("v0.1.3".into()),
+            fallback_reason: None,
+        };
+        let models = crate::sa3_models::models_dir(&fixture.0);
+        let tier = crate::sa3_models::component("sa3-native::medium-F16").unwrap();
+        let model = models.join(&tier.files[0].filename);
+        fixture.write(&model.strip_prefix(&fixture.0).unwrap().to_string_lossy());
+        let fingerprint = |encoding: &str, decoder: bool| {
+            runtime_fingerprint(&fixture.0, &native, &installed, encoding, decoder).unwrap()
+        };
+        let verified = fingerprint("F16", false);
+
+        assert_eq!(verified, fingerprint("F16", false), "unchanged files must match");
+        assert_ne!(verified, fingerprint("Q4_K_M", false), "another tier is another proof");
+        assert_ne!(verified, fingerprint("F16", true), "the decoder setting is part of it");
+        std::fs::write(&model, b"a replaced, longer model file").unwrap();
+        assert_ne!(verified, fingerprint("F16", false), "a replaced model must re-verify");
+        let replaced = fingerprint("F16", false);
+        let base = crate::sa3_models::component("sa3-native::medium-base-Q4_K_M").unwrap();
+        let base = models.join(&base.files[0].filename);
+        fixture.write(&base.strip_prefix(&fixture.0).unwrap().to_string_lossy());
+        assert_ne!(replaced, fingerprint("F16", false), "a new training base needs its check");
+        let mut updated = installed.clone();
+        updated.version = Some("v0.1.4".into());
+        assert_ne!(
+            fingerprint("F16", false),
+            runtime_fingerprint(&fixture.0, &native, &updated, "F16", false).unwrap(),
+            "a new release must re-verify"
+        );
     }
 
     #[test]

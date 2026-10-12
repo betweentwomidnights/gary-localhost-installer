@@ -1095,6 +1095,7 @@ mod bundle_root_tests {
             activated_at: 1,
             cleanup_complete: false,
             cleanup_errors: vec![],
+            runtime_fingerprint: None,
         };
         crate::sa3_runtime::save(&runtime, &selection).unwrap();
         // Before cleanup, retain normal Python resource refresh for optional
@@ -10056,18 +10057,43 @@ async fn cleanup_sa3_legacy_installation(
         (native, installed, env, hub)
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
-    let verified = sa3_migration::verify_native(
+    let progress = |message: &str| {
+        let _ = app_handle.emit("sa3-native-migration-progress", message);
+    };
+    // Activation already proved this runtime: hashed every model, generated
+    // privately and trained two steps. Repeat that only if something it proved
+    // has changed since. The adapter checks always run, because they are what
+    // guarantees nothing still needs the Python environment about to go.
+    let unchanged = sa3_migration::runtime_fingerprint(
         repo_root.inner(),
         &native,
         &installed,
-        &env,
         &selection.encoding,
         decoder_enabled,
-        |message| {
-            let _ = app_handle.emit("sa3-native-migration-progress", message);
-        },
     )
-    .await;
+    .is_ok_and(|current| selection.runtime_fingerprint.as_deref() == Some(current.as_str()));
+    let verified = if unchanged {
+        progress("The C++ runtime is unchanged since it was verified. Checking adapters...");
+        sa3_migration::verify_adapters(repo_root.inner(), &progress).await
+    } else {
+        sa3_migration::verify_native(
+            repo_root.inner(),
+            &native,
+            &installed,
+            &env,
+            &selection.encoding,
+            decoder_enabled,
+            &progress,
+        )
+        .await
+        .and_then(|verified| {
+            // Record what was proved, so a retry after a locked file skips it.
+            let mut current = sa3_runtime::read(repo_root.inner())?
+                .ok_or("Native SA3 selection is missing")?;
+            current.runtime_fingerprint = verified.runtime_fingerprint;
+            sa3_runtime::save(repo_root.inner(), &current)
+        })
+    };
     let result = match verified {
         Err(error) => Err(error),
         Ok(_) if decoder_enabled != sa3_use_decoder_lora_enabled() => {
