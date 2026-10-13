@@ -34,7 +34,7 @@ one GitHub release per version, tagged `vX.Y.Z`, with these assets:
 
 | asset | contents |
 |---|---|
-| `<service>-vX.Y.Z-windows-x64-core.zip` | the server executable (and any CLI tools), the service's own DLLs, `ggml.dll`, `ggml-base.dll`, every `ggml-cpu-*.dll` variant, `LICENSE`, `LICENSE-ggml.txt`, `THIRD_PARTY_NOTICES.md`, `BUILD-INFO.json` |
+| `<service>-vX.Y.Z-windows-x64-core.zip` | the server executable (and any CLI tools), the service's own DLLs, `ggml.dll`, `ggml-base.dll`, every `ggml-cpu-*.dll` variant, the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, `vcomp140.dll`), `LICENSE`, `LICENSE-ggml.txt`, `THIRD_PARTY_NOTICES.md`, `BUILD-INFO.json` |
 | `<service>-vX.Y.Z-windows-x64-cuda.zip` | `ggml-cuda.dll`, nothing else |
 | `<service>-vX.Y.Z-windows-x64-vulkan.zip` | `ggml-vulkan.dll`, nothing else |
 | `<service>-vX.Y.Z-windows-x64-standalone.zip` | core, both backends and the CUDA runtime in one folder, for people running the service on its own. gary4local never downloads it. |
@@ -94,6 +94,15 @@ all of them:
   folder. A multi-service repo such as sa3.cpp shares its complete bundle among
   its own consumers; independent projects keep separate ggml copies. The CUDA
   runtime is shared across projects.
+- the Visual C++ runtime in core, beside the executables, copied from the
+  redistributable folder of the Visual Studio that built the package. the
+  package script fails if it's older than the compiler: binaries from a newer
+  toolset can crash on an older `msvcp140`. Windows loads DLLs from an
+  executable's own folder before System32, so a service runs on the runtime it
+  was built against whatever the machine has, and nobody needs an
+  administrator install of the redistributable. it can't be shared the way the
+  CUDA runtime is: System32 comes before `PATH`, so a stale system copy would
+  win over a shared folder. `BUILD-INFO.json` records its version.
 
 the package script runs the tests with the CPU backend loaded dynamically,
 exactly as it'll be on a user's machine, before it packages anything. the same
@@ -246,7 +255,9 @@ the shared CUDA pack while even a prepared bundle requires it.
 the binaries aren't code-signed. downloads made by gary4local itself carry no
 Mark of the Web, so SmartScreen doesn't apply, but Smart App Control can still
 block the executable. when it does, gary4local's error explains how to get past
-it.
+it. an executable Windows can't load at all, because a DLL it imports is
+missing or outdated, gets an error that says so and asks for a reinstall,
+instead of a bare status code.
 
 ## testing before a release exists
 
@@ -290,7 +301,7 @@ for sa3.cpp, audiocraft.cpp and acestep.cpp:
 
 1. copy yuey's `ci/package-windows.ps1` and `.github/workflows/release.yml`,
    rename the service and its executables, and keep everything else, including
-   the checks. differences should be deliberate and written down here.
+   the checks and the Visual C++ runtime in core. differences should be deliberate and written down here.
 2. make the server keep the promises in [what the executable has to do](#what-the-executable-has-to-do).
 3. add a `THIRD_PARTY_NOTICES.md` for whatever else the service vendors.
 4. add its manifest entry with `"sha256": "unpublished"`, test it through
