@@ -1,11 +1,11 @@
 {
-  "version": "0.4.0-rocm.5",
-  "notes": "Fixes SA3 continue failing on AMD with 'torchaudio is not defined'. Generate and transform were unaffected.\nNo runtime update needed; the fix is in the app's bundled SA3 service.",
-  "pub_date": "2026-10-12T17:48:40.0000000+00:00",
+  "version": "0.4.0-rocm.6",
+  "notes": "SA3 can leave Python: it moves to the native runtime (Vulkan on AMD), verifies it, then offers to remove the old PyTorch env and weights. Please run generate, transform and continue after.\nPress Update runtime on yuey's row for v0.2.4; it now carries its own Visual C++ runtime.",
+  "pub_date": "2026-10-13T17:39:25.0000000+00:00",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEJBRklyN0hTOVVDWHdwUzJ5ODB4MDk4RFNhNWl6NXpHcUNhbElmR0Q0OUI0TWJ4ZVZIcFdwem9yWjVEZ3ZXQzkwREgvaENLVWtzUjVIanZEd0RjZHdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxODI3Mjc2CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uNV94NjQtc2V0dXAuZXhlCk9WWkVKeG40Z2M1SHUwT3JENmZWVWhrMW9LR2hVRkxSdjBjbFUxaGg2cklxZElDdGdQOFVvY1JoZUZ6SkNBQjFWM29RblFqbmdrVXEvUmRYK0JvUkJRPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.5/gary4local-rocm_0.4.0-rocm.5_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFB2eVZudWJHSitKUUo2VWtYOHZ0T2FOZSthQ1BRc3Ardmo5SUVlb0k4S2w4UWZQS3J6N2poS095dFdmcEE5MEhjb2I1V0FKTlNFVHpCRVBDamRsZlFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxOTEyMTA5CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uNl94NjQtc2V0dXAuZXhlCkFPRWVEYVlSd1JsVjF2ZVJyYUlDejRseHRkekZvL1oxQWR1ck5Kb0FFNmpLNnFKNFlNQmZZTG5uZ2V1Z25zaXJiTjVwWERIRUNETFl5VWJJWHFDNENnPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.6/gary4local-rocm_0.4.0-rocm.6_x64-setup.exe"
     }
   }
 }

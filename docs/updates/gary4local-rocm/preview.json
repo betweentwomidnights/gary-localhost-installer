@@ -1,11 +1,11 @@
 {
   "channel": "preview",
-  "latest_version": "0.4.0-rocm.5",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.5/gary4local-rocm_0.4.0-rocm.5_x64-setup.exe",
-  "sha256": "69fabc4261ce3e53d9357159c448843e1cafd5bde2dc803df60d6af5f662f5fb",
-  "published_at": "2026-10-12T17:48:40.0000000+00:00",
+  "latest_version": "0.4.0-rocm.6",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.6/gary4local-rocm_0.4.0-rocm.6_x64-setup.exe",
+  "sha256": "39f26a23359b3508d699c080392feaf5d76764e9ffd380d5d27f41280056b90e",
+  "published_at": "2026-10-13T17:39:25.0000000+00:00",
   "notes": [
-    "Fixes SA3 continue failing on AMD with 'torchaudio is not defined'. Generate and transform were unaffected.",
-    "No runtime update needed; the fix is in the app's bundled SA3 service."
+    "SA3 can leave Python: it moves to the native runtime (Vulkan on AMD), verifies it, then offers to remove the old PyTorch env and weights. Please run generate, transform and continue after.",
+    "Press Update runtime on yuey's row for v0.2.4; it now carries its own Visual C++ runtime."
   ]
 }
