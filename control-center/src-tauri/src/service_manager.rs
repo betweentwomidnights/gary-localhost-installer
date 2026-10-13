@@ -1843,6 +1843,72 @@ mod tests {
     }
 
     #[test]
+    fn yuey_launches_from_its_manifest_with_no_migration_hooks() {
+        // yuey was never a Python service: no migration block, no selection,
+        // no adapter. Pin the process it gets so the shared launch path for
+        // migrating services cannot quietly change it.
+        let root = std::env::temp_dir().join(format!(
+            "gary-yuey-launch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let manager = ServiceManager::new(manifest.services, root.clone());
+        let svc = manager.find_service("yuey").unwrap();
+        let native = svc.native.as_ref().unwrap();
+        let native_dir = manager.native_dir(svc);
+        std::fs::create_dir_all(&native_dir).unwrap();
+        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        let stamp = native_runtime::NativeStamp {
+            version: "fixture".into(),
+            platform: native_runtime::current_platform().into(),
+            backend: "cuda".into(),
+            requested_backend: "auto".into(),
+            fallback_reason: None,
+            runtimes: vec!["cudart-12.8".into()],
+        };
+        std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp).unwrap()).unwrap();
+        let install = manager.native_install(svc).unwrap();
+
+        let launch = manager.native_launch(svc, &install, None).unwrap();
+        assert_eq!(launch.program, native_dir.join("yue2-server.exe"));
+        assert_eq!(launch.dir, native_dir);
+        assert_eq!(launch.args, native.args, "the manifest's arguments, untouched");
+        let command = launch.std_command();
+        let env: HashMap<String, String> = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                Some((key.to_string_lossy().into_owned(), value?.to_string_lossy().into_owned()))
+            })
+            .collect();
+        assert_eq!(env["GARY_RUNTIME"], root.to_string_lossy());
+        assert_eq!(env["YUE2_PORT"], "8007");
+        assert_eq!(env["YUE2_DEVICE"], "cuda");
+        assert_eq!(
+            PathBuf::from(&env["YUE2_MODELS_DIR"]),
+            crate::storage::models_dir(&root).join("yuey")
+        );
+        assert!(env["PATH"].starts_with(
+            &native_runtime::runtimes_root(&root).join("cudart-12.8").to_string_lossy().to_string()
+        ));
+        for (key, _) in crate::yuey_generation_env() {
+            assert!(env.contains_key(key), "{key} is still passed");
+        }
+
+        assert!(crate::migration::service("yuey").is_none());
+        assert!(manager.selection("yuey").is_none());
+        let info = manager.get_service_info().into_iter().find(|info| info.id == "yuey").unwrap();
+        assert!(!info.migration_complete);
+        assert_eq!(info.start_blocker, crate::yuey_missing_models(&manager.models_dir()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn installed_vulkan_consumer_does_not_reserve_cuda() {
         let mut manager = shared_native_manager();
         let root = std::env::temp_dir().join(format!(
