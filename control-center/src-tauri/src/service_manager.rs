@@ -285,6 +285,10 @@ impl ServiceManager {
                 Ok(Some(status)) => {
                     let msg = if status.success() {
                         format!("Process exited cleanly (code 0)")
+                    } else if let Some(reason) =
+                        crate::native_runtime::loader_failure(status.code())
+                    {
+                        format!("Could not start: {reason}")
                     } else {
                         format!(
                             "Process crashed (exit code: {})",

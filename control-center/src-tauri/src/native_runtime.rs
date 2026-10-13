@@ -611,6 +611,9 @@ async fn probe(
         .map_err(|_| "the runtime check did not finish within two minutes".to_string())?
         .map_err(|error| spawn_error_message("the runtime check", &error))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+    if let Some(reason) = loader_failure(output.status.code()) {
+        return Err(format!("the runtime check could not start: {reason}"));
+    }
     if !output.status.success() {
         return Err(format!(
             "the runtime check exited with {}: {}",
@@ -624,6 +627,21 @@ async fn probe(
             tail(&String::from_utf8_lossy(&output.stdout), 500)
         )
     })
+}
+
+/// Why Windows' loader refused to start a native executable, from the
+/// status it exits with when a DLL it imports is missing or wrong, before any
+/// of the service's own code runs. Packages carry their Visual C++ runtime,
+/// so this means a damaged install or a package from before they did.
+pub fn loader_failure(code: Option<i32>) -> Option<&'static str> {
+    match code? as u32 {
+        0xC000_0135 => Some("Windows could not find a DLL it needs. Reinstall the runtime."),
+        0xC000_0139 => Some(
+            "a DLL it loaded is missing a function it needs, usually an outdated copy. Reinstall the runtime.",
+        ),
+        0xC000_007B => Some("a DLL it loaded is not a 64-bit Windows DLL. Reinstall the runtime."),
+        _ => None,
+    }
 }
 
 fn tail(text: &str, max: usize) -> &str {
@@ -1279,6 +1297,22 @@ async fn check(
             .map_err(|error| format!("cannot keep the runtime check: {error}"))?;
     }
     Ok(props)
+}
+
+#[cfg(test)]
+mod loader_tests {
+    use super::loader_failure;
+
+    #[test]
+    fn loader_statuses_are_explained_and_ordinary_exits_are_not() {
+        // How Rust reports NTSTATUS exit codes: as negative i32s.
+        assert!(loader_failure(Some(-1073741515)).unwrap().contains("could not find a DLL"));
+        assert!(loader_failure(Some(-1073741511)).unwrap().contains("outdated"));
+        assert!(loader_failure(Some(-1073741701)).unwrap().contains("64-bit"));
+        assert_eq!(loader_failure(Some(1)), None);
+        assert_eq!(loader_failure(Some(-1073741819)), None); // access violation
+        assert_eq!(loader_failure(None), None);
+    }
 }
 
 #[cfg(test)]
