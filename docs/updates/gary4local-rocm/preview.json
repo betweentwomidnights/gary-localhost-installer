@@ -1,12 +1,11 @@
 {
-    "channel":  "preview",
-    "latest_version":  "0.4.0-rocm.4",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.4/gary4local-rocm_0.4.0-rocm.4_x64-setup.exe",
-    "sha256":  "e3d54ffff6e057f642438afe211c8158e843999e9bb0446efcdbdc27c2836042",
-    "published_at":  "2026-10-07T05:35:44.0000000+00:00",
-    "notes":  [
-                  "Yuey v0.2.2 fixes short MIDI scores. After installing, press Update runtime on Yuey\u0027s row.",
-                  "Local SA3 and Carey accept up to 380 seconds. SA3 continuation includes source plus added audio.",
-                  "Compatible with gary4juce v5.0.0-rc.4 for ten-minute stem imports and model-limited selections."
-              ]
+  "channel": "preview",
+  "latest_version": "0.4.0-rocm.5",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.5/gary4local-rocm_0.4.0-rocm.5_x64-setup.exe",
+  "sha256": "69fabc4261ce3e53d9357159c448843e1cafd5bde2dc803df60d6af5f662f5fb",
+  "published_at": "2026-10-12T17:48:40.0000000+00:00",
+  "notes": [
+    "Fixes SA3 continue failing on AMD with 'torchaudio is not defined'. Generate and transform were unaffected.",
+    "No runtime update needed; the fix is in the app's bundled SA3 service."
+  ]
 }

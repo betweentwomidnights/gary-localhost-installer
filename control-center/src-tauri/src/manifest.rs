@@ -10,6 +10,20 @@ pub struct Manifest {
     /// runtime. Installed once and put on PATH for every service that needs one.
     #[serde(default)]
     pub native_runtimes: HashMap<String, NativePackage>,
+    /// One package set can provide multiple executables/services (SA3, SAOS,
+    /// Foundation and the trainer). Service entries refer to it by identity.
+    #[serde(default)]
+    pub native_bundles: HashMap<String, NativeBundle>,
+}
+
+/// The manifest compiled into this build, the same file the app installs and
+/// runs from. For code that has no running manifest at hand.
+pub fn bundled() -> &'static Manifest {
+    static BUNDLED: std::sync::OnceLock<Manifest> = std::sync::OnceLock::new();
+    BUNDLED.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+            .expect("the bundled service manifest parses")
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,9 +47,91 @@ pub struct ServiceDef {
     pub build_steps: Vec<String>,
     #[serde(default)]
     pub native: Option<NativeDef>,
+    /// Present on a Python service that can move to its `native` runtime.
+    #[serde(default)]
+    pub migration: Option<MigrationDef>,
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
     pub health_check: Option<HealthCheck>,
+}
+
+/// How a service moves from its Python environment to a native runtime.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationDef {
+    /// The service's user-data folder in the runtime root. Its native
+    /// selection, the profile's record of the switch, lives here.
+    pub data_dir: String,
+    /// The short name cleanup uses in what it shows, e.g. "SA3".
+    #[serde(default)]
+    pub label: String,
+    /// How the preview names the data folder it keeps; "<label> user data"
+    /// when absent.
+    #[serde(default)]
+    pub data_label: Option<String>,
+    /// What the Python install owns and cleanup may remove once the native
+    /// runtime is verified. Nothing outside this is ever a cleanup candidate.
+    #[serde(default)]
+    pub legacy: LegacyDef,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyDef {
+    /// Python environments inside the service folder; the first is the one
+    /// the service builds, the rest are alternates a user may have made.
+    #[serde(default)]
+    pub env_dirs: Vec<String>,
+    /// Hugging Face repositories only the Python service downloads.
+    #[serde(default)]
+    pub hf_repos: Vec<LegacyRepo>,
+    /// Exact files the Python service staged inside its data folder. Only
+    /// these are removed there; the folder itself is user data.
+    #[serde(default)]
+    pub staged: Option<LegacyStaged>,
+    /// Bundled Python source, removable only where unedited.
+    #[serde(default)]
+    pub code: LegacyCode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyRepo {
+    /// e.g. `stabilityai/stable-audio-3-medium`.
+    pub repo: String,
+    pub label: String,
+    /// What it is for, when a native replacement must exist before it goes.
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyStaged {
+    /// Relative to the runtime root, inside the service's data folder.
+    pub dir: String,
+    pub label: String,
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyCode {
+    /// Top-level files of the service folder.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Package folders whose `.py` files the bundle ships.
+    #[serde(default)]
+    pub packages: Vec<String>,
+}
+
+impl LegacyRepo {
+    /// The repository's folder in a Hugging Face hub cache.
+    pub fn cache_dir_name(&self) -> String {
+        format!("models--{}", self.repo.replace('/', "--"))
+    }
 }
 
 /// How a service runs: a Python entry point inside a uv venv, or a prebuilt
@@ -52,16 +148,83 @@ pub enum ServiceRuntime {
 #[serde(rename_all = "camelCase")]
 pub struct NativeDef {
     pub executable: String,
+    #[serde(default)]
+    pub bundle: Option<String>,
     /// The release the packages below were published under. A different
     /// version in an installed runtime's stamp means it needs updating.
+    #[serde(default)]
     pub version: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// The runtime's models folder under the profile's models directory.
+    /// Storage transfer carries it, and migration cleanup never touches it.
+    #[serde(default)]
+    pub models_dir: Option<String>,
     /// Keyed by platform, e.g. `windows-x64`.
+    #[serde(default)]
     pub platforms: HashMap<String, NativePlatform>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBundle {
+    pub version: String,
+    pub platforms: HashMap<String, NativePlatform>,
+}
+
+pub fn valid_bundle_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == b'-' || ch == b'_')
+        && !matches!(id, "con" | "prn" | "aux" | "nul")
+        && !(id.len() == 4
+            && (id.starts_with("com") || id.starts_with("lpt"))
+            && id.as_bytes()[3].is_ascii_digit())
+}
+
+impl Manifest {
+    /// Resolve references once so install/launch paths consume the same pinned
+    /// version and backend packages, with no repeated per-service definitions.
+    pub fn resolve_native_bundles(&mut self) -> Result<(), String> {
+        for id in self.native_bundles.keys() {
+            if !valid_bundle_id(id) {
+                return Err(format!("Invalid native bundle identity: {id}"));
+            }
+        }
+        for service in &mut self.services {
+            let Some(native) = service.native.as_mut() else {
+                continue;
+            };
+            let Some(id) = native.bundle.as_ref() else {
+                continue;
+            };
+            if !valid_bundle_id(id) {
+                return Err(format!("Invalid native bundle identity: {id}"));
+            }
+            let bundle = self
+                .native_bundles
+                .get(id)
+                .ok_or_else(|| format!("{} references undefined native bundle {id}", service.id))?;
+            if (!native.version.is_empty() && native.version != bundle.version)
+                || (!native.platforms.is_empty() && native.platforms != bundle.platforms)
+            {
+                return Err(format!(
+                    "{} must use the version/packages from native bundle {id}",
+                    service.id
+                ));
+            }
+            native.version = bundle.version.clone();
+            native.platforms = bundle.platforms.clone();
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NativePlatform {
     /// The executable, ggml, and every CPU variant. Runs anywhere on its own.
@@ -76,7 +239,7 @@ pub struct NativePlatform {
     pub prefer: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NativePackage {
     pub url: String,
@@ -118,8 +281,9 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
 
-    let manifest: Manifest =
+    let mut manifest: Manifest =
         serde_json::from_str(&content).map_err(|e| format!("Invalid manifest JSON: {}", e))?;
+    manifest.resolve_native_bundles()?;
 
     log::info!("Loaded {} services from manifest", manifest.services.len());
     for svc in &manifest.services {
@@ -141,8 +305,63 @@ mod tests {
     use super::{Manifest, ServiceRuntime};
 
     fn bundled() -> Manifest {
-        serde_json::from_str(include_str!("../../../services/manifests/services.json"))
-            .expect("bundled service manifest should be valid JSON")
+        let mut manifest: Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+                .expect("bundled service manifest should be valid JSON");
+        manifest
+            .resolve_native_bundles()
+            .expect("bundle references should resolve");
+        manifest
+    }
+
+    #[test]
+    fn sa3_candidate_uses_one_pinned_bundle_without_switching_python() {
+        let mut manifest = bundled();
+        let sa3 = manifest
+            .services
+            .iter()
+            .find(|service| service.id == "sa3")
+            .unwrap();
+        assert_eq!(sa3.runtime, ServiceRuntime::Python);
+        let native = sa3.native.as_ref().unwrap();
+        assert_eq!(native.bundle.as_deref(), Some("sa3"));
+        assert_eq!(native.version, manifest.native_bundles["sa3"].version);
+        let cuda = &native.platforms["windows-x64"].backends["cuda"];
+        assert_eq!(cuda.requires, ["cudart-12.8"]);
+        assert!(crate::native_runtime::is_sha256(&cuda.sha256));
+        manifest.resolve_native_bundles().unwrap();
+    }
+
+    #[test]
+    fn unknown_or_escaping_bundle_references_are_rejected() {
+        for id in ["missing", "../sa3", "C:/sa3", "COM1", "con", "lpt2"] {
+            let mut manifest = bundled();
+            let native = manifest
+                .services
+                .iter_mut()
+                .find(|service| service.id == "sa3")
+                .unwrap()
+                .native
+                .as_mut()
+                .unwrap();
+            native.bundle = Some(id.to_string());
+            assert!(manifest.resolve_native_bundles().is_err(), "{id}");
+        }
+    }
+
+    #[test]
+    fn consumer_cannot_override_shared_package_identity() {
+        let mut manifest = bundled();
+        manifest
+            .services
+            .iter_mut()
+            .find(|service| service.id == "sa3")
+            .unwrap()
+            .native
+            .as_mut()
+            .unwrap()
+            .version = "v9.9.9".to_string();
+        assert!(manifest.resolve_native_bundles().is_err());
     }
 
     #[test]

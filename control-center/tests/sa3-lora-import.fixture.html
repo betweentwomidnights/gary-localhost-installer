@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>SA3 LoRA import fixture</title></head><body><div id="app"></div><script type="module">
+import {mount} from 'svelte';
+import Sa3LoraModal from '../src/lib/Sa3LoraModal.svelte';
+import '../src/styles.css';
+let callback=0;
+const entries=[{name:'charlie',nativeOnly:false,strength:1,sourcePath:'D:/Gary/sa3/loras/charlie.safetensors',nativePath:'D:/Gary/sa3/native-loras/charlie.gguf',error:null,promptsPath:null,trainingCheckpoints:[]}];
+const audit=document.createElement('pre');audit.id='fixture-audit';audit.style.cssText='position:fixed;bottom:0;left:0;max-height:60px;overflow:auto;font-size:10px';document.body.append(audit);
+window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:()=>{},invoke:async(command,args)=>{
+if(command.startsWith('plugin:event|'))return ++callback;
+audit.textContent+=JSON.stringify({command,args})+'\n';
+switch(command){
+case 'get_sa3_lora_state':return {entries:[],pools:{},catalogPath:'D:/Gary/sa3/lora_catalog.json',registryPath:'D:/Gary/sa3/lora_registry.json',promptsDir:'D:/Gary/sa3/prompts'};
+case 'get_services':return [{id:'sa3',runtime:'native',status:'stopped'}];
+case 'get_sa3_native_lora_state':return {entries,preparing:false,adaptersDir:'D:/Gary/sa3/native-loras'};
+case 'import_sa3_native_lora':return {entries:[...entries,{...entries[0],name:args.name,nativeOnly:true,sourcePath:args.checkpointPath,nativePath:`D:/Gary/sa3/native-loras/${args.name}.gguf`}],preparing:false,adaptersDir:'D:/Gary/sa3/native-loras'};
+default:throw new Error('Fixture refuses '+command);
+}}};
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
+mount(Sa3LoraModal,{target:document.getElementById('app'),props:{open:true,serviceStatus:'stopped',serviceEnvExists:false,onClose:()=>{}}});
+</script></body></html>

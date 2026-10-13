@@ -168,6 +168,12 @@ pub fn active_runtime_root() -> PathBuf {
     resolve_startup_runtime_root()
 }
 
+pub fn ensure_mutations_allowed(root: &Path) -> Result<(), String> {
+    if crate::storage_transfer::in_progress() { return Err("Wait for the storage transfer to finish.".into()); }
+    if storage_info(root).pending_restart { return Err("Restart to use the selected storage before changing runtime files.".into()); }
+    Ok(())
+}
+
 pub fn resolve_startup_runtime_root() -> PathBuf {
     if let Some(path) = env_path(RUNTIME_ROOT_OVERRIDE_ENV) {
         return path;
@@ -217,8 +223,10 @@ pub fn storage_info(active_root: &Path) -> RuntimeStorageInfo {
 pub fn save_runtime_root_config(
     raw_path: &str,
     active_root: &Path,
+    progress: impl FnMut(crate::storage_transfer::Progress),
 ) -> Result<RuntimeStorageInfo, String> {
     let path = validate_runtime_root(raw_path)?;
+    crate::storage_transfer::run(active_root, &path, progress)?;
     seed_runtime_root_config_files(active_root, &path)?;
     write_storage_config(&StorageConfig {
         runtime_root: Some(display_path(&path)),
@@ -226,14 +234,12 @@ pub fn save_runtime_root_config(
     Ok(storage_info(active_root))
 }
 
-pub fn reset_runtime_root_config(active_root: &Path) -> Result<RuntimeStorageInfo, String> {
-    let path = storage_config_path();
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .map_err(|e| format!("Cannot remove storage config {}: {}", path.display(), e))?;
-    }
-    let startup_root = resolve_startup_runtime_root();
+pub fn reset_runtime_root_config(active_root: &Path, progress: impl FnMut(crate::storage_transfer::Progress)) -> Result<RuntimeStorageInfo, String> {
+    let startup_root = automatic_default_runtime_root();
+    std::fs::create_dir_all(&startup_root).map_err(|e| e.to_string())?;
+    crate::storage_transfer::run(active_root, &startup_root, progress)?;
     seed_runtime_root_config_files(active_root, &startup_root)?;
+    write_storage_config(&StorageConfig::default())?;
     Ok(storage_info(active_root))
 }
 
@@ -273,9 +279,7 @@ fn write_storage_config(config: &StorageConfig) -> Result<(), String> {
             )
         })?;
     }
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("Cannot serialize storage config: {}", e))?;
-    std::fs::write(&path, json)
+    crate::sa3_training::save(&path, config)
         .map_err(|e| format!("Cannot save storage config {}: {}", path.display(), e))
 }
 
@@ -342,6 +346,9 @@ fn display_path(path: &Path) -> String {
 }
 
 pub fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    if let (Ok(left), Ok(right)) = (left.canonicalize(), right.canonicalize()) {
+        return path_key(&left) == path_key(&right);
+    }
     let left_key = path_key(left);
     let right_key = path_key(right);
     left_key == right_key
@@ -349,10 +356,11 @@ pub fn paths_equivalent(left: &Path, right: &Path) -> bool {
 
 fn path_key(path: &Path) -> String {
     let value = path.to_string_lossy().replace('/', "\\");
+    let value = value.strip_prefix("\\\\?\\").unwrap_or(&value).trim_end_matches('\\');
     if cfg!(windows) {
         value.to_ascii_lowercase()
     } else {
-        value
+        value.to_string()
     }
 }
 

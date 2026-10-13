@@ -8,9 +8,10 @@ sa3.cpp, audiocraft.cpp and acestep.cpp follow the same pattern as they come
 over. when a service needs something this doesn't cover, change this document
 first, then the repos.
 
-for now yuey is the only native service in gary4local. sa3, foundation-1,
-jerry, gary and carey stay on their pytorch environments until yuey is fully
-validated.
+Yuey pins published v0.2.3. SA3 migration prepares the shared published v0.1.3
+bundle, validates native generation/training and activates it per storage
+profile before cleanup. Both projects use ggml 4ad3b30b and share the existing
+CUDA 12.8 runtime. Foundation-1, Jerry, Gary and Carey still use Python.
 
 ## who owns what
 
@@ -33,7 +34,7 @@ one GitHub release per version, tagged `vX.Y.Z`, with these assets:
 
 | asset | contents |
 |---|---|
-| `<service>-vX.Y.Z-windows-x64-core.zip` | the server executable (and any CLI tools), the service's own DLLs, `ggml.dll`, `ggml-base.dll`, every `ggml-cpu-*.dll` variant, `LICENSE`, `LICENSE-ggml.txt`, `THIRD_PARTY_NOTICES.md`, `BUILD-INFO.json` |
+| `<service>-vX.Y.Z-windows-x64-core.zip` | the server executable (and any CLI tools), the service's own DLLs, `ggml.dll`, `ggml-base.dll`, every `ggml-cpu-*.dll` variant, the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, `vcomp140.dll`), `LICENSE`, `LICENSE-ggml.txt`, `THIRD_PARTY_NOTICES.md`, `BUILD-INFO.json` |
 | `<service>-vX.Y.Z-windows-x64-cuda.zip` | `ggml-cuda.dll`, nothing else |
 | `<service>-vX.Y.Z-windows-x64-vulkan.zip` | `ggml-vulkan.dll`, nothing else |
 | `<service>-vX.Y.Z-windows-x64-standalone.zip` | core, both backends and the CUDA runtime in one folder, for people running the service on its own. gary4local never downloads it. |
@@ -90,7 +91,18 @@ all of them:
   installs leave out. that's what failed yuey's first release dry run.
 - the same ggml fork everywhere (`betweentwomidnights/ggml`), pinned as a
   submodule. each service still ships its own copy of the ggml DLLs in its own
-  folder. nothing is shared between services except the CUDA runtime.
+  folder. A multi-service repo such as sa3.cpp shares its complete bundle among
+  its own consumers; independent projects keep separate ggml copies. The CUDA
+  runtime is shared across projects.
+- the Visual C++ runtime in core, beside the executables, copied from the
+  redistributable folder of the Visual Studio that built the package. the
+  package script fails if it's older than the compiler: binaries from a newer
+  toolset can crash on an older `msvcp140`. Windows loads DLLs from an
+  executable's own folder before System32, so a service runs on the runtime it
+  was built against whatever the machine has, and nobody needs an
+  administrator install of the redistributable. it can't be shared the way the
+  CUDA runtime is: System32 comes before `PATH`, so a stale system copy would
+  win over a shared folder. `BUILD-INFO.json` records its version.
 
 the package script runs the tests with the CPU backend loaded dynamically,
 exactly as it'll be on a user's machine, before it packages anything. the same
@@ -180,6 +192,14 @@ and the shared runtimes sit once at the top level:
 }
 ```
 
+A repo providing several services can define `nativeBundles.<id>` once, with
+`version` and `platforms` in the same format. Its service's `native` block
+references `"bundle": "sa3"` and supplies `executable`, optional `args` and
+`env` overrides. Resolution rejects unsafe/unknown identities and contradictory
+consumer pins. The bundle installs once at `services/<bundle>/native`; consumers
+share its backend and version. A Python service may have a native candidate
+without setting `runtime` to `native`, for preparation before migration.
+
 a `sha256` of `"unpublished"` means nothing has been pinned yet. gary4local
 refuses to install it and says why, rather than downloading something it can't
 check.
@@ -192,13 +212,15 @@ its own order.
 pins are written by a script, never by hand:
 
 ```bash
-node control-center/src-tauri/scripts/pin_native_release.mjs --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.0
+node control-center/src-tauri/scripts/pin_native_release.mjs --service yuey --repo betweentwomidnights/yuey.cpp --tag v0.2.3
 node control-center/src-tauri/scripts/pin_native_release.mjs --runtime cudart-12.8 --repo betweentwomidnights/gary-localhost-installer --tag runtime-cudart-12.8.1
+node control-center/src-tauri/scripts/pin_native_release.mjs --bundle sa3 --repo betweentwomidnights/sa3.cpp --tag v0.1.3
 ```
 
-both read the release's `SHA256SUMS` and edit the manifest in place, so the
-diff is only the lines that changed. a service pin also sets the service's
-`version`.
+These read the release's `SHA256SUMS` and edit only the selected definition in
+place. Service/bundle pins also update their version. A service that references
+a bundle must be pinned using `--bundle`. `--sums` and `--manifest` allow offline
+fixture checks; run `node --test control-center/src-tauri/scripts/pin_native_release.test.mjs`.
 
 ## how gary4local installs a runtime
 
@@ -217,19 +239,25 @@ diff is only the lines that changed. a service pin also sets the service's
    `--props` with the runtime on `PATH`. the first backend that reports its
    devices wins. if the automatic choice doesn't come up, the next one is tried,
    and the panel says so instead of quietly running somewhere else.
-4. **swaps the staging folder into `services/<id>/native`**, keeping the old
+4. **swaps the successfully probed staging folder into `services/<id>/native`**
+   (or `services/<bundle>/native`), keeping the old
    install until the new one is in place, and writes `gary-native.json` (the
    version, the backend it ended up on, the one that was asked for, and any
    fallback reason) and the `--props` output beside the executable.
 
 an installed runtime whose `gary-native.json` version differs from the
 manifest's shows "update runtime". the executable and its DLLs are locked while
-the service runs, so a rebuild refuses to start until it's stopped.
+the service runs, so a rebuild refuses to start until every consumer is stopped
+and its registered trainer/converter jobs have exited. Installers serialize
+shared package mutations. Storage maintenance counts a bundle once and protects
+the shared CUDA pack while even a prepared bundle requires it.
 
 the binaries aren't code-signed. downloads made by gary4local itself carry no
 Mark of the Web, so SmartScreen doesn't apply, but Smart App Control can still
 block the executable. when it does, gary4local's error explains how to get past
-it.
+it. an executable Windows can't load at all, because a DLL it imports is
+missing or outdated, gets an error that says so and asks for a reinstall,
+instead of a bare status code.
 
 ## testing before a release exists
 
@@ -273,11 +301,71 @@ for sa3.cpp, audiocraft.cpp and acestep.cpp:
 
 1. copy yuey's `ci/package-windows.ps1` and `.github/workflows/release.yml`,
    rename the service and its executables, and keep everything else, including
-   the checks. differences should be deliberate and written down here.
+   the checks and the Visual C++ runtime in core. differences should be deliberate and written down here.
 2. make the server keep the promises in [what the executable has to do](#what-the-executable-has-to-do).
 3. add a `THIRD_PARTY_NOTICES.md` for whatever else the service vendors.
 4. add its manifest entry with `"sha256": "unpublished"`, test it through
    `GARY4LOCAL_NATIVE_PACKAGE_DIR`, then release and pin as above.
+
+### replacing a python service
+
+a service that already ships as python (sa3, foundation-1, stable-audio,
+carey, gary, terry) keeps `"runtime": "python"` in the manifest. users move to
+native one profile at a time, so its entry gets a `migration` block beside
+`native`. the shared engine (`migration_inventory.rs`, `migration_cleanup.rs`,
+`migration_code.rs`) reads that block and does the rest:
+
+```json
+"migration": {
+  "dataDir": "sa3",
+  "label": "SA3",
+  "dataLabel": "LoRAs, prompts, training jobs and checkpoints",
+  "legacy": {
+    "envDirs": ["env", ".venv"],
+    "hfRepos": [
+      {"repo": "stabilityai/stable-audio-3-medium", "label": "PyTorch inference weights"},
+      {"repo": "stabilityai/stable-audio-3-medium-base", "label": "PyTorch training base", "role": "training-base"}
+    ],
+    "staged": {"dir": "sa3/training/models/sa3-medium/base", "label": "staged PyTorch training base",
+               "role": "training-base", "files": ["model_config.json", "..."]},
+    "code": {"files": ["api.py", "..."], "packages": ["stable_audio_3", "..."]}
+  }
+}
+```
+
+- **`dataDir`** is the service's user-data folder. its native selection, the
+  profile's record of the switch, is `<dataDir>/native-runtime.json`, and
+  cleanup never removes anything inside it except `legacy.staged` files.
+- **`legacy`** is everything cleanup may ever remove. nothing outside it is a
+  candidate, and each candidate must still resolve exactly where the block
+  says, without overlapping user data, native files, another service's folder
+  or another model in the hub. code is removed only where it still matches
+  the inventory recorded when the bundle was installed.
+- **`role`** tags a legacy artifact that has a native replacement, so the
+  service can refuse cleanup until the replacement exists.
+- **`native.modelsDir`** (on the `native` block, since a native-only service
+  like yuey has one too) is the runtime's folder under the profile's models
+  directory. cleanup never touches it, and moving storage carries it, along
+  with every migrating service's `dataDir` and its selection, which is copied
+  last so an interrupted move never looks migrated.
+
+what the block can't say, the service implements as `migration::Service`:
+its selection's encoding check, user data its own records point at (sa3's
+LoRA catalogs, training datasets, decoder correction), any cleanup blocker,
+and for storage moves, which records must parse to be carried and which
+files its records hash and so must be copied byte for byte. once native, it
+also says which of its jobs block a start, what else must be on disk before
+it starts, how the selected tier changes its launch arguments, and whether a
+client adapter keeps the python-era contract on the public port (sa3's does,
+while its server listens on `SA3_PORT`).
+
+proving the runtime before the switch is the service's own `verify_native`,
+built from shared pieces: `NativeLaunch` for the exact process the service
+will run, and `migration_verify::PrivateServer`, which starts it on a private
+port, waits for `/health` with every required capability, and kills it when
+dropped. sa3 adds its offline probes, model hashes, adapter checks, a
+generation smoke test and a two-step training run on top. a service with a block and no implementation still gets the shared
+inventory and cleanup; `sa3_migration::Sa3` is the reference.
 
 ## not yet
 

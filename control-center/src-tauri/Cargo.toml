@@ -25,6 +25,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 semver = "1.0"
 sha2 = "0.10"
 zip = { version = "4", default-features = false, features = ["deflate"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+base64 = "0.22"
+hound = "3.5"
+regex = "1"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 
@@ -32,4 +36,4 @@ tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }

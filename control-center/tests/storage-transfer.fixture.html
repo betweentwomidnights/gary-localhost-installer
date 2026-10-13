@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>Native storage transfer fixture</title></head><body><div id="app"></div><script type="module">
+import { mount } from 'svelte';
+import Fixture from './storage-transfer.fixture.svelte';
+import '../src/styles.css';
+window.__TAURI_INTERNALS__ = { invoke: async (command) => {
+  if (command === 'plugin:dialog|open') return 'C:/test-migration-daters';
+  throw new Error('Fixture must not call real runtime commands: ' + command);
+}};
+mount(Fixture, { target: document.getElementById('app') });
+</script></body></html>

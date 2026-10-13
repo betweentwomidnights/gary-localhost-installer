@@ -64,6 +64,7 @@
     open,
     info,
     busy = false,
+    transferProgress = null,
     error,
     maintenanceInfo,
     maintenanceBusy = false,
@@ -97,6 +98,7 @@
     open: boolean;
     info: RuntimeStorageInfo | null;
     busy?: boolean;
+    transferProgress?: { message: string; completedBytes: number; totalBytes: number } | null;
     error: string | null;
     maintenanceInfo: LegacyStorageMaintenanceInfo | null;
     maintenanceBusy?: boolean;
@@ -303,7 +305,7 @@
 
 {#if open}
   <div class="overlay">
-    <button type="button" class="backdrop" aria-label="close storage settings" onclick={onClose}></button>
+    <button type="button" class="backdrop" aria-label="close storage settings" onclick={onClose} disabled={busy}></button>
     <div
       class="modal"
       bind:this={modalElement}
@@ -363,6 +365,18 @@
       {#if error}
         <div class="error-note">{error}</div>
       {/if}
+
+      {#if busy && transferProgress}
+        <div class="transfer-status" role="status" aria-live="polite">
+          <div class="transfer-heading"><span class="transfer-spinner" aria-hidden="true"></span>Changing storage</div>
+          <div class="transfer-track" role="progressbar" aria-label="Native storage transfer" aria-valuemin={0} aria-valuemax={100} aria-valuenow={transferProgress.totalBytes > 0 ? Math.min(100, Math.floor(100 * transferProgress.completedBytes / transferProgress.totalBytes)) : undefined}>
+            <div class:indeterminate={transferProgress.totalBytes <= 0} style:width={transferProgress.totalBytes > 0 ? `${Math.min(100, 100 * transferProgress.completedBytes / transferProgress.totalBytes)}%` : "30%"}></div>
+          </div>
+          <div class="transfer-message">{transferProgress.message}</div>
+          {#if transferProgress.totalBytes > 0}<div class="note">{Math.min(100, Math.floor(100 * transferProgress.completedBytes / transferProgress.totalBytes))}% copied and verified</div>{/if}
+        </div>
+      {/if}
+      <div class="note">Changing folders copies and verifies native runtimes, GGUF models, the SA3 training base and LoRAs before switching. Running services stop for the transfer. Original files are kept for recovery.</div>
 
       <div class="active-cache">
         <div class="section-row">
@@ -579,11 +593,11 @@
       {/if}
 
       <div class="actions">
-        <button type="button" onclick={chooseFolder} disabled={busy}>choose folder</button>
+        <button type="button" onclick={chooseFolder} disabled={busy || maintenanceBusy || cacheBusy || serviceEnvBusy !== null || blobReclaimBusy}>choose folder</button>
         <button
           type="button"
           onclick={resetStorage}
-          disabled={busy || !info?.configuredRoot}
+          disabled={busy || maintenanceBusy || cacheBusy || serviceEnvBusy !== null || blobReclaimBusy || !info?.configuredRoot}
           title={resetButtonTitle}
         >
           {resetButtonLabel}
@@ -598,6 +612,16 @@
 {/if}
 
 <style>
+  .transfer-status { margin:16px 0; }
+  .transfer-heading { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .transfer-spinner { width:11px; height:11px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:transfer-spin .7s linear infinite; }
+  .transfer-track { height:4px; overflow:hidden; background:var(--border); }
+  .transfer-track > div { height:100%; background:var(--accent); }
+  .transfer-track > .indeterminate { animation:transfer-slide 1.3s linear infinite; }
+  .transfer-message { margin-top:8px; font-family:var(--font-mono); font-size:11px; overflow-wrap:anywhere; }
+  @keyframes transfer-spin { to { transform:rotate(360deg); } }
+  @keyframes transfer-slide { from { transform:translateX(-100%); } to { transform:translateX(340%); } }
+  @media(prefers-reduced-motion:reduce) { .transfer-spinner,.transfer-track > .indeterminate { animation:none; } }
   .overlay {
     position: fixed;
     inset: 0;
