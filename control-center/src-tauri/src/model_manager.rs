@@ -1075,6 +1075,155 @@ fn friendly_hf_download_error(raw_detail: &str) -> String {
 /// - "org/repo::filename.ckpt" — downloads a single file from the repo
 ///
 /// Uses streaming requests with byte-level progress reporting via JSON on stdout.
+/// The Python that downloads a repository into the HF cache, reporting
+/// progress as JSON lines. Where the service needs only some of a
+/// repository's files, it fetches just those: SA3's medium-base repo also
+/// carries svd_bases.pt, 3.8 GB of LoRA-XS bases nothing here reads, and every
+/// download took it.
+fn repository_download_script(repo_id: &str) -> String {
+    // Let huggingface_hub own cache layout, Xet/LFS handling, authentication
+    // and resume behavior. A small reporter thread keeps the existing
+    // byte-level UI reasonably informative.
+    let allow_patterns = match known_hf_required_files(repo_id) {
+        Some(files) => serde_json::to_string(files).unwrap_or_else(|_| "None".into()),
+        None => "None".into(),
+    };
+    format!(
+        r#"
+import sys, os, json, shutil, threading
+
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+
+from huggingface_hub import HfApi, snapshot_download, constants
+
+model_id = "{repo_id}"
+allow_patterns = {allow_patterns}
+
+def report(pct, msg):
+    print(json.dumps({{"p": round(pct, 4), "m": msg}}), flush=True)
+
+def fmt_size(b):
+    if b < 1024: return str(b) + "B"
+    if b < 1024**2: return f"{{b/1024:.0f}}KB"
+    if b < 1024**3: return f"{{b/1024**2:.1f}}MB"
+    return f"{{b/1024**3:.2f}}GB"
+
+def cache_bytes(folder):
+    total = 0
+    if not os.path.isdir(folder):
+        return total
+    for root, _, files in os.walk(folder):
+        for name in files:
+            if name.endswith(".lock"):
+                continue
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+def exception_details(error):
+    details = []
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        details.append(type(current).__name__ + ": " + str(current))
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return "\n".join(details)
+
+try:
+    report(0.0, "Fetching repo info...")
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    api = HfApi(token=token)
+    repo_info = api.repo_info(model_id, files_metadata=True)
+    siblings = [s for s in repo_info.siblings if not s.rfilename.startswith(".")]
+    if allow_patterns is not None:
+        siblings = [s for s in siblings if s.rfilename in allow_patterns]
+        missing = sorted(set(allow_patterns) - {{s.rfilename for s in siblings}})
+        if missing:
+            raise RuntimeError(
+                model_id + " no longer has files this service needs: " + ", ".join(missing)
+            )
+    file_entries = [(s.rfilename, s.size or (s.lfs.size if s.lfs else 0) or 0) for s in siblings]
+    total_bytes = sum(sz for _, sz in file_entries)
+
+    if total_bytes == 0:
+        report(1.0, "No files")
+        print(json.dumps({{"status": "done"}}), flush=True)
+        sys.exit(0)
+
+    report(0.0, f"Downloading {{len(file_entries)}} files ({{fmt_size(total_bytes)}})")
+    os.makedirs(constants.HF_HUB_CACHE, exist_ok=True)
+    folder = os.path.join(
+        constants.HF_HUB_CACHE,
+        "models--" + model_id.replace("/", "--"),
+    )
+    blobs_dir = os.path.join(folder, "blobs")
+    snapshot_dir = os.path.join(folder, "snapshots", repo_info.sha)
+    existing_bytes = min(
+        max(cache_bytes(blobs_dir), cache_bytes(snapshot_dir)),
+        total_bytes,
+    )
+    remaining_bytes = max(total_bytes - existing_bytes, 0)
+    free_bytes = shutil.disk_usage(constants.HF_HUB_CACHE).free
+    reserve_bytes = 512 * 1024 * 1024
+    if free_bytes < remaining_bytes + reserve_bytes:
+        raise RuntimeError(
+            "Not enough free disk space for this model. "
+            f"Need about {{fmt_size(remaining_bytes + reserve_bytes)}} free, "
+            f"but only {{fmt_size(free_bytes)}} is available."
+        )
+
+    stop_reporting = threading.Event()
+
+    def report_cache_progress():
+        last_bytes = -1
+        while not stop_reporting.wait(1.0):
+            current = min(
+                max(cache_bytes(blobs_dir), cache_bytes(snapshot_dir)),
+                total_bytes,
+            )
+            if current != last_bytes:
+                report(
+                    current / total_bytes,
+                    f"Downloaded {{fmt_size(current)}}/{{fmt_size(total_bytes)}}",
+                )
+                last_bytes = current
+
+    reporter = threading.Thread(target=report_cache_progress, daemon=True)
+    reporter.start()
+    try:
+        snapshot_download(
+            repo_id=model_id,
+            token=token,
+            revision=repo_info.sha,
+            max_workers=4,
+            allow_patterns=allow_patterns,
+        )
+    finally:
+        stop_reporting.set()
+        reporter.join(timeout=2)
+
+    report(1.0, "done")
+    print(json.dumps({{"status": "done"}}), flush=True)
+
+except Exception as e:
+    print(json.dumps({{
+        "status": "error",
+        "error": str(e),
+        "details": exception_details(e),
+    }}), flush=True)
+    sys.exit(1)
+"#,
+        repo_id = repo_id,
+        allow_patterns = allow_patterns,
+    )
+}
+
 pub async fn download_model(
     model_id: String,
     python_exe: PathBuf,
@@ -1201,133 +1350,7 @@ except Exception as e:
             filename = filename,
         )
     } else {
-        // Full-repo download. Let huggingface_hub own cache layout, Xet/LFS
-        // handling, authentication, and resume behavior. A small reporter
-        // thread keeps the existing byte-level UI reasonably informative.
-        format!(
-            r#"
-import sys, os, json, shutil, threading
-
-os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
-os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
-
-from huggingface_hub import HfApi, snapshot_download, constants
-
-model_id = "{repo_id}"
-
-def report(pct, msg):
-    print(json.dumps({{"p": round(pct, 4), "m": msg}}), flush=True)
-
-def fmt_size(b):
-    if b < 1024: return str(b) + "B"
-    if b < 1024**2: return f"{{b/1024:.0f}}KB"
-    if b < 1024**3: return f"{{b/1024**2:.1f}}MB"
-    return f"{{b/1024**3:.2f}}GB"
-
-def cache_bytes(folder):
-    total = 0
-    if not os.path.isdir(folder):
-        return total
-    for root, _, files in os.walk(folder):
-        for name in files:
-            if name.endswith(".lock"):
-                continue
-            try:
-                total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                pass
-    return total
-
-def exception_details(error):
-    details = []
-    seen = set()
-    current = error
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        details.append(type(current).__name__ + ": " + str(current))
-        current = current.__cause__ or (
-            None if current.__suppress_context__ else current.__context__
-        )
-    return "\n".join(details)
-
-try:
-    report(0.0, "Fetching repo info...")
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-    api = HfApi(token=token)
-    repo_info = api.repo_info(model_id, files_metadata=True)
-    siblings = [s for s in repo_info.siblings if not s.rfilename.startswith(".")]
-    file_entries = [(s.rfilename, s.size or (s.lfs.size if s.lfs else 0) or 0) for s in siblings]
-    total_bytes = sum(sz for _, sz in file_entries)
-
-    if total_bytes == 0:
-        report(1.0, "No files")
-        print(json.dumps({{"status": "done"}}), flush=True)
-        sys.exit(0)
-
-    report(0.0, f"Downloading {{len(file_entries)}} files ({{fmt_size(total_bytes)}})")
-    os.makedirs(constants.HF_HUB_CACHE, exist_ok=True)
-    folder = os.path.join(
-        constants.HF_HUB_CACHE,
-        "models--" + model_id.replace("/", "--"),
-    )
-    blobs_dir = os.path.join(folder, "blobs")
-    snapshot_dir = os.path.join(folder, "snapshots", repo_info.sha)
-    existing_bytes = min(
-        max(cache_bytes(blobs_dir), cache_bytes(snapshot_dir)),
-        total_bytes,
-    )
-    remaining_bytes = max(total_bytes - existing_bytes, 0)
-    free_bytes = shutil.disk_usage(constants.HF_HUB_CACHE).free
-    reserve_bytes = 512 * 1024 * 1024
-    if free_bytes < remaining_bytes + reserve_bytes:
-        raise RuntimeError(
-            "Not enough free disk space for this model. "
-            f"Need about {{fmt_size(remaining_bytes + reserve_bytes)}} free, "
-            f"but only {{fmt_size(free_bytes)}} is available."
-        )
-
-    stop_reporting = threading.Event()
-
-    def report_cache_progress():
-        last_bytes = -1
-        while not stop_reporting.wait(1.0):
-            current = min(
-                max(cache_bytes(blobs_dir), cache_bytes(snapshot_dir)),
-                total_bytes,
-            )
-            if current != last_bytes:
-                report(
-                    current / total_bytes,
-                    f"Downloaded {{fmt_size(current)}}/{{fmt_size(total_bytes)}}",
-                )
-                last_bytes = current
-
-    reporter = threading.Thread(target=report_cache_progress, daemon=True)
-    reporter.start()
-    try:
-        snapshot_download(
-            repo_id=model_id,
-            token=token,
-            revision=repo_info.sha,
-            max_workers=4,
-        )
-    finally:
-        stop_reporting.set()
-        reporter.join(timeout=2)
-
-    report(1.0, "done")
-    print(json.dumps({{"status": "done"}}), flush=True)
-
-except Exception as e:
-    print(json.dumps({{
-        "status": "error",
-        "error": str(e),
-        "details": exception_details(e),
-    }}), flush=True)
-    sys.exit(1)
-"#,
-            repo_id = repo_id,
-        )
+        repository_download_script(&repo_id)
     };
 
     let mut cmd = tokio::process::Command::new(python_exe.to_str().unwrap());
@@ -2021,6 +2044,40 @@ mod tests {
     };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Parse a generated script with Python's own parser, so a broken
+    /// format! (an indentation slip inside the raw string) fails here rather
+    /// than as a download error. Skipped where no Python is on PATH.
+    fn assert_python_parses(script: &str) {
+        let Ok(mut child) = std::process::Command::new("python")
+            .args(["-c", "import ast, sys; ast.parse(sys.stdin.read())"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        else {
+            return;
+        };
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+        assert!(child.wait().unwrap().success(), "generated Python does not parse");
+    }
+
+    #[test]
+    fn repository_download_fetches_only_the_files_a_service_needs() {
+        let base = super::repository_download_script("stabilityai/stable-audio-3-medium-base");
+        let expected = serde_json::to_string(
+            known_hf_required_files("stabilityai/stable-audio-3-medium-base").unwrap(),
+        )
+        .unwrap();
+        assert!(base.contains(&format!("allow_patterns = {expected}")));
+        assert!(!expected.contains("svd_bases.pt"));
+        assert!(base.contains("allow_patterns=allow_patterns"));
+        assert_python_parses(&base);
+
+        // A repository with no known file list is still downloaded whole.
+        let whole = super::repository_download_script("someone/unlisted-model");
+        assert!(whole.contains("allow_patterns = None"));
+        assert_python_parses(&whole);
+    }
 
     #[test]
     fn explains_missing_public_gated_repo_permission() {
