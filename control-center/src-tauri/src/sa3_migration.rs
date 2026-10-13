@@ -125,6 +125,70 @@ impl crate::migration::Service for Sa3 {
     fn validate_records(&self, root: &Path) -> Result<(), String> {
         crate::sa3_loras::read_catalog(root).map(|_| ())
     }
+
+    fn blocking_jobs(&self) -> &'static [&'static str] {
+        &[
+            "native-migration",
+            "native-training",
+            "legacy-lora-edit",
+            "lora-import",
+            "lora-edit",
+            "checkpoint-selection",
+            "lora-preparation",
+            "decoder-preparation",
+        ]
+    }
+
+    /// The selected tier's models, and the decoder correction when enabled.
+    fn native_start_blocker(
+        &self,
+        root: &Path,
+        selection: Option<&crate::migration::Selection>,
+    ) -> Option<String> {
+        let encoding = selection.map_or("F16", |selection| selection.encoding.as_str());
+        if let Some(missing) = crate::sa3_runtime::missing_models(root, encoding) {
+            return Some(missing);
+        }
+        if crate::sa3_use_decoder_lora_enabled() {
+            return crate::sa3_decoder::blocker(root);
+        }
+        None
+    }
+
+    fn launch_args(&self, args: &[String], encoding: Option<&str>) -> Result<Vec<String>, String> {
+        crate::sa3_runtime::launch_args(args, encoding.unwrap_or("F16"))
+    }
+
+    /// Gary's SA3 HTTP contract on the public port, translated to the native
+    /// server's unified API on its private SA3_PORT.
+    fn client_adapter(
+        &self,
+        public_port: u16,
+        env: &[(String, String)],
+        root: &Path,
+    ) -> Result<Option<Box<dyn crate::migration::ClientAdapter>>, String> {
+        let native_port = env
+            .iter()
+            .find(|(key, _)| key == "SA3_PORT")
+            .ok_or("SA3's native server port is missing")?
+            .1
+            .parse::<u16>()
+            .map_err(|_| "SA3's native server port is invalid")?;
+        let default_lora = env
+            .iter()
+            .rev()
+            .find(|(key, _)| key == "SA3_DEFAULT_LORA")
+            .map(|(_, value)| value.clone());
+        let listener = crate::sa3_adapter::AdapterListener::bind(
+            public_port,
+            native_port,
+            root.join("sa3/native-inputs"),
+            crate::sa3_adapter::client_defaults(&crate::sa3_loudness_env()),
+            root.to_path_buf(),
+            default_lora,
+        )?;
+        Ok(Some(Box::new(listener)))
+    }
 }
 
 /// SA3's contribution to its inventory: its selection, the user data its
@@ -288,69 +352,15 @@ pub async fn verify_native(
     verify_adapters(root, &progress).await?;
     progress("Starting the private native test server...");
     let dir = crate::sa3_training::checked_folder(root, &["sa3", "migration-checks"])?;
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let log = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dir.join(format!("server-{nonce}.log")))
-        .map_err(|error| error.to_string())?;
-    let reservation = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|error| error.to_string())?;
-    let port = reservation
-        .local_addr()
-        .map_err(|error| error.to_string())?
-        .port();
-    // The service's own launch, with --port overriding the SA3_PORT it sets.
-    let mut command = launch.tokio_command();
-    crate::hide_console_window(&mut command);
-    command
-        .arg("--port")
-        .arg(port.to_string())
-        .stdout(log.try_clone().map_err(|error| error.to_string())?)
-        .stderr(log)
-        .kill_on_drop(true);
-    crate::workload_job::configure_tokio_command(&mut command);
-    drop(reservation);
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-    if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
-        let _ = child.kill().await;
-        return Err(error);
-    }
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .pool_max_idle_per_host(0)
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let base = format!("http://127.0.0.1:{port}");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let health: Value = loop {
-        if let Some(exit) = child.try_wait().map_err(|error| error.to_string())? {
-            return Err(format!(
-                "Native SA3 migration check exited with {exit}; inspect migration-checks logs"
-            ));
-        }
-        if let Ok(response) = client.get(format!("{base}/health")).send().await {
-            if response.status().is_success() {
-                break response.json().await.map_err(|error| error.to_string())?;
-            }
-        }
-        if Instant::now() >= deadline {
-            return Err(
-                "Native SA3 migration check did not start; inspect migration-checks logs".into(),
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-    for capability in crate::sa3_runtime::REQUIRED_CAPABILITIES {
-        if health["capabilities"][capability] != true {
-            return Err(format!("Installed SA3 runtime lacks {capability}; prepare a compatible release before migration"));
-        }
-    }
+    let server = crate::migration_verify::PrivateServer::start(
+        launch,
+        &dir,
+        "SA3",
+        crate::sa3_runtime::REQUIRED_CAPABILITIES,
+    )
+    .await?;
+    let client = &server.client;
+    let base = &server.base;
     progress("Loading the selected native model...");
     client
         .post(format!("{base}/load"))
@@ -435,8 +445,7 @@ pub async fn verify_native(
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    child.kill().await.map_err(|error| error.to_string())?;
-    child.wait().await.map_err(|error| error.to_string())?;
+    server.stop().await?;
     // A capability flag alone does not prove that this machine can train or
     // publish checkpoints. Exercise a tiny isolated dataset when a base exists.
     for training_encoding in ["Q4_K_M", "F16"] {
@@ -1214,7 +1223,7 @@ mod tests {
         }
         let launch = if packaged {
             let manager = crate::service_manager::ServiceManager::new(defs.clone(), root.clone());
-            manager.sa3_migration_launch("F16").unwrap().2
+            manager.migration_launch("sa3", "F16").unwrap().2
         } else {
             crate::native_runtime::NativeLaunch::new(
                 &root,

@@ -3,6 +3,7 @@ mod migration;
 mod migration_cleanup;
 mod migration_code;
 mod migration_inventory;
+mod migration_verify;
 mod model_manager;
 mod native_models;
 mod native_runtime;
@@ -10048,7 +10049,7 @@ async fn cleanup_sa3_legacy_installation(
         }
         let hub = models.hf_hub_cache_dir();
         sa3_cleanup::validate_review(repo_root.inner(), &hub, &review_token)?;
-        let (native, installed, launch) = services.sa3_migration_launch(&selection.encoding)?;
+        let (native, installed, launch) = services.migration_launch("sa3", &selection.encoding)?;
         services.begin_native_workload("sa3", "legacy-cleanup", "SA3 legacy cleanup")?;
         services.set_build_started("sa3", 1);
         (native, installed, launch, hub)
@@ -10154,7 +10155,7 @@ async fn activate_sa3_native_runtime(
         if let Some(blocker) = services.native_mutation_blocker("sa3") {
             return Err(format!("Cannot switch SA3: {blocker}"));
         }
-        let plan = services.sa3_migration_launch(&encoding)?;
+        let plan = services.migration_launch("sa3", &encoding)?;
         services.begin_native_workload("sa3", "native-migration", "SA3 migration validation")?;
         services.set_build_started("sa3", 1);
         plan

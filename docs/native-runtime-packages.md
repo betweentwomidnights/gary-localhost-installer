@@ -342,7 +342,18 @@ what the block can't say, the service implements as `migration::Service`:
 its selection's encoding check, user data its own records point at (sa3's
 LoRA catalogs, training datasets, decoder correction), any cleanup blocker,
 and for storage moves, which records must parse to be carried and which
-files its records hash and so must be copied byte for byte. a service with a block and no implementation still gets the shared
+files its records hash and so must be copied byte for byte. once native, it
+also says which of its jobs block a start, what else must be on disk before
+it starts, how the selected tier changes its launch arguments, and whether a
+client adapter keeps the python-era contract on the public port (sa3's does,
+while its server listens on `SA3_PORT`).
+
+proving the runtime before the switch is the service's own `verify_native`,
+built from shared pieces: `NativeLaunch` for the exact process the service
+will run, and `migration_verify::PrivateServer`, which starts it on a private
+port, waits for `/health` with every required capability, and kills it when
+dropped. sa3 adds its offline probes, model hashes, adapter checks, a
+generation smoke test and a two-step training run on top. a service with a block and no implementation still gets the shared
 inventory and cleanup; `sa3_migration::Sa3` is the reference.
 
 ## not yet

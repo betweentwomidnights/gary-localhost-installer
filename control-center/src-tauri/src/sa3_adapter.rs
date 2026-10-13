@@ -847,6 +847,12 @@ impl AdapterListener {
     }
 }
 
+impl crate::migration::ClientAdapter for AdapterListener {
+    fn start(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+        Box::new((*self).spawn())
+    }
+}
+
 async fn generate(State(state): State<AdapterState>, Json(body): Json<Value>) -> Reply {
     state.submit(Mode::Generate, body).await
 }

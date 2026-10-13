@@ -50,7 +50,8 @@ struct RunningService {
     healthy: bool,
     started_at: Instant,
     last_health_check_at: Option<Instant>,
-    _adapter: Option<crate::sa3_adapter::AdapterHandle>,
+    /// A migrated service's client adapter, stopped when this is dropped.
+    _adapter: Option<Box<dyn std::any::Any + Send>>,
 }
 
 pub struct HealthTarget {
@@ -400,25 +401,29 @@ impl ServiceManager {
     }
 
     /// What migration verifies: the installed runtime, launched exactly as the
-    /// service would be, but with the generation tier being verified.
-    pub fn sa3_migration_launch(
+    /// service would be, but with the tier being verified.
+    pub fn migration_launch(
         &self,
+        service_id: &str,
         encoding: &str,
     ) -> Result<(NativeDef, NativeInstall, NativeLaunch), String> {
-        let service = self.find_service("sa3").ok_or("Unknown SA3 service")?;
+        let service = self
+            .find_service(service_id)
+            .ok_or_else(|| format!("Unknown service: {service_id}"))?;
         let native = service
             .native
             .clone()
-            .ok_or("SA3 has no native runtime definition")?;
+            .ok_or_else(|| format!("{} has no native runtime definition", service.display_name))?;
         let installed = self
             .native_install(service)
-            .ok_or("Prepare the SA3 C++ runtime first")?;
+            .ok_or_else(|| format!("Prepare {}'s C++ runtime first", service.display_name))?;
         let launch = self.native_launch(service, &installed, Some(encoding))?;
         Ok((native, installed, launch))
     }
 
     /// The one place a native service's process is described. `encoding`
-    /// overrides SA3's selected tier, for verifying a tier before selecting it.
+    /// overrides a migrated service's selected tier, for verifying a tier
+    /// before selecting it.
     fn native_launch(
         &self,
         svc: &ServiceDef,
@@ -429,11 +434,12 @@ impl ServiceManager {
             .native
             .as_ref()
             .ok_or_else(|| format!("{} has no native definition", svc.id))?;
-        let args = if svc.id == "sa3" {
-            let selected = self.selection("sa3").map(|selection| selection.encoding.as_str());
-            crate::sa3_runtime::launch_args(&native.args, encoding.or(selected).unwrap_or("F16"))?
-        } else {
-            native.args.clone()
+        let args = match crate::migration::service(&svc.id) {
+            Some(service) => {
+                let selected = self.selection(&svc.id).map(|selection| selection.encoding.as_str());
+                service.launch_args(&native.args, encoding.or(selected))?
+            }
+            None => native.args.clone(),
         };
         let mut launch = NativeLaunch::new(
             &self.repo_root,
@@ -978,21 +984,11 @@ impl ServiceManager {
         if let Some(error) = self.migrations.get(&svc.id).and_then(|state| state.error.as_ref()) {
             return Some(format!("cannot use this profile's native selection: {error}"));
         }
-        if svc.id == "sa3" {
-            // Jobs that rewrite what the server would load, or validate it.
-            const BLOCKING_JOBS: &[&str] = &[
-                "native-migration",
-                "native-training",
-                "legacy-lora-edit",
-                "lora-import",
-                "lora-edit",
-                "checkpoint-selection",
-                "lora-preparation",
-                "decoder-preparation",
-            ];
+        let service = crate::migration::service(&svc.id);
+        if let Some(service) = service {
             let key = self.native_dir(svc).to_string_lossy().to_string();
             if let Some(label) = self.native_workloads.get(&key).and_then(|jobs| {
-                BLOCKING_JOBS.iter().find_map(|job| jobs.get(*job))
+                service.blocking_jobs().iter().find_map(|job| jobs.get(*job))
             }) {
                 return Some(format!("is waiting for {label} to finish"));
             }
@@ -1012,18 +1008,10 @@ impl ServiceManager {
                     ));
                 }
             }
-            if svc.id == "sa3" {
-                let encoding = self
-                    .selection("sa3")
-                    .map_or("F16", |selection| selection.encoding.as_str());
-                if let Some(missing) = crate::sa3_runtime::missing_models(&self.repo_root, encoding) {
-                    return Some(missing);
-                }
-                if crate::sa3_use_decoder_lora_enabled() {
-                    if let Some(blocker) = crate::sa3_decoder::blocker(&self.repo_root) {
-                        return Some(blocker);
-                    }
-                }
+            if let Some(blocker) = service.and_then(|service| {
+                service.native_start_blocker(&self.repo_root, self.selection(&svc.id))
+            }) {
+                return Some(blocker);
             }
         }
         if svc.id == "yuey" {
@@ -1042,28 +1030,13 @@ impl ServiceManager {
                 svc.display_name
             )
         })?;
-        // The manifest keeps SA3 on Python until migration is validated. When
-        // native is selected, preserve the public client port while the C++
-        // server serves its unified API on the private native port.
-        let adapter = if svc.id == "sa3" {
-            let template = self.native_env_template(svc);
-            let port = template
-                .iter()
-                .find(|(key, _)| key == "SA3_PORT")
-                .ok_or("SA3's native server port is missing")?
-                .1
-                .parse::<u16>()
-                .map_err(|_| "SA3's native server port is invalid")?;
-            Some(crate::sa3_adapter::AdapterListener::bind(
-                svc.port,
-                port,
-                self.repo_root.join("sa3/native-inputs"),
-                crate::sa3_adapter::client_defaults(&crate::sa3_loudness_env()),
-                self.repo_root.clone(),
-                template.iter().rev().find(|(key, _)| key == "SA3_DEFAULT_LORA").map(|(_, value)| value.clone()),
-            )?)
-        } else {
-            None
+        // A migrated service keeps its Python-era client contract on the public
+        // port while the native server listens privately.
+        let adapter = match crate::migration::service(&svc.id) {
+            Some(service) => {
+                service.client_adapter(svc.port, &self.native_env_template(svc), &self.repo_root)?
+            }
+            None => None,
         };
 
         let work_dir = self.service_dir(svc);
@@ -1111,7 +1084,7 @@ impl ServiceManager {
                 healthy: false,
                 started_at: Instant::now(),
                 last_health_check_at: None,
-                _adapter: adapter.map(crate::sa3_adapter::AdapterListener::spawn),
+                _adapter: adapter.map(|adapter| adapter.start()),
             },
         );
 

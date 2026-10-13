@@ -48,6 +48,43 @@ pub trait Service: Sync {
     fn validate_records(&self, _root: &Path) -> Result<(), String> {
         Ok(())
     }
+
+    /// Native jobs that must finish before the service may start: anything
+    /// that rewrites what its server loads, or validates it.
+    fn blocking_jobs(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Why the native runtime cannot start with this selection yet, such as
+    /// models its tier needs that are not on disk.
+    fn native_start_blocker(&self, _root: &Path, _selection: Option<&Selection>) -> Option<String> {
+        None
+    }
+
+    /// The manifest's launch arguments adjusted for `encoding`: the selected
+    /// tier, or the one being verified before it is selected.
+    fn launch_args(&self, args: &[String], _encoding: Option<&str>) -> Result<Vec<String>, String> {
+        Ok(args.to_vec())
+    }
+
+    /// Whatever keeps the Python service's client contract on its public port
+    /// while the native server listens privately, bound before the server
+    /// starts so a taken port fails the start instead of the first request.
+    fn client_adapter(
+        &self,
+        _public_port: u16,
+        _env: &[(String, String)],
+        _root: &Path,
+    ) -> Result<Option<Box<dyn ClientAdapter>>, String> {
+        Ok(None)
+    }
+}
+
+/// A bound client adapter, waiting for its native server to start.
+pub trait ClientAdapter: Send {
+    /// Start serving. The handle keeps the adapter alive, and it stops when
+    /// the handle is dropped with the running service.
+    fn start(self: Box<Self>) -> Box<dyn std::any::Any + Send>;
 }
 
 /// A migrating service as the shared engine sees it: its id, which names its
