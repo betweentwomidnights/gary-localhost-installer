@@ -16,6 +16,16 @@ pub struct Manifest {
     pub native_bundles: HashMap<String, NativeBundle>,
 }
 
+/// The manifest compiled into this build, the same file the app installs and
+/// runs from. For code that has no running manifest at hand.
+pub fn bundled() -> &'static Manifest {
+    static BUNDLED: std::sync::OnceLock<Manifest> = std::sync::OnceLock::new();
+    BUNDLED.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../services/manifests/services.json"))
+            .expect("the bundled service manifest parses")
+    })
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDef {
@@ -55,9 +65,6 @@ pub struct MigrationDef {
     /// when absent.
     #[serde(default)]
     pub data_label: Option<String>,
-    /// The native models folder under the profile's models directory.
-    #[serde(default)]
-    pub models_dir: Option<String>,
     /// What the Python install owns and cleanup may remove once the native
     /// runtime is verified. Nothing outside this is ever a cleanup candidate.
     #[serde(default)]
@@ -147,6 +154,10 @@ pub struct NativeDef {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// The runtime's models folder under the profile's models directory.
+    /// Storage transfer carries it, and migration cleanup never touches it.
+    #[serde(default)]
+    pub models_dir: Option<String>,
     /// Keyed by platform, e.g. `windows-x64`.
     #[serde(default)]
     pub platforms: HashMap<String, NativePlatform>,

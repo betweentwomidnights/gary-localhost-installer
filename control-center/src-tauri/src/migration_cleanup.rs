@@ -188,7 +188,7 @@ mod tests {
 
     impl Service for Other {
         fn target(&self) -> Target<'_> {
-            Target { id: "foundation", def: &self.0 }
+            Target { id: "foundation", def: &self.0, models_dir: Some("foundation") }
         }
 
         fn extras(&self, root: &Path, _hub: &Path) -> Extras {
@@ -223,7 +223,6 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "dataDir": "foundation",
                 "label": "Foundation-1",
-                "modelsDir": "foundation",
                 "legacy": {
                     "envDirs": ["env"],
                     "hfRepos": [{"repo": "org/foundation-1", "label": "PyTorch weights"}]

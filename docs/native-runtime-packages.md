@@ -309,7 +309,6 @@ native one profile at a time, so its entry gets a `migration` block beside
   "dataDir": "sa3",
   "label": "SA3",
   "dataLabel": "LoRAs, prompts, training jobs and checkpoints",
-  "modelsDir": "sa3",
   "legacy": {
     "envDirs": ["env", ".venv"],
     "hfRepos": [
@@ -333,11 +332,17 @@ native one profile at a time, so its entry gets a `migration` block beside
   the inventory recorded when the bundle was installed.
 - **`role`** tags a legacy artifact that has a native replacement, so the
   service can refuse cleanup until the replacement exists.
+- **`native.modelsDir`** (on the `native` block, since a native-only service
+  like yuey has one too) is the runtime's folder under the profile's models
+  directory. cleanup never touches it, and moving storage carries it, along
+  with every migrating service's `dataDir` and its selection, which is copied
+  last so an interrupted move never looks migrated.
 
 what the block can't say, the service implements as `migration::Service`:
 its selection's encoding check, user data its own records point at (sa3's
-LoRA catalogs, training datasets, decoder correction), and any cleanup
-blocker. a service with a block and no implementation still gets the shared
+LoRA catalogs, training datasets, decoder correction), any cleanup blocker,
+and for storage moves, which records must parse to be carried and which
+files its records hash and so must be copied byte for byte. a service with a block and no implementation still gets the shared
 inventory and cleanup; `sa3_migration::Sa3` is the reference.
 
 ## not yet

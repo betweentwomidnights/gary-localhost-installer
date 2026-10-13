@@ -7,27 +7,24 @@ use std::path::Path;
 
 pub use crate::migration::Selection;
 
+fn sa3() -> &'static crate::manifest::ServiceDef {
+    crate::manifest::bundled()
+        .services
+        .iter()
+        .find(|service| service.id == "sa3")
+        .expect("the bundled manifest has an SA3 entry")
+}
+
 /// SA3's `migration` block, from the manifest compiled into this build: the
 /// same file the app installs and runs from. SA3-specific code paths with no
 /// manifest at hand take their migration definition from here.
 fn migration_def() -> &'static MigrationDef {
-    static DEF: std::sync::OnceLock<MigrationDef> = std::sync::OnceLock::new();
-    DEF.get_or_init(|| {
-        let manifest: crate::manifest::Manifest =
-            serde_json::from_str(include_str!("../../../services/manifests/services.json"))
-                .expect("the bundled service manifest parses");
-        manifest
-            .services
-            .into_iter()
-            .find(|service| service.id == "sa3")
-            .and_then(|service| service.migration)
-            .expect("SA3's manifest entry has a migration block")
-    })
+    sa3().migration.as_ref().expect("SA3's manifest entry has a migration block")
 }
 
 /// SA3 as the shared migration engine addresses it.
 pub fn target() -> crate::migration::Target<'static> {
-    crate::migration::Target { id: "sa3", def: migration_def() }
+    crate::migration::Target::of(sa3()).expect("SA3's manifest entry has a migration block")
 }
 
 fn check(selection: &Selection) -> Result<(), String> {

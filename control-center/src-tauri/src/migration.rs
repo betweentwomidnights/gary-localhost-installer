@@ -9,11 +9,11 @@ use crate::manifest::{MigrationDef, ServiceDef};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const SELECTION_FILE: &str = "native-runtime.json";
+pub const SELECTION_FILE: &str = "native-runtime.json";
 
 /// What only a migrating service can answer. The shared inventory and cleanup
 /// engine asks these; everything else it takes from the manifest block.
-pub trait Service {
+pub trait Service: Sync {
     fn target(&self) -> Target<'_>;
 
     /// The service's contribution to an inventory: its selection, the user
@@ -30,6 +30,24 @@ pub trait Service {
     fn cleanup_blocker(&self, _root: &Path, _hub: &Path) -> Option<String> {
         None
     }
+
+    /// Records in the data folder, relative to the runtime root, that storage
+    /// transfer must refuse to carry if they no longer parse.
+    fn authoritative_records(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Files the service's records point at and hash, so storage transfer
+    /// copies them byte for byte instead of relocating paths inside them.
+    fn opaque_files(&self, _root: &Path) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Check that the records the service depends on parse in a profile that
+    /// storage transfer has just copied them into.
+    fn validate_records(&self, _root: &Path) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// A migrating service as the shared engine sees it: its id, which names its
@@ -38,6 +56,20 @@ pub trait Service {
 pub struct Target<'a> {
     pub id: &'a str,
     pub def: &'a MigrationDef,
+    /// The native runtime's models folder (`native.modelsDir`), protected
+    /// from cleanup.
+    pub models_dir: Option<&'a str>,
+}
+
+impl<'a> Target<'a> {
+    /// The target for a manifest entry, if it has a migration block.
+    pub fn of(service: &'a ServiceDef) -> Option<Self> {
+        Some(Self {
+            id: &service.id,
+            def: service.migration.as_ref()?,
+            models_dir: service.native.as_ref().and_then(|native| native.models_dir.as_deref()),
+        })
+    }
 }
 
 impl<'a> Target<'a> {

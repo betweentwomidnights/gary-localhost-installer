@@ -9,6 +9,104 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Instant, SystemTime};
 
+/// What a storage transfer carries, read from the manifest: every native
+/// runtime's models folder, and every migrating service's data folder with the
+/// selection inside it. Python environments are not portable and stay with the
+/// existing Python storage workflow.
+pub struct Layout {
+    model_dirs: Vec<PathBuf>,
+    data_dirs: Vec<PathBuf>,
+    migrations: Vec<Migration>,
+}
+
+struct Migration {
+    def: crate::manifest::MigrationDef,
+    label: String,
+    service: Option<&'static dyn crate::migration::Service>,
+}
+
+impl Layout {
+    pub fn from_services(services: &[crate::manifest::ServiceDef]) -> Self {
+        let model_dirs = services
+            .iter()
+            .filter_map(|service| service.native.as_ref()?.models_dir.as_ref())
+            .map(|dir| Path::new("models").join(dir))
+            .collect();
+        let migrations: Vec<Migration> = services
+            .iter()
+            .filter_map(|service| {
+                let def = service.migration.clone()?;
+                let label = if def.label.is_empty() {
+                    service.display_name.clone()
+                } else {
+                    def.label.clone()
+                };
+                Some(Migration { label, service: crate::migration::service(&service.id), def })
+            })
+            .collect();
+        let data_dirs = migrations
+            .iter()
+            .map(|migration| PathBuf::from(&migration.def.data_dir))
+            .collect();
+        Self { model_dirs, data_dirs, migrations }
+    }
+
+    /// The layout of the manifest compiled into this build.
+    pub fn bundled() -> &'static Self {
+        static BUNDLED: std::sync::OnceLock<Layout> = std::sync::OnceLock::new();
+        BUNDLED.get_or_init(|| Self::from_services(&crate::manifest::bundled().services))
+    }
+
+    /// Inside a migrating service's data folder, where JSON is catalogs,
+    /// history and settings that may point at other carried files.
+    fn in_data(&self, relative: &Path) -> bool {
+        self.data_dirs.iter().any(|dir| relative.starts_with(dir))
+    }
+
+    fn selection(migration: &Migration) -> PathBuf {
+        Path::new(&migration.def.data_dir).join(crate::migration::SELECTION_FILE)
+    }
+
+    fn is_selection(&self, relative: &Path) -> bool {
+        self.migrations.iter().any(|migration| Self::selection(migration) == relative)
+    }
+
+    /// Records that must parse to be carried: every selection, plus the
+    /// records each service names.
+    fn authoritative(&self, relative: &Path) -> bool {
+        self.is_selection(relative)
+            || self.migrations.iter().any(|migration| {
+                migration.service.is_some_and(|service| {
+                    service
+                        .authoritative_records()
+                        .iter()
+                        .any(|record| Path::new(record) == relative)
+                })
+            })
+    }
+
+    /// Each migrating service's selection in `root`, with its label.
+    fn selections(
+        &self,
+        root: &Path,
+    ) -> Result<Vec<(&str, Option<crate::migration::Selection>)>, String> {
+        self.migrations
+            .iter()
+            .map(|migration| {
+                let selection = crate::migration::read(root, &migration.def, |selection| {
+                    migration.service.map_or(Ok(()), |service| service.check_selection(selection))
+                })?;
+                Ok((migration.label.as_str(), selection))
+            })
+            .collect()
+    }
+
+    /// Whether `root` holds a native model tree.
+    pub fn contains_native_models(&self, root: &Path) -> bool {
+        self.model_dirs.iter().any(|dir| root.join(dir).exists())
+    }
+}
+
 static COPYING: AtomicBool = AtomicBool::new(false);
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const RECEIPT: &str = ".gary-native-storage-transfer.json";
@@ -137,19 +235,13 @@ fn visit(root: &Path, relative: &Path, entries: &mut Vec<Entry>) -> Result<(), S
     Ok(())
 }
 
-fn inventory(root: &Path) -> Result<Vec<Entry>, String> {
+fn inventory(root: &Path, layout: &Layout) -> Result<Vec<Entry>, String> {
     let mut entries = Vec::new();
-    // Only native assets and SA3's user data. Python environments are not
-    // portable and remain governed by the existing Python storage workflow.
-    for relative in [
-        "models/sa3",
-        "models/yuey",
-        "native-runtimes",
-        "sa3",
-        "app_settings.json",
-        "hf_token.txt",
-    ] {
-        visit(root, Path::new(relative), &mut entries)?;
+    // Only native assets and migrating services' user data. Python
+    // environments are not portable and stay with the Python storage workflow.
+    let fixed = ["native-runtimes", "app_settings.json", "hf_token.txt"].map(PathBuf::from);
+    for relative in layout.model_dirs.iter().chain(&layout.data_dirs).chain(&fixed) {
+        visit(root, relative, &mut entries)?;
     }
     let services = checked(root, Path::new("services"))?;
     if services.is_dir() {
@@ -166,13 +258,13 @@ fn inventory(root: &Path) -> Result<Vec<Entry>, String> {
     }
     // Datasets and imported sources may be managed under another directory in
     // this storage profile. Carry referenced user files as well as the standard
-    // SA3 layout, leaving genuinely external sources at their original paths.
+    // layout, leaving genuinely external sources at their original paths.
     let mut index = 0;
     let mut followed = std::collections::BTreeSet::new();
     while index < entries.len() {
         let entry = entries[index].clone();
         index += 1;
-        if !entry.relative.starts_with("sa3")
+        if !layout.in_data(&entry.relative)
             || entry.relative.extension().and_then(|e| e.to_str()) != Some("json")
             || entry.bytes > JSON_LIMIT
         {
@@ -203,14 +295,9 @@ fn inventory(root: &Path) -> Result<Vec<Entry>, String> {
     }
     entries.sort_by_key(|e| e.relative.clone());
     entries.dedup_by(|a, b| a.relative == b.relative);
-    // Put the selection last: incomplete copying must not advertise a migrated
+    // Put the selections last: incomplete copying must not advertise a migrated
     // destination. The startup setting is committed only after all verification.
-    entries.sort_by_key(|e| {
-        (
-            e.relative == Path::new("sa3/native-runtime.json"),
-            e.relative.clone(),
-        )
-    });
+    entries.sort_by_key(|e| (layout.is_selection(&e.relative), e.relative.clone()));
     Ok(entries)
 }
 
@@ -309,19 +396,14 @@ fn rebase(value: &mut serde_json::Value, source: &Path, target: &Path) {
     }
 }
 
-fn opaque_configs(root: &Path) -> Result<std::collections::BTreeSet<PathBuf>, String> {
-    let catalog = crate::sa3_loras::read_catalog(root)?;
-    let decoder = crate::sa3_decoder::read(root)?;
+/// Files inside this profile that services record by hash, relative to it.
+fn opaque_configs(
+    root: &Path,
+    layout: &Layout,
+) -> Result<std::collections::BTreeSet<PathBuf>, String> {
     let mut result = std::collections::BTreeSet::new();
-    for entry in catalog.values().chain(decoder.iter()) {
-        let sidecar = Path::new(&entry.source_path).with_extension("json");
-        for text in entry
-            .config_path
-            .iter()
-            .cloned()
-            .chain(entry.legacy_export.iter().map(|e| e.config_path.clone()))
-            .chain(std::iter::once(sidecar.to_string_lossy().into_owned()))
-        {
+    for service in layout.migrations.iter().filter_map(|migration| migration.service) {
+        for text in service.opaque_files(root)? {
             let mut references = Vec::new();
             referenced_paths(
                 &serde_json::json!({"configPath":text}),
@@ -339,22 +421,23 @@ fn transformed(
     source: &Path,
     target: &Path,
     opaque: &std::collections::BTreeSet<PathBuf>,
+    layout: &Layout,
 ) -> Result<Option<Vec<u8>>, String> {
     // Imported adapter configurations retain their exact content and recorded
     // hash. Relocate the catalog pointer, not the configuration's contents.
     if opaque.contains(&entry.relative) {
         return Ok(None);
     }
-    // JSON under SA3 is catalog/history/settings, including trainer sidecars.
-    // Model metadata and bundled runtime JSON are byte-for-byte artifacts.
-    if (!entry.relative.starts_with("sa3") && entry.relative != Path::new("app_settings.json"))
+    // JSON in a data folder is catalog/history/settings, including trainer
+    // sidecars. Model metadata and bundled runtime JSON are byte-for-byte.
+    if (!layout.in_data(&entry.relative) && entry.relative != Path::new("app_settings.json"))
         || entry.relative.extension().and_then(|e| e.to_str()) != Some("json")
     {
         return Ok(None);
     }
     if entry.bytes > JSON_LIMIT {
         return Err(format!(
-            "SA3 metadata is too large to relocate: {}",
+            "Service metadata is too large to relocate: {}",
             entry.relative.display()
         ));
     }
@@ -364,17 +447,9 @@ fn transformed(
     let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(e) => {
-            if [
-                "sa3/native-runtime.json",
-                "sa3/lora_catalog.json",
-                "sa3/lora_registry.json",
-                "sa3/native-loras/catalog.json",
-            ]
-            .iter()
-            .any(|p| entry.relative == Path::new(p))
-            {
+            if layout.authoritative(&entry.relative) {
                 return Err(format!(
-                    "Cannot relocate invalid SA3 catalog {}: {e}",
+                    "Cannot relocate invalid catalog {}: {e}",
                     entry.relative.display()
                 ));
             }
@@ -504,6 +579,15 @@ fn check_space(_target: &Path, _bytes: u64) -> Result<(), String> {
 }
 
 pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Result<(), String> {
+    run_with(Layout::bundled(), source, target, callback)
+}
+
+pub fn run_with(
+    layout: &Layout,
+    source: &Path,
+    target: &Path,
+    callback: impl FnMut(Progress),
+) -> Result<(), String> {
     let source = source
         .canonicalize()
         .map_err(|e| format!("Cannot open current storage: {e}"))?;
@@ -527,13 +611,13 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
         0,
         true,
     );
-    let entries = inventory(&source)?;
+    let entries = inventory(&source, layout)?;
     if entries.is_empty() {
         return Ok(());
     }
-    let source_selection = crate::sa3_runtime::read(&source)?;
-    let opaque = opaque_configs(&source)?;
-    let target_selection = crate::sa3_runtime::read(&target)?;
+    let source_selections = layout.selections(&source)?;
+    let opaque = opaque_configs(&source, layout)?;
+    let target_selections = layout.selections(&target)?;
     let source_id = profile_id(&source)?.unwrap_or_else(|| {
         format!(
             "{:x}",
@@ -550,17 +634,20 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
         )
     });
     let target_id = profile_id(&target)?;
+    // An older destination with no profile id is the same lineage when a
+    // service's selection there records the same activation as here.
     let same_profile = target_id.as_ref() == Some(&source_id)
         || (target_id.is_none()
-            && source_selection
-                .as_ref()
-                .zip(target_selection.as_ref())
-                .is_some_and(|(a, b)| a.activated_at == b.activated_at));
+            && source_selections.iter().zip(&target_selections).any(|((_, a), (_, b))| {
+                a.as_ref().zip(b.as_ref()).is_some_and(|(a, b)| a.activated_at == b.activated_at)
+            }));
     if target_id.is_some() && !same_profile {
         return Err("The selected folder belongs to a different native storage profile. Choose an empty folder.".into());
     }
-    if target_selection.is_some() && !same_profile {
-        return Err("The selected folder belongs to a different SA3 migration. Choose an empty folder to keep both installations safe.".into());
+    if let Some((label, _)) = target_selections.iter().find(|(_, selection)| selection.is_some()) {
+        if !same_profile {
+            return Err(format!("The selected folder belongs to a different {label} migration. Choose an empty folder to keep both installations safe."));
+        }
     }
     let receipt_path = checked(&target, Path::new(RECEIPT))?;
     if receipt_path.exists() {
@@ -611,7 +698,7 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
                 entry.relative.clone(),
                 Some((meta.len(), meta.modified().map_err(|e| e.to_string())?)),
             );
-            let bytes = transformed(entry, &source, &target, &opaque)?;
+            let bytes = transformed(entry, &source, &target, &opaque, layout)?;
             let expected = if let Some(bytes) = &bytes {
                 format!("{:x}", Sha256::digest(bytes))
             } else {
@@ -625,7 +712,7 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
             if actual != expected
                 && !(same_profile
                     && !opaque.contains(&entry.relative)
-                    && ((entry.relative.starts_with("sa3")
+                    && ((layout.in_data(&entry.relative)
                         && entry.relative.extension().and_then(|e| e.to_str()) == Some("json"))
                         || entry.relative == Path::new("app_settings.json")))
             {
@@ -665,7 +752,7 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
         checked(&target, &entry.relative)?;
         let label = format!("Copying {}", entry.relative.display());
         reporter.report(&label, 0, true);
-        let bytes = transformed(entry, &source, &target, &opaque)?;
+        let bytes = transformed(entry, &source, &target, &opaque, layout)?;
         let expected = if let Some(bytes) = &bytes {
             let expected = format!("{:x}", Sha256::digest(bytes));
             if !destination.exists() || digest(&destination, &mut reporter, &label)? != expected {
@@ -750,7 +837,7 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
             );
         }
     }
-    if inventory(&source)? != entries {
+    if inventory(&source, layout)? != entries {
         return Err(
             "Current storage changed during transfer. Retry before switching storage.".into(),
         );
@@ -763,8 +850,10 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
             );
         }
     }
-    crate::sa3_runtime::read(&target)?;
-    crate::sa3_loras::read_catalog(&target)?;
+    layout.selections(&target)?;
+    for service in layout.migrations.iter().filter_map(|migration| migration.service) {
+        service.validate_records(&target)?;
+    }
     atomic_write(
         &checked(&target, Path::new(PROFILE_ID))?,
         &serde_json::to_vec(&source_id).map_err(|e| e.to_string())?,
@@ -782,9 +871,7 @@ pub fn run(source: &Path, target: &Path, callback: impl FnMut(Progress)) -> Resu
 /// Generic legacy cleanup predates GGUF storage. Never offer blanket model
 /// deletion while a native model tree is present in the former profile.
 pub fn contains_native_models(root: &Path) -> bool {
-    ["models/sa3", "models/yuey"]
-        .iter()
-        .any(|p| root.join(p).exists())
+    Layout::bundled().contains_native_models(root)
 }
 
 #[cfg(test)]
@@ -890,7 +977,7 @@ mod tests {
             json!({"datasetPath":dataset}).to_string(),
         );
         Fixture::write(&source, "services/sa3/env/python.exe", b"not portable");
-        let before = inventory(&source).unwrap();
+        let before = inventory(&source, Layout::bundled()).unwrap();
         let mut progress = Vec::new();
         run(&source, &target, |p| progress.push(p)).unwrap();
         let selection = crate::sa3_runtime::read(&target).unwrap().unwrap();
@@ -902,7 +989,7 @@ mod tests {
             .is_file());
         assert!(target.join("models/yuey/q4.gguf").is_file());
         assert!(!target.join("services/sa3/env").exists());
-        assert_eq!(inventory(&source).unwrap(), before, "source remains intact");
+        assert_eq!(inventory(&source, Layout::bundled()).unwrap(), before, "source remains intact");
         let catalog = crate::sa3_loras::read_catalog(&target).unwrap();
         assert_eq!(
             Path::new(catalog["test"].native_path.as_ref().unwrap()),
@@ -1140,6 +1227,73 @@ mod tests {
     }
 
     #[test]
+    fn a_service_added_to_the_manifest_is_carried_without_naming_it_here() {
+        // Foundation-1 as it would arrive: native models and a migration
+        // block, with no line of this module mentioning it.
+        let mut services = crate::manifest::bundled().services.clone();
+        let foundation = services.iter_mut().find(|service| service.id == "foundation").unwrap();
+        foundation.native = Some(
+            serde_json::from_value(serde_json::json!({
+                "executable": "foundation-server.exe",
+                "modelsDir": "foundation"
+            }))
+            .unwrap(),
+        );
+        foundation.migration = Some(
+            serde_json::from_value(serde_json::json!({"dataDir": "foundation", "label": "Foundation-1"}))
+                .unwrap(),
+        );
+        let layout = Layout::from_services(&services);
+        let fixture = Fixture::new();
+        let source = fixture.root("default");
+        let target = fixture.root("custom");
+        Fixture::write(&source, "models/foundation/foundation-F16.gguf", b"weights");
+        Fixture::write(&source, "foundation/presets/user.json", b"{\"preset\":1}");
+        let selection = crate::migration::Selection {
+            schema_version: 1,
+            encoding: "F16".into(),
+            verified_release: "v0.1.0".into(),
+            backend: "cuda".into(),
+            activated_at: 7,
+            cleanup_complete: true,
+            cleanup_errors: Vec::new(),
+            runtime_fingerprint: None,
+        };
+        let def = foundation_def(&services);
+        crate::migration::save(&source, &def, &selection, |_| Ok(())).unwrap();
+        Fixture::write(&source, "services/foundation/env/python.exe", b"not portable");
+
+        let entries = inventory(&source, &layout).unwrap();
+        assert_eq!(
+            entries.last().unwrap().relative,
+            Path::new("foundation").join("native-runtime.json"),
+            "the selection is committed last"
+        );
+        assert!(!Layout::bundled().contains_native_models(&source));
+        assert!(layout.contains_native_models(&source));
+
+        run_with(&layout, &source, &target, |_| {}).unwrap();
+        assert!(target.join("models/foundation/foundation-F16.gguf").is_file());
+        assert!(target.join("foundation/presets/user.json").is_file());
+        assert!(!target.join("services/foundation/env").exists());
+        let copied = crate::migration::read(&target, &def, |_| Ok(())).unwrap().unwrap();
+        assert_eq!(copied.activated_at, 7);
+        // A different profile's selection blocks the transfer, named by service.
+        let other = fixture.root("other");
+        crate::migration::save(&other, &def, &crate::migration::Selection { activated_at: 8, ..selection }, |_| Ok(())).unwrap();
+        let error = run_with(&layout, &source, &other, |_| {}).unwrap_err();
+        assert!(error.contains("different Foundation-1 migration"), "{error}");
+    }
+
+    fn foundation_def(services: &[crate::manifest::ServiceDef]) -> crate::manifest::MigrationDef {
+        services
+            .iter()
+            .find(|service| service.id == "foundation")
+            .and_then(|service| service.migration.clone())
+            .unwrap()
+    }
+
+    #[test]
     fn yuey_only_profile_can_return_to_default_with_updated_settings() {
         let fixture = Fixture::new();
         let source = fixture.root("default");
@@ -1252,8 +1406,8 @@ mod tests {
         let real = PathBuf::from(std::env::var_os("GARY4LOCAL_STORAGE_TRANSFER_SOURCE").unwrap())
             .canonicalize()
             .unwrap();
-        let before = inventory(&real).unwrap();
-        let opaque = opaque_configs(&real).unwrap();
+        let before = inventory(&real, Layout::bundled()).unwrap();
+        let opaque = opaque_configs(&real, Layout::bundled()).unwrap();
         let fixture = Fixture::new();
         let source = fixture.root("snapshot");
         let target = fixture.root("custom");
@@ -1262,7 +1416,7 @@ mod tests {
         for entry in &before {
             let destination = source.join(&entry.relative);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
-            if let Some(bytes) = transformed(entry, &real, &source, &opaque).unwrap() {
+            if let Some(bytes) = transformed(entry, &real, &source, &opaque, Layout::bundled()).unwrap() {
                 fs::write(destination, bytes).unwrap();
             } else {
                 fs::hard_link(real.join(&entry.relative), destination).unwrap();
@@ -1323,7 +1477,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            inventory(&real).unwrap(),
+            inventory(&real, Layout::bundled()).unwrap(),
             before,
             "production source files unchanged"
         );

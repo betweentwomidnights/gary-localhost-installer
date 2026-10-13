@@ -964,9 +964,9 @@ impl ServiceManager {
     /// Whether a migrated service's Python files are back, as a downgrade can
     /// bring them. Bounded for status polling; the full inventory is separate.
     fn legacy_runtime_present(&self, svc: &ServiceDef) -> bool {
-        svc.migration.as_ref().is_some_and(|def| {
+        crate::migration::Target::of(svc).is_some_and(|target| {
             crate::migration_inventory::legacy_present(
-                crate::migration::Target { id: &svc.id, def },
+                target,
                 &self.repo_root,
                 &crate::storage::effective_hf_hub_cache_dir(&self.repo_root),
             )

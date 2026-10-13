@@ -98,6 +98,33 @@ impl crate::migration::Service for Sa3 {
                 .into()
         })
     }
+
+    fn authoritative_records(&self) -> Vec<String> {
+        ["sa3/lora_catalog.json", "sa3/lora_registry.json", "sa3/native-loras/catalog.json"]
+            .map(String::from)
+            .to_vec()
+    }
+
+    /// Imported adapter configurations keep their exact content, because the
+    /// catalog records their hash: the catalog pointer moves, not the file's
+    /// contents. That covers explicit configs, legacy-export configs and the
+    /// sidecar beside each source.
+    fn opaque_files(&self, root: &Path) -> Result<Vec<String>, String> {
+        let catalog = crate::sa3_loras::read_catalog(root)?;
+        let decoder = crate::sa3_decoder::read(root)?;
+        let mut files = Vec::new();
+        for entry in catalog.values().chain(decoder.iter()) {
+            let sidecar = Path::new(&entry.source_path).with_extension("json");
+            files.extend(entry.config_path.iter().cloned());
+            files.extend(entry.legacy_export.iter().map(|export| export.config_path.clone()));
+            files.push(sidecar.to_string_lossy().into_owned());
+        }
+        Ok(files)
+    }
+
+    fn validate_records(&self, root: &Path) -> Result<(), String> {
+        crate::sa3_loras::read_catalog(root).map(|_| ())
+    }
 }
 
 /// SA3's contribution to its inventory: its selection, the user data its
@@ -813,7 +840,7 @@ mod tests {
         let target = super::target();
         let legacy = &target.def.legacy;
         assert_eq!(target.def.data_dir, "sa3");
-        assert_eq!(target.def.models_dir.as_deref(), Some("sa3"));
+        assert_eq!(target.models_dir, Some("sa3"));
         assert_eq!(target.label(), "SA3");
         assert_eq!(legacy.env_dirs, ["env", ".venv"]);
         let repos: Vec<_> = legacy

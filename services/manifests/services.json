@@ -138,7 +138,6 @@
         "dataDir": "sa3",
         "label": "SA3",
         "dataLabel": "LoRAs, prompts, training jobs and checkpoints",
-        "modelsDir": "sa3",
         "legacy": {
           "envDirs": [
             "env",
@@ -194,6 +193,7 @@
       "native": {
         "bundle": "sa3",
         "executable": "sa3-server.exe",
+        "modelsDir": "sa3",
         "args": ["--model", "medium", "--encoding", "f16", "--t5-encoding", "f16", "--ae-encoding", "f32"],
         "env": {
           "SA3_PORT": "18006",
@@ -346,6 +346,7 @@
       "workingDir": "services/yuey",
       "native": {
         "executable": "yue2-server.exe",
+        "modelsDir": "yuey",
         "version": "v0.2.3",
         "platforms": {
           "windows-x64": {

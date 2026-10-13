@@ -236,9 +236,7 @@ fn inventory(
     // this folder if, say, a training dataset is the whole of it.
     let data = target.data_dir(root);
     let models = target
-        .def
         .models_dir
-        .as_ref()
         .map(|dir| crate::storage::models_dir(root).join(dir));
     let mut protected_paths = vec![root.join("native-runtimes"), service.join("native")];
     protected_paths.extend(models.clone());
