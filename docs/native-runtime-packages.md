@@ -99,7 +99,11 @@ all of them:
   was built against whatever the machine has, and nobody needs an
   administrator install of the redistributable. it can't be shared the way the
   CUDA runtime is: System32 comes before `PATH`, so a stale system copy would
-  win over a shared folder. `BUILD-INFO.json` records its version.
+  win over a shared folder. `BUILD-INFO.json` records its version. the
+  runtime and the compiler are read from the build's own CMake
+  configuration, and the script runs the staged server's `--props` under a
+  DLL-load recorder, failing unless all four DLLs load from the package's
+  own folder rather than System32.
 
 the package script runs the tests with the CPU backend loaded dynamically,
 exactly as it'll be on a user's machine, before it packages anything. the same
