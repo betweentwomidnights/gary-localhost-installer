@@ -485,6 +485,78 @@ fn checked_adapters_dir(root: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// A converted or published adapter's revision file, `lora-<name>-<24 hex>-f32.gguf`.
+fn adapter_revision(file_name: &str) -> bool {
+    file_name
+        .strip_prefix("lora-")
+        .and_then(|rest| rest.strip_suffix("-f32.gguf"))
+        .and_then(|rest| rest.rsplit_once('-'))
+        .is_some_and(|(name, digest)| {
+            !name.is_empty()
+                && digest.len() == 24
+                && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
+/// Remove adapter revisions nothing records any more. Revisions are named by
+/// what produced them and never overwritten, so a new converter or source
+/// leaves the previous file behind, and without this every release that
+/// changed the converter kept another full copy of every adapter.
+///
+/// Referenced means any path in the native catalog, its training checkpoints
+/// included, or in the decoder correction's record. Run this only inside an
+/// adapter preparation, which requires SA3 and every other native SA3 job to
+/// be stopped, so no process can still have an old revision open. If either
+/// record cannot be read nothing is removed. A file that will not delete is
+/// left for the next preparation.
+pub(crate) fn prune_unreferenced_revisions(root: &Path) -> Result<Vec<PathBuf>, String> {
+    fn collect(value: &serde_json::Value, paths: &mut std::collections::BTreeSet<PathBuf>) {
+        match value {
+            serde_json::Value::String(text) => {
+                if let Ok(path) = Path::new(text).canonicalize() {
+                    paths.insert(path);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| collect(item, paths)),
+            serde_json::Value::Object(map) => map.values().for_each(|item| collect(item, paths)),
+            _ => {}
+        }
+    }
+    let dir = checked_adapters_dir(root)?;
+    let mut referenced = std::collections::BTreeSet::new();
+    let catalog = read_catalog(root)?;
+    collect(
+        &serde_json::to_value(&catalog).map_err(|error| error.to_string())?,
+        &mut referenced,
+    );
+    if let Some(decoder) = crate::sa3_decoder::read(root)? {
+        collect(
+            &serde_json::to_value(&decoder).map_err(|error| error.to_string())?,
+            &mut referenced,
+        );
+    }
+    let mut removed = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_type().is_ok_and(|kind| kind.is_file())
+            || !adapter_revision(&entry.file_name().to_string_lossy())
+        {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(canonical) = path.canonicalize() else { continue };
+        if referenced.contains(&canonical) {
+            continue;
+        }
+        match crate::remove_managed_path(&path, &dir) {
+            Ok(true) => removed.push(path),
+            Ok(false) => {}
+            Err(error) => log::warn!("Keeping unreferenced adapter {}: {error}", path.display()),
+        }
+    }
+    Ok(removed)
+}
+
 fn save_catalog(root: &Path, entries: &BTreeMap<String, NativeLora>) -> Result<(), String> {
     let dir = checked_adapters_dir(root)?;
     let stage = dir.join(format!(
@@ -1276,6 +1348,63 @@ mod tests {
             training_checkpoints: Vec::new(),
             legacy_export: None,
         }
+    }
+
+    #[test]
+    fn pruning_keeps_every_recorded_revision_and_removes_superseded_ones() {
+        let root = root("prune");
+        let dir = checked_adapters_dir(&root).unwrap();
+        let write = |name: &str| {
+            let path = dir.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"gguf").unwrap();
+            path
+        };
+        let current = write("lora-koan-aaaaaaaaaaaaaaaaaaaaaaaa-f32.gguf");
+        let checkpoint = write("lora-koan-bbbbbbbbbbbbbbbbbbbbbbbb-f32.gguf");
+        let decoder = write("lora-squeakfix-v3-cccccccccccccccccccccccc-f32.gguf");
+        let stale_lora = write("lora-koan-dddddddddddddddddddddddd-f32.gguf");
+        let stale_decoder = write("lora-squeakfix-v3-eeeeeeeeeeeeeeeeeeeeeeee-f32.gguf");
+        let untouched = [
+            write("notes.txt"),
+            write("lora-koan-not-a-revision-f32.gguf"),
+            write(".convert-1-0.partial"),
+            write("conversion-koan.log"),
+            write("legacy-exports/lora-koan-ffffffffffffffffffffffff-f32.gguf"),
+        ];
+
+        let mut koan = entry(&root.join("koan.safetensors"));
+        koan.native_path = Some(current.to_string_lossy().into());
+        koan.training_checkpoints = vec![crate::sa3_training::Checkpoint {
+            job_id: "job".into(),
+            step: 100,
+            epoch: None,
+            path: checkpoint.to_string_lossy().into(),
+            state_path: root.join("state.gguf").to_string_lossy().into(),
+        }];
+        save_catalog(&root, &BTreeMap::from([("koan".to_string(), koan)])).unwrap();
+        let mut squeakfix = entry(&root.join("squeakfix_v3.safetensors"));
+        squeakfix.name = "squeakfix-v3".into();
+        squeakfix.strength = 1.0;
+        squeakfix.native_path = Some(decoder.to_string_lossy().into());
+        let record = crate::sa3_training::checked_folder(&root, &["sa3", "native-decoder"]).unwrap();
+        crate::sa3_training::save(&record.join("adapter.json"), &squeakfix).unwrap();
+
+        let mut removed = prune_unreferenced_revisions(&root).unwrap();
+        removed.sort();
+        let mut expected = vec![stale_lora.clone(), stale_decoder.clone()];
+        expected.sort();
+        assert_eq!(removed, expected);
+        for path in [&current, &checkpoint, &decoder].into_iter().chain(&untouched) {
+            assert!(path.is_file(), "{} must be kept", path.display());
+        }
+
+        // An unreadable record means nothing is known to be unreferenced.
+        let orphan = write("lora-koan-999999999999999999999999-f32.gguf");
+        std::fs::write(catalog_path(&root), b"not json").unwrap();
+        assert!(prune_unreferenced_revisions(&root).is_err());
+        assert!(orphan.is_file());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn safetensors(path: &Path, header: serde_json::Value) {

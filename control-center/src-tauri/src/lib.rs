@@ -10379,6 +10379,19 @@ fn get_sa3_native_decoder_state(repo_root: tauri::State<'_, PathBuf>) -> sa3_dec
     sa3_decoder::state(repo_root.inner())
 }
 
+/// Called while a preparation still holds its workload, which kept SA3 and
+/// every other native SA3 job stopped, so no process has an old revision open.
+fn prune_sa3_adapter_revisions(root: &Path) {
+    match sa3_loras::prune_unreferenced_revisions(root) {
+        Ok(removed) => {
+            for path in removed {
+                log::info!("Removed superseded SA3 adapter revision {}", path.display());
+            }
+        }
+        Err(error) => log::warn!("Cannot prune superseded SA3 adapter revisions: {error}"),
+    }
+}
+
 #[tauri::command]
 async fn prepare_sa3_native_decoder(
     repo_root: tauri::State<'_, PathBuf>,
@@ -10411,6 +10424,9 @@ async fn prepare_sa3_native_decoder(
         )
     };
     let result = sa3_decoder::prepare(repo_root.inner(), &converter, runtime_path.as_deref()).await;
+    if result.is_ok() {
+        prune_sa3_adapter_revisions(repo_root.inner());
+    }
     manager
         .lock()
         .await
@@ -10459,6 +10475,9 @@ async fn prepare_sa3_native_loras(
         },
     )
     .await;
+    if result.is_ok() {
+        prune_sa3_adapter_revisions(repo_root.inner());
+    }
     manager
         .lock()
         .await
