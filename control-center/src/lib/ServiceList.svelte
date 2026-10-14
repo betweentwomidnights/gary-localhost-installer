@@ -26,9 +26,10 @@
     native_fallback_reason: string | null;
     start_blocker: string | null;
     migration_complete: boolean;
+    has_migration: boolean;
   }
 
-  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateSa3Runtime }: {
+  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateRuntime }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
     hfTokenConfigured: boolean;
@@ -38,7 +39,7 @@
     onTrainCareyAce: () => void;
     onManageSa3Loras: () => void;
     onTrainSa3Lora: () => void;
-    onMigrateSa3Runtime: () => void;
+    onMigrateRuntime: (id: string) => void;
   } = $props();
 
   async function rebuildAll() {
@@ -73,8 +74,8 @@
       onManageSa3Loras={onManageSa3Loras}
       hasSa3LoraTraining={service.id === "sa3" && hfTokenConfigured}
       onTrainSa3Lora={onTrainSa3Lora}
-      hasSa3Migration={service.id === "sa3" && !service.migration_complete}
-      {onMigrateSa3Runtime}
+      hasMigration={service.has_migration && !service.migration_complete}
+      onMigrateRuntime={() => onMigrateRuntime(service.id)}
     />
   {/each}
   {#if services.length === 0}

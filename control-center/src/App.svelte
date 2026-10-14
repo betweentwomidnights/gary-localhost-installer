@@ -19,7 +19,7 @@
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
-  import Sa3MigrationModal from "./lib/Sa3MigrationModal.svelte";
+  import MigrationModal from "./lib/MigrationModal.svelte";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
   import StorageSettingsModal from "./lib/StorageSettingsModal.svelte";
@@ -49,6 +49,7 @@
     native_fallback_reason: string | null;
     start_blocker: string | null;
     migration_complete: boolean;
+    has_migration: boolean;
   }
 
   interface Sa3LoudnessSettings {
@@ -217,7 +218,7 @@
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
   let storageModalOpen = $state(false);
-  let sa3MigrationOpen = $state(false);
+  let migrationServiceId: string | null = $state(null);
   let storageInfo: RuntimeStorageInfo | null = $state(null);
   let storageBusy = $state(false);
   let storageTransferProgress = $state<{ message: string; completedBytes: number; totalBytes: number } | null>(null);
@@ -322,9 +323,9 @@
     sa3LoraTrainingModalOpen = false;
   }
 
-  async function showSa3Migration() {
-    selectedServiceId = "sa3";
-    sa3MigrationOpen = true;
+  async function showMigration(serviceId: string) {
+    selectedServiceId = serviceId;
+    migrationServiceId = serviceId;
     await loadRuntimeStorageInfo();
   }
 
@@ -919,13 +920,13 @@
         onTrainCareyAce={showCareyAceTraining}
         onManageSa3Loras={showSa3Loras}
         onTrainSa3Lora={showSa3LoraTraining}
-        onMigrateSa3Runtime={showSa3Migration}
+        onMigrateRuntime={showMigration}
       />
     </div>
     <div class="divider"></div>
     <div class="right-panel">
       {#if rightPanel === "models" && modelServiceId}
-        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} onBack={backToLogs} />{/key}
+        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} hasMigration={services.find((service) => service.id === modelServiceId)?.has_migration ?? false} onBack={backToLogs} />{/key}
       {:else}
         {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
           <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />
@@ -1082,12 +1083,17 @@
     pendingRestart={storageInfo?.pendingRestart ?? false}
     onClose={closeSa3Loras}
   />
-  <Sa3MigrationModal
-    open={sa3MigrationOpen}
-    pendingRestart={storageInfo?.pendingRestart ?? true}
-    onReveal={revealStoragePath}
-    onClose={() => sa3MigrationOpen = false}
-  />
+  {#if migrationServiceId}
+    {#key migrationServiceId}
+      <MigrationModal
+        open={true}
+        serviceId={migrationServiceId}
+        pendingRestart={storageInfo?.pendingRestart ?? true}
+        onReveal={revealStoragePath}
+        onClose={() => migrationServiceId = null}
+      />
+    {/key}
+  {/if}
   <Sa3LoraTrainingModal
     open={sa3LoraTrainingModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}

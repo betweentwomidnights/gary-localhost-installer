@@ -45,7 +45,7 @@
   }
   async function loadState() {
     const [selection, state] = await Promise.all([
-      invoke<{ encoding: string } | null>("get_sa3_native_runtime_selection"),
+      invoke<{ encoding: string } | null>("get_native_runtime_selection", { serviceId: "sa3" }),
       invoke<Decoder>("get_sa3_native_decoder_state"),
     ]);
     activeEncoding = selection?.encoding ?? null;
@@ -54,12 +54,12 @@
   $effect(() => { void nativeSelected; void loadState().catch((cause) => error = String(cause)); });
   onMount(() => {
     let disposed = false;
-    void invoke<Component[]>("get_sa3_native_model_catalog").then((entries) => { if (!disposed) catalog = entries; }).catch((cause) => { if (!disposed) error = String(cause); });
+    void invoke<Component[]>("get_native_model_catalog", { serviceId: "sa3" }).then((entries) => { if (!disposed) catalog = entries; }).catch((cause) => { if (!disposed) error = String(cause); });
     void invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId: "sa3" }).then((info) => {
       if (!disposed && recommendQuantizedSa3Training(info)) trainingRecommendation = "Q4_K_M";
     }).catch((cause) => { if (!disposed) error = String(cause); });
     const listeners = [
-      listen<{ encoding: string }>("sa3-native-model-selected", (event) => { if (!disposed) activeEncoding = event.payload.encoding; }),
+      listen<{ serviceId: string; encoding: string }>("native-model-selected", (event) => { if (!disposed && event.payload.serviceId === "sa3") activeEncoding = event.payload.encoding; }),
       listen<Decoder>("sa3-native-decoder-updated", (event) => { if (!disposed) decoder = event.payload; }),
     ];
     return () => { disposed = true; for (const listener of listeners) void listener.then((stop) => stop()); };
@@ -67,7 +67,7 @@
   async function useTier(tier: string) {
     busy = true; error = null; message = null;
     try {
-      const selection = await invoke<{ encoding: string }>("select_sa3_native_model", { encoding: tier });
+      const selection = await invoke<{ encoding: string }>("select_native_model", { serviceId: "sa3", encoding: tier });
       activeEncoding = selection.encoding;
       message = `SA3 will use ${tier} next time it starts.`;
     } catch (cause) { error = String(cause); }

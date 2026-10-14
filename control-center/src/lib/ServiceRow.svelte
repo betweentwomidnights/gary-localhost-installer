@@ -41,8 +41,8 @@
     onManageSa3Loras = () => {},
     hasSa3LoraTraining = false,
     onTrainSa3Lora = () => {},
-    hasSa3Migration = false,
-    onMigrateSa3Runtime = () => {},
+    hasMigration = false,
+    onMigrateRuntime = () => {},
   }: {
     service: ServiceInfo;
     selected: boolean;
@@ -57,8 +57,8 @@
     onManageSa3Loras?: () => void;
     hasSa3LoraTraining?: boolean;
     onTrainSa3Lora?: () => void;
-    hasSa3Migration?: boolean;
-    onMigrateSa3Runtime?: () => void;
+    hasMigration?: boolean;
+    onMigrateRuntime?: () => void;
   } = $props();
 
   const statusColors: Record<string, string> = {
@@ -179,14 +179,14 @@
         add lora
       </button>
     {/if}
-    {#if hasSa3LoraTraining || hasSa3Migration}<div class="runtime-actions">
+    {#if hasSa3LoraTraining || hasMigration}<div class="runtime-actions">
     {#if hasSa3LoraTraining}
       <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onTrainSa3Lora(); }}>
         train lora
       </button>
     {/if}
-    {#if hasSa3Migration}
-      <button class="migration-btn" onclick={(e) => { e.stopPropagation(); onMigrateSa3Runtime(); }} disabled={isBuilding}>
+    {#if hasMigration}
+      <button class="migration-btn" onclick={(e) => { e.stopPropagation(); onMigrateRuntime(); }} disabled={isBuilding}>
         migrate runtime
       </button>
     {/if}

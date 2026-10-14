@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
   import Sa3NativeModels from "./Sa3NativeModels.svelte";
+  import NativeTierModels from "./NativeTierModels.svelte";
   import { chooseYueyTier, loadYueyTiers } from "./yueyTiers";
 
   interface ModelEntry {
@@ -36,9 +37,10 @@
     recommendedEncoding: string | null;
   }
 
-  let { serviceId, serviceRuntime = "python", onBack }: {
+  let { serviceId, serviceRuntime = "python", hasMigration = false, onBack }: {
     serviceId: string;
     serviceRuntime?: "python" | "native";
+    hasMigration?: boolean;
     onBack: () => void;
   } = $props();
 
@@ -229,9 +231,16 @@
     };
   });
 
+  // A migrating service other than SA3 shows its native components in their
+  // own section; its Python models go once it runs native.
+  const hasTierModels = $derived(hasMigration && !isSa3);
+  let nativeModels = $derived(models.filter((m) => m.service === serviceId && m.size_category === "native"));
+
   // Filter models belonging to this service
   let serviceModels = $derived(
-    models.filter((m) => m.service === serviceId && (!isSa3 || serviceRuntime !== "native" || m.id.startsWith("sa3-native::")))
+    models.filter((m) => m.service === serviceId
+      && (!isSa3 || serviceRuntime !== "native" || m.id.startsWith("sa3-native::"))
+      && (!hasTierModels || (m.size_category !== "native" && serviceRuntime !== "native")))
   );
 
   // For Jerry: separate base models from finetune checkpoints
@@ -793,8 +802,12 @@
       </div>
 
     {:else}
+      {#if hasTierModels}
+        <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        {#if serviceModels.length}<div class="size-label">Python models</div>{/if}
+      {/if}
       <!-- Gary / other services: grouped by size -->
-      {#if serviceModels.length === 0}
+      {#if serviceModels.length === 0 && !hasTierModels}
         <div class="empty">
           <p>No models configured for this service yet.</p>
         </div>
