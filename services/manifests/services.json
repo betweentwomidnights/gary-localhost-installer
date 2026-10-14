@@ -1,4 +1,29 @@
 {
+  "nativeBundles": {
+    "sa3": {
+      "version": "v0.1.4",
+      "platforms": {
+        "windows-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.4/sa3-v0.1.4-windows-x64-core.zip",
+            "sha256": "ba71855d03287c1f7615c01cffd61957c5b6037cf977fac237a9b11b40902059"
+          },
+          "backends": {
+            "cuda": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.4/sa3-v0.1.4-windows-x64-cuda.zip",
+              "sha256": "62c3eb1fdd623be3032247089e7c83c4cdd0f517567f4524df48c67b19deb307",
+              "requires": ["cudart-12.8"]
+            },
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.4/sa3-v0.1.4-windows-x64-vulkan.zip",
+              "sha256": "a16cb16ec49b2ad086eadad1cbc619ee31641f3d8f605ffb0cbf793d1daeedbd"
+            }
+          },
+          "prefer": ["cuda", "vulkan"]
+        }
+      }
+    }
+  },
   "version": "2.0",
   "services": [
     {
@@ -109,6 +134,77 @@
     },
     {
       "id": "sa3",
+      "migration": {
+        "dataDir": "sa3",
+        "label": "SA3",
+        "dataLabel": "LoRAs, prompts, training jobs and checkpoints",
+        "legacy": {
+          "envDirs": [
+            "env",
+            ".venv"
+          ],
+          "hfRepos": [
+            {
+              "repo": "stabilityai/stable-audio-3-medium",
+              "label": "PyTorch inference weights"
+            },
+            {
+              "repo": "stabilityai/stable-audio-3-medium-base",
+              "label": "PyTorch training base",
+              "role": "training-base"
+            }
+          ],
+          "staged": {
+            "dir": "sa3/training/models/sa3-medium/base",
+            "label": "staged PyTorch training base",
+            "role": "training-base",
+            "files": [
+              "model_config.json",
+              "model.safetensors",
+              "t5gemma-b-b-ul2/config.json",
+              "t5gemma-b-b-ul2/model.safetensors",
+              "t5gemma-b-b-ul2/tokenizer.json",
+              "t5gemma-b-b-ul2/tokenizer_config.json"
+            ]
+          },
+          "code": {
+            "files": [
+              "api.py",
+              "analyze_audio.py",
+              "bpm_analysis.py",
+              "key_analysis.py",
+              "build_lora_prompts.py",
+              "lora_train.py",
+              "lora_train_lightning.py",
+              "train_lora_job.py",
+              "train_memory.py",
+              "setup.py",
+              "requirements.txt"
+            ],
+            "packages": [
+              "stable_audio_3",
+              "underfit",
+              "dataset_processing",
+              "tests"
+            ]
+          }
+        }
+      },
+      "native": {
+        "bundle": "sa3",
+        "executable": "sa3-server.exe",
+        "modelsDir": "sa3",
+        "args": ["--model", "medium", "--encoding", "f16", "--t5-encoding", "f16", "--ae-encoding", "f32"],
+        "env": {
+          "SA3_PORT": "18006",
+          "SA3_MAX_DURATION": "446",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/sa3",
+          "SA3_ADAPTERS_DIR": "${GARY_RUNTIME}/sa3/native-loras",
+          "SA3_SOURCE_LORAS_DIR": "${GARY_RUNTIME}/sa3/loras",
+          "SA3_PROMPTS_DIR": "${GARY_RUNTIME}/sa3/prompts"
+        }
+      },
       "displayName": "sa3 (stable audio 3)",
       "description": "Text-to-audio generation and editing with Stable Audio 3",
       "port": 8006,
@@ -250,22 +346,23 @@
       "workingDir": "services/yuey",
       "native": {
         "executable": "yue2-server.exe",
-        "version": "v0.2.2",
+        "modelsDir": "yuey",
+        "version": "v0.2.4",
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.2/yuey-v0.2.2-windows-x64-core.zip",
-              "sha256": "8348ce2bb1416053ff1d8e5c54afdbb1cb06443d23b29be6f00461f6b26a9b2c"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-core.zip",
+              "sha256": "5175174811e5ffbbc2bb324745b3512fedeac005e8eafddc4ba285cdab359493"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.2/yuey-v0.2.2-windows-x64-cuda.zip",
-                "sha256": "5acc1ec39d270d73944f7b72887d7c6c377408a56da05be7f3e12140b8fa92fe",
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-cuda.zip",
+                "sha256": "c07a1fad96109874ba53bef435d51793e389bc92c61f3210da36dd8590c60bc1",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.2/yuey-v0.2.2-windows-x64-vulkan.zip",
-                "sha256": "80499e568dc4d1180bf2f41e97fe7a245ac56c9ec6a4fc5c464246445945f31d"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-vulkan.zip",
+                "sha256": "d7600536eac3f23f3e239e521a4cdfc22def1ea92c5f91d5b4170fe4e1a80041"
               }
             },
             "prefer": ["cuda", "vulkan"]

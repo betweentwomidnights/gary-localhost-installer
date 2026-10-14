@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
+  import Sa3NativeLoras from "./Sa3NativeLoras.svelte";
 
   interface Sa3LoraEntry {
     name: string;
@@ -42,17 +43,19 @@
   let {
     open,
     serviceStatus,
-    serviceEnvExists,
+    pendingRestart = false,
     onClose,
   }: {
     open: boolean;
     serviceStatus: "stopped" | "starting" | "running" | "unhealthy" | "failed";
     serviceEnvExists: boolean;
+    pendingRestart?: boolean;
     onClose: () => void;
   } = $props();
 
   let loraState: Sa3LoraState | null = $state(null);
   let loading = $state(false);
+  let nativeRuntime = $state(false);
   let saving = $state(false);
   let building = $state(false);
   let switchingName = $state<string | null>(null);
@@ -104,7 +107,8 @@
     loading = true;
     error = null;
     try {
-      loraState = await invoke<Sa3LoraState>("get_sa3_lora_state");
+      const [state,services] = await Promise.all([invoke<Sa3LoraState>("get_sa3_lora_state"),invoke<{id:string;runtime:string}[]>("get_services")]);
+      loraState = state; nativeRuntime = services.some((service) => service.id === "sa3" && service.runtime === "native");
     } catch (e) {
       error = describeError(e);
     } finally {
@@ -251,7 +255,8 @@
     }
   }
 
-  let canBuild = $derived(open && serviceEnvExists && !building);
+  let registryBlocked = $derived(loading || saving || building || pendingRestart || switchingName !== null || deletingName !== null || (nativeRuntime && ["starting", "running", "unhealthy"].includes(serviceStatus)));
+  let canBuild = $derived(open && !registryBlocked);
 
   let poolSummary: [string, number][] = $derived.by(() => {
     if (!loraState) return [];
@@ -278,22 +283,23 @@
       tabindex="-1"
     >
       <div class="eyebrow">sa3 lora manager</div>
-      <div class="title" id="sa3-lora-title">add local LoRAs and prompt pools</div>
+      <div class="title" id="sa3-lora-title">{nativeRuntime ? "manage native LoRAs and prompt pools" : "add local LoRAs and prompt pools"}</div>
       <div class="body">
         pick the SA3 LoRA checkpoint file. if you still have the training dataset folder with txt sidecars,
         add that folder too and gary4local can build a prompt dice pool for the plugin.
       </div>
 
       <div class="note">
-        SA3 loads LoRAs into the model at startup. if the model is already resident, restart SA3 before testing a newly added LoRA.
+        {nativeRuntime ? "Stop SA3 before importing or changing native adapters. Refresh the plugin LoRA menu after updating entries." : "SA3 loads LoRAs into the model at startup. Restart SA3 before testing a newly added LoRA when its model is already resident."}
       </div>
 
-      {#if !serviceEnvExists}
-        <div class="warning">build SA3 first. you can still save LoRA entries now, but prompt generation is unavailable.</div>
-      {:else if serviceStatus !== "running"}
+      {#if pendingRestart}<div class="warning">Restart gary4local to use the selected storage before changing LoRAs.</div>{/if}
+
+      {#if serviceStatus !== "running"}
         <div class="warning">SA3 is not running. you can save LoRA entries now; start SA3 before generation testing.</div>
       {/if}
 
+      {#if !nativeRuntime}
       <div class="section-label">new entry</div>
       <div class="form-grid">
         <label class="field">
@@ -322,17 +328,18 @@
         the prompt builder reads each txt sidecar, strips the bpm/key tail, and writes one JSON per LoRA.
       </div>
 
+      {/if}
       <div class="actions top-actions">
-        <button
+        {#if !nativeRuntime}<button
           class="accent"
           onclick={saveLora}
-          disabled={saving || !formName.trim() || !checkpointPath.trim()}
+          disabled={registryBlocked || !formName.trim() || !checkpointPath.trim()}
         >
           {saving ? "saving..." : "save LoRA"}
-        </button>
+        </button>{/if}
         <button onclick={() => void loadState()} disabled={loading || saving || building}>refresh</button>
-        <button onclick={buildPrompts} disabled={!canBuild}>
-          {building ? "building..." : "build prompts"}
+        <button onclick={buildPrompts} disabled={!canBuild} title="Replaces LoRA prompt pools using their caption datasets">
+          {building ? "building..." : "rebuild all LoRA prompts"}
         </button>
         <button onclick={onClose}>close</button>
       </div>
@@ -348,6 +355,8 @@
       {/if}
 
       <div class="section-label">registered LoRAs</div>
+      <Sa3NativeLoras refreshKey={loraState} allowImport={nativeRuntime} {pendingRestart} />
+      {#if nativeRuntime && loraState?.entries.length}<div class="section-label">legacy source entries</div>{/if}
       {#if loading && !loraState}
         <div class="empty">loading...</div>
       {:else if loraState && loraState.entries.length > 0}
@@ -363,13 +372,13 @@
                   <button
                     class="danger"
                     onclick={() => removeLora(entry.name)}
-                    disabled={switchingName === entry.name || deletingName === entry.name}
+                    disabled={registryBlocked}
                   >remove</button>
                   {#if entry.trainingJobId}
                     <button
                       class="danger delete-files"
                       onclick={() => deleteTrainedLora(entry)}
-                      disabled={switchingName === entry.name || deletingName === entry.name}
+                      disabled={registryBlocked}
                     >{deletingName === entry.name ? "deleting..." : "delete files"}</button>
                   {/if}
                 </div>
@@ -390,7 +399,7 @@
                         <select
                           value={selectedCheckpointStep(entry)}
                           onchange={(event) => chooseCheckpoint(entry.name, event)}
-                          disabled={switchingName === entry.name}
+                          disabled={registryBlocked}
                         >
                           {#each entry.trainingCheckpoints as checkpoint}
                             <option value={checkpoint.step} title={checkpoint.path}>
@@ -403,7 +412,7 @@
                         type="button"
                         class="checkpoint-action"
                         onclick={() => activateCheckpoint(entry)}
-                        disabled={switchingName === entry.name || selectedCheckpointStep(entry) === entry.selectedTrainingStep}
+                        disabled={registryBlocked || selectedCheckpointStep(entry) === entry.selectedTrainingStep}
                       >
                         {switchingName === entry.name ? "switching..." : "use checkpoint"}
                       </button>

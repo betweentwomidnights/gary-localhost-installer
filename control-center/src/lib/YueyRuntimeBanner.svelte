@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import NativeBackendPicker from "./NativeBackendPicker.svelte";
   import { chooseYueyTier, loadYueyTiers, type YueyTiers } from "./yueyTiers";
 
   interface NativeDevice {
@@ -169,19 +170,7 @@
       </label>
     {/if}
     {#if info}
-      <label class="backend">
-        <span>backend</span>
-        <select
-          value={info.preference}
-          disabled={saving || building}
-          onchange={(e) => choose((e.currentTarget as HTMLSelectElement).value)}
-        >
-          <option value="auto">auto</option>
-          {#each info.offeredBackends as backend}
-            <option value={backend}>{backend}</option>
-          {/each}
-        </select>
-      </label>
+      <NativeBackendPicker value={info.preference} backends={info.offeredBackends} disabled={saving || building} onChange={choose} />
     {/if}
   </div>
 
