@@ -6,7 +6,7 @@
 use crate::model_manager::{emit_model_status, emit_model_status_from, ModelManager};
 use crate::native_runtime::{download_verified, is_sha256, parse_sha256sums};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -83,6 +83,118 @@ async fn finish_download(
         return Err(error);
     }
     Ok(())
+}
+
+/// A downloadable part of a native service's models: pinned files that are
+/// fetched, verified and kept together.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct CatalogComponent {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub files: Vec<PinnedHfFile>,
+}
+
+/// A native service's published model components, and the folder under the
+/// runtime's models folder that they live in.
+pub struct Catalog {
+    folder: &'static str,
+    components: Vec<CatalogComponent>,
+}
+
+impl Catalog {
+    /// A catalog bundled with the application; invalid JSON is a build error
+    /// caught by every catalog's tests.
+    pub fn bundled(folder: &'static str, json: &str) -> Self {
+        Self {
+            folder,
+            components: serde_json::from_str(json).expect("a bundled model catalog is valid"),
+        }
+    }
+
+    pub fn components(&self) -> &[CatalogComponent] {
+        &self.components
+    }
+
+    pub fn component(&self, id: &str) -> Option<&CatalogComponent> {
+        self.components.iter().find(|entry| entry.id == id)
+    }
+
+    pub fn models_dir(&self, runtime_root: &Path) -> PathBuf {
+        crate::storage::models_dir(runtime_root).join(self.folder)
+    }
+
+    /// The chosen runtime root may itself be a junction, but model subfolders
+    /// must remain inside it. Resolve the boundary before downloading or
+    /// deleting files.
+    pub fn checked_models_dir(&self, runtime_root: &Path) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(runtime_root)
+            .map_err(|error| format!("Cannot create runtime storage: {error}"))?;
+        let root = runtime_root
+            .canonicalize()
+            .map_err(|error| format!("Cannot resolve runtime storage: {error}"))?;
+        let mut dir = root.clone();
+        for folder in ["models", self.folder] {
+            dir.push(folder);
+            std::fs::create_dir_all(&dir)
+                .map_err(|error| format!("Cannot prepare model storage: {error}"))?;
+            dir = dir
+                .canonicalize()
+                .map_err(|error| format!("Cannot resolve model storage: {error}"))?;
+            if !dir.starts_with(&root) {
+                return Err("Model storage points outside the selected runtime folder.".into());
+            }
+        }
+        Ok(dir)
+    }
+
+    /// Presence is an inventory check, not a hash check. Preparation always
+    /// hashes existing files again before keeping them. Partial files never count.
+    pub fn present(entry: &CatalogComponent, dir: &Path) -> bool {
+        entry.files.iter().all(|file| {
+            std::fs::symlink_metadata(dir.join(&file.filename))
+                .map(|metadata| metadata.file_type().is_file() && metadata.len() == file.bytes)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Why `ids` cannot run yet: the labels of those not on disk.
+    pub fn missing(&self, runtime_root: &Path, ids: &[String]) -> Option<String> {
+        let dir = self.models_dir(runtime_root);
+        let missing: Vec<&str> = ids
+            .iter()
+            .filter_map(|id| self.component(id))
+            .filter(|component| !Self::present(component, &dir))
+            .map(|component| component.label.as_str())
+            .collect();
+        (!missing.is_empty()).then(|| format!("needs downloaded native models: {}", missing.join(", ")))
+    }
+
+    /// Hash every file of `ids` against its pin, reporting each as it goes.
+    pub async fn verify(
+        &self,
+        runtime_root: &Path,
+        ids: &[String],
+        progress: &(dyn Fn(&str) + Sync),
+    ) -> Result<(), String> {
+        let dir = self.models_dir(runtime_root);
+        for id in ids {
+            let component = self.component(id).ok_or_else(|| format!("Unknown native model {id}"))?;
+            if !Self::present(component, &dir) {
+                return Err(format!("Prepare {} before migration", component.label));
+            }
+            for file in &component.files {
+                progress(&format!("Verifying {}...", file.filename));
+                if crate::native_runtime::sha256_file(&dir.join(&file.filename)).await? != file.sha256 {
+                    return Err(format!(
+                        "Native model {} failed verification; prepare it again",
+                        file.filename
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 pub async fn download_pinned_hf_files(

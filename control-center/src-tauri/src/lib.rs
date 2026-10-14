@@ -1,3 +1,5 @@
+mod foundation_migration;
+mod foundation_models;
 mod manifest;
 mod migration;
 mod migration_cleanup;
@@ -10,6 +12,8 @@ mod native_runtime;
 mod sa3_adapter;
 mod sa3_analysis;
 mod sa3_decoder;
+// SA3's cleanup tests, over the shared engine the generic commands call.
+#[cfg(test)]
 mod sa3_cleanup;
 mod sa3_loras;
 mod sa3_gguf;
@@ -1160,6 +1164,49 @@ mod bundle_root_tests {
     }
 
     #[test]
+    fn each_retired_service_keeps_its_folder_while_the_others_refresh() {
+        let root = temp_root("retired-foundation-sync-test");
+        let bundle = root.join("bundle");
+        let runtime = root.join("runtime");
+        std::fs::create_dir_all(bundle.join("services/manifests")).unwrap();
+        std::fs::write(bundle.join("services/manifests/services.json"), "{}").unwrap();
+        for service in ["foundation", "sa3"] {
+            std::fs::create_dir_all(bundle.join("services").join(service)).unwrap();
+            std::fs::write(bundle.join("services").join(service).join("api.py"), b"bundled v2").unwrap();
+            std::fs::create_dir_all(runtime.join("services").join(service)).unwrap();
+            std::fs::write(runtime.join("services").join(service).join("api.py"), b"bundled v1").unwrap();
+        }
+        std::fs::write(runtime.join("services/foundation/notes.txt"), b"user asset").unwrap();
+        let foundation = crate::migration::Target::of(
+            crate::manifest::bundled().services.iter().find(|service| service.id == "foundation").unwrap(),
+        )
+        .unwrap();
+        let retired = crate::migration::Selection {
+            schema_version: 1,
+            encoding: "Q5_K_M".into(),
+            verified_release: "v0.1.5".into(),
+            backend: "cuda".into(),
+            activated_at: 1,
+            cleanup_complete: true,
+            cleanup_errors: vec![],
+            runtime_fingerprint: None,
+        };
+        crate::migration::save(&runtime, foundation.def, &retired, |_| Ok(())).unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        // Foundation's Python is retired: nothing is recopied or cleared.
+        assert_eq!(std::fs::read(runtime.join("services/foundation/api.py")).unwrap(), b"bundled v1");
+        assert!(runtime.join("services/foundation/notes.txt").is_file());
+        // SA3 has not migrated, so its bundle still refreshes.
+        assert_eq!(std::fs::read(runtime.join("services/sa3/api.py")).unwrap(), b"bundled v2");
+        // A later release without Foundation's Python folder keeps the retired one.
+        std::fs::remove_dir_all(bundle.join("services/foundation")).unwrap();
+        std::fs::write(bundle.join("services/bundle-stamp.txt"), "no-foundation-python").unwrap();
+        super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
+        assert!(runtime.join("services/foundation/notes.txt").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn an_app_update_keeps_a_native_runtime_and_refreshes_the_rest() {
         let root = temp_root("native-sync-test");
         let bundle = root.join("bundle");
@@ -1378,12 +1425,10 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     // Once cleanup begins, future bundles must not recreate retired Python
     // code or clear native/custom assets, including after interrupted cleanup.
     // Before cleanup, retain Python resource refresh for optional legacy training.
-    let sa3_retired = sa3_retired_for_sync(runtime_root);
-    if sa3_retired {
-        // Earlier native profiles may have retired their environment before
-        // code ownership was recorded. Seeding metadata never recopies code.
-        record_sa3_code_ownership(bundle_root, runtime_root, true);
-    }
+    let retired = retired_for_sync(runtime_root);
+    // Earlier native profiles may have retired their environment before code
+    // ownership was recorded. Seeding metadata never recopies code.
+    record_code_ownership(bundle_root, runtime_root, true, |id| retired.contains(id));
 
     if current_stamp.as_deref() == Some(desired_stamp.as_str())
         && runtime_services
@@ -1391,9 +1436,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             .join("services.json")
             .exists()
     {
-        if !sa3_retired {
-            record_sa3_code_ownership(bundle_root, runtime_root, true);
-        }
+        record_code_ownership(bundle_root, runtime_root, true, |id| !retired.contains(id));
         log::info!("Runtime services already match bundled resources");
         return Ok(());
     }
@@ -1434,16 +1477,17 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if !bundle_names.contains(&name) && !(sa3_retired && name == "sa3") {
+        if !bundle_names.contains(&name) && !retired.contains(&name) {
             remove_path(&existing)?;
         }
     }
 
     for src in bundle_entries {
         let name = src.file_name().unwrap_or_default().to_os_string();
-        if sa3_retired && name == "sa3" {
+        if retired.contains(name.to_string_lossy().as_ref()) {
             log::info!(
-                "Preserving retired SA3 native service folder without copying Python resources"
+                "Preserving retired {} native service folder without copying Python resources",
+                name.to_string_lossy()
             );
             continue;
         }
@@ -1464,9 +1508,7 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
         }
     }
 
-    if !sa3_retired {
-        record_sa3_code_ownership(bundle_root, runtime_root, false);
-    }
+    record_code_ownership(bundle_root, runtime_root, false, |id| !retired.contains(id));
 
     std::fs::write(&stamp_path, desired_stamp)
         .map_err(|e| format!("Cannot write {}: {}", stamp_path.display(), e))?;
@@ -1474,32 +1516,57 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
     Ok(())
 }
 
-/// Whether SA3's service folder is past the point where a bundle may refresh
-/// it. This runs during the sync that refreshes every service, so SA3's own
-/// state must never abort it. An unreadable or invalid selection means a
-/// migration was at least started; preserve the folder and let the service
+/// The migrating services whose folders are past the point where a bundle may
+/// refresh them. This runs during the sync that refreshes every service, so no
+/// service's own state may abort it. An unreadable or invalid selection means
+/// a migration was at least started; preserve the folder and let the service
 /// report the problem itself (ServiceManager keeps it as a start blocker).
-fn sa3_retired_for_sync(runtime_root: &Path) -> bool {
-    match sa3_runtime::read(runtime_root) {
-        Ok(selection) => selection.is_some_and(|selection| selection.cleanup_started()),
-        Err(error) => {
-            let message = format!(
-                "Preserving the SA3 service folder: cannot read its native selection: {error}"
-            );
-            log::warn!("{message}");
-            append_startup_diagnostic(&message);
-            true
+fn retired_for_sync(runtime_root: &Path) -> std::collections::HashSet<String> {
+    let mut retired = std::collections::HashSet::new();
+    for service in &manifest::bundled().services {
+        let Some(target) = migration::Target::of(service) else { continue };
+        let started = match migration::read(runtime_root, target.def, |selection| {
+            migration::check_for(service, selection)
+        }) {
+            Ok(selection) => selection.is_some_and(|selection| selection.cleanup_started()),
+            Err(error) => {
+                let message = format!(
+                    "Preserving the {} service folder: cannot read its native selection: {error}",
+                    target.label()
+                );
+                log::warn!("{message}");
+                append_startup_diagnostic(&message);
+                true
+            }
+        };
+        if started {
+            retired.insert(service.id.clone());
         }
     }
+    retired
 }
 
+/// Record which bundled Python files each migrating service `include`s owns.
 /// Best effort for the same reason. Ownership only ever admits files for
 /// cleanup, so a stale or missing inventory makes cleanup keep more, not less.
-fn record_sa3_code_ownership(bundle_root: &Path, runtime_root: &Path, only_if_missing: bool) {
-    if let Err(error) = migration_code::record_bundle(sa3_runtime::target(), bundle_root, runtime_root, only_if_missing) {
-        let message = format!("Cannot record SA3 Python code ownership: {error}");
-        log::warn!("{message}");
-        append_startup_diagnostic(&message);
+fn record_code_ownership(
+    bundle_root: &Path,
+    runtime_root: &Path,
+    only_if_missing: bool,
+    include: impl Fn(&str) -> bool,
+) {
+    for service in &manifest::bundled().services {
+        let Some(target) = migration::Target::of(service) else { continue };
+        if !include(&service.id) {
+            continue;
+        }
+        if let Err(error) =
+            migration_code::record_bundle(target, bundle_root, runtime_root, only_if_missing)
+        {
+            let message = format!("Cannot record {} Python code ownership: {error}", target.label());
+            log::warn!("{message}");
+            append_startup_diagnostic(&message);
+        }
     }
 }
 
@@ -6119,14 +6186,15 @@ pub fn run() {
             save_hf_token,
             delete_hf_token,
             get_runtime_storage_info,
-            get_sa3_migration_preview,
-            activate_sa3_native_runtime,
-            cleanup_sa3_legacy_installation,
-            get_sa3_native_runtime_selection,
-            select_sa3_native_model,
-            prepare_sa3_native_runtime,
-            prepare_sa3_native_models,
-            get_sa3_native_model_catalog,
+            get_migration_profile,
+            get_migration_preview,
+            get_native_runtime_selection,
+            select_native_model,
+            activate_native_runtime,
+            cleanup_legacy_installation,
+            prepare_native_runtime,
+            get_native_model_catalog,
+            prepare_native_models,
             get_sa3_native_lora_state,
             import_sa3_native_lora,
             update_sa3_native_lora,
@@ -6881,16 +6949,7 @@ async fn get_yuey_tiers(
 async fn get_models(
     model_mgr: tauri::State<'_, ModelState>,
 ) -> Result<Vec<model_manager::ModelEntry>, String> {
-    let mgr = model_mgr.lock().await;
-    let mut models = mgr.get_gary_models();
-    models.extend(mgr.get_melodyflow_models());
-    models.extend(mgr.get_jerry_models());
-    models.extend(mgr.get_sa3_models());
-    models.extend(mgr.get_carey_models());
-    models.extend(mgr.get_foundation_models());
-    models.extend(mgr.get_yuey_models());
-    models.extend(mgr.get_sa3_native_models());
-    Ok(models)
+    Ok(model_mgr.lock().await.all_models())
 }
 
 #[tauri::command]
@@ -9947,178 +10006,245 @@ fn get_runtime_storage_info(
     Ok(storage::storage_info(repo_root.inner()))
 }
 
+/// A service's migration, or why it has none.
+fn migrating(service_id: &str) -> Result<&'static dyn migration::Service, String> {
+    migration::service(service_id).ok_or_else(|| format!("{service_id} has no native migration"))
+}
+
+/// A step of a service's migration, for its panel.
+fn migration_progress(app_handle: &tauri::AppHandle, service_id: &str, message: &str) {
+    let _ = app_handle.emit(
+        "native-migration-progress",
+        serde_json::json!({"serviceId": service_id, "message": message}),
+    );
+}
+
 #[tauri::command]
-async fn get_sa3_migration_preview(
+fn get_migration_profile(service_id: String) -> Result<migration::Profile, String> {
+    Ok(migrating(&service_id)?.profile())
+}
+
+#[tauri::command]
+async fn get_migration_preview(
+    service_id: String,
     repo_root: tauri::State<'_, PathBuf>,
     model_mgr: tauri::State<'_, ModelState>,
-) -> Result<sa3_migration::Sa3MigrationPreview, String> {
+) -> Result<migration_inventory::Preview, String> {
+    let service = migrating(&service_id)?;
     let root = repo_root.inner().clone();
     // Use the model manager's effective cache, including legacy HF overrides.
-    let (hub, legacy_training) = {
+    let (hub, training_downloaded) = {
         let models = model_mgr.lock().await;
-        let legacy_training = models.get_sa3_models().iter().any(|model| {
-            sa3_migration::legacy_repos(Some("training-base")).contains(&model.id.as_str())
-                && matches!(model.status, model_manager::ModelStatus::Downloaded)
-        });
-        (models.hf_hub_cache_dir(), legacy_training)
+        let training: Vec<String> = service
+            .target()
+            .def
+            .legacy
+            .hf_repos
+            .iter()
+            .filter(|repo| repo.role.as_deref() == Some("training-base"))
+            .map(|repo| repo.repo.clone())
+            .collect();
+        (models.hf_hub_cache_dir(), !models.downloaded(&training).is_empty())
     };
+    let label = service.target().label();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut preview = sa3_migration::preview(&root, &hub);
-        preview.training_base_present |= legacy_training;
+        let mut preview = migration_cleanup::preview(service, &root, &hub);
+        preview.training_base_present |= training_downloaded;
         preview
     })
-        .await
-        .map_err(|error| format!("SA3 migration scan failed: {error}"))
+    .await
+    .map_err(|error| format!("{label} migration scan failed: {error}"))
 }
 
 #[tauri::command]
-fn get_sa3_native_runtime_selection(
+fn get_native_runtime_selection(
+    service_id: String,
     repo_root: tauri::State<'_, PathBuf>,
-) -> Result<Option<sa3_runtime::Selection>, String> {
-    sa3_runtime::read(repo_root.inner())
+) -> Result<Option<migration::Selection>, String> {
+    let service = migrating(&service_id)?;
+    migration::read(repo_root.inner(), service.target().def, |selection| {
+        service.check_selection(selection)
+    })
 }
 
 #[tauri::command]
-async fn select_sa3_native_model(
+async fn select_native_model(
+    service_id: String,
     encoding: String,
     repo_root: tauri::State<'_, PathBuf>,
     manager: tauri::State<'_, ManagerState>,
     app_handle: tauri::AppHandle,
-) -> Result<sa3_runtime::Selection, String> {
+) -> Result<migration::Selection, String> {
+    let service = migrating(&service_id)?;
     if storage::storage_info(repo_root.inner()).pending_restart {
-        return Err("Restart to use your selected storage before changing the SA3 model.".into());
+        return Err(format!(
+            "Restart to use your selected storage before changing the {} model.",
+            service.target().label()
+        ));
     }
-    let _launch = sa3_training::LAUNCH.try_lock()
-        .map_err(|_| "Wait for SA3 training or migration to finish starting.")?;
-    let selection = manager.lock().await.select_sa3_native_model(&encoding)?;
+    let _exclusive = service.exclusive(false)?;
+    let selection = manager.lock().await.select_native_model(&service_id, &encoding)?;
     emit_status(manager.inner(), &app_handle).await;
-    let _ = app_handle.emit("sa3-native-model-selected", &selection);
+    let _ = app_handle.emit(
+        "native-model-selected",
+        serde_json::json!({"serviceId": service_id, "encoding": selection.encoding}),
+    );
     Ok(selection)
 }
 
+/// Prove the native runtime privately, then switch the service to it. No
+/// Python environment, original model or user file changes here.
 #[tauri::command]
-async fn cleanup_sa3_legacy_installation(
+async fn activate_native_runtime(
+    service_id: String,
+    encoding: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<migration::Selection, String> {
+    let service = migrating(&service_id)?;
+    let label = service.target().label();
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(format!("Restart to use your chosen storage before switching {label}"));
+    }
+    let _exclusive = service.exclusive(false)?;
+    let _mutation = native_runtime::mutation_guard().await;
+    let (native, installed, launch) = {
+        let mut services = manager.lock().await;
+        if services.is_running(&service_id) {
+            return Err(format!("Stop {label} before switching to C++"));
+        }
+        if let Some(blocker) = services.native_mutation_blocker(&service_id) {
+            return Err(format!("Cannot switch {label}: {blocker}"));
+        }
+        let plan = services.migration_launch(&service_id, &encoding)?;
+        services.begin_native_workload(
+            &service_id,
+            "native-migration",
+            &format!("{label} migration validation"),
+        )?;
+        services.set_build_started(&service_id, 1);
+        plan
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    let progress = |message: &str| migration_progress(&app_handle, &service_id, message);
+    let checked = service
+        .verify(migration::Run {
+            root: repo_root.inner(),
+            native: &native,
+            installed: &installed,
+            launch: &launch,
+            encoding: &encoding,
+            progress: &progress,
+        })
+        .await;
+    let result = {
+        let mut services = manager.lock().await;
+        let result = checked.and_then(|selection| services.activate_native(&service_id, selection));
+        services.end_native_workload(&service_id, "native-migration");
+        services.set_build_done(&service_id, result.as_ref().err().cloned());
+        result
+    };
+    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
+    result
+}
+
+/// Remove the reviewed Python installation, after proving again what removing
+/// it depends on.
+#[tauri::command]
+async fn cleanup_legacy_installation(
+    service_id: String,
     review_token: String,
     repo_root: tauri::State<'_, PathBuf>,
     manager: tauri::State<'_, ManagerState>,
     model_mgr: tauri::State<'_, ModelState>,
     app_handle: tauri::AppHandle,
-) -> Result<sa3_cleanup::ResultInfo, String> {
+) -> Result<migration_cleanup::ResultInfo, String> {
+    let service = migrating(&service_id)?;
+    let label = service.target().label();
+    let def = service.target().def;
+    let check = |selection: &migration::Selection| service.check_selection(selection);
     if storage::storage_info(repo_root.inner()).pending_restart {
-        return Err("Restart to use your chosen storage before cleaning up SA3.".into());
+        return Err(format!("Restart to use your chosen storage before cleaning up {label}."));
     }
-    let _launch = sa3_training::LAUNCH
-        .try_lock()
-        .map_err(|_| "SA3 training or migration is already starting")?;
-    if matches!(
-        read_sa3_lora_training_state().status.as_str(),
-        "starting" | "running"
-    ) || matches!(
-        read_sa3_autolabel_state().status.as_str(),
-        "starting" | "running"
-    ) {
-        return Err("Wait for SA3 training and dataset jobs to finish before cleanup.".into());
-    }
+    let _exclusive = service.exclusive(true)?;
     let _mutation = native_runtime::mutation_guard().await;
-    let selection =
-        sa3_runtime::read(repo_root.inner())?.ok_or("Verify and select C++ before cleanup")?;
-    let decoder_enabled = sa3_use_decoder_lora_enabled();
+    let selection = migration::read(repo_root.inner(), def, check)?
+        .ok_or("Verify and select C++ before cleanup")?;
+    let legacy_models = service.legacy_model_ids();
     let (native, installed, launch, hub) = {
         let mut services = manager.lock().await;
-        if !services.is_native("sa3") || services.is_running("sa3") {
-            return Err("Select C++ and stop SA3 before cleanup.".into());
+        if !services.is_native(&service_id) || services.is_running(&service_id) {
+            return Err(format!("Select C++ and stop {label} before cleanup."));
         }
-        if let Some(blocker) = services.native_mutation_blocker("sa3") {
-            return Err(format!("Cannot clean up SA3: {blocker}"));
+        if let Some(blocker) = services.native_mutation_blocker(&service_id) {
+            return Err(format!("Cannot clean up {label}: {blocker}"));
         }
         let models = model_mgr.lock().await;
-        let sa3_models = models.get_sa3_models();
-        if sa3_models
-            .iter()
-            .any(|model| models.is_downloading(&model.id))
-        {
-            return Err("Wait for SA3 model downloads to finish before cleanup.".into());
-        }
-        let legacy_training = sa3_models.iter().any(|model| {
-            sa3_migration::legacy_repos(Some("training-base")).contains(&model.id.as_str())
-                && matches!(model.status, model_manager::ModelStatus::Downloaded)
-        });
-        if (legacy_training || sa3_migration::legacy_training_base_present(repo_root.inner(), &models.hf_hub_cache_dir()))
-            && !sa3_migration::native_training_base_present(repo_root.inner()) {
-            return Err("Prepare the C++ training model before removing the existing PyTorch training model.".into());
+        if legacy_models.iter().any(|id| models.is_downloading(id)) {
+            return Err(format!("Wait for {label} model downloads to finish before cleanup."));
         }
         let hub = models.hf_hub_cache_dir();
-        sa3_cleanup::validate_review(repo_root.inner(), &hub, &review_token)?;
-        let (native, installed, launch) = services.migration_launch("sa3", &selection.encoding)?;
-        services.begin_native_workload("sa3", "legacy-cleanup", "SA3 legacy cleanup")?;
-        services.set_build_started("sa3", 1);
+        let downloaded = models.downloaded(&legacy_models);
+        if let Some(blocker) = service.cleanup_blocker(repo_root.inner(), &hub, &downloaded) {
+            return Err(blocker);
+        }
+        migration_cleanup::validate_review(service, repo_root.inner(), &hub, &review_token)?;
+        let (native, installed, launch) = services.migration_launch(&service_id, &selection.encoding)?;
+        services.begin_native_workload(&service_id, "legacy-cleanup", &format!("{label} legacy cleanup"))?;
+        services.set_build_started(&service_id, 1);
         (native, installed, launch, hub)
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
-    let progress = |message: &str| {
-        let _ = app_handle.emit("sa3-native-migration-progress", message);
-    };
-    // Activation already proved this runtime: hashed every model, generated
-    // privately and trained two steps. Repeat that only if something it proved
-    // has changed since. The adapter checks always run, because they are what
-    // guarantees nothing still needs the Python environment about to go.
-    let unchanged = sa3_migration::runtime_fingerprint(
-        repo_root.inner(),
-        &native,
-        &installed,
-        &selection.encoding,
-        decoder_enabled,
-    )
-    .is_ok_and(|current| selection.runtime_fingerprint.as_deref() == Some(current.as_str()));
-    let verified = if unchanged {
-        progress("The C++ runtime is unchanged since it was verified. Checking adapters...");
-        sa3_migration::verify_adapters(repo_root.inner(), &progress).await
-    } else {
-        sa3_migration::verify_native(
-            repo_root.inner(),
-            &native,
-            &installed,
-            &launch,
-            &selection.encoding,
-            decoder_enabled,
-            &progress,
+    let progress = |message: &str| migration_progress(&app_handle, &service_id, message);
+    let verified = service
+        .reverify(
+            migration::Run {
+                root: repo_root.inner(),
+                native: &native,
+                installed: &installed,
+                launch: &launch,
+                encoding: &selection.encoding,
+                progress: &progress,
+            },
+            &selection,
         )
         .await
-        .and_then(|verified| {
+        .and_then(|fingerprint| match fingerprint {
             // Record what was proved, so a retry after a locked file skips it.
-            let mut current = sa3_runtime::read(repo_root.inner())?
-                .ok_or("Native SA3 selection is missing")?;
-            current.runtime_fingerprint = verified.runtime_fingerprint;
-            sa3_runtime::save(repo_root.inner(), &current)
-        })
-    };
+            Some(fingerprint) => {
+                let mut current = migration::read(repo_root.inner(), def, check)?
+                    .ok_or_else(|| format!("Native {label} selection is missing"))?;
+                current.runtime_fingerprint = Some(fingerprint);
+                migration::save(repo_root.inner(), def, &current, check)
+            }
+            None => Ok(()),
+        });
     let result = match verified {
         Err(error) => Err(error),
-        Ok(_) if decoder_enabled != sa3_use_decoder_lora_enabled() => {
-            Err("Decoder correction changed during verification; review cleanup again.".into())
-        }
-        Ok(_) => {
+        Ok(()) => {
             let root = repo_root.inner().clone();
             let cleanup_handle = app_handle.clone();
+            let cleanup_id = service_id.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                sa3_cleanup::run(&root, &hub, &review_token, |message| {
-                    let _ = cleanup_handle.emit("sa3-native-migration-progress", message);
+                migration_cleanup::run(service, &root, &hub, &review_token, |message| {
+                    migration_progress(&cleanup_handle, &cleanup_id, message);
                 })
             })
             .await
-            .map_err(|error| format!("SA3 cleanup transaction failed: {error}"))
+            .map_err(|error| format!("{label} cleanup transaction failed: {error}"))
             .and_then(|result| result)
         }
     };
     {
         let mut services = manager.lock().await;
-        let _ = services.refresh_migration("sa3");
-        services.end_native_workload("sa3", "legacy-cleanup");
-        services.set_build_done("sa3", result.as_ref().err().cloned());
+        let _ = services.refresh_migration(&service_id);
+        services.end_native_workload(&service_id, "legacy-cleanup");
+        services.set_build_done(&service_id, result.as_ref().err().cloned());
     }
     {
         let mut models = model_mgr.lock().await;
-        for id in sa3_migration::legacy_repos(None) {
+        for id in &legacy_models {
             models.forget_model_status(id);
         }
     }
@@ -10126,101 +10252,132 @@ async fn cleanup_sa3_legacy_installation(
     model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
     result
 }
-#[tauri::command]
-async fn activate_sa3_native_runtime(
-    encoding: String,
-    repo_root: tauri::State<'_, PathBuf>,
-    manager: tauri::State<'_, ManagerState>,
-    app_handle: tauri::AppHandle,
-) -> Result<sa3_runtime::Selection, String> {
-    let decoder_enabled = sa3_use_decoder_lora_enabled();
-    if storage::storage_info(repo_root.inner()).pending_restart {
-        return Err("Restart to use your chosen storage before switching SA3".into());
-    }
-    let _launch = sa3_training::LAUNCH
-        .try_lock()
-        .map_err(|_| "SA3 training or migration is already starting")?;
-    if matches!(
-        read_sa3_lora_training_state().status.as_str(),
-        "starting" | "running"
-    ) {
-        return Err("Wait for SA3 training to finish before switching its runtime".into());
-    }
-    let _mutation = native_runtime::mutation_guard().await;
-    let (native, installed, launch) = {
-        let mut services = manager.lock().await;
-        if services.is_running("sa3") {
-            return Err("Stop SA3 before switching to C++".into());
-        }
-        if let Some(blocker) = services.native_mutation_blocker("sa3") {
-            return Err(format!("Cannot switch SA3: {blocker}"));
-        }
-        let plan = services.migration_launch("sa3", &encoding)?;
-        services.begin_native_workload("sa3", "native-migration", "SA3 migration validation")?;
-        services.set_build_started("sa3", 1);
-        plan
-    };
-    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
-    let checked = sa3_migration::verify_native(
-        repo_root.inner(),
-        &native,
-        &installed,
-        &launch,
-        &encoding,
-        decoder_enabled,
-        |message| {
-            let _ = app_handle.emit("sa3-native-migration-progress", message);
-        },
-    )
-    .await;
-    let result = {
-        let mut services = manager.lock().await;
-        let result = checked.and_then(|selection| {
-            if decoder_enabled != sa3_use_decoder_lora_enabled() {
-                return Err("Decoder correction changed during migration validation; retry with the current setting.".into());
-            }
-            services.activate_native("sa3", selection)
-        });
-        services.end_native_workload("sa3", "native-migration");
-        services.set_build_done("sa3", result.as_ref().err().cloned());
-        result
-    };
-    let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
-    result
-}
 
-/// Prepare the verified bundle while the legacy service remains selected.
-/// No Python environment, original model or adapter is removed here.
+/// Install the service's native runtime while its Python service stays selected.
 #[tauri::command]
-async fn prepare_sa3_native_runtime(
+async fn prepare_native_runtime(
+    service_id: String,
     repo_root: tauri::State<'_, PathBuf>,
     manager: tauri::State<'_, ManagerState>,
     app_handle: tauri::AppHandle,
 ) -> Result<native_runtime::NativeRuntimeInfo, String> {
+    let service = migrating(&service_id)?;
     if storage::storage_info(repo_root.inner()).pending_restart {
-        return Err(
-            "Restart to use your chosen storage before installing SA3's runtime.".to_string(),
-        );
+        return Err(format!(
+            "Restart to use your chosen storage before installing {}'s runtime.",
+            service.target().label()
+        ));
     }
     let info = {
         let mut mgr = manager.lock().await;
-        let info = mgr.get_native_build_info("sa3")?;
-        mgr.set_build_started("sa3", info.total_steps());
+        let info = mgr.get_native_build_info(&service_id)?;
+        mgr.set_build_started(&service_id, info.total_steps());
         info
     };
     let result = native_runtime::install(info, manager.inner().clone(), app_handle.clone()).await;
     {
         let mut mgr = manager.lock().await;
-        mgr.set_build_done("sa3", result.as_ref().err().cloned());
+        mgr.set_build_done(&service_id, result.as_ref().err().cloned());
         let _ = app_handle.emit("services-updated", mgr.get_service_info());
     }
     result?;
-    get_native_runtime_info("sa3".to_string(), manager).await
+    get_native_runtime_info(service_id, manager).await
 }
 
 #[tauri::command]
-fn get_sa3_native_model_catalog() -> Vec<sa3_models::Component> {
-    sa3_models::catalog().to_vec()
+fn get_native_model_catalog(service_id: String) -> Result<Vec<native_models::CatalogComponent>, String> {
+    Ok(migrating(&service_id)?.models().components().to_vec())
+}
+
+/// Claim the entire model plan before spawning downloads so repeated clicks,
+/// individual component downloads and managed removal see the same
+/// reservation. `component_ids` is what the panel chose; components the
+/// service currently needs are added.
+#[tauri::command]
+async fn prepare_native_models(
+    service_id: String,
+    component_ids: Vec<String>,
+    wait_for_completion: Option<bool>,
+    repo_root: tauri::State<'_, PathBuf>,
+    model_mgr: tauri::State<'_, ModelState>,
+    svc_mgr: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    let service = migrating(&service_id)?;
+    let label = service.target().label();
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err(format!("Restart to use your chosen storage before preparing {label} models."));
+    }
+    let catalog = service.models();
+    let mut ids: Vec<String> = Vec::new();
+    for id in component_ids.into_iter().chain(service.implied_components()) {
+        if catalog.component(&id).is_none() {
+            return Err(format!("Unknown {label} model component: {id}"));
+        }
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        return Err(format!("Choose the {label} models to prepare."));
+    }
+    let mut services = svc_mgr.lock().await;
+    if services.is_native(&service_id) {
+        if let Some(blocker) = services.native_mutation_blocker(&service_id) {
+            return Err(format!("Cannot prepare {label} models: {blocker}."));
+        }
+    }
+    let dest_dir = {
+        let mut mgr = model_mgr.lock().await;
+        if ids.iter().any(|id| mgr.is_downloading(id)) {
+            return Err(format!(
+                "{label} model preparation is already in progress. Wait for it to finish."
+            ));
+        }
+        let dir = catalog.checked_models_dir(&mgr.runtime_root())?;
+        services.begin_native_model_mutation(&service_id, &format!("{label} model preparation"))?;
+        for id in &ids {
+            mgr.set_download_started(id);
+        }
+        dir
+    };
+    drop(services);
+    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
+    let manager = model_mgr.inner().clone();
+    let services = svc_mgr.inner().clone();
+    let queued = ids.clone();
+    let reserved = service_id.clone();
+    let preparation = async move {
+        let mut errors = Vec::new();
+        for id in queued {
+            let files = catalog.component(&id).expect("validated model plan").files.clone();
+            if let Err(error) = native_models::download_pinned_hf_files(
+                id,
+                files,
+                dest_dir.clone(),
+                manager.clone(),
+                app_handle.clone(),
+            )
+            .await
+            {
+                errors.push(error);
+            }
+        }
+        services.lock().await.end_native_model_mutation(&reserved);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("\n"))
+        }
+    };
+    if wait_for_completion.unwrap_or(false) {
+        // A guided migration waits for both downloads and their mutation
+        // reservation to finish before converting adapters or validating.
+        preparation.await?;
+    } else {
+        tauri::async_runtime::spawn(preparation);
+    }
+    Ok(ids)
 }
 
 #[tauri::command]
@@ -10487,87 +10644,6 @@ async fn prepare_sa3_native_loras(
         let _ = app_handle.emit("sa3-native-loras-updated", state);
     }
     result
-}
-
-/// Claim the entire model plan before spawning downloads so repeated clicks,
-/// individual component downloads and managed removal see the same reservation.
-#[tauri::command]
-async fn prepare_sa3_native_models(
-    encoding: String,
-    training_base: Option<String>,
-    include_decoder: Option<bool>,
-    wait_for_completion: Option<bool>,
-    repo_root: tauri::State<'_, PathBuf>,
-    model_mgr: tauri::State<'_, ModelState>,
-    svc_mgr: tauri::State<'_, ManagerState>,
-    app_handle: tauri::AppHandle,
-) -> Result<Vec<String>, String> {
-    if storage::storage_info(repo_root.inner()).pending_restart {
-        return Err("Restart to use your chosen storage before preparing SA3 models.".into());
-    }
-    let mut ids = sa3_models::preparation_ids(&encoding, training_base.as_deref())?;
-    if include_decoder.unwrap_or(false) || sa3_use_decoder_lora_enabled() {
-        ids.push(sa3_decoder::MODEL_ID.into());
-    }
-    let mut services = svc_mgr.lock().await;
-    if services.is_native("sa3") {
-        if let Some(blocker) = services.native_mutation_blocker("sa3") {
-            return Err(format!("Cannot prepare SA3 models: {blocker}."));
-        }
-    }
-    let dest_dir = {
-        let mut mgr = model_mgr.lock().await;
-        if ids.iter().any(|id| mgr.is_downloading(id)) {
-            return Err(
-                "SA3 model preparation is already in progress. Wait for it to finish.".into(),
-            );
-        }
-        let dir = sa3_models::checked_models_dir(&mgr.runtime_root())?;
-        services.begin_native_model_mutation("sa3", "SA3 model preparation")?;
-        for id in &ids {
-            mgr.set_download_started(id);
-        }
-        dir
-    };
-    drop(services);
-    model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
-    let manager = model_mgr.inner().clone();
-    let services = svc_mgr.inner().clone();
-    let queued = ids.clone();
-    let preparation = async move {
-        let mut errors = Vec::new();
-        for id in queued {
-            let files = sa3_models::component(&id)
-                .expect("validated model plan")
-                .files
-                .clone();
-            if let Err(error) = native_models::download_pinned_hf_files(
-                id,
-                files,
-                dest_dir.clone(),
-                manager.clone(),
-                app_handle.clone(),
-            )
-            .await
-            {
-                errors.push(error);
-            }
-        }
-        services.lock().await.end_native_model_mutation("sa3");
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors.join("\n"))
-        }
-    };
-    if wait_for_completion.unwrap_or(false) {
-        // The guided migration must wait for both downloads and their mutation
-        // reservation to finish before converting adapters or validating SA3.
-        preparation.await?;
-    } else {
-        tauri::async_runtime::spawn(preparation);
-    }
-    Ok(ids)
 }
 
 fn build_runtime_cache_info(active_root: &Path) -> RuntimeCacheInfo {

@@ -102,3 +102,92 @@ impl PrivateServer {
         Ok(())
     }
 }
+
+/// Submit a job to the private server and wait for its audio: the
+/// session/poll_status contract every GGML server shares. Returns the WAV.
+pub async fn run_audio_job(
+    server: &PrivateServer,
+    path: &str,
+    body: &serde_json::Value,
+    what: &str,
+) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let submitted: serde_json::Value = server
+        .client
+        .post(format!("{}{path}", server.base))
+        .json(body)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("{what} was refused: {error}"))?
+        .json()
+        .await
+        .map_err(|error| error.to_string())?;
+    let id = submitted["session_id"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        })
+        .ok_or_else(|| format!("{what} returned an invalid job"))?
+        .to_string();
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        let status: serde_json::Value = server
+            .client
+            .get(format!("{}/poll_status/{id}", server.base))
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .json()
+            .await
+            .map_err(|error| error.to_string())?;
+        match status["status"].as_str() {
+            Some("completed") => {
+                return base64::engine::general_purpose::STANDARD
+                    .decode(
+                        status["audio_data"]
+                            .as_str()
+                            .ok_or_else(|| format!("{what} returned no audio"))?,
+                    )
+                    .map_err(|error| error.to_string());
+            }
+            Some("failed") => return Err(format!("{what} failed: {}", status["error"])),
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("{what} timed out"));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// A metadata fingerprint of what a runtime proof covered: each path's size
+/// and modification time, plus `identity` (release, backend, tier...). It
+/// hashes no file contents, so recomputing it is cheap; a missing file counts
+/// as a difference.
+pub fn fingerprint(paths: &[std::path::PathBuf], identity: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let stamps: Vec<(String, Option<(u64, u128)>)> = paths
+        .iter()
+        .map(|path| {
+            let metadata = std::fs::metadata(path).ok().and_then(|metadata| {
+                let nanos = metadata
+                    .modified()
+                    .ok()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?
+                    .as_nanos();
+                Some((metadata.len(), nanos))
+            });
+            (path.to_string_lossy().into_owned(), metadata)
+        })
+        .collect();
+    let bytes = serde_json::to_vec(&(identity, stamps)).unwrap_or_default();
+    format!("{:x}", Sha256::digest(bytes))
+}

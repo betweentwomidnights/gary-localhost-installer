@@ -53,7 +53,9 @@ pub fn validate_review(
             "Verify and select C++ before retiring the {label} Python installation."
         ));
     }
-    if let Some(blocker) = service.cleanup_blocker(root, hub) {
+    // What is on disk; callers that know which legacy models the model
+    // manager holds as downloaded check those before reviewing.
+    if let Some(blocker) = service.cleanup_blocker(root, hub, &[]) {
         return Err(blocker);
     }
     Ok(current)
@@ -199,6 +201,22 @@ mod tests {
                 warnings: Vec::new(),
                 training_base_present: false,
             }
+        }
+
+        fn models(&self) -> &'static crate::native_models::Catalog {
+            static NONE: std::sync::OnceLock<crate::native_models::Catalog> = std::sync::OnceLock::new();
+            NONE.get_or_init(|| crate::native_models::Catalog::bundled("foundation", "[]"))
+        }
+
+        fn tier_components(&self, _tier: &str) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
+
+        fn verify<'a>(
+            &'a self,
+            _run: crate::migration::Run<'a>,
+        ) -> crate::migration::Proof<'a, crate::migration::Selection> {
+            Box::pin(async { Err("cleanup tests never verify".to_string()) })
         }
     }
 

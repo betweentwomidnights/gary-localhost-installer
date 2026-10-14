@@ -335,6 +335,44 @@
         "FOUNDATION_CKPT_PATH": "${MODELS_DIR}/foundation-1/Foundation_1.safetensors",
         "FOUNDATION_CONFIG_PATH": "${MODELS_DIR}/foundation-1/model_config.json"
       },
+      "native": {
+        "bundle": "sa3",
+        "executable": "sat-server.exe",
+        "modelsDir": "foundation",
+        "args": ["--model", "foundation-1", "--encoding", "f16"],
+        "env": {
+          "SA3_PORT": "8015",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/foundation"
+        }
+      },
+      "migration": {
+        "dataDir": "foundation",
+        "label": "Foundation-1",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [],
+          "staged": {
+            "dir": "models/foundation-1",
+            "label": "PyTorch model",
+            "files": ["Foundation_1.safetensors", "model_config.json"]
+          },
+          "code": {
+            "files": [
+              "Dockerfile.reference",
+              "api_foundation.py",
+              "bpm_range.py",
+              "bpm_range_test.py",
+              "download_model.py",
+              "inference_profiles.py",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "test_inference_profiles.py"
+            ],
+            "packages": ["RC-stable-audio-tools"]
+          }
+        }
+      },
       "dependsOn": []
     },
     {

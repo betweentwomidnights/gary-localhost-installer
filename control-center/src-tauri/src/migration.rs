@@ -5,29 +5,110 @@
 //! and an interrupted cleanup must never silently restore Python, so the same
 //! record journals cleanup progress. What is service-specific about a
 //! migration lives with the service; this module holds what every one shares.
-use crate::manifest::{MigrationDef, ServiceDef};
+use crate::manifest::{MigrationDef, NativeDef, ServiceDef};
+use crate::native_models::Catalog;
+use crate::native_runtime::{NativeInstall, NativeLaunch};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
 pub const SELECTION_FILE: &str = "native-runtime.json";
+
+/// An asynchronous migration proof.
+pub type Proof<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+/// What a runtime proof works from: the installed runtime, launched exactly as
+/// the service would be, but at the tier being proved.
+pub struct Run<'a> {
+    pub root: &'a Path,
+    pub native: &'a NativeDef,
+    pub installed: &'a NativeInstall,
+    pub launch: &'a NativeLaunch,
+    pub encoding: &'a str,
+    pub progress: &'a (dyn Fn(&str) + Sync),
+}
+
+/// What the migration panel needs to know about a service.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub service_id: String,
+    pub label: String,
+    pub data_label: Option<String>,
+    /// Generation tiers, best quality first; the first is the default.
+    pub tiers: Vec<String>,
+    /// The components each tier needs, which is what preparing it downloads.
+    pub tier_components: std::collections::BTreeMap<String, Vec<String>>,
+    /// Service-specific steps the panel offers, such as SA3's adapters.
+    pub features: Vec<String>,
+}
 
 /// What only a migrating service can answer. The shared inventory and cleanup
 /// engine asks these; everything else it takes from the manifest block.
 pub trait Service: Sync {
     fn target(&self) -> Target<'_>;
 
+    /// The native models this service downloads, and where they live.
+    fn models(&self) -> &'static Catalog;
+
+    /// Generation tiers, best quality first; the first is the default.
+    fn tiers(&self) -> &'static [&'static str] {
+        &["F16", "Q8_0", "Q5_K_M", "Q4_K_M"]
+    }
+
+    /// The model components generating at `tier` needs.
+    fn tier_components(&self, tier: &str) -> Result<Vec<String>, String>;
+
+    /// Service-specific steps the migration panel offers beyond runtime,
+    /// models and checks.
+    fn features(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Components every model plan includes whatever the panel asked for,
+    /// such as a correction the service currently applies.
+    fn implied_components(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Keeps conflicting work out while a migration step runs, for as long as
+    /// the returned guard lives. `cleanup` says which step it is.
+    fn exclusive(&self, _cleanup: bool) -> Result<Option<Box<dyn std::any::Any + Send>>, String> {
+        Ok(None)
+    }
+
+    /// Prove the installed runtime privately at `run.encoding`, returning the
+    /// selection activation records.
+    fn verify<'a>(&'a self, run: Run<'a>) -> Proof<'a, Selection>;
+
+    /// What cleanup proves again before removing Python. Returns the
+    /// fingerprint to record when it repeated the full proof; by default it
+    /// always does.
+    fn reverify<'a>(&'a self, run: Run<'a>, _selection: &'a Selection) -> Proof<'a, Option<String>> {
+        Box::pin(async move { Ok(self.verify(run).await?.runtime_fingerprint) })
+    }
+
+    /// The ids the model manager knows the Python install's models by: those
+    /// cleanup waits on while downloading and forgets afterwards. By default
+    /// the manifest's legacy Hugging Face repositories.
+    fn legacy_model_ids(&self) -> Vec<String> {
+        self.target().def.legacy.hf_repos.iter().map(|repo| repo.repo.clone()).collect()
+    }
+
     /// The service's contribution to an inventory: its selection, the user
     /// data its own records point at, and anything it shows as kept.
     fn extras(&self, root: &Path, hub: &Path) -> crate::migration_inventory::Extras;
 
     /// Whether `selection.encoding` names one of the service's tiers.
-    fn check_selection(&self, _selection: &Selection) -> Result<(), String> {
-        Ok(())
+    fn check_selection(&self, selection: &Selection) -> Result<(), String> {
+        self.tier_components(&selection.encoding).map(|_| ())
     }
 
     /// Why cleanup must not run yet, e.g. a legacy artifact whose native
-    /// replacement has not been prepared.
-    fn cleanup_blocker(&self, _root: &Path, _hub: &Path) -> Option<String> {
+    /// replacement has not been prepared. `downloaded` holds the legacy model
+    /// ids the model manager reports as downloaded.
+    fn cleanup_blocker(&self, _root: &Path, _hub: &Path, _downloaded: &[String]) -> Option<String> {
         None
     }
 
@@ -55,16 +136,39 @@ pub trait Service: Sync {
         &[]
     }
 
-    /// Why the native runtime cannot start with this selection yet, such as
-    /// models its tier needs that are not on disk.
-    fn native_start_blocker(&self, _root: &Path, _selection: Option<&Selection>) -> Option<String> {
-        None
+    /// Why the native runtime cannot start with this selection yet: by
+    /// default, models its tier needs that are not on disk.
+    fn native_start_blocker(&self, root: &Path, selection: Option<&Selection>) -> Option<String> {
+        let tier = selection.map_or(self.tiers()[0], |selection| selection.encoding.as_str());
+        match self.tier_components(tier) {
+            Ok(ids) => self.models().missing(root, &ids),
+            Err(error) => Some(error),
+        }
     }
 
     /// The manifest's launch arguments adjusted for `encoding`: the selected
     /// tier, or the one being verified before it is selected.
-    fn launch_args(&self, args: &[String], _encoding: Option<&str>) -> Result<Vec<String>, String> {
-        Ok(args.to_vec())
+    fn launch_args(&self, args: &[String], encoding: Option<&str>) -> Result<Vec<String>, String> {
+        let tier = encoding.unwrap_or(self.tiers()[0]);
+        self.tier_components(tier)?;
+        with_encoding_arg(args, tier)
+    }
+
+    /// The panel's view of this service.
+    fn profile(&self) -> Profile {
+        let target = self.target();
+        Profile {
+            service_id: target.id.to_string(),
+            label: target.label().to_string(),
+            data_label: target.def.data_label.clone(),
+            tiers: self.tiers().iter().map(|tier| tier.to_string()).collect(),
+            tier_components: self
+                .tiers()
+                .iter()
+                .filter_map(|tier| Some((tier.to_string(), self.tier_components(tier).ok()?)))
+                .collect(),
+            features: self.features().iter().map(|feature| feature.to_string()).collect(),
+        }
     }
 
     /// Whatever keeps the Python service's client contract on its public port
@@ -78,6 +182,24 @@ pub trait Service: Sync {
     ) -> Result<Option<Box<dyn ClientAdapter>>, String> {
         Ok(None)
     }
+}
+
+/// `args` with `--encoding` set to `tier`, added when the manifest left it out.
+pub fn with_encoding_arg(args: &[String], tier: &str) -> Result<Vec<String>, String> {
+    let mut args = args.to_vec();
+    let indices: Vec<usize> = args
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| (value == "--encoding").then_some(index))
+        .collect();
+    match indices.as_slice() {
+        [] => args.extend(["--encoding".into(), tier.to_ascii_lowercase()]),
+        [index] if index + 1 < args.len() && !args[index + 1].starts_with("--") => {
+            args[index + 1] = tier.to_ascii_lowercase();
+        }
+        _ => return Err("The native launch has an invalid encoding argument".into()),
+    }
+    Ok(args)
 }
 
 /// A bound client adapter, waiting for its native server to start.
@@ -201,6 +323,7 @@ impl State {
 pub fn service(id: &str) -> Option<&'static dyn Service> {
     match id {
         "sa3" => Some(&crate::sa3_migration::Sa3),
+        "foundation" => Some(&crate::foundation_migration::Foundation),
         _ => None,
     }
 }

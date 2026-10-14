@@ -33,6 +33,8 @@ pub struct ServiceInfo {
     /// The service's move to native and its reviewed Python cleanup have both
     /// finished. Always false for a service with nothing to migrate.
     pub migration_complete: bool,
+    /// The service has a migration to native that this app can run.
+    pub has_migration: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -554,22 +556,26 @@ impl ServiceManager {
     }
 
     /// Choose downloaded generation weights without repeating migration or cleanup.
-    pub fn select_sa3_native_model(&mut self, encoding: &str) -> Result<crate::migration::Selection, String> {
-        let ids = crate::sa3_models::preparation_ids(encoding, None)?;
-        if let Some(blocker) = self.native_mutation_blocker("sa3") {
-            return Err(format!("Cannot change the SA3 model: {blocker}."));
+    /// Switch a migrated service to another generation tier it has the models for.
+    pub fn select_native_model(&mut self, service_id: &str, encoding: &str) -> Result<crate::migration::Selection, String> {
+        let service = crate::migration::service(service_id).ok_or("This service has no native migration")?;
+        let label = service.target().label();
+        let ids = service.tier_components(encoding)?;
+        if let Some(blocker) = self.native_mutation_blocker(service_id) {
+            return Err(format!("Cannot change the {label} model: {blocker}."));
         }
-        let mut selection = self.selection("sa3").cloned()
-            .ok_or("Migrate SA3 to C++ before selecting a generation tier.")?;
-        let dir = crate::sa3_models::models_dir(&self.repo_root);
+        let mut selection = self.selection(service_id).cloned()
+            .ok_or_else(|| format!("Migrate {label} to C++ before selecting a generation tier."))?;
+        let catalog = service.models();
+        let dir = catalog.models_dir(&self.repo_root);
         for id in ids {
-            let component = crate::sa3_models::component(&id).ok_or("Unknown SA3 model")?;
-            if !crate::sa3_models::present(component, &dir) {
+            let component = catalog.component(&id).ok_or_else(|| format!("Unknown {label} model"))?;
+            if !crate::native_models::Catalog::present(component, &dir) {
                 return Err(format!("Download {} before using this generation tier.", component.label));
             }
         }
         selection.encoding = encoding.to_string();
-        self.activate_native("sa3", selection)
+        self.activate_native(service_id, selection)
     }
 
     /// Where the shared runtimes native services need are installed.
@@ -807,6 +813,8 @@ impl ServiceManager {
                     migration_complete: svc.runtime == ServiceRuntime::Native
                         && self.selection(&svc.id).is_some_and(|selection| selection.retired())
                         && !self.legacy_runtime_present(svc),
+                    has_migration: svc.migration.is_some()
+                        && crate::migration::service(&svc.id).is_some(),
                 }
             })
             .collect()
@@ -1542,31 +1550,31 @@ mod tests {
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut defs = manifest.services;
-        let foundation = defs.iter_mut().find(|service| service.id == "foundation").unwrap();
-        foundation.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "foundation"})).unwrap());
+        let terry = defs.iter_mut().find(|service| service.id == "melodyflow").unwrap();
+        terry.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap());
         let info = |manager: &ServiceManager, id: &str| {
             manager.get_service_info().into_iter().find(|service| service.id == id).unwrap()
         };
 
         let untouched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(!untouched.is_native("foundation") && !info(&untouched, "foundation").migration_complete);
+        assert!(!untouched.is_native("melodyflow") && !info(&untouched, "melodyflow").migration_complete);
 
         let selection = crate::migration::Selection {
             schema_version: 1, encoding: "anything".into(), verified_release: "v0.1.0".into(),
             backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         };
-        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "foundation"})).unwrap();
+        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap();
         crate::migration::save(&root, &def, &selection, |_| Ok(())).unwrap();
         let switched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(switched.is_native("foundation"));
-        assert_eq!(switched.selection("foundation").unwrap().verified_release, "v0.1.0");
-        assert!(info(&switched, "foundation").migration_complete);
+        assert!(switched.is_native("melodyflow"));
+        assert_eq!(switched.selection("melodyflow").unwrap().verified_release, "v0.1.0");
+        assert!(info(&switched, "melodyflow").migration_complete);
         assert!(!switched.is_native("sa3"), "SA3 has its own selection, and none exists");
 
         std::fs::write(crate::migration::selection_path(&root, &def), "{}").unwrap();
         let unreadable = ServiceManager::new(defs, root.clone());
-        assert!(unreadable.is_native("foundation"), "an unreadable selection still means it moved");
-        assert!(info(&unreadable, "foundation").start_blocker.unwrap().contains("native selection"));
+        assert!(unreadable.is_native("melodyflow"), "an unreadable selection still means it moved");
+        assert!(info(&unreadable, "melodyflow").start_blocker.unwrap().contains("native selection"));
         assert!(!info(&unreadable, "sa3").start_blocker.is_some_and(|blocker| blocker.contains("native selection")));
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
     }
@@ -1583,10 +1591,10 @@ mod tests {
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut manager = ServiceManager::new(manifest.services, root.clone());
-        assert!(manager.select_sa3_native_model("Q8_0").unwrap_err().contains("Download"));
-        assert!(manager.select_sa3_native_model("../../bad").is_err());
+        assert!(manager.select_native_model("sa3", "Q8_0").unwrap_err().contains("Download"));
+        assert!(manager.select_native_model("sa3", "../../bad").is_err());
         manager.begin_native_workload("sa3", "trainer", "SA3 training").unwrap();
-        assert!(manager.select_sa3_native_model("F16").unwrap_err().contains("SA3 training"));
+        assert!(manager.select_native_model("sa3", "F16").unwrap_err().contains("SA3 training"));
         assert_eq!(std::fs::read(crate::sa3_runtime::selection_path(&root)).unwrap(), before);
         assert!(manager.get_service_info().iter().find(|service| service.id == "sa3").unwrap().migration_complete);
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
@@ -1612,7 +1620,7 @@ mod tests {
         manifest.resolve_native_bundles().unwrap();
         let defs = manifest.services;
         let mut manager = ServiceManager::new(defs.clone(), root.clone());
-        let selection = manager.select_sa3_native_model("F16").unwrap();
+        let selection = manager.select_native_model("sa3", "F16").unwrap();
         assert_eq!(selection.encoding, "F16");
         assert!(selection.cleanup_complete && selection.cleanup_errors.is_empty());
         assert_eq!(selection.activated_at, 123);
@@ -1620,7 +1628,7 @@ mod tests {
         assert_eq!(restarted.selection("sa3").unwrap().encoding, "F16");
         assert!(restarted.get_service_info().iter().find(|service| service.id == "sa3").unwrap().migration_complete);
         assert!(crate::sa3_runtime::missing_models(&root, "F16").is_none());
-        assert!(manager.select_sa3_native_model("Q8_0").is_err());
+        assert!(manager.select_native_model("sa3", "Q8_0").is_err());
         assert_eq!(crate::sa3_runtime::read(&root).unwrap().unwrap().encoding, "F16");
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
         println!("PASS real F16 model selection, restart persistence, cleanup preservation and rejection of missing Q8 weights; production profile unchanged");
