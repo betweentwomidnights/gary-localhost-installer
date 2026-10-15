@@ -18,7 +18,16 @@
     nativeSelection: Selection | null;
     cleanupToken: string;
   }
-  interface Profile { serviceId: string; label: string; dataLabel: string | null; tiers: string[]; tierComponents: Record<string, string[]>; features: string[]; }
+  interface Profile {
+    serviceId: string;
+    label: string;
+    dataLabel: string | null;
+    tiers: string[];
+    tierComponents: Record<string, string[]>;
+    features: string[];
+    tierOptions: Record<string, string[]>;
+    optionsLabel: string | null;
+  }
   interface Service { id: string; status: string; build_status: { building: boolean; step_label: string } | null; }
   interface Download { model_id: string; progress: number; status: string; message: string; error: string | null; }
   interface Component { id: string; label: string; files: { bytes: number }[]; }
@@ -47,6 +56,8 @@
   let trainingBase = $state("F16");
   let includeTraining = $state(false);
   let includeDecoder = $state(false);
+  // Chosen tier options by position, so a choice follows a change of tier.
+  let optionPicks = $state<boolean[]>([]);
   let elapsedSeconds = $state(0);
   let services: Service[] = $state([]);
   let dialog: HTMLDivElement | undefined = $state();
@@ -63,8 +74,11 @@
   const taskIndex = $derived(task ? tasks.findIndex((entry) => entry.id === task) : -1);
   const stepNumber = $derived(stage === "setup" ? working && task === "verify" ? 2 : 1 : 3);
   const blocked = $derived(loading || working || pendingRestart || !!services.find((entry) => entry.id === serviceId)?.build_status?.building);
+  const tierOptions = $derived((profile?.tierOptions[encoding] ?? []).flatMap((id) => catalog.filter((entry) => entry.id === id)));
+  const pickedOptions = $derived(tierOptions.filter((_, index) => optionPicks[index]));
   const modelIds = $derived([
     ...(profile?.tierComponents[encoding] ?? []),
+    ...pickedOptions.map((entry) => entry.id),
     ...(has("training-base") && includeTraining ? [`sa3-native::medium-base-${trainingBase}`] : []),
     ...(has("decoder-correction") && includeDecoder ? ["sa3-native::decoder-correction"] : []),
   ]);
@@ -255,12 +269,16 @@
             <h3>One action to prepare and switch</h3>
             <p>Gary will prepare the runtime{has("adapters") ? ", models and your LoRAs" : " and models"}, then automatically check {checks} before offering cleanup.</p>
             <p>{preview.legacyRuntimePresent ? "Your Python installation stays available until the checks pass and you choose to clean it up." : `Your ${dataLabel} stay in place.`} {label} will stop while migration runs.</p>
-            <div class="summary">{encoding} {has("training-base") ? "inference" : "generation"}{has("training-base") && includeTraining ? ` · ${trainingBase} training` : ""}{modelBytes ? ` · ${formatBytes(modelBytes)} of model files` : ""}<small>Existing model components and shared runtimes are reused.</small></div>
+            <div class="summary">{encoding} {has("training-base") ? "inference" : "generation"}{has("training-base") && includeTraining ? ` · ${trainingBase} training` : ""}{pickedOptions.length ? ` · ${pickedOptions.length} ${profile.optionsLabel ?? "options"}` : ""}{modelBytes ? ` · ${formatBytes(modelBytes)} of model files` : ""}<small>Existing model components and shared runtimes are reused.</small></div>
             <details>
               <summary>Model options</summary>
               <div class="options">
                 <label>{has("training-base") ? "Inference precision" : "Precision"}<select bind:value={encoding} disabled={blocked}>{#each profile.tiers as tier}<option>{tier}</option>{/each}</select></label>
+                {#each tierOptions as option, index (option.id)}
+                  <label class="check"><input type="checkbox" bind:checked={optionPicks[index]} disabled={blocked} />{option.label} · {formatBytes(option.files.reduce((sum, file) => sum + file.bytes, 0))}</label>
+                {/each}
               </div>
+              {#if tierOptions.length}<p>Downloaded {profile.optionsLabel ?? "options"} are offered in gary4juce alongside the base model, and are checked too. You can add or remove them later from Models.</p>{/if}
               {#if has("training-base")}<p>{includeTraining ? `Your existing training setup was detected. Gary includes its ${trainingBase} C++ replacement automatically.` : "No existing training base was found. You can add training models later from Models."}</p>{/if}
             </details>
             {:else}
@@ -352,6 +370,7 @@
   .options { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin-top:12px; }
   label { font-size:12px; }
   select { display:block; margin-top:6px; }
+  label.check { display:flex; align-items:center; gap:6px; }
   .tasks { list-style:none; padding:0; margin:18px 0 0; font-size:12px; }
   .tasks li { display:flex; gap:10px; padding:5px 0; color:var(--text-secondary,#aaa); }
   .tasks .active { color:var(--text-primary,#eee); }

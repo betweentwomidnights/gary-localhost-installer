@@ -32,12 +32,14 @@ impl PinnedHfFile {
                 && part != "."
                 && part != ".."
         };
+        // A file may sit in a repo subfolder (SAOS finetunes do), and keeps
+        // that relative path under the models folder.
         if parts.len() != 2
             || !parts.iter().all(|part| safe_part(part))
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
-            || !safe_part(&self.filename)
-            || !(self.filename.ends_with(".gguf") || self.filename.ends_with(".safetensors"))
+            || !self.filename.split('/').all(safe_part)
+            || ![".gguf", ".safetensors", ".json"].iter().any(|ext| self.filename.ends_with(ext))
             || !is_sha256(&self.sha256)
             || self.bytes == 0
         {
@@ -158,6 +160,23 @@ impl Catalog {
         })
     }
 
+    /// The files removing component `id` deletes: its own, less any that
+    /// another component on disk still needs (a finetune's prompt bank is
+    /// shared by every tier of it).
+    pub fn removable_files(&self, id: &str, dir: &Path) -> Vec<PinnedHfFile> {
+        let Some(component) = self.component(id) else {
+            return Vec::new();
+        };
+        let needed_elsewhere = |file: &PinnedHfFile| {
+            self.components.iter().any(|other| {
+                other.id != id
+                    && other.files.iter().any(|shared| shared.filename == file.filename)
+                    && Self::present(other, dir)
+            })
+        };
+        component.files.iter().filter(|file| !needed_elsewhere(file)).cloned().collect()
+    }
+
     /// Why `ids` cannot run yet: the labels of those not on disk.
     pub fn missing(&self, runtime_root: &Path, ids: &[String]) -> Option<String> {
         let dir = self.models_dir(runtime_root);
@@ -244,6 +263,16 @@ async fn transfer_pinned_files(
                     "Model download destination is not a regular file: {}",
                     path.display()
                 ));
+            }
+        }
+        // A file's subfolder must resolve inside the models folder, as the
+        // folder itself does.
+        if let Some(parent) = dest.parent().filter(|parent| *parent != dest_dir) {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Cannot prepare model storage: {error}"))?;
+            let inside = |path: &Path| path.canonicalize().map_err(|error| format!("Cannot resolve model storage: {error}"));
+            if !inside(parent)?.starts_with(inside(dest_dir)?) {
+                return Err("Model storage points outside the selected runtime folder.".into());
             }
         }
         let label = format!("{} ({}/{})", file.filename, index + 1, files.len());

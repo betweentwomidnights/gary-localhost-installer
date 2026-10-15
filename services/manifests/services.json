@@ -130,6 +130,47 @@
         "PYTHONIOENCODING": "utf-8",
         "HF_TOKEN": "${HF_TOKEN}"
       },
+      "native": {
+        "bundle": "sa3",
+        "executable": "sat-server.exe",
+        "modelsDir": "stable-audio",
+        "args": ["--model", "saos", "--encoding", "f16"],
+        "env": {
+          "SA3_PORT": "8005",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/stable-audio"
+        }
+      },
+      "migration": {
+        "dataDir": "stable-audio",
+        "label": "jerry",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [
+            {"repo": "stabilityai/stable-audio-open-small", "label": "PyTorch base model"},
+            {"repo": "thepatch/jerry_grunge", "label": "PyTorch Jerry Grunge finetune"},
+            {"repo": "S3Sound/kickbass", "label": "PyTorch kickbass finetune"}
+          ],
+          "code": {
+            "files": [
+              "LICENSE",
+              "README.md",
+              "api.py",
+              "base_model_config.json",
+              "defaults.ini",
+              "model_loader_enhanced.py",
+              "patch_generation.py",
+              "pre_encode.py",
+              "pyproject.toml",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "riff_manager.py",
+              "setup.py"
+            ],
+            "packages": ["LICENSES", "riffs", "stable_audio_tools"]
+          }
+        }
+      },
       "dependsOn": []
     },
     {

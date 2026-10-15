@@ -146,7 +146,7 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
         "Foundation-1 generation",
     )
     .await?;
-    check_geometry(&generated, SAMPLES, "generation")?;
+    crate::migration_verify::check_wav(&generated, SAMPLES, "Foundation-1 generation")?;
 
     (run.progress)("Testing audio-to-audio...");
     let transformed = crate::migration_verify::run_audio_job(
@@ -160,7 +160,7 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
         "Foundation-1 audio-to-audio",
     )
     .await?;
-    check_geometry(&transformed, SAMPLES, "audio-to-audio")?;
+    crate::migration_verify::check_wav(&transformed, SAMPLES, "Foundation-1 audio-to-audio")?;
     server.stop().await?;
 
     Ok(Selection {
@@ -297,18 +297,4 @@ mod tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-fn check_geometry(wav: &[u8], samples: u32, what: &str) -> Result<(), String> {
-    let reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
-    let spec = reader.spec();
-    if spec.sample_rate != 44100 || spec.channels != 2 || reader.duration() != samples {
-        return Err(format!(
-            "Foundation-1 {what} check returned {} Hz, {} channels, {} samples; expected 44100 Hz stereo, {samples}",
-            spec.sample_rate,
-            spec.channels,
-            reader.duration()
-        ));
-    }
-    Ok(())
 }

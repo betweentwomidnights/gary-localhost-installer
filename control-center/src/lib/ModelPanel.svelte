@@ -351,6 +351,12 @@
       <div class="model-action-error">{modelActionError}</div>
     {/if}
     {#if isJerry}
+      {#if hasTierModels}
+        <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+      {/if}
+      <!-- Jerry's Python models go once it runs native. -->
+      {#if serviceRuntime !== "native"}
+      {#if hasTierModels}<div class="size-label">Python models</div>{/if}
       <!-- Jerry: Base model section -->
       <div class="size-group">
         <div class="size-label">base model</div>
@@ -467,6 +473,7 @@
           </div>
         {/if}
       </div>
+      {/if}
 
     {:else if isSa3}
       <Sa3NativeModels models={serviceModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />

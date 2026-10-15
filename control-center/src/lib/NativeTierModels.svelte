@@ -6,7 +6,13 @@
   interface Component { id: string; label: string; description: string; files: { bytes: number }[]; }
   interface Model { id: string; status: "available" | "downloading" | "downloaded" | "failed"; downloaded_bytes: number | null; }
   interface Progress { model_id: string; progress: number; status: string; message: string; error: string | null; }
-  interface Profile { label: string; tiers: string[]; tierComponents: Record<string, string[]>; }
+  interface Profile {
+    label: string;
+    tiers: string[];
+    tierComponents: Record<string, string[]>;
+    tierOptions: Record<string, string[]>;
+    optionsLabel: string | null;
+  }
   let { serviceId, models, progress, nativeSelected, onDownload, onRemove, removingId }: {
     serviceId: string;
     models: Model[];
@@ -24,13 +30,24 @@
   let message = $state<string | null>(null);
   const label = $derived(profile?.label ?? serviceId);
   // Each tier's own bundle comes first in its component list; what every
-  // tier also needs (such as an encoder) is shared.
+  // tier also needs (such as an encoder) is shared. A tier's options (such
+  // as jerry's finetunes) run with it without being needed by it.
   const tierOf = $derived(new Map((profile?.tiers ?? []).map((tier) => [profile!.tierComponents[tier][0], tier])));
-  const shared = $derived(catalog.filter((entry) => !tierOf.has(entry.id)));
+  const optionIds = $derived(new Set(Object.values(profile?.tierOptions ?? {}).flat()));
+  const shared = $derived(catalog.filter((entry) => !tierOf.has(entry.id) && !optionIds.has(entry.id)));
   const tiers = $derived(catalog.filter((entry) => tierOf.has(entry.id)));
   const downloading = $derived(models.some((model) => model.status === "downloading"));
   const status = (id: string) => models.find((model) => model.id === id)?.status;
   const ready = (tier: string) => (profile?.tierComponents[tier] ?? []).every((id) => status(id) === "downloaded");
+  // Options follow the tier the service runs (or will run) at: the active
+  // one, else the first downloaded, else the default.
+  const optionTier = $derived(activeEncoding
+    ?? profile?.tiers.find((tier) => ready(tier))
+    ?? profile?.tiers[0]
+    ?? null);
+  const options = $derived(optionTier
+    ? (profile?.tierOptions[optionTier] ?? []).flatMap((id) => catalog.filter((entry) => entry.id === id))
+    : []);
   function size(bytes: number) { return `${(bytes / 1024 ** 3).toFixed(2)} GB`; }
 
   $effect(() => {
@@ -99,6 +116,14 @@
     {#if activeEncoding}{label} is set to {activeEncoding}. Stop {label} before changing its model.{/if}</p>
   {#each tiers as entry (entry.id)}{@render row(entry, tierOf.get(entry.id) ?? null)}{/each}
 </section>
+{#if options.length}
+  <section aria-label={profile?.optionsLabel ?? "options"}>
+    <div class="group-label">{profile?.optionsLabel ?? "options"}</div>
+    <p>Each one downloaded at {optionTier} is offered in gary4juce alongside the base model.
+      {#if optionTier && !ready(optionTier)}They run once the {optionTier} tier is downloaded.{/if}</p>
+    {#each options as entry (entry.id)}{@render row(entry, null)}{/each}
+  </section>
+{/if}
 {#if !nativeSelected}<p>Use migrate runtime on the {label} service row to switch to C++ after downloading.</p>{/if}
 {#if message}<p role="status">{message}</p>{/if}
 {#if error}<p class="error" role="alert">{error}</p>{/if}

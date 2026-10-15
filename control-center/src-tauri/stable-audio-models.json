@@ -1,0 +1,254 @@
+[
+  {
+    "id": "stable-audio-native::F16",
+    "label": "Stable Audio Open Small F16",
+    "description": "F16 generation bundle (reference): the ARC base DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-dit-0.3B-v1.0-F16.gguf",
+        "sha256": "f9326325a76f65e05a45a2188b627e43333c2ce3e0c9a54f4a919008cd4cc47c",
+        "bytes": 683204576
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "t5-base-encoder-0.1B-v1.0-F16.gguf",
+        "sha256": "3c648a060392c3670a0347b727814c80924e9862e407de4bf8cd60bca78d2ae3",
+        "bytes": 219954784
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-oobleck-v1.0-F16.gguf",
+        "sha256": "5c4978ffcca3baf8c409cb39ba5e13f8ebb1b7200b780fbb6f930bcaf5e5256c",
+        "bytes": 156319168
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::Q8_0",
+    "label": "Stable Audio Open Small Q8_0",
+    "description": "Q8_0 generation bundle (near-transparent): the ARC base DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-dit-0.3B-v1.0-Q8_0.gguf",
+        "sha256": "a97237b2f22f4f39392a69c5de09fd4dd8e969a6b2f2d8ec8c1f23dcefd631ae",
+        "bytes": 363831776
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "t5-base-encoder-0.1B-v1.0-Q8_0.gguf",
+        "sha256": "cde5b0c8fb5bdf080599e716d8efaf88a423db63537a9568029beb03dd8e779f",
+        "bytes": 117196384
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-oobleck-v1.0-Q8_0.gguf",
+        "sha256": "edcf88daeabacf36d44be21ea3225b0d3d6964853a68de75544588b734e74ea9",
+        "bytes": 115707328
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::Q5_K_M",
+    "label": "Stable Audio Open Small Q5_K_M",
+    "description": "Q5_K_M generation bundle (recommended compact): the ARC base DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-dit-0.3B-v1.0-Q5_K_M.gguf",
+        "sha256": "87d79dddd8e3f9a26adbd83790f3e914ad3c8ef4febbeb4b1d0c862cb00a6002",
+        "bytes": 256233440
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "t5-base-encoder-0.1B-v1.0-Q5_K_M.gguf",
+        "sha256": "a68bfb05f22eef96bbed50a711b1df553890b3ed78d9aba4f0fe09c986281769",
+        "bytes": 80310112
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-oobleck-v1.0-Q5_K_M.gguf",
+        "sha256": "4ee1d7d05839cdb9372f2f871ba409494daaefb758eaf20be5dc1af3d9a1eeaa",
+        "bytes": 99548608
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::Q4_K_M",
+    "label": "Stable Audio Open Small Q4_K_M",
+    "description": "Q4_K_M generation bundle (smallest): the ARC base DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-dit-0.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "540c8c5654859f8300ffce5c60d422e3977ee7344816602bde6e2469997568d5",
+        "bytes": 232533984
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "t5-base-encoder-0.1B-v1.0-Q4_K_M.gguf",
+        "sha256": "790560686146d2a74f3deb233e2b630cdfd7ea47819f801ca39687d66ffde4b9",
+        "bytes": 70578016
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "stable-audio-open-small-oobleck-v1.0-Q4_K_M.gguf",
+        "sha256": "14e7b5bd7952187da899054af5ffe56e3eb96cd543e1b99307968f5896ba333c",
+        "bytes": 94141888
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::kickbass::F16",
+    "label": "Kickbass F16",
+    "description": "S3Sound's kick and bass finetune.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/kickbass/kickbass-v1-e257-dit-0.3B-v1.0-F16.gguf",
+        "sha256": "c6985514d672da237341f0a789a682d2257ffb5797deebaf468d44d610364adb",
+        "bytes": 683204544
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::jerry-grunge::F16",
+    "label": "Jerry Grunge F16",
+    "description": "thepatch's jerry finetune, with its dice prompt bank.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-F16.gguf",
+        "sha256": "3d0709972811c05c397e39841b5649eb25dc244ffed767df4d306cc13d6753b7",
+        "bytes": 683204608
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/prompts.json",
+        "sha256": "e2b420804b099d66444e630d0eab4585c4f7971155db5a98efd8af1f0ed8ae97",
+        "bytes": 13390
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::kickbass::Q8_0",
+    "label": "Kickbass Q8_0",
+    "description": "S3Sound's kick and bass finetune.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/kickbass/kickbass-v1-e257-dit-0.3B-v1.0-Q8_0.gguf",
+        "sha256": "988fd6e4cd8eda2700fe647f670c87bf50ec0110dfde29c020fad3b5857c0a5b",
+        "bytes": 363831744
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::jerry-grunge::Q8_0",
+    "label": "Jerry Grunge Q8_0",
+    "description": "thepatch's jerry finetune, with its dice prompt bank.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-Q8_0.gguf",
+        "sha256": "0a74ceca108d1089f33f166d4cda5d6db7ccf19d10e7dd8146e7c96ec1187abc",
+        "bytes": 363831808
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/prompts.json",
+        "sha256": "e2b420804b099d66444e630d0eab4585c4f7971155db5a98efd8af1f0ed8ae97",
+        "bytes": 13390
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::kickbass::Q5_K_M",
+    "label": "Kickbass Q5_K_M",
+    "description": "S3Sound's kick and bass finetune.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/kickbass/kickbass-v1-e257-dit-0.3B-v1.0-Q5_K_M.gguf",
+        "sha256": "112322d113f4dee8be8aa2f75e3411de62af7cd0c1cbe67d8d3535cf7f9d724d",
+        "bytes": 256233408
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::jerry-grunge::Q5_K_M",
+    "label": "Jerry Grunge Q5_K_M",
+    "description": "thepatch's jerry finetune, with its dice prompt bank.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-Q5_K_M.gguf",
+        "sha256": "e807eb48c6d46ea6dfdb0b725d0f27836e518615d28989c2c08e0a1f007167ba",
+        "bytes": 256233472
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/prompts.json",
+        "sha256": "e2b420804b099d66444e630d0eab4585c4f7971155db5a98efd8af1f0ed8ae97",
+        "bytes": 13390
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::kickbass::Q4_K_M",
+    "label": "Kickbass Q4_K_M",
+    "description": "S3Sound's kick and bass finetune.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/kickbass/kickbass-v1-e257-dit-0.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "67d8fc928da900b84ef8f43e896eeba1c1dd7b0a8191946ab73a450148d83fac",
+        "bytes": 232533952
+      }
+    ]
+  },
+  {
+    "id": "stable-audio-native::jerry-grunge::Q4_K_M",
+    "label": "Jerry Grunge Q4_K_M",
+    "description": "thepatch's jerry finetune, with its dice prompt bank.",
+    "files": [
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "9b13302c8dc8f18f28bf6fdcdc7896391241dec65c2a58cd60af1b6169f7479d",
+        "bytes": 232534016
+      },
+      {
+        "repo": "thepatch/stable-audio-open-small-GGUF",
+        "revision": "5244b3d1f0ddd36876652f44aa32b2d79c2bb679",
+        "filename": "finetunes/jerry-grunge/prompts.json",
+        "sha256": "e2b420804b099d66444e630d0eab4585c4f7971155db5a98efd8af1f0ed8ae97",
+        "bytes": 13390
+      }
+    ]
+  }
+]

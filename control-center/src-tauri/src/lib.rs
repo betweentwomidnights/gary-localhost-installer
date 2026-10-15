@@ -23,6 +23,8 @@ mod sa3_prompts;
 mod sa3_runtime;
 mod sa3_training;
 mod service_manager;
+mod stable_audio_migration;
+mod stable_audio_models;
 mod storage;
 mod storage_transfer;
 mod update;
@@ -7186,7 +7188,7 @@ async fn remove_model(
                 return Err("Wait for this model download to finish first.".into());
             }
             let root = service.models().checked_models_dir(&models.runtime_root())?;
-            let files = component.files.clone();
+            let files = service.models().removable_files(&component.id, &root);
             let removed_bytes = tauri::async_runtime::spawn_blocking(move || {
                 let mut removed_bytes = 0;
                 for file in files {

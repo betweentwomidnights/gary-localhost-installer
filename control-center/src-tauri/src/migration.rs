@@ -42,6 +42,10 @@ pub struct Profile {
     pub tier_components: std::collections::BTreeMap<String, Vec<String>>,
     /// Service-specific steps the panel offers, such as SA3's adapters.
     pub features: Vec<String>,
+    /// Optional components each tier can add, such as jerry's finetunes.
+    pub tier_options: std::collections::BTreeMap<String, Vec<String>>,
+    /// What the panel calls those options.
+    pub options_label: Option<String>,
 }
 
 /// What only a migrating service can answer. The shared inventory and cleanup
@@ -59,6 +63,17 @@ pub trait Service: Sync {
 
     /// The model components generating at `tier` needs.
     fn tier_components(&self, tier: &str) -> Result<Vec<String>, String>;
+
+    /// Optional components that work with `tier` without being needed by it,
+    /// such as finetunes of the tier's base model.
+    fn tier_options(&self, _tier: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// What the models panel calls the tier options.
+    fn options_label(&self) -> Option<&'static str> {
+        None
+    }
 
     /// Service-specific steps the migration panel offers beyond runtime,
     /// models and checks.
@@ -168,6 +183,13 @@ pub trait Service: Sync {
                 .filter_map(|tier| Some((tier.to_string(), self.tier_components(tier).ok()?)))
                 .collect(),
             features: self.features().iter().map(|feature| feature.to_string()).collect(),
+            tier_options: self
+                .tiers()
+                .iter()
+                .map(|tier| (tier.to_string(), self.tier_options(tier)))
+                .filter(|(_, options)| !options.is_empty())
+                .collect(),
+            options_label: self.options_label().map(str::to_string),
         }
     }
 
@@ -324,6 +346,7 @@ pub fn service(id: &str) -> Option<&'static dyn Service> {
     match id {
         "sa3" => Some(&crate::sa3_migration::Sa3),
         "foundation" => Some(&crate::foundation_migration::Foundation),
+        "stable-audio" => Some(&crate::stable_audio_migration::StableAudio),
         _ => None,
     }
 }

@@ -167,6 +167,51 @@ pub async fn run_audio_job(
     }
 }
 
+/// Generate on a private server that answers synchronously with
+/// `{success, audio_base64, metadata}`, as jerry's contract does. Returns the
+/// WAV and the metadata. The wait is per request, so a slow backend has as
+/// long as a polled job would.
+pub async fn run_sync_audio(
+    server: &PrivateServer,
+    path: &str,
+    body: &serde_json::Value,
+    what: &str,
+) -> Result<(Vec<u8>, serde_json::Value), String> {
+    use base64::Engine;
+    let response = server
+        .client
+        .post(format!("{}{path}", server.base))
+        .timeout(Duration::from_secs(300))
+        .json(body)
+        .send()
+        .await
+        .map_err(|error| format!("{what} failed: {error}"))?;
+    let status = response.status();
+    let reply: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    if !status.is_success() || reply["success"] != true {
+        return Err(format!("{what} failed: {}", reply["error"].as_str().unwrap_or(status.as_str())));
+    }
+    let audio = base64::engine::general_purpose::STANDARD
+        .decode(reply["audio_base64"].as_str().ok_or_else(|| format!("{what} returned no audio"))?)
+        .map_err(|error| error.to_string())?;
+    Ok((audio, reply["metadata"].clone()))
+}
+
+/// Check a proof's WAV is 44.1 kHz stereo and exactly `samples` long.
+pub fn check_wav(wav: &[u8], samples: u32, what: &str) -> Result<(), String> {
+    let reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
+    let spec = reader.spec();
+    if spec.sample_rate != 44100 || spec.channels != 2 || reader.duration() != samples {
+        return Err(format!(
+            "{what} check returned {} Hz, {} channels, {} samples; expected 44100 Hz stereo, {samples}",
+            spec.sample_rate,
+            spec.channels,
+            reader.duration()
+        ));
+    }
+    Ok(())
+}
+
 /// A metadata fingerprint of what a runtime proof covered: each path's size
 /// and modification time, plus `identity` (release, backend, tier...). It
 /// hashes no file contents, so recomputing it is cheap; a missing file counts
