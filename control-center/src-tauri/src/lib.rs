@@ -1033,6 +1033,18 @@ fn resolve_bundle_root_from_resource_dir(resource_dir: &Path) -> Result<PathBuf,
 }
 
 #[cfg(test)]
+mod native_backend_key_tests {
+    #[test]
+    fn services_sharing_a_runtime_share_its_backend_choice() {
+        // Foundation-1 launches the sa3 bundle, so SA3's choice is its choice.
+        assert_eq!(super::native_backend_key("foundation"), "sa3");
+        assert_eq!(super::native_backend_key("sa3"), "sa3");
+        assert_eq!(super::native_backend_key("yuey"), "yuey");
+        assert_eq!(super::native_backend_key("gary"), "gary");
+    }
+}
+
+#[cfg(test)]
 mod bundle_root_tests {
     use super::{compute_bundle_sync_stamp, resolve_bundle_root_from_resource_dir};
 
@@ -1705,11 +1717,12 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
 
     if let Some(native_backends) = patch.native_backends {
         for (service_id, backend) in native_backends {
+            let key = native_backend_key(&service_id);
             let backend = backend.trim().to_ascii_lowercase();
             if backend.is_empty() || backend == "auto" {
-                current.native_backends.remove(&service_id);
+                current.native_backends.remove(&key);
             } else {
-                current.native_backends.insert(service_id, backend);
+                current.native_backends.insert(key, backend);
             }
         }
     }
@@ -5410,11 +5423,23 @@ pub(crate) fn sa3_use_decoder_lora_enabled() -> bool {
     read_app_settings().sa3_use_decoder_lora
 }
 
-/// "auto" unless the user picked a backend for this native service.
+/// Where a service's backend choice is kept: services that share a runtime
+/// bundle share one choice, under the bundle's name, because the runtime they
+/// all launch is installed for exactly one backend.
+pub(crate) fn native_backend_key(service_id: &str) -> String {
+    manifest::bundled()
+        .services
+        .iter()
+        .find(|service| service.id == service_id)
+        .and_then(|service| service.native.as_ref()?.bundle.clone())
+        .unwrap_or_else(|| service_id.to_string())
+}
+
+/// "auto" unless the user picked a backend for this native service's runtime.
 pub(crate) fn native_backend_preference(service_id: &str) -> String {
     read_app_settings()
         .native_backends
-        .get(service_id)
+        .get(&native_backend_key(service_id))
         .cloned()
         .unwrap_or_else(|| "auto".to_string())
 }
@@ -10286,17 +10311,26 @@ async fn prepare_native_runtime(
     }
     let info = {
         let mut mgr = manager.lock().await;
-        let info = mgr.get_native_build_info(&service_id)?;
-        mgr.set_build_started(&service_id, info.total_steps());
-        info
+        // Installed and current, possibly by another service sharing its bundle:
+        // reinstalling would replace that service's runtime too, and could
+        // change its backend.
+        if mgr.native_runtime_current(&service_id) {
+            None
+        } else {
+            let info = mgr.get_native_build_info(&service_id)?;
+            mgr.set_build_started(&service_id, info.total_steps());
+            Some(info)
+        }
     };
-    let result = native_runtime::install(info, manager.inner().clone(), app_handle.clone()).await;
-    {
-        let mut mgr = manager.lock().await;
-        mgr.set_build_done(&service_id, result.as_ref().err().cloned());
-        let _ = app_handle.emit("services-updated", mgr.get_service_info());
+    if let Some(info) = info {
+        let result = native_runtime::install(info, manager.inner().clone(), app_handle.clone()).await;
+        {
+            let mut mgr = manager.lock().await;
+            mgr.set_build_done(&service_id, result.as_ref().err().cloned());
+            let _ = app_handle.emit("services-updated", mgr.get_service_info());
+        }
+        result?;
     }
-    result?;
     get_native_runtime_info(service_id, manager).await
 }
 

@@ -396,6 +396,17 @@ impl ServiceManager {
         native_runtime::installed(&svc.id, &self.native_dir(svc), &native.executable)
     }
 
+    /// The service's native runtime is installed at the version the manifest
+    /// pins, whichever service sharing its bundle installed it.
+    pub fn native_runtime_current(&self, service_id: &str) -> bool {
+        self.find_service(service_id).is_some_and(|svc| {
+            match (self.native_install(svc), svc.native.as_ref()) {
+                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str()),
+                _ => false,
+            }
+        })
+    }
+
     /// A native service's definition and install folder, for the UI.
     pub fn native_service(&self, service_id: &str) -> Option<(NativeDef, PathBuf)> {
         let svc = self.find_service(service_id)?;
