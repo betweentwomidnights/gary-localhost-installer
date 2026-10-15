@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import DownloadProgress from "./DownloadProgress.svelte";
   import { onMount } from "svelte";
 
   interface Component { id: string; label: string; description: string; files: { bytes: number }[]; }
@@ -93,7 +94,7 @@
       {#if download?.error}<span class="error" role="alert">{download.error}</span>{/if}
     </div>
     {#if model?.status === "downloading"}
-      <div class="download-progress"><progress max="1" value={download?.progress ?? 0} aria-label={`${entry.label} download`}></progress><span>{Math.round((download?.progress ?? 0) * 100)}%</span></div>
+      <DownloadProgress value={download?.progress ?? 0} label={`${entry.label} download`} />
     {:else if model?.status === "downloaded"}
       <div class="actions">
         {#if tier && nativeSelected && activeEncoding !== tier}<button class="download" disabled={busy || downloading || removingId !== null || !ready(tier)} title={ready(tier) ? `Use this tier next time ${label} starts` : "Download the shared components first"} onclick={() => useTier(tier)}>use</button>{/if}
@@ -143,7 +144,5 @@
   button.download { color: var(--accent); border-color: var(--accent); }
   .badge { display: inline-block; margin-left: 5px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 9px; color: var(--text-muted); }
   .badge.active { color: var(--green); border-color: var(--green); }
-  .download-progress { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-secondary); }
-  progress { width: 80px; height: 6px; }
   .error { color: var(--red); font-size: 11px; overflow-wrap: anywhere; }
 </style>

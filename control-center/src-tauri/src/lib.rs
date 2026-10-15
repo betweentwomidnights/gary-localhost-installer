@@ -7009,7 +7009,11 @@ async fn download_model(
         }
         let mut svc_mgr = _svc_mgr.lock().await;
         if svc_mgr.is_native(&owner) {
-            if let Some(blocker) = svc_mgr.native_mutation_blocker(&owner) {
+            // Its model folder is about to change: stop it rather than refuse.
+            if svc_mgr.stop_for_model_change(&owner) {
+                let _ = app_handle.emit("services-updated", svc_mgr.get_service_info());
+            }
+            if let Some(blocker) = svc_mgr.native_model_blocker(&owner) {
                 return Err(format!("Cannot prepare {label} models: {blocker}."));
             }
         }
@@ -7176,11 +7180,13 @@ async fn remove_model(
             }
             // Keep both reservations until the files are removed: a new native
             // launch, trainer, component download or preparation cannot race us.
-            let services = svc_mgr.lock().await;
-            if services.is_running(&owner) {
-                return Err(format!("Stop {label} before removing its model."));
+            let mut services = svc_mgr.lock().await;
+            // A running native server may hold the file open: stop it rather
+            // than refuse. A running Python service never loads these files.
+            if services.stop_for_model_change(&owner) {
+                let _ = app_handle.emit("services-updated", services.get_service_info());
             }
-            if let Some(blocker) = services.native_mutation_blocker(&owner) {
+            if let Some(blocker) = services.native_model_blocker(&owner) {
                 return Err(format!("Cannot remove {label} models: {blocker}."));
             }
             let mut models = model_mgr.lock().await;
@@ -10375,7 +10381,10 @@ async fn prepare_native_models(
     }
     let mut services = svc_mgr.lock().await;
     if services.is_native(&service_id) {
-        if let Some(blocker) = services.native_mutation_blocker(&service_id) {
+        if services.stop_for_model_change(&service_id) {
+            let _ = app_handle.emit("services-updated", services.get_service_info());
+        }
+        if let Some(blocker) = services.native_model_blocker(&service_id) {
             return Err(format!("Cannot prepare {label} models: {blocker}."));
         }
     }

@@ -290,6 +290,25 @@ impl ServiceManager {
 
     /// Called under the manager lock before reserving an install/removal.
     pub fn native_mutation_blocker(&self, service_id: &str) -> Option<String> {
+        self.mutation_blocker(service_id, true)
+    }
+
+    /// What keeps a native service's own models from changing: as
+    /// `native_mutation_blocker`, except that the services sharing its runtime
+    /// may keep running, since these models are only its own.
+    pub fn native_model_blocker(&self, service_id: &str) -> Option<String> {
+        self.mutation_blocker(service_id, false)
+    }
+
+    /// Make way for a change to `service_id`'s own native models by stopping
+    /// it, when it runs native. Returns whether it was stopped.
+    pub fn stop_for_model_change(&mut self, service_id: &str) -> bool {
+        self.is_native(service_id) && self.is_running(service_id) && self.stop(service_id).is_ok()
+    }
+
+    /// `whole_bundle`: whether a running service sharing the runtime blocks
+    /// too, as it does for changes to the runtime itself.
+    fn mutation_blocker(&self, service_id: &str, whole_bundle: bool) -> Option<String> {
         if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
         let svc = self.find_service(service_id)?;
         if let Some(blocker) = self.shared_runtime_blocker(svc) {
@@ -299,7 +318,10 @@ impl ServiceManager {
             if let Some(label) = self.native_model_mutations.get(&consumer.id) {
                 return Some(format!("wait for {label} to finish"));
             }
-            if consumer.runtime == ServiceRuntime::Native && self.is_running(&consumer.id) {
+            if consumer.runtime == ServiceRuntime::Native
+                && self.is_running(&consumer.id)
+                && (whole_bundle || consumer.id == service_id)
+            {
                 return Some(format!("stop {} first", consumer.display_name));
             }
             if self.is_building(&consumer.id) {
@@ -379,7 +401,7 @@ impl ServiceManager {
         if self.native_service(service_id).is_none() {
             return Err(format!("{service_id} has no native model runtime"));
         }
-        if let Some(blocker) = self.native_mutation_blocker(service_id) {
+        if let Some(blocker) = self.native_model_blocker(service_id) {
             return Err(format!("Cannot prepare models: {blocker}."));
         }
         self.native_model_mutations
@@ -1826,6 +1848,36 @@ mod tests {
         assert!(manager
             .begin_shared_runtime_replacement("cudart-12.8")
             .is_ok());
+    }
+
+    #[test]
+    fn a_service_sharing_the_runtime_keeps_running_while_another_changes_its_models() {
+        let mut manager = shared_native_manager();
+        let running = |manager: &mut ServiceManager, id: &str| {
+            let mut process = Command::new("cmd.exe")
+                .args(["/c", "exit /b 0"])
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap();
+            process.wait().unwrap();
+            manager.running.insert(
+                id.into(),
+                RunningService {
+                    process,
+                    healthy: false,
+                    started_at: Instant::now(),
+                    last_health_check_at: None,
+                    _adapter: None,
+                },
+            );
+        };
+        running(&mut manager, "foundation");
+        // The runtime itself is in use, but jerry's models are only jerry's.
+        assert!(manager.native_mutation_blocker("stable-audio").is_some());
+        assert!(manager.native_model_blocker("stable-audio").is_none());
+        running(&mut manager, "stable-audio");
+        assert!(manager.native_model_blocker("stable-audio").unwrap().contains("stop"));
+        manager.running.clear();
     }
 
     #[test]

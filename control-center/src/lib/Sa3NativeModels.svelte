@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import DownloadProgress from "./DownloadProgress.svelte";
   import { onMount } from "svelte";
   import { recommendQuantizedSa3Training, type Sa3TrainingHardware } from "./sa3NativeTraining";
 
@@ -105,7 +106,7 @@
           {#if download?.error}<span class="error" role="alert">{download.error}</span>{/if}
         </div>
         {#if model?.status === "downloading"}
-          <div class="download-progress"><progress max="1" value={download?.progress ?? 0} aria-label={`${label(entry)} download`}></progress><span>{Math.round((download?.progress ?? 0) * 100)}%</span></div>
+          <DownloadProgress value={download?.progress ?? 0} label={`${label(entry)} download`} />
         {:else if model?.status === "downloaded"}
           <div class="actions">
             {#if group.kind === "generation" && nativeSelected && activeEncoding !== encoding(entry.id)}<button class="download" disabled={busy || downloading || removingId !== null || !sharedReady} title={sharedReady ? "Use this tier next time SA3 starts" : "Download the shared components first"} onclick={() => useTier(encoding(entry.id))}>use</button>{/if}
@@ -124,7 +125,7 @@
       {#if fix?.status === "downloading"}<span class="model-size" role="status">{fixProgress?.message ?? "Downloading decoder fix…"}</span>{/if}
       {#if fixProgress?.error || decoder?.error}<span class="error">{fixProgress?.error ?? decoder?.error}</span>{/if}
     </div>
-    {#if fix?.status === "downloading"}<div class="download-progress"><progress max="1" value={fixProgress?.progress ?? 0} aria-label="Decoder fix download"></progress><span>{Math.round((fixProgress?.progress ?? 0) * 100)}%</span></div>
+    {#if fix?.status === "downloading"}<DownloadProgress value={fixProgress?.progress ?? 0} label="Decoder fix download" />
     {:else if !decoder?.prepared}
       {#if fix?.status === "downloaded" || decoder?.sourcePresent}<button class="download" disabled={busy || downloading || removingId !== null} onclick={convertDecoder}>install decoder fix</button>
       {:else}<button class="download" disabled={busy || downloading || removingId !== null} onclick={() => onDownload("sa3-native::decoder-correction")}>{fix?.status === "failed" ? "Retry" : "Download"}</button>{/if}
@@ -150,7 +151,5 @@
   button.download { color: var(--accent); border-color: var(--accent); }
   .badge { display: inline-block; margin-left: 5px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 9px; color: var(--text-muted); }
   .badge.active { color: var(--green); border-color: var(--green); }
-  .download-progress { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-secondary); }
-  progress { width: 80px; height: 6px; }
   .error { color: var(--red); font-size: 11px; overflow-wrap: anywhere; }
 </style>
