@@ -70,7 +70,7 @@ mod tests {
             let options = finetunes(tier);
             assert_eq!(names(&options[0]), [format!("finetunes/kickbass/kickbass-v1-e257-dit-0.3B-v1.0-{tier}.gguf")]);
             assert_eq!(names(&options[1]), [
-                format!("finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-{tier}.gguf"),
+                format!("finetunes/jerry-grunge/jerry-grunge-bs128-step320-dit-0.3B-v1.0-{tier}.gguf"),
                 "finetunes/jerry-grunge/prompts.json".to_string(),
             ]);
         }
@@ -97,8 +97,8 @@ mod tests {
         let removable = |id: &str| -> Vec<String> {
             models().removable_files(id, &dir).into_iter().map(|file| file.filename).collect()
         };
-        assert_eq!(removable(q4), ["finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-Q4_K_M.gguf"]);
-        std::fs::remove_file(dir.join("finetunes/jerry-grunge/jerry-grunge-bs64-step3000-dit-0.3B-v1.0-F16.gguf")).unwrap();
+        assert_eq!(removable(q4), ["finetunes/jerry-grunge/jerry-grunge-bs128-step320-dit-0.3B-v1.0-Q4_K_M.gguf"]);
+        std::fs::remove_file(dir.join("finetunes/jerry-grunge/jerry-grunge-bs128-step320-dit-0.3B-v1.0-F16.gguf")).unwrap();
         assert!(removable(q4).contains(&"finetunes/jerry-grunge/prompts.json".to_string()));
         std::fs::remove_dir_all(dir).unwrap();
     }
