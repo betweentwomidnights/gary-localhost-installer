@@ -55,6 +55,34 @@ def validate_accelerator_or_raise():
         )
 
 
+def finetune_state_dict(state_dict):
+    """The finetune weights a checkpoint holds, named as the inference model
+    names them.
+
+    Lightning training checkpoints prefix the conditioned model with
+    `diffusion.` (so the DiT is `diffusion.model.model.*`) and keep an EMA copy
+    of the DiT as `diffusion_ema.ema_model.model.*`; the inference model that
+    create_model_from_config builds names the same weights `model.model.*`.
+    Unwrapped checkpoints (kickbass) already use the inference names. The EMA
+    copy is preferred when present, and the pretransform always stays the base
+    model's.
+    """
+    ema_prefix = "diffusion_ema.ema_model."
+    has_ema = any(key.startswith(ema_prefix) for key in state_dict)
+    weights = {}
+    for key, value in state_dict.items():
+        if key.startswith(ema_prefix):
+            weights["model." + key[len(ema_prefix):]] = value
+            continue
+        name = key[len("diffusion."):] if key.startswith("diffusion.") else key
+        if name.startswith("pretransform."):
+            continue
+        if has_ema and name.startswith("model."):
+            continue  # the EMA copy replaces the raw training weights
+        weights[name] = value
+    return weights
+
+
 class ModelManager:
     """Smart model cache with memory management for multiple model support"""
     
@@ -322,34 +350,23 @@ class ModelManager:
             ckpt = torch.load(ft_ckpt_path, map_location="cpu")
             state_dict = ckpt.get("state_dict", ckpt)
             
-            # FIXED: Handle EMA weights (from test script)
-            ema_keys = [k for k in state_dict.keys() if k.startswith("diffusion_ema.ema_model.")]
-            
-            if ema_keys:
-                print(f"   [SEARCH] Found EMA weights ({len(ema_keys)} keys)")
-                # Create new state dict with EMA weights, stripping the prefix
-                ema_state = {}
-                for key in ema_keys:
-                    # Strip "diffusion_ema.ema_model." prefix to get "diffusion.model.*"
-                    new_key = key.replace("diffusion_ema.ema_model.", "diffusion.model.")
-                    ema_state[new_key] = state_dict[key]
-                
-                # Also include pretransform weights from base (not EMA'd)
-                print(f"   [SEARCH] Keeping pretransform weights from base model")
-                for key in state_dict.keys():
-                    if key.startswith("diffusion.pretransform"):
-                        ema_state[key] = state_dict[key]
-                
-                # Use EMA state
-                print(f"   [OK] Using {len(ema_state)} EMA-remapped weights")
-                copy_state_dict(model, ema_state)
-            else:
-                print(f"   [INFO]  No EMA weights found, using regular state_dict")
-                # Filter out pretransform to preserve base model's pretransform
-                filtered_state = {k: v for k, v in state_dict.items() 
-                                if not k.startswith("pretransform.")}
-                print(f"   [OK] Using {len(filtered_state)} regular weights (excluding pretransform)")
-                copy_state_dict(model, filtered_state)
+            # copy_state_dict silently skips any key the model does not have,
+            # which once left every EMA finetune running as the base model, so
+            # map the checkpoint onto the model's names and refuse to continue
+            # unless the whole DiT comes from the finetune.
+            finetune_state = finetune_state_dict(state_dict)
+            model_state = model.state_dict()
+            loaded = {key: value for key, value in finetune_state.items()
+                      if key in model_state and model_state[key].shape == value.shape}
+            dit_keys = [key for key in model_state if key.startswith("model.")]
+            dit_loaded = [key for key in loaded if key.startswith("model.")]
+            if len(dit_loaded) != len(dit_keys):
+                raise RuntimeError(
+                    f"{checkpoint_name} supplies {len(dit_loaded)} of {len(dit_keys)} DiT weights; "
+                    "refusing to run the base model under its name")
+            print(f"   [OK] Loaded {len(loaded)} finetune weights, including all {len(dit_loaded)} DiT weights"
+                  + (" (EMA)" if any(key.startswith("diffusion_ema.ema_model.") for key in state_dict) else ""))
+            copy_state_dict(model, loaded)
 
             # Device, dtype, eval()
             device = "cuda" if torch.cuda.is_available() else "cpu"

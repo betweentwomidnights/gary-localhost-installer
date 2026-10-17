@@ -1,0 +1,128 @@
+[
+  {
+    "id": "foundation-native::F16",
+    "label": "Foundation-1 F16",
+    "description": "F16 generation bundle (reference): DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "foundation-1-dit-1.1B-v1.0-F16.gguf",
+        "sha256": "5e24e4e9ad51b4d8a556fd87df8abd4af5109d98122af3b484a5fafa0b25f013",
+        "bytes": 2116602176
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "t5-base-encoder-128tok-0.1B-v1.0-F16.gguf",
+        "sha256": "b00f03b30620d4a6c8d9fdc3c1a491e3de9bdd324c936ef9fdbf18ed9e1dbc63",
+        "bytes": 219954784
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "stable-audio-open-oobleck-v1.0-F16.gguf",
+        "sha256": "5c4978ffcca3baf8c409cb39ba5e13f8ebb1b7200b780fbb6f930bcaf5e5256c",
+        "bytes": 156319168
+      }
+    ]
+  },
+  {
+    "id": "foundation-native::Q8_0",
+    "label": "Foundation-1 Q8_0",
+    "description": "Q8_0 generation bundle (conservative high fidelity): DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "foundation-1-dit-1.1B-v1.0-Q8_0.gguf",
+        "sha256": "0f4f73300633b73d39e291f46877ce87c47d21bf1633ef38b1bab90f83086ae2",
+        "bytes": 1126243136
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "t5-base-encoder-128tok-0.1B-v1.0-Q8_0.gguf",
+        "sha256": "510dcf1c0a7d2ce87950ec79f74a109a24268894089639d4f60a2802f675485d",
+        "bytes": 117196384
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "stable-audio-open-oobleck-v1.0-Q8_0.gguf",
+        "sha256": "edcf88daeabacf36d44be21ea3225b0d3d6964853a68de75544588b734e74ea9",
+        "bytes": 115707328
+      }
+    ]
+  },
+  {
+    "id": "foundation-native::Q5_K_M",
+    "label": "Foundation-1 Q5_K_M",
+    "description": "Q5_K_M generation bundle (recommended compact): DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "foundation-1-dit-1.1B-v1.0-Q5_K_M.gguf",
+        "sha256": "0337dea35e5a2883aa02200aeb87559ff16dadf3510ff47c5d2269b87be84677",
+        "bytes": 786641216
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "t5-base-encoder-128tok-0.1B-v1.0-Q5_K_M.gguf",
+        "sha256": "546d477c5d86f3463e0d603321c45bf90d0bef0393bc9d238cdf8c6e497b9cb7",
+        "bytes": 80310112
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "stable-audio-open-oobleck-v1.0-Q5_K_M.gguf",
+        "sha256": "4ee1d7d05839cdb9372f2f871ba409494daaefb758eaf20be5dc1af3d9a1eeaa",
+        "bytes": 99548608
+      }
+    ]
+  },
+  {
+    "id": "foundation-native::Q4_K_M",
+    "label": "Foundation-1 Q4_K_M",
+    "description": "Q4_K_M generation bundle (smallest): DiT, text encoder and decoder.",
+    "files": [
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "foundation-1-dit-1.1B-v1.0-Q4_K_M.gguf",
+        "sha256": "7c29a657b07f64503f606a7547c3d10578b87a70e5d2adb8bc0db6df79fae773",
+        "bytes": 707690816
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "t5-base-encoder-128tok-0.1B-v1.0-Q4_K_M.gguf",
+        "sha256": "b51f42d0a790d3aaeaf9f99db86e77493089507bff78a01e9e1489080dea90a6",
+        "bytes": 70578016
+      },
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "stable-audio-open-oobleck-v1.0-Q4_K_M.gguf",
+        "sha256": "14e7b5bd7952187da899054af5ffe56e3eb96cd543e1b99307968f5896ba333c",
+        "bytes": 94141888
+      }
+    ]
+  },
+  {
+    "id": "foundation-native::encoder",
+    "label": "Audio-to-audio encoder",
+    "description": "F16 Oobleck encoder; audio2audio turns input audio into a latent with it. Shared by every tier.",
+    "files": [
+      {
+        "repo": "thepatch/foundation-1-GGUF",
+        "revision": "2ff92cbf2daacd658c44a8db3061e92e0794fcc4",
+        "filename": "stable-audio-open-oobleck-encoder-v1.0-F16.gguf",
+        "sha256": "17423b89a23d3c9f851cbe2544db438b6ad408d53e8797f3a5fca67b35ecab17",
+        "bytes": 156057664
+      }
+    ]
+  }
+]
