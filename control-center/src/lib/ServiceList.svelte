@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import ServiceRow from "./ServiceRow.svelte";
+  import { runtimeGroupLabel } from "./runtimeGroups";
 
   interface BuildStatus {
     building: boolean;
@@ -27,11 +28,14 @@
     start_blocker: string | null;
     migration_complete: boolean;
     has_migration: boolean;
+    runtime_group: string | null;
   }
 
-  let { services, selectedServiceId, hfTokenConfigured, onSelect, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateRuntime }: {
+  let { services, selectedServiceId, selectedRuntimeGroup, hfTokenConfigured, onSelect, onSelectGroup, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateRuntime }: {
     services: ServiceInfo[];
     selectedServiceId: string | null;
+    selectedRuntimeGroup: string | null;
+    onSelectGroup: (group: string) => void;
     hfTokenConfigured: boolean;
     onSelect: (id: string) => void;
     onShowModels: (id: string) => void;
@@ -52,31 +56,73 @@
 
   // Services that have downloadable models
   const servicesWithModels = new Set(["gary", "melodyflow", "stable-audio", "sa3", "carey", "foundation", "yuey"]);
+
+  // Services sharing a native runtime are listed together under it, where
+  // the first of them would have been.
+  type Entry = { service: ServiceInfo } | { group: string; members: ServiceInfo[] };
+  const entries = $derived.by(() => {
+    const out: Entry[] = [];
+    const seen = new Set<string>();
+    for (const service of services) {
+      const group = service.runtime_group;
+      if (!group) { out.push({ service }); continue; }
+      if (seen.has(group)) continue;
+      seen.add(group);
+      out.push({ group, members: services.filter((member) => member.runtime_group === group) });
+    }
+    return out;
+  });
+  const live = (service: ServiceInfo) => ["running", "starting", "unhealthy"].includes(service.status);
+  function groupSummary(members: ServiceInfo[]) {
+    const native = members.find((member) => member.runtime === "native");
+    const parts = [`${members.filter(live).length}/${members.length} running`];
+    if (native?.native_backend) parts.push(native.native_backend);
+    if (members.some((member) => member.runtime === "native" && member.native_update_available)) parts.push("update available");
+    if (members.some((member) => member.build_status?.building)) parts.push("busy");
+    return parts.join(" · ");
+  }
 </script>
+
+{#snippet row(service: ServiceInfo, grouped: boolean)}
+  <ServiceRow
+    {service}
+    {grouped}
+    selected={selectedServiceId === service.id}
+    onSelect={() => onSelect(service.id)}
+    hasModels={servicesWithModels.has(service.id) && (!["stable-audio", "sa3"].includes(service.id) || hfTokenConfigured)}
+    onShowModels={() => onShowModels(service.id)}
+    hasCareyLoras={service.id === "carey"}
+    onManageCareyLoras={onManageCareyLoras}
+    hasCareyAceTraining={service.id === "carey"}
+    onTrainCareyAce={onTrainCareyAce}
+    hasSa3Loras={service.id === "sa3"}
+    onManageSa3Loras={onManageSa3Loras}
+    hasSa3LoraTraining={service.id === "sa3" && hfTokenConfigured}
+    onTrainSa3Lora={onTrainSa3Lora}
+    hasMigration={service.has_migration && !service.migration_complete}
+    onMigrateRuntime={() => onMigrateRuntime(service.id)}
+  />
+{/snippet}
 
 <div class="service-list">
   <div class="list-header">
     <span class="label">services</span>
     <button onclick={rebuildAll}>rebuild all envs</button>
   </div>
-  {#each services as service (service.id)}
-    <ServiceRow
-      {service}
-      selected={selectedServiceId === service.id}
-      onSelect={() => onSelect(service.id)}
-      hasModels={servicesWithModels.has(service.id) && (!["stable-audio", "sa3"].includes(service.id) || hfTokenConfigured)}
-      onShowModels={() => onShowModels(service.id)}
-      hasCareyLoras={service.id === "carey"}
-      onManageCareyLoras={onManageCareyLoras}
-      hasCareyAceTraining={service.id === "carey"}
-      onTrainCareyAce={onTrainCareyAce}
-      hasSa3Loras={service.id === "sa3"}
-      onManageSa3Loras={onManageSa3Loras}
-      hasSa3LoraTraining={service.id === "sa3" && hfTokenConfigured}
-      onTrainSa3Lora={onTrainSa3Lora}
-      hasMigration={service.has_migration && !service.migration_complete}
-      onMigrateRuntime={() => onMigrateRuntime(service.id)}
-    />
+  {#each entries as entry ("group" in entry ? `group:${entry.group}` : entry.service.id)}
+    {#if "group" in entry}
+      <div class="runtime-group">
+        <button class="group-header" class:selected={selectedRuntimeGroup === entry.group} onclick={() => onSelectGroup(entry.group)}>
+          <span class="group-name">{runtimeGroupLabel(entry.group)}</span>
+          <span class="group-meta">{groupSummary(entry.members)}</span>
+        </button>
+        <div class="group-members">
+          {#each entry.members as service (service.id)}{@render row(service, true)}{/each}
+        </div>
+      </div>
+    {:else}
+      {@render row(entry.service, false)}
+    {/if}
   {/each}
   {#if services.length === 0}
     <div class="empty">loading services...</div>
@@ -106,4 +152,24 @@
     text-align: center;
     color: var(--text-muted);
   }
+  .runtime-group { margin: 6px 0; }
+  .group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+  }
+  .group-header:hover { background: var(--bg-hover); }
+  .group-header.selected { background: var(--bg-panel); border-color: var(--accent); }
+  .group-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .group-meta { font-size: 10px; color: var(--text-secondary); font-family: var(--font-mono); white-space: nowrap; }
+  .group-members { margin-left: 10px; padding-left: 4px; border-left: 1px solid var(--border); }
 </style>

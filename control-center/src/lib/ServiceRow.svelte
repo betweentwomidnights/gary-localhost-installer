@@ -43,6 +43,7 @@
     onTrainSa3Lora = () => {},
     hasMigration = false,
     onMigrateRuntime = () => {},
+    grouped = false,
   }: {
     service: ServiceInfo;
     selected: boolean;
@@ -59,6 +60,8 @@
     onTrainSa3Lora?: () => void;
     hasMigration?: boolean;
     onMigrateRuntime?: () => void;
+    /** Shares its native runtime with other services, which install it together. */
+    grouped?: boolean;
   } = $props();
 
   const statusColors: Record<string, string> = {
@@ -151,6 +154,7 @@
       <button onclick={(e) => { e.stopPropagation(); stopService(); }}>stop</button>
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
     {/if}
+    {#if !(grouped && isNative)}
     <button onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
       {#if isBuilding}
         {isNative ? "installing..." : "building..."}
@@ -158,6 +162,7 @@
         {buildLabel}
       {/if}
     </button>
+    {/if}
     {#if hasModels}
       <!-- Native models download without the runtime; Python ones need the env. -->
       <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={!service.env_exists && !isNative}>

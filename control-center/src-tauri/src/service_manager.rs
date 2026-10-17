@@ -35,6 +35,10 @@ pub struct ServiceInfo {
     pub migration_complete: bool,
     /// The service has a migration to native that this app can run.
     pub has_migration: bool,
+    /// The runtime bundle this service shares with others, if any: the
+    /// services with the same value install, update and pick a backend
+    /// together.
+    pub runtime_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,6 +210,17 @@ impl ServiceManager {
         Some(self.native_dir(svc))
     }
 
+    /// The services sharing `service_id`'s native runtime, itself included,
+    /// in manifest order; just `service_id` when it has no shared runtime.
+    pub fn runtime_members(&self, service_id: &str) -> Vec<String> {
+        match self.find_service(service_id) {
+            Some(svc) if svc.native.is_some() => {
+                self.bundle_consumers(svc).iter().map(|member| member.id.clone()).collect()
+            }
+            _ => vec![service_id.to_string()],
+        }
+    }
+
     fn bundle_consumers(&self, svc: &ServiceDef) -> Vec<&ServiceDef> {
         let dir = self.native_dir(svc);
         self.services
@@ -300,9 +315,9 @@ impl ServiceManager {
         self.mutation_blocker(service_id, false)
     }
 
-    /// Make way for a change to `service_id`'s own native models by stopping
-    /// it, when it runs native. Returns whether it was stopped.
-    pub fn stop_for_model_change(&mut self, service_id: &str) -> bool {
+    /// Stop `service_id` when it runs native, making way for a change to what
+    /// it loads (its models or its runtime). Returns whether it was stopped.
+    pub fn stop_if_native(&mut self, service_id: &str) -> bool {
         self.is_native(service_id) && self.is_running(service_id) && self.stop(service_id).is_ok()
     }
 
@@ -848,6 +863,11 @@ impl ServiceManager {
                         && !self.legacy_runtime_present(svc),
                     has_migration: svc.migration.is_some()
                         && crate::migration::service(&svc.id).is_some(),
+                    runtime_group: svc
+                        .native
+                        .as_ref()
+                        .and_then(|native| native.bundle.clone())
+                        .filter(|_| self.bundle_consumers(svc).len() > 1),
                 }
             })
             .collect()
@@ -1848,6 +1868,23 @@ mod tests {
         assert!(manager
             .begin_shared_runtime_replacement("cudart-12.8")
             .is_ok());
+    }
+
+    #[test]
+    fn services_sharing_a_runtime_report_one_group_and_the_rest_none() {
+        let manager = shared_native_manager();
+        let groups: std::collections::HashMap<_, _> = manager
+            .get_service_info()
+            .into_iter()
+            .map(|info| (info.id, info.runtime_group))
+            .collect();
+        for id in ["sa3", "stable-audio", "foundation"] {
+            assert_eq!(groups[id].as_deref(), Some("sa3"), "{id}");
+        }
+        assert_eq!(groups["yuey"], None);
+        assert_eq!(groups["gary"], None);
+        assert_eq!(manager.runtime_members("foundation"), ["stable-audio", "sa3", "foundation"]);
+        assert_eq!(manager.runtime_members("gary"), ["gary"]);
     }
 
     #[test]

@@ -9,6 +9,7 @@ mod migration_verify;
 mod model_manager;
 mod native_models;
 mod native_runtime;
+mod runtime_activity;
 mod sa3_adapter;
 mod sa3_analysis;
 mod sa3_decoder;
@@ -6220,6 +6221,8 @@ pub fn run() {
             activate_native_runtime,
             cleanup_legacy_installation,
             prepare_native_runtime,
+            install_shared_runtime,
+            get_runtime_activity,
             get_native_model_catalog,
             prepare_native_models,
             get_sa3_native_lora_state,
@@ -6556,7 +6559,7 @@ async fn run_build(
     manager.lock().await.validate_build_runtime(&build_info)?;
     if build_info.runtime == manifest::ServiceRuntime::Native {
         let service_id = build_info.service_id.clone();
-        native_runtime::install(build_info, manager.clone(), handle.clone()).await?;
+        install_native_runtime(build_info, manager.clone(), handle.clone()).await?;
         // A runtime with no models can only fail its first request, so fetch
         // the ones the install check just recommended.
         if service_id == "yuey" {
@@ -7010,7 +7013,7 @@ async fn download_model(
         let mut svc_mgr = _svc_mgr.lock().await;
         if svc_mgr.is_native(&owner) {
             // Its model folder is about to change: stop it rather than refuse.
-            if svc_mgr.stop_for_model_change(&owner) {
+            if svc_mgr.stop_if_native(&owner) {
                 let _ = app_handle.emit("services-updated", svc_mgr.get_service_info());
             }
             if let Some(blocker) = svc_mgr.native_model_blocker(&owner) {
@@ -7183,7 +7186,7 @@ async fn remove_model(
             let mut services = svc_mgr.lock().await;
             // A running native server may hold the file open: stop it rather
             // than refuse. A running Python service never loads these files.
-            if services.stop_for_model_change(&owner) {
+            if services.stop_if_native(&owner) {
                 let _ = app_handle.emit("services-updated", services.get_service_info());
             }
             if let Some(blocker) = services.native_model_blocker(&owner) {
@@ -10194,6 +10197,18 @@ async fn activate_native_runtime(
         services.set_build_done(&service_id, result.as_ref().err().cloned());
         result
     };
+    runtime_activity::record(
+        repo_root.inner(),
+        &native_backend_key(&service_id),
+        &match &result {
+            Ok(selection) => format!(
+                "{label} switched to C++: {} on {}, checked with {}",
+                selection.encoding, selection.backend, selection.verified_release
+            ),
+            Err(error) => format!("{label}'s switch to C++ failed: {error}"),
+        },
+        result.is_err(),
+    );
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     result
 }
@@ -10291,6 +10306,15 @@ async fn cleanup_legacy_installation(
         services.end_native_workload(&service_id, "legacy-cleanup");
         services.set_build_done(&service_id, result.as_ref().err().cloned());
     }
+    runtime_activity::record(
+        repo_root.inner(),
+        &native_backend_key(&service_id),
+        &match &result {
+            Ok(_) => format!("{label}'s Python installation was removed"),
+            Err(error) => format!("{label}'s Python cleanup failed: {error}"),
+        },
+        result.is_err(),
+    );
     {
         let mut models = model_mgr.lock().await;
         for id in &legacy_models {
@@ -10300,6 +10324,102 @@ async fn cleanup_legacy_installation(
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     model_manager::emit_model_status(model_mgr.inner(), &app_handle).await;
     result
+}
+
+/// Install a native runtime and journal the outcome for the services that
+/// share it.
+async fn install_native_runtime(
+    info: service_manager::BuildInfo,
+    manager: Arc<Mutex<ServiceManager>>,
+    handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let service_id = info.service_id.clone();
+    let root = info.runtime_root.clone();
+    let result = native_runtime::install(info, manager.clone(), handle).await;
+    let text = match &result {
+        Ok(()) => match manager.lock().await.native_service(&service_id) {
+            Some((def, dir)) => describe_runtime(&native_runtime::runtime_info(
+                &service_id,
+                &dir,
+                &def,
+                native_backend_preference(&service_id),
+            )),
+            None => "installed the runtime".to_string(),
+        },
+        Err(error) => format!("runtime install failed: {error}"),
+    };
+    runtime_activity::record(&root, &native_backend_key(&service_id), &text, result.is_err());
+    result
+}
+
+/// "installed v0.1.7 on cuda, NVIDIA GeForce RTX 5070 Laptop GPU (8.0 GB)".
+fn describe_runtime(info: &native_runtime::NativeRuntimeInfo) -> String {
+    let backend = info.backend.as_deref().unwrap_or("an unknown backend");
+    let mut text = format!(
+        "installed {} on {backend}",
+        info.version.as_deref().unwrap_or("a development build")
+    );
+    if let Some(device) = info.devices.iter().find(|device| {
+        device.device_type != "cpu" && device.backend.to_ascii_lowercase().contains(backend)
+    }) {
+        text += &format!(
+            ", {} ({:.1} GB)",
+            device.name,
+            device.memory_total_bytes as f64 / 1024f64.powi(3)
+        );
+    }
+    if let Some(reason) = &info.fallback_reason {
+        text += &format!("; fell back because {reason}");
+    }
+    text
+}
+
+/// The recent activity of the runtime `service_id` launches, oldest first.
+#[tauri::command]
+fn get_runtime_activity(
+    service_id: String,
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Vec<runtime_activity::Event> {
+    runtime_activity::recent(repo_root.inner(), &native_backend_key(&service_id), 50)
+}
+
+/// Install, update or reinstall the runtime `service_id` shares with other
+/// services, stopping those that run on it first. The install is reported
+/// under a member already on the runtime, so its row shows the progress.
+#[tauri::command]
+async fn install_shared_runtime(
+    service_id: String,
+    repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before installing the runtime.".into());
+    }
+    let (owner, info) = {
+        let mut mgr = manager.lock().await;
+        let members = mgr.runtime_members(&service_id);
+        for member in &members {
+            mgr.stop_if_native(member);
+        }
+        let owner = members
+            .iter()
+            .find(|member| mgr.is_native(member))
+            .cloned()
+            .unwrap_or_else(|| service_id.clone());
+        let info = mgr.get_native_build_info(&owner)?;
+        mgr.set_build_started(&owner, info.total_steps());
+        let _ = app_handle.emit("services-updated", mgr.get_service_info());
+        (owner, info)
+    };
+    let mgr_clone = manager.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let result = install_native_runtime(info, mgr_clone.clone(), app_handle.clone()).await;
+        let mut mgr = mgr_clone.lock().await;
+        mgr.set_build_done(&owner, result.err());
+        let _ = app_handle.emit("services-updated", mgr.get_service_info());
+    });
+    Ok(())
 }
 
 /// Install the service's native runtime while its Python service stays selected.
@@ -10331,7 +10451,7 @@ async fn prepare_native_runtime(
         }
     };
     if let Some(info) = info {
-        let result = native_runtime::install(info, manager.inner().clone(), app_handle.clone()).await;
+        let result = install_native_runtime(info, manager.inner().clone(), app_handle.clone()).await;
         {
             let mut mgr = manager.lock().await;
             mgr.set_build_done(&service_id, result.as_ref().err().cloned());
@@ -10381,7 +10501,7 @@ async fn prepare_native_models(
     }
     let mut services = svc_mgr.lock().await;
     if services.is_native(&service_id) {
-        if services.stop_for_model_change(&service_id) {
+        if services.stop_if_native(&service_id) {
             let _ = app_handle.emit("services-updated", services.get_service_info());
         }
         if let Some(blocker) = services.native_model_blocker(&service_id) {
