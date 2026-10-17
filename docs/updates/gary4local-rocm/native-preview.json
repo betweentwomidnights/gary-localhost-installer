@@ -1,11 +1,11 @@
 {
-  "version": "0.4.0-rocm.6",
-  "notes": "SA3 can leave Python: it moves to the native runtime (Vulkan on AMD), verifies it, then offers to remove the old PyTorch env and weights. Please run generate, transform and continue after.\nPress Update runtime on yuey's row for v0.2.4; it now carries its own Visual C++ runtime.",
-  "pub_date": "2026-10-13T17:39:25.0000000+00:00",
-  "platforms": {
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFB2eVZudWJHSitKUUo2VWtYOHZ0T2FOZSthQ1BRc3Ardmo5SUVlb0k4S2w4UWZQS3J6N2poS095dFdmcEE5MEhjb2I1V0FKTlNFVHpCRVBDamRsZlFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxOTEyMTA5CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uNl94NjQtc2V0dXAuZXhlCkFPRWVEYVlSd1JsVjF2ZVJyYUlDejRseHRkekZvL1oxQWR1ck5Kb0FFNmpLNnFKNFlNQmZZTG5uZ2V1Z25zaXJiTjVwWERIRUNETFl5VWJJWHFDNENnPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.6/gary4local-rocm_0.4.0-rocm.6_x64-setup.exe"
-    }
-  }
+    "version":  "0.4.0-rocm.7",
+    "notes":  "jerry and foundation-1 can leave Python too: all three stable audio services now share one C++ runtime under a stable audio header. Press update runtime there first (sa3.cpp v0.1.7), then migrate jerry and foundation-1.\nUse gary4juce v5.0.1-rc.2 for jerry\u0027s finetunes and their dice prompts.",
+    "pub_date":  "2026-10-17T03:33:55.1854954+00:00",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME9jYVlBSHVrRllaWXNRNko0VTdvUnc2NFJhYUJOVmdTQUs2OVloSjYybzNjTDg0ZnpMdHVuak1TOVQvSU9HY1VOUlZ1MFRGU1JvWnhFU2I2UFMvWXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjA3MjY4CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNC4wLXJvY20uN194NjQtc2V0dXAuZXhlClIxZWkwZVpBK1hlY21ndkIxUlR4K0hwNTk1MGRhWm1nbGVKdmRtRktta0Vib2l3ZWMyM3ZBNEVNNjRBTGJYcmVjOEJ4bE9STmtIcVFSZW5HZkU0d0NRPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.7/gary4local-rocm_0.4.0-rocm.7_x64-setup.exe"
+                                         }
+                  }
 }
