@@ -1,6 +1,5 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import NativeBackendPicker from "./NativeBackendPicker.svelte";
 
   interface RuntimeInfo {
     installed: boolean;
@@ -20,33 +19,14 @@
     onShowModels: () => void;
   } = $props();
   let info = $state<RuntimeInfo | null>(null);
-  let saving = $state(false);
   let message: string | null = $state(null);
-  let running = $derived(["running", "starting", "unhealthy"].includes(serviceStatus));
   let device = $derived(info?.devices.find((entry) => entry.deviceType !== "cpu" && entry.backend.toLowerCase().includes(info?.backend ?? "")));
-  let wantsReinstall = $derived(!!info?.installed && !info.devOverride && info.preference !== "auto" && info.preference !== info.backend);
 
   async function load() {
     try { info = await invoke<RuntimeInfo>("get_native_runtime_info", { serviceId: "sa3" }); }
     catch (error) { message = String(error); }
   }
   $effect(() => { void nativeBackend; void envExists; void building; void load(); });
-
-  async function choose(backend: string) {
-    saving = true; message = null;
-    try {
-      await invoke("save_app_settings", { settings: { nativeBackends: { sa3: backend } } });
-      await load();
-      message = info?.installed ? "Reinstall the runtime to switch backends." : "Install the runtime to use this backend.";
-    } catch (error) { message = String(error); }
-    finally { saving = false; }
-  }
-  async function reinstall() {
-    saving = true; message = null;
-    try { await invoke("rebuild_env", { serviceId: "sa3" }); }
-    catch (error) { message = String(error); }
-    finally { saving = false; }
-  }
 </script>
 
 <div class="runtime-banner">
@@ -57,20 +37,13 @@
         {#if !info}checking…
         {:else if info.devOverride}local build on {info.backend}
         {:else if info.installed}{info.backend} · {info.version}{#if device} · {device.name} ({(device.memoryTotalBytes / 1024 ** 3).toFixed(1)} GB){/if}
-        {:else}not installed yet. use install runtime on the left.
+        {:else}not installed yet. select stable audio on the left to install it.
         {/if}
       </div>
     </div>
-    {#if info}<NativeBackendPicker value={info.preference} backends={info.offeredBackends} disabled={saving || building} onChange={choose} />{/if}
   </div>
   {#if info?.fallbackReason}<div class="warning">{info.fallbackReason}</div>{/if}
-  {#if wantsReinstall}
-    <div class="note">Installed on {info?.backend}, set to {info?.preference}.
-      {#if running}Stop SA3, then reinstall the runtime to switch.
-      {:else}<button class="link" disabled={saving || building} onclick={reinstall}>reinstall now</button>{/if}
-    </div>
-  {/if}
-  <div class="note">Auto selects the backend for your hardware. Choose a backend above to override it. Generation tiers are in <button class="link" onclick={onShowModels}>models</button>.</div>
+  <div class="note">SA3 shares this runtime with jerry and foundation-1: pick its backend and install or update it under stable audio on the left. Generation tiers are in <button class="link" onclick={onShowModels}>models</button>.</div>
   {#if message}<div class="note" role="status">{message}</div>{/if}
 </div>
 

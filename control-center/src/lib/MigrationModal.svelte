@@ -18,18 +18,31 @@
     nativeSelection: Selection | null;
     cleanupToken: string;
   }
+  interface Profile {
+    serviceId: string;
+    label: string;
+    dataLabel: string | null;
+    tiers: string[];
+    tierComponents: Record<string, string[]>;
+    features: string[];
+    tierOptions: Record<string, string[]>;
+    optionsLabel: string | null;
+  }
   interface Service { id: string; status: string; build_status: { building: boolean; step_label: string } | null; }
   interface Download { model_id: string; progress: number; status: string; message: string; error: string | null; }
   interface Component { id: string; label: string; files: { bytes: number }[]; }
   type Stage = "setup" | "cleanup" | "complete";
+  type Task = "runtime" | "models" | "adapters" | "verify";
 
-  let { open, pendingRestart, onClose, onReveal }: {
+  let { open, serviceId, pendingRestart, onClose, onReveal }: {
     open: boolean;
+    serviceId: string;
     pendingRestart: boolean;
     onClose: () => void;
     onReveal: (path: string) => void;
   } = $props();
 
+  let profile = $state<Profile | null>(null);
   let preview: Preview | null = $state(null);
   let catalog: Component[] = $state([]);
   let stage: Stage = $state("setup");
@@ -37,22 +50,37 @@
   let working = $state(false);
   let error: string | null = $state(null);
   let progress = $state("");
-  let task = $state(-1);
+  let task: Task | null = $state(null);
   let downloads: Download[] = $state([]);
   let encoding = $state("F16");
   let trainingBase = $state("F16");
-  let includeTraining = $state(true);
+  let includeTraining = $state(false);
   let includeDecoder = $state(false);
+  // Chosen tier options by position, so a choice follows a change of tier.
+  let optionPicks = $state<boolean[]>([]);
   let elapsedSeconds = $state(0);
   let services: Service[] = $state([]);
   let dialog: HTMLDivElement | undefined = $state();
-  const tasks = ["Prepare the C++ runtime", "Prepare model files", "Prepare your LoRAs", "Verify and switch to C++"];
-  const stepNumber = $derived(stage === "setup" ? working && task === 3 ? 2 : 1 : 3);
-  const blocked = $derived(loading || working || pendingRestart || !!services.find((entry) => entry.id === "sa3")?.build_status?.building);
+
+  // SA3's extra steps; other services offer none of these.
+  const has = (feature: string) => profile?.features.includes(feature) ?? false;
+  const label = $derived(profile?.label ?? serviceId);
+  const tasks = $derived<{ id: Task; label: string }[]>([
+    { id: "runtime", label: "Prepare the C++ runtime" },
+    { id: "models", label: "Prepare model files" },
+    ...(has("adapters") ? [{ id: "adapters" as Task, label: "Prepare your LoRAs" }] : []),
+    { id: "verify", label: "Verify and switch to C++" },
+  ]);
+  const taskIndex = $derived(task ? tasks.findIndex((entry) => entry.id === task) : -1);
+  const stepNumber = $derived(stage === "setup" ? working && task === "verify" ? 2 : 1 : 3);
+  const blocked = $derived(loading || working || pendingRestart || !!services.find((entry) => entry.id === serviceId)?.build_status?.building);
+  const tierOptions = $derived((profile?.tierOptions[encoding] ?? []).flatMap((id) => catalog.filter((entry) => entry.id === id)));
+  const pickedOptions = $derived(tierOptions.filter((_, index) => optionPicks[index]));
   const modelIds = $derived([
-    "sa3-native::text", "sa3-native::medium-decoder", `sa3-native::medium-${encoding}`,
-    ...(includeTraining ? [`sa3-native::medium-base-${trainingBase}`] : []),
-    ...(includeDecoder ? ["sa3-native::decoder-correction"] : []),
+    ...(profile?.tierComponents[encoding] ?? []),
+    ...pickedOptions.map((entry) => entry.id),
+    ...(has("training-base") && includeTraining ? [`sa3-native::medium-base-${trainingBase}`] : []),
+    ...(has("decoder-correction") && includeDecoder ? ["sa3-native::decoder-correction"] : []),
   ]);
   const modelBytes = $derived(catalog.filter((entry) => modelIds.includes(entry.id)).reduce((sum, entry) => sum + entry.files.reduce((bytes, file) => bytes + file.bytes, 0), 0));
   const hasCleanup = $derived.by(() => !!preview && (preview.cleanupCandidates.length > 0 || preview.legacyRuntimePresent || (preview.nativeSelection?.cleanupErrors.length ?? 0) > 0));
@@ -62,11 +90,13 @@
     const download = selectedDownloads.find((download) => download.model_id === entry.id);
     return sum + entry.files.reduce((bytes, file) => bytes + file.bytes, 0) * (download?.status === "downloaded" ? 1 : Math.min(1, Math.max(0, download?.progress ?? 0)));
   }, 0));
+  const checks = $derived(has("training-base") && includeTraining ? "generation, training and checkpoint saving" : "generation");
+  const dataLabel = $derived(profile?.dataLabel ?? "data and other services");
 
   function formatBytes(bytes: number) { return `${(bytes / 1024 ** 3).toFixed(1)} GB`; }
 
   async function scan() {
-    preview = await invoke<Preview>("get_sa3_migration_preview");
+    preview = await invoke<Preview>("get_migration_preview", { serviceId });
   }
 
   async function initialize() {
@@ -75,22 +105,27 @@
     stage = "setup";
     error = null;
     downloads = [];
-    task = -1;
+    task = null;
     try {
-      const [storage, hardware, components, currentServices, decoder] = await Promise.all([
-        invoke<Preview>("get_sa3_migration_preview"),
-        invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId: "sa3" }),
-        invoke<Component[]>("get_sa3_native_model_catalog"),
+      const [details, storage, components, currentServices] = await Promise.all([
+        invoke<Profile>("get_migration_profile", { serviceId }),
+        invoke<Preview>("get_migration_preview", { serviceId }),
+        invoke<Component[]>("get_native_model_catalog", { serviceId }),
         invoke<Service[]>("get_services"),
-        invoke<{ enabled: boolean }>("get_sa3_native_decoder_state"),
       ]);
+      profile = details;
       preview = storage;
       catalog = components;
       services = currentServices;
-      encoding = storage.nativeSelection?.encoding ?? "F16";
-      trainingBase = recommendQuantizedSa3Training(hardware) ? "Q4_K_M" : "F16";
-      includeTraining = storage.trainingBasePresent;
-      includeDecoder = decoder.enabled;
+      encoding = storage.nativeSelection?.encoding ?? details.tiers[0];
+      includeTraining = has("training-base") && storage.trainingBasePresent;
+      if (has("training-base")) {
+        const hardware = await invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId });
+        trainingBase = recommendQuantizedSa3Training(hardware) ? "Q4_K_M" : "F16";
+      }
+      if (has("decoder-correction")) {
+        includeDecoder = (await invoke<{ enabled: boolean }>("get_sa3_native_decoder_state")).enabled;
+      }
       stage = storage.nativeSelection?.cleanupComplete
         && !storage.nativeSelection.cleanupErrors.length
         && !storage.legacyRuntimePresent ? "complete" : "setup";
@@ -114,7 +149,7 @@
     return () => clearInterval(timer);
   });
   $effect(() => {
-    if (!working || task !== 1) return;
+    if (!working || task !== "models") return;
     let disposed = false;
     let polling = false;
     const timer = setInterval(async () => {
@@ -133,14 +168,23 @@
       listen<Service[]>("services-updated", (event) => {
         if (disposed) return;
         services = event.payload;
-        const build = services.find((entry) => entry.id === "sa3")?.build_status;
-        if (working && task === 0 && build?.building) progress = build.step_label;
+        const build = services.find((entry) => entry.id === serviceId)?.build_status;
+        if (working && task === "runtime" && build?.building) progress = build.step_label;
       }),
       listen<Download[]>("download-progress", (event) => { if (!disposed) downloads = event.payload; }),
-      listen<string>("sa3-native-migration-progress", (event) => { if (!disposed && working) progress = event.payload; }),
+      listen<{ serviceId: string; message: string }>("native-migration-progress", (event) => {
+        if (!disposed && working && event.payload.serviceId === serviceId) progress = event.payload.message;
+      }),
     ];
     return () => { disposed = true; for (const listener of listeners) void listener.then((stop) => stop()); };
   });
+
+  async function stopService() {
+    const current = await invoke<Service[]>("get_services");
+    if (current.some((entry) => entry.id === serviceId && ["running", "starting", "unhealthy"].includes(entry.status))) {
+      await invoke("stop_service", { serviceId });
+    }
+  }
 
   async function migrate() {
     if (blocked || !preview) return;
@@ -148,29 +192,28 @@
     error = null;
     downloads = [];
     try {
-      task = 0;
-      progress = "Stopping SA3 before migration...";
-      const current = await invoke<Service[]>("get_services");
-      if (current.some((entry) => entry.id === "sa3" && ["running", "starting", "unhealthy"].includes(entry.status))) {
-        await invoke("stop_service", { serviceId: "sa3" });
-      }
+      task = "runtime";
+      progress = `Stopping ${label} before migration...`;
+      await stopService();
       progress = "Installing and checking the runtime for your hardware...";
-      await invoke("prepare_sa3_native_runtime");
-      task = 1;
+      await invoke("prepare_native_runtime", { serviceId });
+      task = "models";
       progress = "Downloading and verifying model files. Existing components are reused.";
-      await invoke("prepare_sa3_native_models", { encoding, trainingBase: includeTraining ? trainingBase : null, includeDecoder, waitForCompletion: true });
-      if (includeDecoder) {
+      await invoke("prepare_native_models", { serviceId, componentIds: modelIds, waitForCompletion: true });
+      if (has("decoder-correction") && includeDecoder) {
         progress = "Preparing your decoder squeak fix...";
         await invoke("prepare_sa3_native_decoder");
       }
-      task = 2;
-      progress = "Preparing native copies of your registered LoRAs...";
-      const loras = await invoke<{ entries: { name: string; nativePath: string | null; error: string | null }[] }>("prepare_sa3_native_loras");
-      const failed = loras.entries.filter((entry) => !entry.nativePath || entry.error);
-      if (failed.length) throw new Error(failed.map((entry) => `${entry.name}: ${entry.error ?? "Native copy is missing"}`).join("\n"));
-      task = 3;
-      progress = "Verifying the server, training tools, model files and native generation...";
-      await invoke<Selection>("activate_sa3_native_runtime", { encoding });
+      if (has("adapters")) {
+        task = "adapters";
+        progress = "Preparing native copies of your registered LoRAs...";
+        const loras = await invoke<{ entries: { name: string; nativePath: string | null; error: string | null }[] }>("prepare_sa3_native_loras");
+        const failed = loras.entries.filter((entry) => !entry.nativePath || entry.error);
+        if (failed.length) throw new Error(failed.map((entry) => `${entry.name}: ${entry.error ?? "Native copy is missing"}`).join("\n"));
+      }
+      task = "verify";
+      progress = `Verifying the server, model files and native ${checks}...`;
+      await invoke<Selection>("activate_native_runtime", { serviceId, encoding });
       await scan();
       stage = hasCleanup ? "cleanup" : "complete";
     } catch (cause) { error = String(cause); }
@@ -183,12 +226,9 @@
     error = null;
     progress = "Verifying C++ again before removing reviewed Python files...";
     try {
-      const current = await invoke<Service[]>("get_services");
-      if (current.some((entry) => entry.id === "sa3" && ["running", "starting", "unhealthy"].includes(entry.status))) {
-        await invoke("stop_service", { serviceId: "sa3" });
-      }
+      await stopService();
       // The current review token binds this action to the paths shown below.
-      const result = await invoke<{ selection: Selection; errors: string[] }>("cleanup_sa3_legacy_installation", { reviewToken: preview.cleanupToken });
+      const result = await invoke<{ selection: Selection; errors: string[] }>("cleanup_legacy_installation", { serviceId, reviewToken: preview.cleanupToken });
       await scan();
       if (result.selection.cleanupComplete) stage = "complete";
       if (result.errors.length) error = result.errors.join("\n");
@@ -211,36 +251,40 @@
 {#if open}
   <div class="overlay">
     <button class="backdrop" type="button" aria-label="Close runtime migration" onclick={close} disabled={working || loading}></button>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sa3-migration-title" aria-busy={working || loading} tabindex="-1" bind:this={dialog} onkeydown={handleKeys}>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="migration-title" aria-busy={working || loading} tabindex="-1" bind:this={dialog} onkeydown={handleKeys}>
       <header>
-        <div><div class="eyebrow">SA3 runtime</div><h2 id="sa3-migration-title">{stage === "complete" ? "C++ is ready" : "Migrate SA3 to C++"}</h2></div>
+        <div><div class="eyebrow">{label} runtime</div><h2 id="migration-title">{stage === "complete" ? "C++ is ready" : `Migrate ${label} to C++`}</h2></div>
         <button type="button" class="close" aria-label="Close runtime migration" onclick={close} disabled={working || loading}>×</button>
       </header>
       <ol class="steps" aria-label="Migration steps">
-        {#each ["Prepare", "Automatic checks", "Clean up"] as label, index}
-          <li class:current={stepNumber === index + 1} class:done={stepNumber > index + 1 || stage === "complete"} aria-current={stepNumber === index + 1 ? "step" : undefined}><span>{stepNumber > index + 1 || stage === "complete" ? "✓" : index + 1}</span>{label}</li>
+        {#each ["Prepare", "Automatic checks", "Clean up"] as step, index}
+          <li class:current={stepNumber === index + 1} class:done={stepNumber > index + 1 || stage === "complete"} aria-current={stepNumber === index + 1 ? "step" : undefined}><span>{stepNumber > index + 1 || stage === "complete" ? "✓" : index + 1}</span>{step}</li>
         {/each}
       </ol>
       <div class="content">
-        {#if loading}<p role="status">Checking your SA3 installation and storage…</p>
-        {:else if preview}
+        {#if loading}<p role="status">Checking your {label} installation and storage…</p>
+        {:else if preview && profile}
           {#if stage === "setup"}
             {#if !working}
             <h3>One action to prepare and switch</h3>
-            <p>Gary will prepare the runtime, models and your LoRAs, then automatically check generation{includeTraining ? ", training and checkpoint saving" : ""} before offering cleanup.</p>
-            <p>{preview.legacyRuntimePresent ? "Your Python installation stays available until the checks pass and you choose to clean it up." : "Your LoRAs, datasets, prompts and other services stay in place."} SA3 will stop while migration runs.</p>
-            <div class="summary">{encoding} inference{includeTraining ? ` · ${trainingBase} training` : ""}{modelBytes ? ` · ${formatBytes(modelBytes)} of model files` : ""}<small>Existing model components and shared runtimes are reused.</small></div>
+            <p>Gary will prepare the runtime{has("adapters") ? ", models and your LoRAs" : " and models"}, then automatically check {checks} before offering cleanup.</p>
+            <p>{preview.legacyRuntimePresent ? "Your Python installation stays available until the checks pass and you choose to clean it up." : `Your ${dataLabel} stay in place.`} {label} will stop while migration runs.</p>
+            <div class="summary">{encoding} {has("training-base") ? "inference" : "generation"}{has("training-base") && includeTraining ? ` · ${trainingBase} training` : ""}{pickedOptions.length ? ` · ${pickedOptions.length} ${profile.optionsLabel ?? "options"}` : ""}{modelBytes ? ` · ${formatBytes(modelBytes)} of model files` : ""}<small>Existing model components and shared runtimes are reused.</small></div>
             <details>
               <summary>Model options</summary>
               <div class="options">
-                <label>Inference precision<select bind:value={encoding} disabled={blocked}><option>F16</option><option>Q8_0</option><option>Q5_K_M</option><option>Q4_K_M</option></select></label>
+                <label>{has("training-base") ? "Inference precision" : "Precision"}<select bind:value={encoding} disabled={blocked}>{#each profile.tiers as tier}<option>{tier}</option>{/each}</select></label>
+                {#each tierOptions as option, index (option.id)}
+                  <label class="check"><input type="checkbox" bind:checked={optionPicks[index]} disabled={blocked} />{option.label} · {formatBytes(option.files.reduce((sum, file) => sum + file.bytes, 0))}</label>
+                {/each}
               </div>
-              <p>{includeTraining ? `Your existing training setup was detected. Gary includes its ${trainingBase} C++ replacement automatically.` : "No existing training base was found. You can add training models later from Models."}</p>
+              {#if tierOptions.length}<p>Downloaded {profile.optionsLabel ?? "options"} are offered in gary4juce alongside the base model, and are checked too. You can add or remove them later from Models.</p>{/if}
+              {#if has("training-base")}<p>{includeTraining ? `Your existing training setup was detected. Gary includes its ${trainingBase} C++ replacement automatically.` : "No existing training base was found. You can add training models later from Models."}</p>{/if}
             </details>
             {:else}
-              <h3>{task === 3 ? "Running automatic checks" : "Preparing SA3 C++"}</h3>
+              <h3>{task === "verify" ? "Running automatic checks" : `Preparing ${label} C++`}</h3>
               <p class="progress" role="status">{progress}</p>
-              {#if task === 1}
+              {#if task === "models"}
                 <div class="download-summary"><strong>{activeDownload ? catalog.find((entry) => entry.id === activeDownload.model_id)?.label ?? "Preparing model files" : "Checking model files"}</strong><span>{modelBytes ? `${Math.round(preparedBytes / modelBytes * 100)}%` : ""}</span></div>
                 <progress max="1" value={modelBytes ? preparedBytes / modelBytes : undefined} aria-label="Overall model preparation"></progress>
                 <p>{formatBytes(preparedBytes)} of {formatBytes(modelBytes)} prepared</p>
@@ -249,25 +293,25 @@
               {/if}
               <small>Elapsed: {Math.floor(elapsedSeconds / 60)}m {elapsedSeconds % 60}s</small>
             {/if}
-            {#if working || task >= 0}
-              <ul class="tasks" aria-label="Preparation progress">{#each tasks as label, index}<li class:active={index === task} class:finished={index < task}><span>{index < task ? "✓" : index === task ? "•" : "○"}</span>{label}</li>{/each}</ul>
-              {#if task === 1}{#each selectedDownloads.filter((entry) => entry.error) as download}<p class="error" role="alert">{download.error}</p>{/each}{/if}
+            {#if working || task}
+              <ul class="tasks" aria-label="Preparation progress">{#each tasks as entry, index}<li class:active={index === taskIndex} class:finished={index < taskIndex}><span>{index < taskIndex ? "✓" : index === taskIndex ? "•" : "○"}</span>{entry.label}</li>{/each}</ul>
+              {#if task === "models"}{#each selectedDownloads.filter((entry) => entry.error) as download}<p class="error" role="alert">{download.error}</p>{/each}{/if}
             {/if}
           {:else if stage === "cleanup"}
-            <h3>Remove the old SA3 Python installation</h3>
-            <p class="passed">✓ Automatic runtime, generation{includeTraining ? ", training and checkpoint" : ""} checks passed.</p>
-            <div class="summary">About {formatBytes(preview.estimatedCleanupBytes)} in reviewed Python files<small>Includes SA3 environments, PyTorch weights and unchanged bundled code. Actual recovered space may differ.</small></div>
-            <p>Your original LoRAs, checkpoints, datasets, prompts, native models and other services are preserved. Edited or unrecognized Python source files are kept.</p>
-            <p>This step stops SA3 and permanently removes the reviewed files. Gary verifies C++ again before cleanup and stops if the storage review has changed.</p>
+            <h3>Remove the old {label} Python installation</h3>
+            <p class="passed">✓ Automatic runtime and {checks} checks passed.</p>
+            <div class="summary">About {formatBytes(preview.estimatedCleanupBytes)} in reviewed Python files<small>Includes {label} environments, PyTorch weights and unchanged bundled code. Actual recovered space may differ.</small></div>
+            <p>Your {dataLabel}, native models and other services are preserved. Edited or unrecognized Python source files are kept.</p>
+            <p>This step stops {label} and permanently removes the reviewed files. Gary verifies C++ again before cleanup and stops if the storage review has changed.</p>
             <details><summary>Files to remove ({preview.cleanupCandidates.length})</summary><div class="file-list">{#each preview.cleanupCandidates as entry}<div class="file"><span>{entry.label}</span><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>{/each}</div></details>
             <details><summary>Preserved files and folders</summary>{#each preview.preservedPaths as entry}<div class="file"><span>{entry.label}</span><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>{/each}<p>The shared UV cache stays available to your other Python services. It can be cleared separately in Storage.</p></details>
             {#each preview.warnings as warning}<p class="error" role="alert">{warning}</p>{/each}
             {#if preview.warnings.length}<p>Resolve these storage warnings, then check again before cleanup.</p><button type="button" onclick={initialize} disabled={blocked}>check again</button>{/if}
             {#each preview.nativeSelection?.cleanupErrors ?? [] as issue}<p class="error">{issue}</p>{/each}
           {:else}
-            <h3>{preview.nativeSelection?.cleanupComplete ? "Migration complete" : "Ready to use SA3 C++"}</h3>
-            <p>{preview.nativeSelection?.cleanupComplete ? "The reviewed Python files have been cleaned up. SA3 now uses the C++ runtime." : "C++ is selected and there are no reviewed Python files to clean up."}</p>
-            <p>Your LoRAs, training history and prompts remain available.</p>
+            <h3>{preview.nativeSelection?.cleanupComplete ? "Migration complete" : `Ready to use ${label} C++`}</h3>
+            <p>{preview.nativeSelection?.cleanupComplete ? `The reviewed Python files have been cleaned up. ${label} now uses the C++ runtime.` : "C++ is selected and there are no reviewed Python files to clean up."}</p>
+            {#if profile.dataLabel}<p>Your {profile.dataLabel} remain available.</p>{/if}
           {/if}
           <details class="storage"><summary>Using your current storage folder</summary><button class="path" type="button" onclick={() => onReveal(preview!.activeRoot)}>{preview.activeRoot}</button><p>PyTorch cache: {preview.hfHubCache}</p></details>
         {/if}
@@ -275,14 +319,14 @@
         {#if working && stage !== "setup"}
           <div class="cleanup-activity">
             <p class="progress" role="status"><span class="spinner" aria-hidden="true"></span>{progress}</p>
-            <div class="progress-bar" role="progressbar" aria-label="SA3 cleanup in progress"><div class="progress-fill"></div></div>
+            <div class="progress-bar" role="progressbar" aria-label={`${label} cleanup in progress`}><div class="progress-fill"></div></div>
             <small>{elapsedSeconds}s elapsed · Large folders can take a little while to remove.</small>
           </div>
         {/if}
         {#if error}<p class="error" role="alert">{error}</p>{#if !preview}<button type="button" onclick={initialize} disabled={working || loading}>check again</button>{/if}{/if}
       </div>
       <footer>
-        {#if stage === "setup"}<button type="button" onclick={close} disabled={working || loading}>later</button><button class="primary" type="button" onclick={migrate} disabled={blocked || !preview}>{working ? "migrating…" : error && task >= 0 ? "retry migration" : preview?.nativeSelection ? "check and finish migration" : "prepare and switch to C++"}</button>
+        {#if stage === "setup"}<button type="button" onclick={close} disabled={working || loading}>later</button><button class="primary" type="button" onclick={migrate} disabled={blocked || !preview}>{working ? "migrating…" : error && task ? "retry migration" : preview?.nativeSelection ? "check and finish migration" : "prepare and switch to C++"}</button>
         {:else if stage === "cleanup"}<button type="button" onclick={close} disabled={working || loading}>keep Python for now</button><button class="primary" type="button" onclick={cleanup} disabled={blocked || !!preview?.warnings.length}>{working ? "cleaning up…" : "clean up Python and finish"}</button>
         {:else}<button class="primary" type="button" onclick={close}>done</button>{/if}
       </footer>
@@ -326,6 +370,7 @@
   .options { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin-top:12px; }
   label { font-size:12px; }
   select { display:block; margin-top:6px; }
+  label.check { display:flex; align-items:center; gap:6px; }
   .tasks { list-style:none; padding:0; margin:18px 0 0; font-size:12px; }
   .tasks li { display:flex; gap:10px; padding:5px 0; color:var(--text-secondary,#aaa); }
   .tasks .active { color:var(--text-primary,#eee); }

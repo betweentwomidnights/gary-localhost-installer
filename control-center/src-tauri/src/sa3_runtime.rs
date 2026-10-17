@@ -106,28 +106,9 @@ pub fn read(root: &Path) -> Result<Option<Selection>, String> {
     crate::migration::read(root, migration_def(), check)
 }
 
+#[cfg(test)]
 pub fn save(root: &Path, selection: &Selection) -> Result<(), String> {
     crate::migration::save(root, migration_def(), selection, check)
-}
-
-pub fn launch_args(args: &[String], encoding: &str) -> Result<Vec<String>, String> {
-    crate::sa3_models::preparation_ids(encoding, None)?;
-    let mut args = args.to_vec();
-    let indices: Vec<usize> = args
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| (value == "--encoding").then_some(index))
-        .collect();
-    match indices.as_slice() {
-        [] => {
-            args.extend(["--encoding".into(), encoding.to_ascii_lowercase()]);
-        }
-        [index] if index + 1 < args.len() && !args[index + 1].starts_with("--") => {
-            args[index + 1] = encoding.to_ascii_lowercase();
-        }
-        _ => return Err("Native SA3 launch has an invalid encoding argument".into()),
-    }
-    Ok(args)
 }
 
 pub fn missing_models(root: &Path, encoding: &str) -> Option<String> {
@@ -252,9 +233,12 @@ mod tests {
         .iter()
         .map(|arg| arg.to_string())
         .collect();
-        let changed = launch_args(&args, "Q4_K_M").unwrap();
+        use crate::migration::Service;
+        let sa3 = crate::sa3_migration::Sa3;
+        let changed = sa3.launch_args(&args, Some("Q4_K_M")).unwrap();
         assert_eq!(changed[3], "q4_k_m");
         assert_eq!(&changed[4..], &args[4..]);
-        assert!(launch_args(&["--encoding".into()], "F16").is_err());
+        assert!(sa3.launch_args(&["--encoding".into()], Some("F16")).is_err());
+        assert!(sa3.launch_args(&args, Some("../model")).is_err());
     }
 }

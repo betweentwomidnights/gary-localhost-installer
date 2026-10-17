@@ -655,9 +655,42 @@ impl ModelManager {
         yuey_models_dir_in(&crate::storage::models_dir(&self.repo_root))
     }
 
-    pub fn get_sa3_native_models(&self) -> Vec<ModelEntry> {
-        let dir = crate::sa3_models::models_dir(&self.repo_root);
-        crate::sa3_models::catalog()
+    /// Every model this manager tracks: each service's Python-era models,
+    /// and the native components of every service with a migration.
+    pub fn all_models(&self) -> Vec<ModelEntry> {
+        let mut models = self.get_gary_models();
+        models.extend(self.get_melodyflow_models());
+        models.extend(self.get_jerry_models());
+        models.extend(self.get_sa3_models());
+        models.extend(self.get_carey_models());
+        models.extend(self.get_foundation_models());
+        models.extend(self.get_yuey_models());
+        for service in &crate::manifest::bundled().services {
+            if service.migration.is_some() {
+                models.extend(self.get_native_models(&service.id));
+            }
+        }
+        models
+    }
+
+    /// Which of `ids` this manager reports as downloaded.
+    pub fn downloaded(&self, ids: &[String]) -> Vec<String> {
+        self.all_models()
+            .into_iter()
+            .filter(|model| ids.contains(&model.id) && matches!(model.status, ModelStatus::Downloaded))
+            .map(|model| model.id)
+            .collect()
+    }
+
+    /// A migrating service's native model components and their status.
+    pub fn get_native_models(&self, service_id: &str) -> Vec<ModelEntry> {
+        let Some(service) = crate::migration::service(service_id) else {
+            return Vec::new();
+        };
+        let catalog = service.models();
+        let dir = catalog.models_dir(&self.repo_root);
+        catalog
+            .components()
             .iter()
             .map(|entry| {
                 let status = match self.downloads.get(&entry.id) {
@@ -669,7 +702,7 @@ impl ModelManager {
                     {
                         download.status.clone()
                     }
-                    _ if crate::sa3_models::present(entry, &dir) => ModelStatus::Downloaded,
+                    _ if crate::native_models::Catalog::present(entry, &dir) => ModelStatus::Downloaded,
                     _ => ModelStatus::Available,
                 };
                 let downloaded_bytes = matches!(status, ModelStatus::Downloaded)
@@ -677,7 +710,7 @@ impl ModelManager {
                 ModelEntry {
                     id: entry.id.clone(),
                     display_name: entry.label.clone(),
-                    service: "sa3".into(),
+                    service: service_id.into(),
                     size_category: Some("native".into()),
                     group: Some(entry.description.clone()),
                     epoch: None,
@@ -2054,14 +2087,7 @@ pub async fn emit_model_status(manager: &Arc<Mutex<ModelManager>>, handle: &taur
 /// The same events from a manager already locked, for callers that cannot
 /// wait for the lock (a download's progress callback).
 pub fn emit_model_status_from(mgr: &ModelManager, handle: &tauri::AppHandle) {
-    let mut models = mgr.get_gary_models();
-    models.extend(mgr.get_melodyflow_models());
-    models.extend(mgr.get_jerry_models());
-    models.extend(mgr.get_sa3_models());
-    models.extend(mgr.get_carey_models());
-    models.extend(mgr.get_foundation_models());
-    models.extend(mgr.get_yuey_models());
-    models.extend(mgr.get_sa3_native_models());
+    let models = mgr.all_models();
     let progress = mgr.get_download_progress();
 
     use tauri::Emitter;

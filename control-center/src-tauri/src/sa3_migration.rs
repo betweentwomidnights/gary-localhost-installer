@@ -7,6 +7,7 @@
 use crate::migration_inventory::Extras;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
 pub use crate::migration_inventory::Preview as Sa3MigrationPreview;
 
 fn target() -> crate::migration::Target<'static> {
@@ -58,6 +59,7 @@ pub fn legacy_runtime_present(active_root: &Path, hf_hub: &Path) -> bool {
     crate::migration_inventory::legacy_present(target(), active_root, hf_hub)
 }
 
+#[cfg(test)]
 pub fn preview(active_root: &Path, hf_hub: &Path) -> Sa3MigrationPreview {
     crate::migration_inventory::preview(target(), active_root, hf_hub, extras(active_root, hf_hub))
 }
@@ -86,16 +88,125 @@ impl crate::migration::Service for Sa3 {
         extras(root, hub)
     }
 
-    fn check_selection(&self, selection: &crate::migration::Selection) -> Result<(), String> {
-        crate::sa3_models::preparation_ids(&selection.encoding, None).map(|_| ())
+    fn models(&self) -> &'static crate::native_models::Catalog {
+        crate::sa3_models::models()
+    }
+
+    fn tier_components(&self, tier: &str) -> Result<Vec<String>, String> {
+        crate::sa3_models::preparation_ids(tier, None)
+    }
+
+    fn features(&self) -> &'static [&'static str] {
+        &["training-base", "decoder-correction", "adapters"]
+    }
+
+    /// While decoder correction is on, the server needs its adapter.
+    fn implied_components(&self) -> Vec<String> {
+        if crate::sa3_use_decoder_lora_enabled() {
+            vec![crate::sa3_decoder::MODEL_ID.into()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Training and dataset jobs launch through the same lock, and both read
+    /// what migration replaces.
+    fn exclusive(&self, cleanup: bool) -> Result<Option<Box<dyn std::any::Any + Send>>, String> {
+        let launch = crate::sa3_training::LAUNCH
+            .try_lock()
+            .map_err(|_| "SA3 training or migration is already starting")?;
+        let training = matches!(
+            crate::read_sa3_lora_training_state().status.as_str(),
+            "starting" | "running"
+        );
+        if training && !cleanup {
+            return Err("Wait for SA3 training to finish before switching its runtime".into());
+        }
+        if cleanup
+            && (training
+                || matches!(crate::read_sa3_autolabel_state().status.as_str(), "starting" | "running"))
+        {
+            return Err("Wait for SA3 training and dataset jobs to finish before cleanup.".into());
+        }
+        Ok(Some(Box::new(launch)))
     }
 
     /// The PyTorch training base may only go once its native replacement is
     /// on disk; otherwise retiring Python would end SA3 training entirely.
-    fn cleanup_blocker(&self, root: &Path, hub: &Path) -> Option<String> {
-        (legacy_training_base_present(root, hub) && !native_training_base_present(root)).then(|| {
+    fn cleanup_blocker(&self, root: &Path, hub: &Path, downloaded: &[String]) -> Option<String> {
+        let legacy = legacy_training_base_present(root, hub)
+            || legacy_repos(Some("training-base"))
+                .iter()
+                .any(|repo| downloaded.iter().any(|id| id == repo));
+        (legacy && !native_training_base_present(root)).then(|| {
             "Prepare the C++ training model before removing the existing PyTorch training model."
                 .into()
+        })
+    }
+
+    fn verify<'a>(
+        &'a self,
+        run: crate::migration::Run<'a>,
+    ) -> crate::migration::Proof<'a, crate::migration::Selection> {
+        Box::pin(async move {
+            let decoder_enabled = crate::sa3_use_decoder_lora_enabled();
+            let selection = verify_native(
+                run.root,
+                run.native,
+                run.installed,
+                run.launch,
+                run.encoding,
+                decoder_enabled,
+                run.progress,
+            )
+            .await?;
+            if decoder_enabled != crate::sa3_use_decoder_lora_enabled() {
+                return Err("Decoder correction changed during migration validation; retry with the current setting.".into());
+            }
+            Ok(selection)
+        })
+    }
+
+    /// Activation already proved this runtime: hashed every model, generated
+    /// privately and trained two steps. Repeat that only if something it
+    /// proved has changed since. The adapter checks always run, because they
+    /// are what guarantees nothing still needs the Python environment.
+    fn reverify<'a>(
+        &'a self,
+        run: crate::migration::Run<'a>,
+        selection: &'a crate::migration::Selection,
+    ) -> crate::migration::Proof<'a, Option<String>> {
+        Box::pin(async move {
+            let decoder_enabled = crate::sa3_use_decoder_lora_enabled();
+            let unchanged = runtime_fingerprint(
+                run.root,
+                run.native,
+                run.installed,
+                run.encoding,
+                decoder_enabled,
+            )
+            .is_ok_and(|current| selection.runtime_fingerprint.as_deref() == Some(current.as_str()));
+            let fingerprint = if unchanged {
+                (run.progress)("The C++ runtime is unchanged since it was verified. Checking adapters...");
+                verify_adapters(run.root, &run.progress).await?;
+                None
+            } else {
+                verify_native(
+                    run.root,
+                    run.native,
+                    run.installed,
+                    run.launch,
+                    run.encoding,
+                    decoder_enabled,
+                    run.progress,
+                )
+                .await?
+                .runtime_fingerprint
+            };
+            if decoder_enabled != crate::sa3_use_decoder_lora_enabled() {
+                return Err("Decoder correction changed during verification; review cleanup again.".into());
+            }
+            Ok(fingerprint)
         })
     }
 
@@ -153,10 +264,6 @@ impl crate::migration::Service for Sa3 {
             return crate::sa3_decoder::blocker(root);
         }
         None
-    }
-
-    fn launch_args(&self, args: &[String], encoding: Option<&str>) -> Result<Vec<String>, String> {
-        crate::sa3_runtime::launch_args(args, encoding.unwrap_or("F16"))
     }
 
     /// Gary's SA3 HTTP contract on the public port, translated to the native
@@ -309,7 +416,7 @@ pub async fn verify_native(
     launch: &crate::native_runtime::NativeLaunch,
     encoding: &str,
     decoder_enabled: bool,
-    progress: impl Fn(&str),
+    progress: impl Fn(&str) + Sync,
 ) -> Result<crate::sa3_runtime::Selection, String> {
     use serde_json::{json, Value};
     use std::time::{Duration, Instant};
@@ -1229,7 +1336,7 @@ mod tests {
                 &root,
                 &native.executable,
                 &installed,
-                crate::sa3_runtime::launch_args(&native.args, "F16").unwrap(),
+                crate::migration::Service::launch_args(&crate::sa3_migration::Sa3, &native.args, Some("F16")).unwrap(),
                 Vec::new(),
                 &[("SA3_MODELS_DIR".into(), target.to_string_lossy().into())],
             )

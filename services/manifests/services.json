@@ -1,22 +1,22 @@
 {
   "nativeBundles": {
     "sa3": {
-      "version": "v0.1.4",
+      "version": "v0.1.7",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.4/sa3-v0.1.4-windows-x64-core.zip",
-            "sha256": "ba71855d03287c1f7615c01cffd61957c5b6037cf977fac237a9b11b40902059"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-core.zip",
+            "sha256": "f2a8addbd9e33f542d9ab35f98aca088b4eed8dc92a3035e48aa468492ff9711"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.4/sa3-v0.1.4-windows-x64-cuda.zip",
-              "sha256": "62c3eb1fdd623be3032247089e7c83c4cdd0f517567f4524df48c67b19deb307",
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-cuda.zip",
+              "sha256": "1fe58d9719e6aaf21db9737164d5df840310972eadbc41b84a82896a8c6d73db",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.4/sa3-v0.1.4-windows-x64-vulkan.zip",
-              "sha256": "a16cb16ec49b2ad086eadad1cbc619ee31641f3d8f605ffb0cbf793d1daeedbd"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-vulkan.zip",
+              "sha256": "4b09715ab2f036327cc73ee4d6e038bfe2bc8afd817fb20c8d34771525d55287"
             }
           },
           "prefer": ["cuda", "vulkan"]
@@ -129,6 +129,47 @@
       "env": {
         "PYTHONIOENCODING": "utf-8",
         "HF_TOKEN": "${HF_TOKEN}"
+      },
+      "native": {
+        "bundle": "sa3",
+        "executable": "sat-server.exe",
+        "modelsDir": "stable-audio",
+        "args": ["--model", "saos", "--encoding", "f16"],
+        "env": {
+          "SA3_PORT": "8005",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/stable-audio"
+        }
+      },
+      "migration": {
+        "dataDir": "stable-audio",
+        "label": "jerry",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [
+            {"repo": "stabilityai/stable-audio-open-small", "label": "PyTorch base model"},
+            {"repo": "thepatch/jerry_grunge", "label": "PyTorch Jerry Grunge finetune"},
+            {"repo": "S3Sound/kickbass", "label": "PyTorch kickbass finetune"}
+          ],
+          "code": {
+            "files": [
+              "LICENSE",
+              "README.md",
+              "api.py",
+              "base_model_config.json",
+              "defaults.ini",
+              "model_loader_enhanced.py",
+              "patch_generation.py",
+              "pre_encode.py",
+              "pyproject.toml",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "riff_manager.py",
+              "setup.py"
+            ],
+            "packages": ["LICENSES", "riffs", "stable_audio_tools"]
+          }
+        }
       },
       "dependsOn": []
     },
@@ -334,6 +375,44 @@
         "FOUNDATION_MODEL_DIR": "${MODELS_DIR}/foundation-1",
         "FOUNDATION_CKPT_PATH": "${MODELS_DIR}/foundation-1/Foundation_1.safetensors",
         "FOUNDATION_CONFIG_PATH": "${MODELS_DIR}/foundation-1/model_config.json"
+      },
+      "native": {
+        "bundle": "sa3",
+        "executable": "sat-server.exe",
+        "modelsDir": "foundation",
+        "args": ["--model", "foundation-1", "--encoding", "f16"],
+        "env": {
+          "SA3_PORT": "8015",
+          "SA3_DEVICE": "${NATIVE_BACKEND}",
+          "SA3_MODELS_DIR": "${MODELS_DIR}/foundation"
+        }
+      },
+      "migration": {
+        "dataDir": "foundation",
+        "label": "Foundation-1",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [],
+          "staged": {
+            "dir": "models/foundation-1",
+            "label": "PyTorch model",
+            "files": ["Foundation_1.safetensors", "model_config.json"]
+          },
+          "code": {
+            "files": [
+              "Dockerfile.reference",
+              "api_foundation.py",
+              "bpm_range.py",
+              "bpm_range_test.py",
+              "download_model.py",
+              "inference_profiles.py",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "test_inference_profiles.py"
+            ],
+            "packages": ["RC-stable-audio-tools"]
+          }
+        }
       },
       "dependsOn": []
     },

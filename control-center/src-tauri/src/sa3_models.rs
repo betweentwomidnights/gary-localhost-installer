@@ -1,56 +1,32 @@
 //! Published SA3 model components, kept separate from the legacy HF cache.
 //! Inference and training share the encoder, tokenizer, decoder and conditioner.
 
-use crate::native_models::PinnedHfFile;
-use serde::{Deserialize, Serialize};
+use crate::native_models::Catalog;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Component {
-    pub id: String,
-    pub label: String,
-    pub description: String,
-    pub files: Vec<PinnedHfFile>,
+pub use crate::native_models::CatalogComponent as Component;
+
+pub fn models() -> &'static Catalog {
+    static CATALOG: OnceLock<Catalog> = OnceLock::new();
+    CATALOG.get_or_init(|| Catalog::bundled("sa3", include_str!("../sa3-models.json")))
 }
 
+#[cfg(test)]
 pub fn catalog() -> &'static [Component] {
-    static CATALOG: OnceLock<Vec<Component>> = OnceLock::new();
-    CATALOG.get_or_init(|| {
-        serde_json::from_str(include_str!("../sa3-models.json"))
-            .expect("the bundled SA3 model catalog is valid")
-    })
+    models().components()
 }
 
 pub fn component(id: &str) -> Option<&'static Component> {
-    catalog().iter().find(|entry| entry.id == id)
+    models().component(id)
 }
 
 pub fn models_dir(runtime_root: &Path) -> PathBuf {
-    crate::storage::models_dir(runtime_root).join("sa3")
+    models().models_dir(runtime_root)
 }
 
-/// The chosen runtime root may itself be a junction, but model subfolders must
-/// remain inside it. Resolve the boundary before downloading or deleting files.
 pub fn checked_models_dir(runtime_root: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(runtime_root)
-        .map_err(|error| format!("Cannot create runtime storage: {error}"))?;
-    let root = runtime_root
-        .canonicalize()
-        .map_err(|error| format!("Cannot resolve runtime storage: {error}"))?;
-    let mut dir = root.clone();
-    for folder in ["models", "sa3"] {
-        dir.push(folder);
-        std::fs::create_dir_all(&dir)
-            .map_err(|error| format!("Cannot prepare SA3 model storage: {error}"))?;
-        dir = dir
-            .canonicalize()
-            .map_err(|error| format!("Cannot resolve SA3 model storage: {error}"))?;
-        if !dir.starts_with(&root) {
-            return Err("SA3 model storage points outside the selected runtime folder.".into());
-        }
-    }
-    Ok(dir)
+    models().checked_models_dir(runtime_root)
 }
 
 pub fn preparation_ids(encoding: &str, training_base: Option<&str>) -> Result<Vec<String>, String> {
@@ -71,14 +47,8 @@ pub fn preparation_ids(encoding: &str, training_base: Option<&str>) -> Result<Ve
     Ok(ids)
 }
 
-/// Presence is an inventory check, not a hash check. Preparation always hashes
-/// existing files again before keeping them. Partial files never count.
 pub fn present(entry: &Component, dir: &Path) -> bool {
-    entry.files.iter().all(|file| {
-        std::fs::symlink_metadata(dir.join(&file.filename))
-            .map(|metadata| metadata.file_type().is_file() && metadata.len() == file.bytes)
-            .unwrap_or(false)
-    })
+    Catalog::present(entry, dir)
 }
 
 #[cfg(test)]
@@ -154,7 +124,7 @@ mod tests {
         let mut manager = crate::model_manager::ModelManager::new(root);
         manager.set_download_started("sa3-native::text");
         manager.set_download_done("sa3-native::text", None);
-        let models = manager.get_sa3_native_models();
+        let models = manager.get_native_models("sa3");
         assert_eq!(
             models
                 .iter()

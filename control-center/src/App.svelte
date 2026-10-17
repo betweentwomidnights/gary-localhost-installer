@@ -19,7 +19,9 @@
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
   import Sa3LoraModal from "./lib/Sa3LoraModal.svelte";
   import Sa3LoraTrainingModal from "./lib/Sa3LoraTrainingModal.svelte";
-  import Sa3MigrationModal from "./lib/Sa3MigrationModal.svelte";
+  import MigrationModal from "./lib/MigrationModal.svelte";
+  import RuntimeGroupPanel from "./lib/RuntimeGroupPanel.svelte";
+  import { runtimeGroupLabel } from "./lib/runtimeGroups";
   import CloseBehaviorModal from "./lib/CloseBehaviorModal.svelte";
   import AppUpdateModal from "./lib/AppUpdateModal.svelte";
   import StorageSettingsModal from "./lib/StorageSettingsModal.svelte";
@@ -49,6 +51,9 @@
     native_fallback_reason: string | null;
     start_blocker: string | null;
     migration_complete: boolean;
+    has_migration: boolean;
+    runtime_group: string | null;
+    python_retired: boolean;
   }
 
   interface Sa3LoudnessSettings {
@@ -178,6 +183,10 @@
 
   let services: ServiceInfo[] = $state([]);
   let selectedServiceId: string | null = $state(null);
+  // A runtime shared by several services, selected instead of one of them.
+  let selectedRuntimeGroup: string | null = $state(null);
+  // Selecting one service, by any route, leaves the group.
+  $effect(() => { if (selectedServiceId) selectedRuntimeGroup = null; });
   let logText: string = $state("");
   let logViewerLive = $state(true);
   let pollTimer: number;
@@ -217,7 +226,7 @@
   let updateCheckError: string | null = $state(null);
   let updateActionError: string | null = $state(null);
   let storageModalOpen = $state(false);
-  let sa3MigrationOpen = $state(false);
+  let migrationServiceId: string | null = $state(null);
   let storageInfo: RuntimeStorageInfo | null = $state(null);
   let storageBusy = $state(false);
   let storageTransferProgress = $state<{ message: string; completedBytes: number; totalBytes: number } | null>(null);
@@ -273,7 +282,14 @@
     }
   }
 
+  function selectRuntimeGroup(group: string) {
+    selectedRuntimeGroup = group;
+    selectedServiceId = null;
+    rightPanel = "logs";
+  }
+
   function selectService(id: string) {
+    selectedRuntimeGroup = null;
     selectedServiceId = id;
     logViewerLive = true;
     rightPanel = "logs";
@@ -322,9 +338,10 @@
     sa3LoraTrainingModalOpen = false;
   }
 
-  async function showSa3Migration() {
-    selectedServiceId = "sa3";
-    sa3MigrationOpen = true;
+  async function showMigration(serviceId: string) {
+    // A migration started from a runtime group keeps the group in view.
+    if (!selectedRuntimeGroup) selectedServiceId = serviceId;
+    migrationServiceId = serviceId;
     await loadRuntimeStorageInfo();
   }
 
@@ -912,20 +929,29 @@
       <ServiceList
         {services}
         {selectedServiceId}
+        {selectedRuntimeGroup}
         {hfTokenConfigured}
         onSelect={selectService}
+        onSelectGroup={selectRuntimeGroup}
         onShowModels={showModels}
         onManageCareyLoras={showCareyLoras}
         onTrainCareyAce={showCareyAceTraining}
         onManageSa3Loras={showSa3Loras}
         onTrainSa3Lora={showSa3LoraTraining}
-        onMigrateSa3Runtime={showSa3Migration}
+        onMigrateRuntime={showMigration}
       />
     </div>
     <div class="divider"></div>
     <div class="right-panel">
-      {#if rightPanel === "models" && modelServiceId}
-        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} onBack={backToLogs} />{/key}
+      {#if rightPanel === "logs" && selectedRuntimeGroup}
+        <RuntimeGroupPanel
+          label={runtimeGroupLabel(selectedRuntimeGroup)}
+          members={services.filter((service) => service.runtime_group === selectedRuntimeGroup)}
+          onSelectService={selectService}
+          onMigrate={showMigration}
+        />
+      {:else if rightPanel === "models" && modelServiceId}
+        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} hasMigration={services.find((service) => service.id === modelServiceId)?.has_migration ?? false} pythonRetired={services.find((service) => service.id === modelServiceId)?.python_retired ?? false} onBack={backToLogs} />{/key}
       {:else}
         {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
           <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />
@@ -1082,12 +1108,17 @@
     pendingRestart={storageInfo?.pendingRestart ?? false}
     onClose={closeSa3Loras}
   />
-  <Sa3MigrationModal
-    open={sa3MigrationOpen}
-    pendingRestart={storageInfo?.pendingRestart ?? true}
-    onReveal={revealStoragePath}
-    onClose={() => sa3MigrationOpen = false}
-  />
+  {#if migrationServiceId}
+    {#key migrationServiceId}
+      <MigrationModal
+        open={true}
+        serviceId={migrationServiceId}
+        pendingRestart={storageInfo?.pendingRestart ?? true}
+        onReveal={revealStoragePath}
+        onClose={() => migrationServiceId = null}
+      />
+    {/key}
+  {/if}
   <Sa3LoraTrainingModal
     open={sa3LoraTrainingModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}

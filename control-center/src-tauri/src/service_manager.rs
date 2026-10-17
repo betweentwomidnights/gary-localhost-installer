@@ -33,6 +33,16 @@ pub struct ServiceInfo {
     /// The service's move to native and its reviewed Python cleanup have both
     /// finished. Always false for a service with nothing to migrate.
     pub migration_complete: bool,
+    /// The service has a migration to native that this app can run.
+    pub has_migration: bool,
+    /// The runtime bundle this service shares with others, if any: the
+    /// services with the same value install, update and pick a backend
+    /// together.
+    pub runtime_group: Option<String>,
+    /// The service sets up on C++ only: it has no Python environment to keep
+    /// (as on a fresh install) or already runs native, so its Python
+    /// environment is never built.
+    pub python_retired: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,6 +214,17 @@ impl ServiceManager {
         Some(self.native_dir(svc))
     }
 
+    /// The services sharing `service_id`'s native runtime, itself included,
+    /// in manifest order; just `service_id` when it has no shared runtime.
+    pub fn runtime_members(&self, service_id: &str) -> Vec<String> {
+        match self.find_service(service_id) {
+            Some(svc) if svc.native.is_some() => {
+                self.bundle_consumers(svc).iter().map(|member| member.id.clone()).collect()
+            }
+            _ => vec![service_id.to_string()],
+        }
+    }
+
     fn bundle_consumers(&self, svc: &ServiceDef) -> Vec<&ServiceDef> {
         let dir = self.native_dir(svc);
         self.services
@@ -288,6 +309,25 @@ impl ServiceManager {
 
     /// Called under the manager lock before reserving an install/removal.
     pub fn native_mutation_blocker(&self, service_id: &str) -> Option<String> {
+        self.mutation_blocker(service_id, true)
+    }
+
+    /// What keeps a native service's own models from changing: as
+    /// `native_mutation_blocker`, except that the services sharing its runtime
+    /// may keep running, since these models are only its own.
+    pub fn native_model_blocker(&self, service_id: &str) -> Option<String> {
+        self.mutation_blocker(service_id, false)
+    }
+
+    /// Stop `service_id` when it runs native, making way for a change to what
+    /// it loads (its models or its runtime). Returns whether it was stopped.
+    pub fn stop_if_native(&mut self, service_id: &str) -> bool {
+        self.is_native(service_id) && self.is_running(service_id) && self.stop(service_id).is_ok()
+    }
+
+    /// `whole_bundle`: whether a running service sharing the runtime blocks
+    /// too, as it does for changes to the runtime itself.
+    fn mutation_blocker(&self, service_id: &str, whole_bundle: bool) -> Option<String> {
         if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
         let svc = self.find_service(service_id)?;
         if let Some(blocker) = self.shared_runtime_blocker(svc) {
@@ -297,7 +337,10 @@ impl ServiceManager {
             if let Some(label) = self.native_model_mutations.get(&consumer.id) {
                 return Some(format!("wait for {label} to finish"));
             }
-            if consumer.runtime == ServiceRuntime::Native && self.is_running(&consumer.id) {
+            if consumer.runtime == ServiceRuntime::Native
+                && self.is_running(&consumer.id)
+                && (whole_bundle || consumer.id == service_id)
+            {
                 return Some(format!("stop {} first", consumer.display_name));
             }
             if self.is_building(&consumer.id) {
@@ -377,7 +420,7 @@ impl ServiceManager {
         if self.native_service(service_id).is_none() {
             return Err(format!("{service_id} has no native model runtime"));
         }
-        if let Some(blocker) = self.native_mutation_blocker(service_id) {
+        if let Some(blocker) = self.native_model_blocker(service_id) {
             return Err(format!("Cannot prepare models: {blocker}."));
         }
         self.native_model_mutations
@@ -392,6 +435,17 @@ impl ServiceManager {
     fn native_install(&self, svc: &ServiceDef) -> Option<NativeInstall> {
         let native = svc.native.as_ref()?;
         native_runtime::installed(&svc.id, &self.native_dir(svc), &native.executable)
+    }
+
+    /// The service's native runtime is installed at the version the manifest
+    /// pins, whichever service sharing its bundle installed it.
+    pub fn native_runtime_current(&self, service_id: &str) -> bool {
+        self.find_service(service_id).is_some_and(|svc| {
+            match (self.native_install(svc), svc.native.as_ref()) {
+                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str()),
+                _ => false,
+            }
+        })
     }
 
     /// A native service's definition and install folder, for the UI.
@@ -554,22 +608,26 @@ impl ServiceManager {
     }
 
     /// Choose downloaded generation weights without repeating migration or cleanup.
-    pub fn select_sa3_native_model(&mut self, encoding: &str) -> Result<crate::migration::Selection, String> {
-        let ids = crate::sa3_models::preparation_ids(encoding, None)?;
-        if let Some(blocker) = self.native_mutation_blocker("sa3") {
-            return Err(format!("Cannot change the SA3 model: {blocker}."));
+    /// Switch a migrated service to another generation tier it has the models for.
+    pub fn select_native_model(&mut self, service_id: &str, encoding: &str) -> Result<crate::migration::Selection, String> {
+        let service = crate::migration::service(service_id).ok_or("This service has no native migration")?;
+        let label = service.target().label();
+        let ids = service.tier_components(encoding)?;
+        if let Some(blocker) = self.native_mutation_blocker(service_id) {
+            return Err(format!("Cannot change the {label} model: {blocker}."));
         }
-        let mut selection = self.selection("sa3").cloned()
-            .ok_or("Migrate SA3 to C++ before selecting a generation tier.")?;
-        let dir = crate::sa3_models::models_dir(&self.repo_root);
+        let mut selection = self.selection(service_id).cloned()
+            .ok_or_else(|| format!("Migrate {label} to C++ before selecting a generation tier."))?;
+        let catalog = service.models();
+        let dir = catalog.models_dir(&self.repo_root);
         for id in ids {
-            let component = crate::sa3_models::component(&id).ok_or("Unknown SA3 model")?;
-            if !crate::sa3_models::present(component, &dir) {
+            let component = catalog.component(&id).ok_or_else(|| format!("Unknown {label} model"))?;
+            if !crate::native_models::Catalog::present(component, &dir) {
                 return Err(format!("Download {} before using this generation tier.", component.label));
             }
         }
         selection.encoding = encoding.to_string();
-        self.activate_native("sa3", selection)
+        self.activate_native(service_id, selection)
     }
 
     /// Where the shared runtimes native services need are installed.
@@ -807,6 +865,14 @@ impl ServiceManager {
                     migration_complete: svc.runtime == ServiceRuntime::Native
                         && self.selection(&svc.id).is_some_and(|selection| selection.retired())
                         && !self.legacy_runtime_present(svc),
+                    has_migration: svc.migration.is_some()
+                        && crate::migration::service(&svc.id).is_some(),
+                    runtime_group: svc
+                        .native
+                        .as_ref()
+                        .and_then(|native| native.bundle.clone())
+                        .filter(|_| self.bundle_consumers(svc).len() > 1),
+                    python_retired: self.python_retired(svc),
                 }
             })
             .collect()
@@ -969,6 +1035,23 @@ impl ServiceManager {
         );
 
         Ok(())
+    }
+
+    /// Whether `svc` sets up on C++ only. A service with a native migration
+    /// keeps its Python environment while it has one, so an existing install
+    /// migrates in its own time; without one, as on a fresh install, there is
+    /// nothing to keep and Python is never built for it.
+    fn python_retired(&self, svc: &ServiceDef) -> bool {
+        let Some(target) = crate::migration::Target::of(svc) else {
+            return false;
+        };
+        if crate::migration::service(&svc.id).is_none() {
+            return false;
+        }
+        svc.runtime == ServiceRuntime::Native
+            || !target.def.legacy.env_dirs.iter().any(|dir| {
+                self.service_dir(svc).join(dir).join("Scripts").join("python.exe").exists()
+            })
     }
 
     /// Whether a migrated service's Python files are back, as a downgrade can
@@ -1155,6 +1238,11 @@ impl ServiceManager {
         if info.runtime == ServiceRuntime::Python && self.is_native(&info.service_id) {
             return Err(format!("{} uses C++. Its Python environment cannot be rebuilt.", info.service_id));
         }
+        if info.runtime == ServiceRuntime::Python
+            && self.find_service(&info.service_id).is_some_and(|svc| self.python_retired(svc))
+        {
+            return Err(format!("{} sets up on C++ now: use set up runtime.", info.service_id));
+        }
         Ok(())
     }
 
@@ -1165,6 +1253,12 @@ impl ServiceManager {
             .find_service(service_id)
             .ok_or_else(|| format!("Unknown service: {}", service_id))?;
 
+        if svc.runtime == ServiceRuntime::Python && self.python_retired(svc) {
+            return Err(format!(
+                "{} sets up on C++ now: use set up runtime.",
+                svc.display_name
+            ));
+        }
         if svc.runtime == ServiceRuntime::Native {
             if let Some(reason) = self.native_mutation_blocker(service_id) {
                 return Err(format!(
@@ -1291,6 +1385,8 @@ impl ServiceManager {
             .filter_map(|svc| {
                 match svc.runtime {
                     ServiceRuntime::Python if svc.build_steps.is_empty() => return None,
+                    // Never build Python for a service that sets up on C++.
+                    ServiceRuntime::Python if self.python_retired(svc) => return None,
                     // A running native service cannot have its runtime swapped.
                     ServiceRuntime::Native if self.running.contains_key(&svc.id) => return None,
                     _ => {}
@@ -1526,8 +1622,11 @@ mod tests {
             assert_eq!(selected.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Native);
             assert_eq!(selected.get_all_build_infos().into_iter().find(|info| info.service_id == "sa3").unwrap().runtime, ServiceRuntime::Native);
         }
+        // A profile with no Python environment sets up on C++ only.
         let fresh = ServiceManager::new(defs.clone(), root.join("other-storage-profile"));
-        assert_eq!(fresh.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Python);
+        assert!(fresh.get_build_info("sa3").err().unwrap().contains("C++"));
+        assert!(fresh.get_all_build_infos().iter().all(|info| info.service_id != "sa3"));
+        assert!(fresh.validate_build_runtime(&queued).unwrap_err().contains("C++"));
         std::fs::write(crate::sa3_runtime::selection_path(&root), "{}").unwrap();
         let corrupted = ServiceManager::new(defs, root.clone());
         assert!(corrupted.validate_build_runtime(&queued).is_err());
@@ -1542,31 +1641,31 @@ mod tests {
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut defs = manifest.services;
-        let foundation = defs.iter_mut().find(|service| service.id == "foundation").unwrap();
-        foundation.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "foundation"})).unwrap());
+        let terry = defs.iter_mut().find(|service| service.id == "melodyflow").unwrap();
+        terry.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap());
         let info = |manager: &ServiceManager, id: &str| {
             manager.get_service_info().into_iter().find(|service| service.id == id).unwrap()
         };
 
         let untouched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(!untouched.is_native("foundation") && !info(&untouched, "foundation").migration_complete);
+        assert!(!untouched.is_native("melodyflow") && !info(&untouched, "melodyflow").migration_complete);
 
         let selection = crate::migration::Selection {
             schema_version: 1, encoding: "anything".into(), verified_release: "v0.1.0".into(),
             backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         };
-        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "foundation"})).unwrap();
+        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap();
         crate::migration::save(&root, &def, &selection, |_| Ok(())).unwrap();
         let switched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(switched.is_native("foundation"));
-        assert_eq!(switched.selection("foundation").unwrap().verified_release, "v0.1.0");
-        assert!(info(&switched, "foundation").migration_complete);
+        assert!(switched.is_native("melodyflow"));
+        assert_eq!(switched.selection("melodyflow").unwrap().verified_release, "v0.1.0");
+        assert!(info(&switched, "melodyflow").migration_complete);
         assert!(!switched.is_native("sa3"), "SA3 has its own selection, and none exists");
 
         std::fs::write(crate::migration::selection_path(&root, &def), "{}").unwrap();
         let unreadable = ServiceManager::new(defs, root.clone());
-        assert!(unreadable.is_native("foundation"), "an unreadable selection still means it moved");
-        assert!(info(&unreadable, "foundation").start_blocker.unwrap().contains("native selection"));
+        assert!(unreadable.is_native("melodyflow"), "an unreadable selection still means it moved");
+        assert!(info(&unreadable, "melodyflow").start_blocker.unwrap().contains("native selection"));
         assert!(!info(&unreadable, "sa3").start_blocker.is_some_and(|blocker| blocker.contains("native selection")));
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
     }
@@ -1583,10 +1682,10 @@ mod tests {
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut manager = ServiceManager::new(manifest.services, root.clone());
-        assert!(manager.select_sa3_native_model("Q8_0").unwrap_err().contains("Download"));
-        assert!(manager.select_sa3_native_model("../../bad").is_err());
+        assert!(manager.select_native_model("sa3", "Q8_0").unwrap_err().contains("Download"));
+        assert!(manager.select_native_model("sa3", "../../bad").is_err());
         manager.begin_native_workload("sa3", "trainer", "SA3 training").unwrap();
-        assert!(manager.select_sa3_native_model("F16").unwrap_err().contains("SA3 training"));
+        assert!(manager.select_native_model("sa3", "F16").unwrap_err().contains("SA3 training"));
         assert_eq!(std::fs::read(crate::sa3_runtime::selection_path(&root)).unwrap(), before);
         assert!(manager.get_service_info().iter().find(|service| service.id == "sa3").unwrap().migration_complete);
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
@@ -1612,7 +1711,7 @@ mod tests {
         manifest.resolve_native_bundles().unwrap();
         let defs = manifest.services;
         let mut manager = ServiceManager::new(defs.clone(), root.clone());
-        let selection = manager.select_sa3_native_model("F16").unwrap();
+        let selection = manager.select_native_model("sa3", "F16").unwrap();
         assert_eq!(selection.encoding, "F16");
         assert!(selection.cleanup_complete && selection.cleanup_errors.is_empty());
         assert_eq!(selection.activated_at, 123);
@@ -1620,7 +1719,7 @@ mod tests {
         assert_eq!(restarted.selection("sa3").unwrap().encoding, "F16");
         assert!(restarted.get_service_info().iter().find(|service| service.id == "sa3").unwrap().migration_complete);
         assert!(crate::sa3_runtime::missing_models(&root, "F16").is_none());
-        assert!(manager.select_sa3_native_model("Q8_0").is_err());
+        assert!(manager.select_native_model("sa3", "Q8_0").is_err());
         assert_eq!(crate::sa3_runtime::read(&root).unwrap().unwrap().encoding, "F16");
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
         println!("PASS real F16 model selection, restart persistence, cleanup preservation and rejection of missing Q8 weights; production profile unchanged");
@@ -1807,6 +1906,82 @@ mod tests {
         assert!(manager
             .begin_shared_runtime_replacement("cudart-12.8")
             .is_ok());
+    }
+
+    #[test]
+    fn a_fresh_install_sets_up_migrating_services_on_cpp_and_keeps_existing_python() {
+        let root = std::env::temp_dir().join(format!("gary-fresh-native-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let retired = |manager: &ServiceManager| -> std::collections::HashMap<String, bool> {
+            manager.get_service_info().into_iter().map(|info| (info.id, info.python_retired)).collect()
+        };
+        let fresh = ServiceManager::new(manifest.services.clone(), root.clone());
+        let flags = retired(&fresh);
+        for id in ["sa3", "stable-audio", "foundation"] {
+            assert!(flags[id], "{id} should set up on C++ on a fresh install");
+        }
+        for id in ["gary", "melodyflow", "carey"] {
+            assert!(!flags[id], "{id} has no C++ migration");
+        }
+        // An existing Python environment stays usable until it migrates.
+        let python = root.join("services/stable-audio/env/Scripts/python.exe");
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::write(&python, b"existing environment").unwrap();
+        let existing = ServiceManager::new(manifest.services, root.clone());
+        let flags = retired(&existing);
+        assert!(!flags["stable-audio"] && flags["foundation"]);
+        assert_eq!(existing.get_build_info("stable-audio").ok().map(|info| info.runtime), Some(ServiceRuntime::Python));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn services_sharing_a_runtime_report_one_group_and_the_rest_none() {
+        let manager = shared_native_manager();
+        let groups: std::collections::HashMap<_, _> = manager
+            .get_service_info()
+            .into_iter()
+            .map(|info| (info.id, info.runtime_group))
+            .collect();
+        for id in ["sa3", "stable-audio", "foundation"] {
+            assert_eq!(groups[id].as_deref(), Some("sa3"), "{id}");
+        }
+        assert_eq!(groups["yuey"], None);
+        assert_eq!(groups["gary"], None);
+        assert_eq!(manager.runtime_members("foundation"), ["stable-audio", "sa3", "foundation"]);
+        assert_eq!(manager.runtime_members("gary"), ["gary"]);
+    }
+
+    #[test]
+    fn a_service_sharing_the_runtime_keeps_running_while_another_changes_its_models() {
+        let mut manager = shared_native_manager();
+        let running = |manager: &mut ServiceManager, id: &str| {
+            let mut process = Command::new("cmd.exe")
+                .args(["/c", "exit /b 0"])
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap();
+            process.wait().unwrap();
+            manager.running.insert(
+                id.into(),
+                RunningService {
+                    process,
+                    healthy: false,
+                    started_at: Instant::now(),
+                    last_health_check_at: None,
+                    _adapter: None,
+                },
+            );
+        };
+        running(&mut manager, "foundation");
+        // The runtime itself is in use, but jerry's models are only jerry's.
+        assert!(manager.native_mutation_blocker("stable-audio").is_some());
+        assert!(manager.native_model_blocker("stable-audio").is_none());
+        running(&mut manager, "stable-audio");
+        assert!(manager.native_model_blocker("stable-audio").unwrap().contains("stop"));
+        manager.running.clear();
     }
 
     #[test]
