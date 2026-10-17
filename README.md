@@ -12,15 +12,18 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 10/17 - the C++ migration has begun
+## update 10/17 - v0.5.0
 
-all three stable audio services (sa3, jerry/SAOS and foundation-1) can now be
-migrated from Python to [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp)
-inside the app. they share one C++ runtime, so the service list groups them
-under a `stable audio` header: click it to install or update that runtime and
-pick its backend (CUDA on NVIDIA, Vulkan on AMD and Intel), then press
-`migrate runtime` on each service. gary4local checks the C++ version first, then
-offers to delete the old Python env and its weights.
+[download gary4local v0.5.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.5.0).
+
+the C++ migration has begun. all three stable audio services (sa3, jerry/SAOS
+and foundation-1) can now be migrated from Python to
+[sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp) inside the app. they
+share one C++ runtime, so the service list groups them under a `stable audio`
+header: click it to install or update that runtime and pick its backend (CUDA
+on NVIDIA, Vulkan on AMD and Intel), then press `migrate runtime` on each
+service. gary4local checks the C++ version first, then offers to delete the
+old Python env and its weights.
 
 if you're installing for the first time, the Python backends for these three
 aren't even an option anymore: `set up runtime` goes straight to C++. if you
@@ -28,45 +31,13 @@ really want the Python versions, an earlier build still has them, and will
 happily eat your storage space.
 
 jerry's finetunes (kickbass and jerry grunge) download from jerry's models
-panel and show up in gary4juce's jerry dropdown, dice prompts included. that
-needs [gary4juce v5.0.1-rc.2](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.1-rc.2)
-or newer.
+panel and show up in gary4juce's jerry dropdown, dice prompts included. jerry
+grunge sounds different now, and that's on purpose: the Python service never
+actually loaded its finetuned weights, so this is the first time you hear it.
 
 thanks again to Kostas for running all three on his Radeon.
 
-## update 10/7 - v0.4.0
-
-[download gary4local v0.4.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.4.0).
-
-now supporting [YuE2](https://github.com/multimodal-art-projection/YuE).
-you'll notice the runtime is a little different... we're using C++ (ggml) for
-this service, and in the future, all gary4local services will be replaced to
-follow this pattern.
-
-this is going to replace the need for a separate gary4local-mac application,
-and is going to save us all a lot of storage space when Python is no longer
-involved.
-
-plz bear with me as i try to make this migration to C++ as smooth as i can.
-
-on yuey's row, `install runtime` downloads the right
-[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) package for your GPU
-(CUDA on NVIDIA, Vulkan on AMD and Intel), checks it, and you're done.
-
-the yuey panel picks the model tier for your GPU, and has a few defaults for
-how it handles instrumentals and how long a song it writes for itself. the
-storage window now shows native runtimes too, including the shared CUDA
-runtime, which you can remove once nothing uses it.
-
-yuey.cpp is now at 0.2.2, fixing the short MIDI score failure that could report
-`invalid YuE2 AR sampling configuration`. after updating this app, press
-`update runtime` on yuey's row. the natural-length default stays at 96 seconds,
-and `copy log` makes it easier to report a slow job.
-
-SA3 and Carey now accept up to 380 seconds locally. longer jobs still depend on
-your available memory; the remote frontend limits stay at 240 seconds.
-
-compatible with [gary4juce v5.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0).
+compatible with [gary4juce v5.0.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.1).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
