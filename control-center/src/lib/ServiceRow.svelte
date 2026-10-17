@@ -25,6 +25,7 @@
     native_fallback_reason: string | null;
     start_blocker: string | null;
     migration_complete: boolean;
+    python_retired: boolean;
   }
 
   let {
@@ -154,7 +155,7 @@
       <button onclick={(e) => { e.stopPropagation(); stopService(); }}>stop</button>
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
     {/if}
-    {#if !(grouped && isNative)}
+    {#if !(grouped && isNative) && !(service.python_retired && !isNative)}
     <button onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
       {#if isBuilding}
         {isNative ? "installing..." : "building..."}
@@ -192,7 +193,7 @@
     {/if}
     {#if hasMigration}
       <button class="migration-btn" onclick={(e) => { e.stopPropagation(); onMigrateRuntime(); }} disabled={isBuilding}>
-        migrate runtime
+        {service.python_retired && !isNative ? "set up runtime" : "migrate runtime"}
       </button>
     {/if}
     </div>{/if}

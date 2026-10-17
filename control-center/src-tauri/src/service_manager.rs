@@ -39,6 +39,10 @@ pub struct ServiceInfo {
     /// services with the same value install, update and pick a backend
     /// together.
     pub runtime_group: Option<String>,
+    /// The service sets up on C++ only: it has no Python environment to keep
+    /// (as on a fresh install) or already runs native, so its Python
+    /// environment is never built.
+    pub python_retired: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -868,6 +872,7 @@ impl ServiceManager {
                         .as_ref()
                         .and_then(|native| native.bundle.clone())
                         .filter(|_| self.bundle_consumers(svc).len() > 1),
+                    python_retired: self.python_retired(svc),
                 }
             })
             .collect()
@@ -1030,6 +1035,23 @@ impl ServiceManager {
         );
 
         Ok(())
+    }
+
+    /// Whether `svc` sets up on C++ only. A service with a native migration
+    /// keeps its Python environment while it has one, so an existing install
+    /// migrates in its own time; without one, as on a fresh install, there is
+    /// nothing to keep and Python is never built for it.
+    fn python_retired(&self, svc: &ServiceDef) -> bool {
+        let Some(target) = crate::migration::Target::of(svc) else {
+            return false;
+        };
+        if crate::migration::service(&svc.id).is_none() {
+            return false;
+        }
+        svc.runtime == ServiceRuntime::Native
+            || !target.def.legacy.env_dirs.iter().any(|dir| {
+                self.service_dir(svc).join(dir).join("Scripts").join("python.exe").exists()
+            })
     }
 
     /// Whether a migrated service's Python files are back, as a downgrade can
@@ -1216,6 +1238,11 @@ impl ServiceManager {
         if info.runtime == ServiceRuntime::Python && self.is_native(&info.service_id) {
             return Err(format!("{} uses C++. Its Python environment cannot be rebuilt.", info.service_id));
         }
+        if info.runtime == ServiceRuntime::Python
+            && self.find_service(&info.service_id).is_some_and(|svc| self.python_retired(svc))
+        {
+            return Err(format!("{} sets up on C++ now: use set up runtime.", info.service_id));
+        }
         Ok(())
     }
 
@@ -1226,6 +1253,12 @@ impl ServiceManager {
             .find_service(service_id)
             .ok_or_else(|| format!("Unknown service: {}", service_id))?;
 
+        if svc.runtime == ServiceRuntime::Python && self.python_retired(svc) {
+            return Err(format!(
+                "{} sets up on C++ now: use set up runtime.",
+                svc.display_name
+            ));
+        }
         if svc.runtime == ServiceRuntime::Native {
             if let Some(reason) = self.native_mutation_blocker(service_id) {
                 return Err(format!(
@@ -1352,6 +1385,8 @@ impl ServiceManager {
             .filter_map(|svc| {
                 match svc.runtime {
                     ServiceRuntime::Python if svc.build_steps.is_empty() => return None,
+                    // Never build Python for a service that sets up on C++.
+                    ServiceRuntime::Python if self.python_retired(svc) => return None,
                     // A running native service cannot have its runtime swapped.
                     ServiceRuntime::Native if self.running.contains_key(&svc.id) => return None,
                     _ => {}
@@ -1587,8 +1622,11 @@ mod tests {
             assert_eq!(selected.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Native);
             assert_eq!(selected.get_all_build_infos().into_iter().find(|info| info.service_id == "sa3").unwrap().runtime, ServiceRuntime::Native);
         }
+        // A profile with no Python environment sets up on C++ only.
         let fresh = ServiceManager::new(defs.clone(), root.join("other-storage-profile"));
-        assert_eq!(fresh.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Python);
+        assert!(fresh.get_build_info("sa3").err().unwrap().contains("C++"));
+        assert!(fresh.get_all_build_infos().iter().all(|info| info.service_id != "sa3"));
+        assert!(fresh.validate_build_runtime(&queued).unwrap_err().contains("C++"));
         std::fs::write(crate::sa3_runtime::selection_path(&root), "{}").unwrap();
         let corrupted = ServiceManager::new(defs, root.clone());
         assert!(corrupted.validate_build_runtime(&queued).is_err());
@@ -1868,6 +1906,35 @@ mod tests {
         assert!(manager
             .begin_shared_runtime_replacement("cudart-12.8")
             .is_ok());
+    }
+
+    #[test]
+    fn a_fresh_install_sets_up_migrating_services_on_cpp_and_keeps_existing_python() {
+        let root = std::env::temp_dir().join(format!("gary-fresh-native-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let retired = |manager: &ServiceManager| -> std::collections::HashMap<String, bool> {
+            manager.get_service_info().into_iter().map(|info| (info.id, info.python_retired)).collect()
+        };
+        let fresh = ServiceManager::new(manifest.services.clone(), root.clone());
+        let flags = retired(&fresh);
+        for id in ["sa3", "stable-audio", "foundation"] {
+            assert!(flags[id], "{id} should set up on C++ on a fresh install");
+        }
+        for id in ["gary", "melodyflow", "carey"] {
+            assert!(!flags[id], "{id} has no C++ migration");
+        }
+        // An existing Python environment stays usable until it migrates.
+        let python = root.join("services/stable-audio/env/Scripts/python.exe");
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::write(&python, b"existing environment").unwrap();
+        let existing = ServiceManager::new(manifest.services, root.clone());
+        let flags = retired(&existing);
+        assert!(!flags["stable-audio"] && flags["foundation"]);
+        assert_eq!(existing.get_build_info("stable-audio").ok().map(|info| info.runtime), Some(ServiceRuntime::Python));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

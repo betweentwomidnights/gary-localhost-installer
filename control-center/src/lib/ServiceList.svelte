@@ -29,6 +29,7 @@
     migration_complete: boolean;
     has_migration: boolean;
     runtime_group: string | null;
+    python_retired: boolean;
   }
 
   let { services, selectedServiceId, selectedRuntimeGroup, hfTokenConfigured, onSelect, onSelectGroup, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateRuntime }: {
