@@ -1,13 +1,12 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.4.0",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0/gary4local_0.4.0_x64-setup.exe",
-    "sha256":  "338046e1d43565388014710c10cbcb9cc93f0376808e05d2f5cf5e01184d866d",
-    "published_at":  "2026-10-07T10:00:36.0000000+00:00",
+    "latest_version":  "0.5.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.5.0/gary4local_0.5.0_x64-setup.exe",
+    "sha256":  "a1a20071e3d9c6bd44686c4d6e193f2b25fe2fca9f0a1a51191f3b89775fb04f",
+    "published_at":  "2026-10-18T08:01:31.0384541+00:00",
     "notes":  [
-                  "YuE2 now runs locally through a native C++/GGML runtime: CUDA on NVIDIA, Vulkan on AMD and Intel.",
-                  "Yuey v0.2.2 fixes short MIDI scores. Existing installs: press Update runtime on Yuey\u0027s row after updating the app.",
-                  "Choose Yuey model tiers and generation defaults; natural length defaults to 96 seconds. Native runtimes appear in storage.",
-                  "Local SA3 and Carey accept 380 seconds. SA3 continuation counts source plus added audio. Compatible with gary4juce v5.0.0."
+                  "sa3, jerry and foundation-1 can move to C++: use migrate runtime under the new stable audio header.",
+                  "Fresh installs set these three up on C++ only, with no Python.",
+                  "jerry grunge now loads its real finetune, so it sounds different. Compatible with gary4juce v5.0.1."
               ]
 }
