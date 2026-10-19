@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { runtimeDevice } from "./nativeDevice";
   import { invoke } from "@tauri-apps/api/core";
 
   interface RuntimeInfo {
@@ -10,6 +11,8 @@
     fallbackReason: string | null;
     offeredBackends: string[];
     devices: { name: string; backend: string; deviceType: string; memoryTotalBytes: number }[];
+    selectedDeviceName: string | null;
+    selectedMemoryBytes: number | null;
   }
   let { serviceStatus, nativeBackend, envExists, building, onShowModels }: {
     serviceStatus: string;
@@ -20,7 +23,7 @@
   } = $props();
   let info = $state<RuntimeInfo | null>(null);
   let message: string | null = $state(null);
-  let device = $derived(info?.devices.find((entry) => entry.deviceType !== "cpu" && entry.backend.toLowerCase().includes(info?.backend ?? "")));
+  let device = $derived(runtimeDevice(info));
 
   async function load() {
     try { info = await invoke<RuntimeInfo>("get_native_runtime_info", { serviceId: "sa3" }); }

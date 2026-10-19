@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { runtimeDevice } from "./nativeDevice";
   import { invoke } from "@tauri-apps/api/core";
   import NativeBackendPicker from "./NativeBackendPicker.svelte";
 
@@ -15,6 +16,8 @@
     fallbackReason: string | null;
     offeredBackends: string[];
     devices: { name: string; backend: string; deviceType: string; memoryTotalBytes: number }[];
+    selectedDeviceName: string | null;
+    selectedMemoryBytes: number | null;
   }
   let { serviceId, label, serviceStatus, nativeBackend, building, onShowModels }: {
     serviceId: string;
@@ -28,7 +31,7 @@
   let busy = $state(false);
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
-  const device = $derived(info?.devices.find((entry) => entry.deviceType !== "cpu" && entry.backend.toLowerCase().includes(info?.backend ?? "")));
+  const device = $derived(runtimeDevice(info));
   const action = $derived(!info || info.devOverride ? null
     : !info.installed ? "install runtime"
     : info.version !== info.manifestVersion ? "update runtime"
