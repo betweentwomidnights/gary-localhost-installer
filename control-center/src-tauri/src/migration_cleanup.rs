@@ -18,7 +18,9 @@ pub struct ResultInfo {
 }
 
 pub fn preview(service: &dyn Service, root: &Path, hub: &Path) -> Preview {
-    crate::migration_inventory::preview(service.target(), root, hub, service.extras(root, hub))
+    let mut preview = crate::migration_inventory::preview(service.target(), root, hub, service.extras(root, hub));
+    preview.python_still_needed = service.python_still_needed();
+    preview
 }
 
 fn read_selection(service: &dyn Service, root: &Path) -> Result<Option<Selection>, String> {

@@ -76,7 +76,8 @@ impl Service for Carey {
     }
 
     fn python_only_features(&self) -> Option<&'static str> {
-        Some("LoRA training, LoRAs and caption helpers")
+        // SA3's dataset auto-captioning runs Carey's captioner in Carey's environment.
+        Some("LoRA training, LoRAs, caption helpers and SA3's dataset auto-captioning")
     }
 
     /// ace-server chooses a model per request, so the tier only decides what

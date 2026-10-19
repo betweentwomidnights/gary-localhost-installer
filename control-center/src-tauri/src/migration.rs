@@ -154,14 +154,18 @@ pub trait Service: Sync {
     /// runs, then the service's own blocker. Cleanup asks this, never
     /// `cleanup_blocker` alone.
     fn retirement_blocker(&self, root: &Path, hub: &Path, downloaded: &[String]) -> Option<String> {
-        self.python_only_features()
-            .map(|features| {
-                format!(
-                    "{}'s {features} still run in Python, so its Python installation stays until they run in C++ too.",
-                    self.target().label()
-                )
-            })
-            .or_else(|| self.cleanup_blocker(root, hub, downloaded))
+        self.python_still_needed().or_else(|| self.cleanup_blocker(root, hub, downloaded))
+    }
+
+    /// Why the Python installation stays whatever is on disk, for the
+    /// migration preview and cleanup alike.
+    fn python_still_needed(&self) -> Option<String> {
+        self.python_only_features().map(|features| {
+            format!(
+                "{}'s {features} still run in Python, so its Python installation stays until they run in C++ too.",
+                self.target().label()
+            )
+        })
     }
 
     /// Records in the data folder, relative to the runtime root, that storage

@@ -17,6 +17,7 @@
     warnings: string[];
     nativeSelection: Selection | null;
     cleanupToken: string;
+    pythonStillNeeded: string | null;
   }
   interface Profile {
     serviceId: string;
@@ -240,7 +241,7 @@
   }
 
   async function cleanup() {
-    if (blocked || !preview || preview.warnings.length) return;
+    if (blocked || !preview || preview.warnings.length || preview.pythonStillNeeded) return;
     working = true;
     error = null;
     progress = "Verifying C++ again before removing reviewed Python files...";
@@ -316,6 +317,12 @@
               <ul class="tasks" aria-label="Preparation progress">{#each tasks as entry, index}<li class:active={index === taskIndex} class:finished={index < taskIndex}><span>{index < taskIndex ? "✓" : index === taskIndex ? "•" : "○"}</span>{entry.label}</li>{/each}</ul>
               {#if task === "models"}{#each selectedDownloads.filter((entry) => entry.error) as download}<p class="error" role="alert">{download.error}</p>{/each}{/if}
             {/if}
+          {:else if stage === "cleanup" && preview.pythonStillNeeded}
+            <h3>{label} runs on C++; Python stays for now</h3>
+            <p class="passed">✓ Automatic runtime and {checks} checks passed.</p>
+            <p>{preview.pythonStillNeeded}</p>
+            <div class="summary">About {formatBytes(preview.estimatedCleanupBytes)} in reviewed Python files<small>Cleanup can remove these once nothing needs them. Open this again from migrate runtime then.</small></div>
+            <details><summary>Files cleanup will remove ({preview.cleanupCandidates.length})</summary><div class="file-list">{#each preview.cleanupCandidates as entry}<div class="file"><span>{entry.label}</span><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>{/each}</div></details>
           {:else if stage === "cleanup"}
             <h3>Remove the old {label} Python installation</h3>
             <p class="passed">✓ Automatic runtime and {checks} checks passed.</p>
@@ -346,6 +353,7 @@
       </div>
       <footer>
         {#if stage === "setup"}<button type="button" onclick={close} disabled={working || loading}>later</button><button class="primary" type="button" onclick={migrate} disabled={blocked || !preview}>{working ? "migrating…" : error && task ? "retry migration" : preview?.nativeSelection ? "check and finish migration" : "prepare and switch to C++"}</button>
+        {:else if stage === "cleanup" && preview?.pythonStillNeeded}<button class="primary" type="button" onclick={close}>done</button>
         {:else if stage === "cleanup"}<button type="button" onclick={close} disabled={working || loading}>keep Python for now</button><button class="primary" type="button" onclick={cleanup} disabled={blocked || !!preview?.warnings.length}>{working ? "cleaning up…" : "clean up Python and finish"}</button>
         {:else}<button class="primary" type="button" onclick={close}>done</button>{/if}
       </footer>
