@@ -160,7 +160,7 @@ pub fn metadata(fields: &crate::CareyAceSidecarFields, trigger: &str) -> Result<
     let mut lyrics = fields.lyrics.trim().replace("\r\n", "\n");
     if lyrics.is_empty() {
         if !fields.is_instrumental {
-            return Err("no lyrics, and not marked instrumental".into());
+            return Err("a vocal song needs its lyrics; add them, or mark it instrumental".into());
         }
         lyrics = "[Instrumental]".into();
     }
@@ -760,7 +760,7 @@ mod tests {
         assert!(metadata(&fields("caption: x\nbpm: fast\n"), "").unwrap_err().contains("not a number"));
         assert!(metadata(&fields("caption: x\nbpm: 90\nis_instrumental: false\n"), "")
             .unwrap_err()
-            .contains("no lyrics"));
+            .contains("needs its lyrics"));
         assert!(metadata(&fields("caption: x\nbpm: 90\ntimesignature: waltz\nis_instrumental: true\n"), "").is_err());
         assert_eq!(signature("6/8").unwrap(), 6);
     }

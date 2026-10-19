@@ -1,5 +1,6 @@
 mod ace_client;
 mod carey_migration;
+mod carey_caption;
 mod carey_models;
 mod carey_training;
 mod foundation_migration;
@@ -7866,7 +7867,30 @@ async fn start_carey_ace_lora_training(
     require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
     if manager.lock().await.is_native("carey") {
         if auto_caption || prepare_only {
-            return Err("C++ auto-captioning is coming next. Complete the dataset's sidecars in the dataset editor, then train without auto-captioning.".into());
+            let dit = native_dit.ok_or("Choose the base model whose tokenizer captions the dataset.")?;
+            let dit = carey_models::models()
+                .component(&dit)
+                .ok_or("Unknown base model")?
+                .files[0]
+                .filename
+                .clone();
+            let size = caption_lm_model.trim().trim_start_matches("acestep-5Hz-lm-").to_string();
+            let options = carey_caption::Options {
+                dataset: PathBuf::from(dataset_path.trim()),
+                lm: carey_caption::lm_file(repo_root.inner(), &size)?,
+                dit,
+                vae: carey_models::models()
+                    .component(carey_models::SHARED)
+                    .ok_or("Carey's catalog has no shared models")?
+                    .files[1]
+                    .filename
+                    .clone(),
+                overwrite: overwrite_captions,
+                bpm_analysis,
+                key_analysis,
+                trigger: trigger.trim().to_string(),
+            };
+            return start_native_carey_captioning(options, normalized_name, repo_root.inner(), manager.inner(), app_handle).await;
         }
         let options = carey_training::Options {
             name: normalized_name,
@@ -8274,6 +8298,141 @@ async fn start_native_carey_training(
         if let Err(error) = job.monitor().await {
             let _ = mark_carey_ace_training_failed(&status_path, &error, None);
         }
+        let mut services = manager.lock().await;
+        services.end_native_workload("carey", "native-training");
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+    });
+    Ok(read_carey_ace_lora_training_state())
+}
+
+/// Caption a dataset with ace-server's /caption on a private port: a native
+/// workload, so Carey stays stopped while the captioner holds the GPU.
+async fn start_native_carey_captioning(
+    options: carey_caption::Options,
+    name: String,
+    root: &Path,
+    manager: &ManagerState,
+    app_handle: tauri::AppHandle,
+) -> Result<CareyAceTrainingState, String> {
+    let _launch = carey_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "A Carey training launch is already in progress")?;
+    if !options.dataset.is_dir() {
+        return Err(format!("{} is not a valid dataset folder", options.dataset.display()));
+    }
+    let current = read_carey_ace_lora_training_state();
+    if matches!(current.status.as_str(), "starting" | "running") {
+        return Err("Carey training is already active.".into());
+    }
+    let launch = {
+        let mut services = manager.lock().await;
+        services.stop_if_native("carey");
+        if let Some(blocker) = services.native_mutation_blocker("carey") {
+            return Err(format!("Cannot caption: {blocker}."));
+        }
+        let (_, _, launch) = services.migration_launch("carey", carey_models::TIERS[0])?;
+        services.begin_native_workload("carey", "native-training", "Carey captioning")?;
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+        launch
+    };
+    let started = (|| {
+        let jobs = sa3_training::checked_folder(root, &["carey", "training", "jobs"])?;
+        let id = format!("caption-{}-{}", name, now_epoch_seconds() as u64);
+        let job = jobs.join(&id);
+        std::fs::create_dir_all(&job).map_err(|error| error.to_string())?;
+        let status_path = job.join("status.json");
+        let log_path = job.join("captioning.log");
+        let cancel_path = job.join("cancel.requested");
+        write_carey_ace_training_launch_state(&status_path, &id, &name, &job, &log_path, &cancel_path, 0, "Starting the captioner.")?;
+        patch_carey_ace_training_status(
+            &status_path,
+            &[
+                ("runtime", serde_json::json!("acestep.cpp")),
+                ("phase", serde_json::json!("loading-caption-model")),
+                ("captionLmModel", serde_json::json!(options.lm)),
+            ],
+        )?;
+        std::fs::write(&log_path, format!("Captioning {} with {}\n", options.dataset.display(), options.lm))
+            .map_err(|error| error.to_string())?;
+        Ok::<_, String>((job, status_path, log_path, cancel_path))
+    })();
+    let (job, status_path, log_path, cancel_path) = match started {
+        Ok(paths) => paths,
+        Err(error) => {
+            let mut services = manager.lock().await;
+            services.end_native_workload("carey", "native-training");
+            let _ = app_handle.emit("services-updated", services.get_service_info());
+            return Err(error);
+        }
+    };
+    let manager = manager.clone();
+    tauri::async_runtime::spawn(async move {
+        let log = |line: String| {
+            use std::io::Write;
+            if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+                let _ = writeln!(file, "{line}");
+            }
+        };
+        let outcome = async {
+            let server = migration_verify::PrivateServer::start(&launch, &job, "Carey captioner", &[]).await?;
+            let result = carey_caption::caption_dataset(
+                &server,
+                &options,
+                &job,
+                |progress| {
+                    log(format!("[{}/{}] {}", progress.index, progress.total, progress.name));
+                    let _ = patch_carey_ace_training_status(
+                        &status_path,
+                        &[
+                            ("status", serde_json::json!("running")),
+                            ("phase", serde_json::json!("captioning")),
+                            ("message", serde_json::json!(format!("Captioning {}", progress.name))),
+                            ("currentFile", serde_json::json!(progress.index)),
+                            ("totalFiles", serde_json::json!(progress.total)),
+                            ("captionedCount", serde_json::json!(progress.index - 1)),
+                        ],
+                    );
+                },
+                || cancel_path.exists(),
+            )
+            .await;
+            let _ = server.stop().await;
+            result
+        }
+        .await;
+        let updates = match outcome {
+            Ok((captioned, total)) => {
+                let message = if captioned == 0 {
+                    format!("All {total} songs already have sidecars. Turn on overwrite to recaption them.")
+                } else {
+                    format!("Captioned {captioned} of {total} songs. Review them in the dataset editor (vocal songs need their lyrics), then train.")
+                };
+                log(message.clone());
+                vec![
+                    ("status", serde_json::json!("completed")),
+                    ("phase", serde_json::json!("captioned")),
+                    ("message", serde_json::json!(message)),
+                    ("captionedCount", serde_json::json!(captioned)),
+                ]
+            }
+            Err(error) => {
+                log(error.clone());
+                let cancelled = cancel_path.exists();
+                vec![
+                    ("status", serde_json::json!(if cancelled { "cancelled" } else { "failed" })),
+                    ("phase", serde_json::json!(if cancelled { "cancelled" } else { "failed" })),
+                    ("message", serde_json::json!(error)),
+                    ("error", if cancelled { serde_json::Value::Null } else { serde_json::json!(error) }),
+                ]
+            }
+        };
+        let mut updates = updates;
+        updates.extend([
+            ("pid", serde_json::Value::Null),
+            ("ownerPid", serde_json::Value::Null),
+            ("launcherPid", serde_json::Value::Null),
+        ]);
+        let _ = patch_carey_ace_training_status(&status_path, &updates);
         let mut services = manager.lock().await;
         services.end_native_workload("carey", "native-training");
         let _ = app_handle.emit("services-updated", services.get_service_info());

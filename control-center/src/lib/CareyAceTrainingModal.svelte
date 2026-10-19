@@ -143,6 +143,8 @@
   ] as const;
   let nativeDit = $state<string | null>(null);
   let nativeDownloaded = $state<string[]>([]);
+  // LM sizes with any precision downloaded, e.g. "1.7B".
+  let nativeLmSizes = $state<string[]>([]);
   let trainingRecommendations = $state<Record<string, string>>({});
   let windowMin = $state(45);
   let windowMax = $state(60);
@@ -424,7 +426,10 @@
     NATIVE_FAMILIES.flatMap((family) => nativeDownloaded.filter((id) => id.startsWith(`carey-native::${family.variant}::`)))
   );
   let windowValid = $derived(windowMin >= 1 && windowMax >= windowMin && windowMax <= 600);
-  let canPrepare = $derived(!nativeRuntime && commonValid && hasModel);
+  let nativeLmReady = $derived(nativeLmSizes.includes(captionLmModel.replace("acestep-5Hz-lm-", "")));
+  let canPrepare = $derived(nativeRuntime
+    ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && nativeLmReady
+    : commonValid && hasModel);
   let canTrain = $derived(nativeRuntime
     ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && windowValid && batchSize === 1
     : commonValid && hasModel);
@@ -451,6 +456,9 @@
       nativeDownloaded = models
         .filter((entry) => entry.status === "downloaded" && NATIVE_FAMILIES.some((family) => entry.id.startsWith(`carey-native::${family.variant}::`)))
         .map((entry) => entry.id);
+      nativeLmSizes = [...new Set(models
+        .filter((entry) => entry.status === "downloaded" && entry.id.startsWith("carey-native::lm-"))
+        .map((entry) => entry.id.split("::")[1].replace("lm-", "")))];
       if (nativeRuntime) {
         trainingRecommendations = await invoke<Record<string, string>>("get_carey_training_recommendations").catch(() => ({}));
       }
@@ -541,7 +549,7 @@
       <div class="title" id="ace-train-title">train a local ACE-Step LoRA</div>
       <div class="body">
         {#if nativeRuntime}
-          complete each song's sidecar, then train a LoRA or DoRA adapter on the 2B or XL base with Carey's C++ trainer. Finished and cancelled runs register their adapter for Carey.
+          caption the dataset, review and edit its sidecars, then train a LoRA or DoRA adapter on the 2B or XL base with Carey's C++ trainer. Finished and cancelled runs register their adapter for Carey.
         {:else}
           prepare ACE sidecars with understand_music, edit the metadata, then train a LoRA or DoRA adapter against base or xl-base. Successful runs register themselves in Carey's LoRA registry.
         {/if}
@@ -627,12 +635,6 @@
       {/if}
       {/if}
 
-      {#if nativeRuntime}
-      <div class="section-label">captions</div>
-      <div class="note">
-        C++ auto-captioning is coming next. Until then, complete each song's sidecar with <strong>edit prompts / sidecars</strong>: a caption, its BPM, and lyrics or "instrumental". Training checks every sidecar and names any that are incomplete before it starts.
-      </div>
-      {:else}
       <div class="section-label">captioner</div>
       <div class="settings-grid">
         <label class="field">
@@ -650,6 +652,9 @@
             <small>use this only when you want to replace human edits.</small>
           </span>
         </label>
+        {#if nativeRuntime && modelsLoaded && !nativeLmReady}
+          <div class="warning">download the {captionLmModel.replace("acestep-5Hz-lm-", "")} language model from Carey's models to caption with it.</div>
+        {/if}
         <label class="toggle-field">
           <input type="checkbox" bind:checked={bpmKeySanityCheck} />
           <span>
@@ -661,13 +666,16 @@
       <div class="captioner-prepare">
         <div>
           <strong>caption and prepare dataset</strong>
-          <small>captions missing sidecars with understand_music, applies optional BPM/key checks, then writes editable dataset metadata for review. this loads the model selected above as well as the captioner — understand_music reads audio codes, and that model is what turns your audio into them.</small>
+          {#if nativeRuntime}
+            <small>captions songs without sidecars, lets local BPM/key analysis correct the LM where it is confident, and writes editable sidecars. a BPM in the file name (like <code>_bpm120</code>) always wins. lyrics stay blank: add them for vocal songs before training. this also loads the training model above, whose tokenizer turns your audio into what the captioner reads.</small>
+          {:else}
+            <small>captions missing sidecars with understand_music, applies optional BPM/key checks, then writes editable dataset metadata for review. this loads the model selected above as well as the captioner — understand_music reads audio codes, and that model is what turns your audio into them.</small>
+          {/if}
         </div>
         <button type="button" class="accent" onclick={() => void startJob(true)} disabled={!canPrepare}>
           {starting ? "launching..." : "caption / prepare"}
         </button>
       </div>
-      {/if}
 
       <div class="section-label">training</div>
       <div class="settings-grid">
