@@ -14,6 +14,7 @@
   import Sa3OutputPanel from "./lib/Sa3OutputPanel.svelte";
   import YueyRuntimeBanner from "./lib/YueyRuntimeBanner.svelte";
   import Sa3RuntimeBanner from "./lib/Sa3RuntimeBanner.svelte";
+  import NativeRuntimeBanner from "./lib/NativeRuntimeBanner.svelte";
   import YueyGenerationPanel, { type YueyGenerationSettings } from "./lib/YueyGenerationPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
@@ -978,17 +979,29 @@
             />
           {/if}
         {:else if selectedServiceId === "carey"}
-          <CareyXlBanner
-            enabled={appSettings.careyUseXlModels}
-            serviceStatus={selectedService?.status ?? "stopped"}
-            onUpdated={onCareyXlSettingUpdated}
-          />
-          <CareyScragVaeBanner
-            enabled={appSettings.careyUseScragVae}
-            serviceStatus={selectedService?.status ?? "stopped"}
-            onUpdated={onCareyScragVaeSettingUpdated}
-            onShowModels={() => showModels("carey")}
-          />
+          {#if selectedService?.runtime === "native"}
+            <!-- ace-server picks XL or 2B per request; the XL and scrag VAE switches are Python Carey's. -->
+            <NativeRuntimeBanner
+              serviceId="carey"
+              label="Carey"
+              serviceStatus={selectedService.status}
+              nativeBackend={selectedService.native_backend}
+              building={selectedService.build_status?.building ?? false}
+              onShowModels={() => showModels("carey")}
+            />
+          {:else}
+            <CareyXlBanner
+              enabled={appSettings.careyUseXlModels}
+              serviceStatus={selectedService?.status ?? "stopped"}
+              onUpdated={onCareyXlSettingUpdated}
+            />
+            <CareyScragVaeBanner
+              enabled={appSettings.careyUseScragVae}
+              serviceStatus={selectedService?.status ?? "stopped"}
+              onUpdated={onCareyScragVaeSettingUpdated}
+              onShowModels={() => showModels("carey")}
+            />
+          {/if}
         {:else if selectedServiceId === "gary"}
           <GaryFp16Banner
             enabled={appSettings.garyUseFp16}
