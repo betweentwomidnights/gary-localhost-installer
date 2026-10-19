@@ -1,3 +1,6 @@
+mod ace_client;
+mod carey_migration;
+mod carey_models;
 mod foundation_migration;
 mod foundation_models;
 mod manifest;
@@ -6215,6 +6218,7 @@ pub fn run() {
             delete_hf_token,
             get_runtime_storage_info,
             get_migration_profile,
+            get_native_model_recommendations,
             get_migration_preview,
             get_native_runtime_selection,
             select_native_model,
@@ -10076,6 +10080,30 @@ fn get_migration_profile(service_id: String) -> Result<migration::Profile, Strin
     Ok(migrating(&service_id)?.profile())
 }
 
+/// What the service recommends for this machine's GPU, measured by its
+/// runtime's install probe; nothing until a runtime is installed.
+#[tauri::command]
+async fn get_native_model_recommendations(
+    service_id: String,
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<migration::Recommendations, String> {
+    let service = migrating(&service_id)?;
+    let (def, native_dir) = {
+        let mgr = manager.lock().await;
+        mgr.native_service(&service_id)
+            .ok_or_else(|| format!("{service_id} is not a native service"))?
+    };
+    let info = native_runtime::runtime_info(
+        &service_id,
+        &native_dir,
+        &def,
+        native_backend_preference(&service_id),
+    );
+    Ok(native_runtime::accelerator_memory(&info)
+        .map(|memory| service.recommendations(memory))
+        .unwrap_or_default())
+}
+
 #[tauri::command]
 async fn get_migration_preview(
     service_id: String,
@@ -10250,7 +10278,7 @@ async fn cleanup_legacy_installation(
         }
         let hub = models.hf_hub_cache_dir();
         let downloaded = models.downloaded(&legacy_models);
-        if let Some(blocker) = service.cleanup_blocker(repo_root.inner(), &hub, &downloaded) {
+        if let Some(blocker) = service.retirement_blocker(repo_root.inner(), &hub, &downloaded) {
             return Err(blocker);
         }
         migration_cleanup::validate_review(service, repo_root.inner(), &hub, &review_token)?;

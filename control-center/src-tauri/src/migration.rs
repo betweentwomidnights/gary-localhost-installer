@@ -48,6 +48,15 @@ pub struct Profile {
     pub options_label: Option<String>,
 }
 
+/// Model choices that suit this machine's GPU, from what the runtime's install
+/// probe measured.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Recommendations {
+    pub tier: Option<String>,
+    pub components: Vec<String>,
+}
+
 /// What only a migrating service can answer. The shared inventory and cleanup
 /// engine asks these; everything else it takes from the manifest block.
 pub trait Service: Sync {
@@ -73,6 +82,12 @@ pub trait Service: Sync {
     /// What the models panel calls the tier options.
     fn options_label(&self) -> Option<&'static str> {
         None
+    }
+
+    /// What suits a GPU with `memory_bytes` of memory: the tier to prepare
+    /// and the components to badge as recommended. By default nothing.
+    fn recommendations(&self, _memory_bytes: u64) -> Recommendations {
+        Recommendations::default()
     }
 
     /// Service-specific steps the migration panel offers beyond runtime,
@@ -120,11 +135,33 @@ pub trait Service: Sync {
         self.tier_components(&selection.encoding).map(|_| ())
     }
 
+    /// What still runs only in the Python service, such as its training, as
+    /// a phrase for messages. While there is any, a fresh install still sets
+    /// Python up and cleanup refuses to remove it, so switching to C++ never
+    /// loses a feature.
+    fn python_only_features(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Why cleanup must not run yet, e.g. a legacy artifact whose native
     /// replacement has not been prepared. `downloaded` holds the legacy model
     /// ids the model manager reports as downloaded.
     fn cleanup_blocker(&self, _root: &Path, _hub: &Path, _downloaded: &[String]) -> Option<String> {
         None
+    }
+
+    /// Why the Python installation cannot be removed now: what only Python
+    /// runs, then the service's own blocker. Cleanup asks this, never
+    /// `cleanup_blocker` alone.
+    fn retirement_blocker(&self, root: &Path, hub: &Path, downloaded: &[String]) -> Option<String> {
+        self.python_only_features()
+            .map(|features| {
+                format!(
+                    "{}'s {features} still run in Python, so its Python installation stays until they run in C++ too.",
+                    self.target().label()
+                )
+            })
+            .or_else(|| self.cleanup_blocker(root, hub, downloaded))
     }
 
     /// Records in the data folder, relative to the runtime root, that storage
@@ -347,6 +384,7 @@ pub fn service(id: &str) -> Option<&'static dyn Service> {
         "sa3" => Some(&crate::sa3_migration::Sa3),
         "foundation" => Some(&crate::foundation_migration::Foundation),
         "stable-audio" => Some(&crate::stable_audio_migration::StableAudio),
+        "carey" => Some(&crate::carey_migration::Carey),
         _ => None,
     }
 }

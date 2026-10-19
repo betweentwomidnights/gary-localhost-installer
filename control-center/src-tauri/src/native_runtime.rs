@@ -865,6 +865,21 @@ pub fn runtime_info(
     }
 }
 
+/// Memory on the GPU the installed backend runs on, from the install probe:
+/// the largest GPU of that backend, which is the one a server picks first.
+pub fn accelerator_memory(info: &NativeRuntimeInfo) -> Option<u64> {
+    let backend = info.backend.as_deref()?.to_ascii_lowercase();
+    info.devices
+        .iter()
+        .filter(|device| {
+            device.backend.to_ascii_lowercase().contains(&backend)
+                && matches!(device.device_type.to_ascii_lowercase().as_str(), "gpu" | "igpu")
+        })
+        .map(|device| device.memory_total_bytes)
+        .max()
+        .filter(|bytes| *bytes > 0)
+}
+
 /// The encoding the last runtime check recommended for this machine's memory.
 pub fn recommended_encoding(native_dir: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(native_dir.join(PROPS_FILE)).ok()?;

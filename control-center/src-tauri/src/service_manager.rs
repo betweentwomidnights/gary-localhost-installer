@@ -1045,7 +1045,10 @@ impl ServiceManager {
         let Some(target) = crate::migration::Target::of(svc) else {
             return false;
         };
-        if crate::migration::service(&svc.id).is_none() {
+        let Some(service) = crate::migration::service(&svc.id) else {
+            return false;
+        };
+        if service.python_only_features().is_some() {
             return false;
         }
         svc.runtime == ServiceRuntime::Native
@@ -1923,9 +1926,11 @@ mod tests {
         for id in ["sa3", "stable-audio", "foundation"] {
             assert!(flags[id], "{id} should set up on C++ on a fresh install");
         }
-        for id in ["gary", "melodyflow", "carey"] {
+        for id in ["gary", "melodyflow"] {
             assert!(!flags[id], "{id} has no C++ migration");
         }
+        // Carey migrates, but its training still needs Python.
+        assert!(!flags["carey"], "carey still sets up Python while its training runs only there");
         // An existing Python environment stays usable until it migrates.
         let python = root.join("services/stable-audio/env/Scripts/python.exe");
         std::fs::create_dir_all(python.parent().unwrap()).unwrap();

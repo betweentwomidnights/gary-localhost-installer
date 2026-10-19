@@ -55,7 +55,7 @@ pub fn validate_review(
     }
     // What is on disk; callers that know which legacy models the model
     // manager holds as downloaded check those before reviewing.
-    if let Some(blocker) = service.cleanup_blocker(root, hub, &[]) {
+    if let Some(blocker) = service.retirement_blocker(root, hub, &[]) {
         return Err(blocker);
     }
     Ok(current)

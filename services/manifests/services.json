@@ -337,6 +337,44 @@
         "CAREY_LORA_REGISTRY": "${GARY_RUNTIME}/carey/lora_registry.json",
         "CAREY_CAPTIONS": "${GARY_RUNTIME}/carey/captions.json"
       },
+      "native": {
+        "executable": "ace-server.exe",
+        "modelsDir": "carey",
+        "version": "v0.1.0",
+        "env": {
+          "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
+          "ACE_PORT": "8003",
+          "ACE_DEVICE": "${NATIVE_BACKEND}",
+          "ACE_ADAPTER_MODE": "functional"
+        },
+        "platforms": {
+          "windows-x64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.0/acestep-v0.1.0-windows-x64-core.zip",
+              "sha256": "2b6d1ec5f5854bed48b89a30cf3c863bf40c9fda672dc476592b9535edd1350c"
+            },
+            "backends": {
+              "cuda": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.0/acestep-v0.1.0-windows-x64-cuda.zip",
+                "sha256": "4de2efc93d0c5518b380d7812b03e391b4944840a7ef29c667c16967577bcbbf",
+                "requires": ["cudart-12.8"]
+              },
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.0/acestep-v0.1.0-windows-x64-vulkan.zip",
+                "sha256": "a63734250cb572ddb8f4de683e389bc274233cb9e6a63327687844091276fa3e"
+              }
+            },
+            "prefer": ["cuda", "vulkan"]
+          }
+        }
+      },
+      "migration": {
+        "dataDir": "carey",
+        "label": "Carey",
+        "legacy": {
+          "envDirs": ["env", ".venv"]
+        }
+      },
       "dependsOn": []
     },
     {
