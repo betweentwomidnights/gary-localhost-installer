@@ -37,10 +37,12 @@
     recommendedEncoding: string | null;
   }
 
-  let { serviceId, serviceRuntime = "python", hasMigration = false, onBack }: {
+  let { serviceId, serviceRuntime = "python", hasMigration = false, pythonRetired = false, onBack }: {
     serviceId: string;
     serviceRuntime?: "python" | "native";
     hasMigration?: boolean;
+    /** Sets up on C++ only, so it has no Python models to offer. */
+    pythonRetired?: boolean;
     onBack: () => void;
   } = $props();
 
@@ -234,13 +236,15 @@
   // A migrating service other than SA3 shows its native components in their
   // own section; its Python models go once it runs native.
   const hasTierModels = $derived(hasMigration && !isSa3);
+  // Python models only matter while the service can still run Python.
+  const pythonModels = $derived(serviceRuntime !== "native" && !pythonRetired);
   let nativeModels = $derived(models.filter((m) => m.service === serviceId && m.size_category === "native"));
 
   // Filter models belonging to this service
   let serviceModels = $derived(
     models.filter((m) => m.service === serviceId
-      && (!isSa3 || serviceRuntime !== "native" || m.id.startsWith("sa3-native::"))
-      && (!hasTierModels || (m.size_category !== "native" && serviceRuntime !== "native")))
+      && (!isSa3 || pythonModels || m.id.startsWith("sa3-native::"))
+      && (!hasTierModels || (m.size_category !== "native" && pythonModels)))
   );
 
   // For Jerry: separate base models from finetune checkpoints
@@ -355,7 +359,7 @@
         <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
       {/if}
       <!-- Jerry's Python models go once it runs native. -->
-      {#if serviceRuntime !== "native"}
+      {#if pythonModels}
       {#if hasTierModels}<div class="size-label">Python models</div>{/if}
       <!-- Jerry: Base model section -->
       <div class="size-group">
@@ -477,7 +481,7 @@
 
     {:else if isSa3}
       <Sa3NativeModels models={serviceModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
-      {#if serviceRuntime !== "native"}
+      {#if pythonModels}
       <div class="size-group">
         <div class="size-label">Python models and optional components</div>
         <div class="carey-hint">

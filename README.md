@@ -12,39 +12,32 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 10/7 - v0.4.0
+## update 10/17 - v0.5.0
 
-[download gary4local v0.4.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.4.0).
+[download gary4local v0.5.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.5.0).
 
-now supporting [YuE2](https://github.com/multimodal-art-projection/YuE).
-you'll notice the runtime is a little different... we're using C++ (ggml) for
-this service, and in the future, all gary4local services will be replaced to
-follow this pattern.
+the C++ migration has begun. all three stable audio services (sa3, jerry/SAOS
+and foundation-1) can now be migrated from Python to
+[sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp) inside the app. they
+share one C++ runtime, so the service list groups them under a `stable audio`
+header: click it to install or update that runtime and pick its backend (CUDA
+on NVIDIA, Vulkan on AMD and Intel), then press `migrate runtime` on each
+service. gary4local checks the C++ version first, then offers to delete the
+old Python env and its weights.
 
-this is going to replace the need for a separate gary4local-mac application,
-and is going to save us all a lot of storage space when Python is no longer
-involved.
+if you're installing for the first time, the Python backends for these three
+aren't even an option anymore: `set up runtime` goes straight to C++. if you
+really want the Python versions, an earlier build still has them, and will
+happily eat your storage space.
 
-plz bear with me as i try to make this migration to C++ as smooth as i can.
+jerry's finetunes (kickbass and jerry grunge) download from jerry's models
+panel and show up in gary4juce's jerry dropdown, dice prompts included. jerry
+grunge sounds different now, and that's on purpose: the Python service never
+actually loaded its finetuned weights, so this is the first time you hear it.
 
-on yuey's row, `install runtime` downloads the right
-[yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp) package for your GPU
-(CUDA on NVIDIA, Vulkan on AMD and Intel), checks it, and you're done.
+thanks again to Kostas for running all three on his Radeon.
 
-the yuey panel picks the model tier for your GPU, and has a few defaults for
-how it handles instrumentals and how long a song it writes for itself. the
-storage window now shows native runtimes too, including the shared CUDA
-runtime, which you can remove once nothing uses it.
-
-yuey.cpp is now at 0.2.2, fixing the short MIDI score failure that could report
-`invalid YuE2 AR sampling configuration`. after updating this app, press
-`update runtime` on yuey's row. the natural-length default stays at 96 seconds,
-and `copy log` makes it easier to report a slow job.
-
-SA3 and Carey now accept up to 380 seconds locally. longer jobs still depend on
-your available memory; the remote frontend limits stay at 240 seconds.
-
-compatible with [gary4juce v5.0.0](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.0).
+compatible with [gary4juce v5.0.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.1).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
@@ -59,7 +52,7 @@ build while we tried very hard to break it locally.
 
 ## roadmap
 
-- [ ] replace jerry, foundation-1 and SA3 with [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), which already supports LoRA training in native C++
+- [x] replace jerry, foundation-1 and SA3 with [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), which already supports LoRA training in native C++
 - [ ] replace carey with [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), including the LoRA workflow
 - [ ] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
 - [ ] dig into a LoRA training UI for YuE2
@@ -92,9 +85,9 @@ install and startup flow:
 - `gary` / MusicGen: `http://localhost:8000` via [audiocraft](https://github.com/facebookresearch/audiocraft)
 - `terry` / MelodyFlow: `http://localhost:8002` via [MelodyFlow](https://huggingface.co/spaces/facebook/MelodyFlow)
 - `carey` / ACE-Step: `http://localhost:8003` via [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) with localhost `lego`, `extract`, `complete`, and `cover` mode changes from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
-- `jerry` / Stable Audio: `http://localhost:8005` via [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and [stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools)
-- `sa3` / Stable Audio 3: `http://localhost:8006` via [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
-- `foundation-1`: `http://localhost:8015` via [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1) and [RC-stable-audio-tools](https://github.com/RoyalCities/RC-stable-audio-tools)
+- `jerry` / Stable Audio: `http://localhost:8005` via [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), running [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and its kickbass and jerry grunge finetunes
+- `sa3` / Stable Audio 3: `http://localhost:8006` via [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), running [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
+- `foundation-1`: `http://localhost:8015` via [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), running [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1)
 - `yuey` / YuE2: `http://localhost:8007` via [yuey.cpp](https://github.com/betweentwomidnights/yuey.cpp), a native GGML build of [YuE2](https://github.com/multimodal-art-projection/YuE)
 
 ## LoRA training

@@ -29,6 +29,7 @@
     migration_complete: boolean;
     has_migration: boolean;
     runtime_group: string | null;
+    python_retired: boolean;
   }
 
   let { services, selectedServiceId, selectedRuntimeGroup, hfTokenConfigured, onSelect, onSelectGroup, onShowModels, onManageCareyLoras, onTrainCareyAce, onManageSa3Loras, onTrainSa3Lora, onMigrateRuntime }: {
@@ -53,6 +54,11 @@
       console.error("Rebuild all failed:", e);
     }
   }
+
+  // Jerry's and SA3's Python models come from gated Hugging Face repos, so
+  // their models button waits for a token. Their C++ models are public.
+  const pythonModelsNeedToken = (service: ServiceInfo) =>
+    ["stable-audio", "sa3"].includes(service.id) && service.runtime === "python" && !service.python_retired;
 
   // Services that have downloadable models
   const servicesWithModels = new Set(["gary", "melodyflow", "stable-audio", "sa3", "carey", "foundation", "yuey"]);
@@ -90,7 +96,7 @@
     {grouped}
     selected={selectedServiceId === service.id}
     onSelect={() => onSelect(service.id)}
-    hasModels={servicesWithModels.has(service.id) && (!["stable-audio", "sa3"].includes(service.id) || hfTokenConfigured)}
+    hasModels={servicesWithModels.has(service.id) && (!pythonModelsNeedToken(service) || hfTokenConfigured)}
     onShowModels={() => onShowModels(service.id)}
     hasCareyLoras={service.id === "carey"}
     onManageCareyLoras={onManageCareyLoras}

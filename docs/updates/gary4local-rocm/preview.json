@@ -1,11 +1,10 @@
 {
-  "channel": "preview",
-  "latest_version": "0.4.0-rocm.6",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.6/gary4local-rocm_0.4.0-rocm.6_x64-setup.exe",
-  "sha256": "39f26a23359b3508d699c080392feaf5d76764e9ffd380d5d27f41280056b90e",
-  "published_at": "2026-10-13T17:39:25.0000000+00:00",
-  "notes": [
-    "SA3 can leave Python: it moves to the native runtime (Vulkan on AMD), verifies it, then offers to remove the old PyTorch env and weights. Please run generate, transform and continue after.",
-    "Press Update runtime on yuey's row for v0.2.4; it now carries its own Visual C++ runtime."
-  ]
+    "channel":  "preview",
+    "latest_version":  "0.4.0-rocm.7",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.7/gary4local-rocm_0.4.0-rocm.7_x64-setup.exe",
+    "sha256":  "03bc9bc06432854f5d318d6f1ba902de89c27638d387458734de0ce09f8f5d0a",
+    "published_at":  "2026-10-17T03:33:55.1854954+00:00",
+    "notes":  [
+                  "jerry and foundation-1 can leave Python too: all three stable audio services now share one C++ runtime under a stable audio header. Press update runtime there first (sa3.cpp v0.1.7), then migrate jerry and foundation-1.\nUse gary4juce v5.0.1-rc.2 for jerry\u0027s finetunes and their dice prompts."
+              ]
 }

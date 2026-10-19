@@ -4,6 +4,72 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.5.0 - 2026-10-17
+
+### sa3, jerry and foundation-1 move to sa3.cpp
+
+the three stable audio services now run on
+[sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), the same GGML runtime
+SA3 moved to first. each one migrates on its own: `migrate runtime` installs
+the runtime, downloads the tier you pick, and starts the C++ server on a
+private port to run the requests gary4juce makes (for foundation-1 that's
+randomize, a 4-bar generation and audio-to-audio; for jerry, the model list, a
+generation, a smart loop, each downloaded finetune and the dice prompts). only
+when those pass does the service switch, and only then is the Python env and
+its weights offered for cleanup. it's one-way on purpose; an earlier build
+still has the Python services if you need them.
+
+foundation-1 keeps its port, presets and audio-to-audio, and on sa3.cpp
+audio-to-audio works across the whole transformation range: with its `gary`
+profile, the Python service returned NaN audio at 0.5 and below.
+
+### one runtime, one panel
+
+the three services launch the same sa3.cpp install, so the service list now
+shows them under a `stable audio` header. selecting it opens the runtime: its
+version, backend and GPU, the one backend picker for all three, and a single
+install, update or reinstall that stops whichever of them are running on it
+first. the panel also lists each service with its migrate step, and keeps a
+short journal of what happened to the runtime: installs, each service's switch
+to C++, and each Python cleanup. a migration never reinstalls a runtime another
+service already installed, so it can't flip that service's backend.
+
+### fresh installs skip Python for these three
+
+a service that can run on C++ and has no Python environment of its own, which
+is every fresh install, now offers `set up runtime` instead of `build env`. the
+migration panel does the setup, Python is never built for it, and its models
+panel only shows the C++ models, which download without a Hugging Face token.
+an install that already has the Python env keeps it until it migrates.
+
+### jerry's finetunes, and the jerry grunge that never loaded
+
+jerry's models panel offers four tiers of the base model and two finetunes,
+kickbass and jerry grunge, for whichever tier jerry runs. a finetune you
+download is simply in gary4juce's jerry dropdown; switching between them costs
+0.05-0.2 seconds, so nothing is kept warm and there's no cache to manage. jerry
+grunge brings its dice prompts.
+
+jerry grunge will sound different, and that's the point. the Python loader
+renamed a training checkpoint's EMA weights to `diffusion.model.*` while the
+model names them `model.*`, and the copy skips keys it doesn't have, so not one
+of the 382 finetuned tensors ever loaded: every jerry grunge checkpoint ran as
+stable-audio-open-small's base model, here and on the remote backend. the
+loader is fixed, refuses to run a finetune without its whole DiT, and jerry
+grunge is now its step-320 checkpoint (batch size 128), picked by ear once we
+could finally hear them. this needs gary4juce v5.0.1, which lists the
+finetunes and loads their dice prompts on localhost.
+
+### smaller things
+
+- downloading or removing a C++ service's models now stops that service
+  instead of asking you to. services that only share its runtime keep running.
+- C++ model downloads use the same progress bar as the rest of the models
+  panel.
+- sa3.cpp is pinned at v0.1.7.
+
+compatible with gary4juce v5.0.1.
+
 ## v0.4.0 - 2026-10-07
 
 ### yuey, the first native service

@@ -53,6 +53,7 @@
     migration_complete: boolean;
     has_migration: boolean;
     runtime_group: string | null;
+    python_retired: boolean;
   }
 
   interface Sa3LoudnessSettings {
@@ -950,7 +951,7 @@
           onMigrate={showMigration}
         />
       {:else if rightPanel === "models" && modelServiceId}
-        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} hasMigration={services.find((service) => service.id === modelServiceId)?.has_migration ?? false} onBack={backToLogs} />{/key}
+        {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} hasMigration={services.find((service) => service.id === modelServiceId)?.has_migration ?? false} pythonRetired={services.find((service) => service.id === modelServiceId)?.python_retired ?? false} onBack={backToLogs} />{/key}
       {:else}
         {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
           <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />

@@ -12,6 +12,7 @@
     build_status: BuildStatus | null;
     has_migration: boolean;
     migration_complete: boolean;
+    python_retired: boolean;
   }
   interface RuntimeInfo {
     installed: boolean;
@@ -126,7 +127,7 @@
         <span class="engine">{member.runtime === "native" ? `c++${member.native_backend ? ` · ${member.native_backend}` : ""}` : "python"}</span>
         <span class="step">
           {#if member.has_migration && !member.migration_complete}
-            <button disabled={!!building} onclick={() => onMigrate(member.id)}>{member.runtime === "native" ? "finish migration" : "migrate"}</button>
+            <button disabled={!!building} onclick={() => onMigrate(member.id)}>{member.runtime === "native" ? "finish migration" : member.python_retired ? "set up" : "migrate"}</button>
           {/if}
         </span>
       </div>
