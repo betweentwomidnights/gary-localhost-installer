@@ -345,7 +345,8 @@
           "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
           "ACE_PORT": "8003",
           "ACE_DEVICE": "${NATIVE_BACKEND}",
-          "ACE_ADAPTER_MODE": "functional"
+          "ACE_ADAPTER_MODE": "functional",
+          "ACE_ADAPTERS_DIR": "${GARY_RUNTIME}/carey/adapters"
         },
         "platforms": {
           "windows-x64": {

@@ -45,12 +45,15 @@
     open,
     serviceStatus,
     serviceEnvExists,
+    nativeRuntime = false,
     onClose,
     onShowModels,
   }: {
     open: boolean;
     serviceStatus: "stopped" | "starting" | "running" | "unhealthy" | "failed";
     serviceEnvExists: boolean;
+    // Carey runs on C++: train with ace-train on the native models.
+    nativeRuntime?: boolean;
     onClose: () => void;
     onShowModels: () => void;
   } = $props();
@@ -132,6 +135,17 @@
   let lossWeighting = $state<"min_snr" | "none">("min_snr");
   let snrGamma = $state(5);
   let maxDuration = $state(240);
+  // C++ training: the base model by catalog component, and the rotating
+  // windows ace-train trains on while conditioning on each whole song.
+  const NATIVE_FAMILIES = [
+    { variant: "base", label: "2B base" },
+    { variant: "xl-base", label: "XL base" },
+  ] as const;
+  let nativeDit = $state<string | null>(null);
+  let nativeDownloaded = $state<string[]>([]);
+  let trainingRecommendations = $state<Record<string, string>>({});
+  let windowMin = $state(45);
+  let windowMax = $state(60);
 
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -328,6 +342,9 @@
         lossWeighting,
         snrGamma,
         maxDuration,
+        nativeDit: nativeRuntime ? nativeDit : null,
+        windowMinSeconds: nativeRuntime ? windowMin : null,
+        windowMaxSeconds: nativeRuntime ? windowMax : null,
       });
       shouldRevealLog = true;
       await revealLogOutput();
@@ -357,7 +374,7 @@
   let learningRate = $derived(Number(learningRateText.trim()));
   let timestepMu = $derived(Number(timestepMuText));
   let learningRateDecimal = $derived(formatLearningRate(learningRate));
-  let vramAdvisory = $derived(
+  let vramAdvisory = $derived(nativeRuntime ? null :
     model === "acestep-v15-xl-base"
       ? "XL-base training requires substantially more VRAM; the runtime preflight will verify measured headroom before the first batch."
       : moduleProfile === "balanced" && rank >= 128 && maxDuration > 240
@@ -398,8 +415,32 @@
     TRAINING_MODELS.filter((entry) => downloadedModels.includes(entry.id))
   );
   let hasModel = $derived(availableModels.some((entry) => entry.id === model));
-  let canPrepare = $derived(commonValid && hasModel);
-  let canTrain = $derived(commonValid && hasModel);
+  function nativeLabel(id: string): string {
+    const [, variant, tier] = id.split("::");
+    const family = NATIVE_FAMILIES.find((entry) => entry.variant === variant)?.label ?? variant;
+    return `${family} · ${tier}${trainingRecommendations[variant] === tier ? " (recommended)" : ""}`;
+  }
+  let nativeChoices = $derived(
+    NATIVE_FAMILIES.flatMap((family) => nativeDownloaded.filter((id) => id.startsWith(`carey-native::${family.variant}::`)))
+  );
+  let windowValid = $derived(windowMin >= 1 && windowMax >= windowMin && windowMax <= 600);
+  let canPrepare = $derived(!nativeRuntime && commonValid && hasModel);
+  let canTrain = $derived(nativeRuntime
+    ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && windowValid && batchSize === 1
+    : commonValid && hasModel);
+
+  // Prefer the precision recommended for training on this GPU, then XL.
+  $effect(() => {
+    if (!nativeRuntime || (nativeDit && nativeChoices.includes(nativeDit))) return;
+    const recommended = nativeChoices.find((id) => {
+      const [, variant, tier] = id.split("::");
+      return trainingRecommendations[variant] === tier;
+    });
+    nativeDit = recommended ?? nativeChoices.find((id) => id.startsWith("carey-native::xl-base::")) ?? nativeChoices[0] ?? null;
+  });
+  $effect(() => {
+    if (nativeRuntime && batchSize !== 1) batchSize = 1;
+  });
 
   async function loadDownloadedModels() {
     try {
@@ -407,6 +448,12 @@
       downloadedModels = models
         .filter((entry) => entry.status === "downloaded")
         .map((entry) => entry.id.replace(/^carey::/, ""));
+      nativeDownloaded = models
+        .filter((entry) => entry.status === "downloaded" && NATIVE_FAMILIES.some((family) => entry.id.startsWith(`carey-native::${family.variant}::`)))
+        .map((entry) => entry.id);
+      if (nativeRuntime) {
+        trainingRecommendations = await invoke<Record<string, string>>("get_carey_training_recommendations").catch(() => ({}));
+      }
     } catch (e) {
       console.error("Failed to read carey model status:", e);
     } finally {
@@ -493,11 +540,15 @@
       <div class="eyebrow">carey ace-step trainer</div>
       <div class="title" id="ace-train-title">train a local ACE-Step LoRA</div>
       <div class="body">
-        prepare ACE sidecars with understand_music, edit the metadata, then train a LoRA or DoRA adapter against base or xl-base. Successful runs register themselves in Carey's LoRA registry.
+        {#if nativeRuntime}
+          complete each song's sidecar, then train a LoRA or DoRA adapter on the 2B or XL base with Carey's C++ trainer. Finished and cancelled runs register their adapter for Carey.
+        {:else}
+          prepare ACE sidecars with understand_music, edit the metadata, then train a LoRA or DoRA adapter against base or xl-base. Successful runs register themselves in Carey's LoRA registry.
+        {/if}
       </div>
 
       {#if !serviceEnvExists}
-        <div class="warning">build Carey first so the ACE-Step training environment exists.</div>
+        <div class="warning">{nativeRuntime ? "install Carey's C++ runtime first." : "build Carey first so the ACE-Step training environment exists."}</div>
       {:else if serviceStatus === "running"}
         <div class="warning">Starting the trainer will stop Carey inference first so the captioner/trainer can own GPU memory.</div>
       {/if}
@@ -533,6 +584,25 @@
       </div>
 
       <div class="section-label">model</div>
+      {#if nativeRuntime}
+      <div class="settings-grid">
+        <label class="field">
+          <span>training model</span>
+          <select bind:value={nativeDit} disabled={nativeChoices.length === 0}>
+            {#each nativeChoices as id (id)}
+              <option value={id}>{nativeLabel(id)}</option>
+            {/each}
+          </select>
+          <small>the frozen base the adapter learns on. gary4juce can use it on any precision of the same family.</small>
+        </label>
+      </div>
+      {#if modelsLoaded && nativeChoices.length === 0}
+        <div class="warning">
+          no C++ base model downloaded yet. download the 2B or XL base{trainingRecommendations["xl-base"] ? ` (XL base ${trainingRecommendations["xl-base"]} is recommended for training on this GPU)` : ""} from Carey's models.
+        </div>
+        <button type="button" class="path-link" onclick={onShowModels}>open the models panel</button>
+      {/if}
+      {:else}
       <div class="settings-grid">
         <label class="field">
           <span>preparation + training model</span>
@@ -555,7 +625,14 @@
           caption/prepare and training will use.
         </div>
       {/if}
+      {/if}
 
+      {#if nativeRuntime}
+      <div class="section-label">captions</div>
+      <div class="note">
+        C++ auto-captioning is coming next. Until then, complete each song's sidecar with <strong>edit prompts / sidecars</strong>: a caption, its BPM, and lyrics or "instrumental". Training checks every sidecar and names any that are incomplete before it starts.
+      </div>
+      {:else}
       <div class="section-label">captioner</div>
       <div class="settings-grid">
         <label class="field">
@@ -590,6 +667,7 @@
           {starting ? "launching..." : "caption / prepare"}
         </button>
       </div>
+      {/if}
 
       <div class="section-label">training</div>
       <div class="settings-grid">
@@ -611,11 +689,22 @@
           <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} />
           <small class:invalid={learningRateDecimal === "invalid"}>1e-4 trains lightly; 3e-4 trains hard. Current: {learningRateDecimal}.</small>
         </label>
+        {#if nativeRuntime}
+        <label class="field">
+          <span>training window seconds</span>
+          <div class="path-row">
+            <input type="number" min="1" step="1" bind:value={windowMin} aria-label="shortest training window" />
+            <input type="number" min="1" step="1" bind:value={windowMax} aria-label="longest training window" />
+          </div>
+          <small class:invalid={!windowValid}>each update trains on a {windowMin}–{windowMax} s crop while conditioning on the whole song. longer windows need more VRAM; 45–60 fits 8 GB with XL Q4_K_M.</small>
+        </label>
+        {:else}
         <label class="field">
           <span>max track seconds</span>
           <input type="number" min="1" step="1" bind:value={maxDuration} />
           <small>longer tracks require more VRAM.</small>
         </label>
+        {/if}
       </div>
 
       <details class="advanced-panel">
@@ -653,7 +742,8 @@
         </label>
         <label class="field">
           <span>batch size</span>
-          <input type="number" min="1" step="1" bind:value={batchSize} />
+          <input type="number" min="1" step="1" bind:value={batchSize} disabled={nativeRuntime} />
+          {#if nativeRuntime}<small>C++ training uses batch 1; raise grad accum for a larger effective batch.</small>{/if}
         </label>
         <label class="field">
           <span>grad accum</span>
@@ -684,7 +774,11 @@
       {/if}
 
       <div class="note">
-        Use caption/prepare first, review the sidecars, then train. Every run measures post-offload VRAM and stops before the first batch when the remaining budget is unsafe.
+        {#if nativeRuntime}
+          Cancelling finishes the current update and registers the adapter saved there. Checkpoints are kept every {saveEvery} epochs.
+        {:else}
+          Use caption/prepare first, review the sidecars, then train. Every run measures post-offload VRAM and stops before the first batch when the remaining budget is unsafe.
+        {/if}
         <button type="button" class="inline-link" onclick={onShowModels}>open Carey models</button>
       </div>
       <div class="training-resource">

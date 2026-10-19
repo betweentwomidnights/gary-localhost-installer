@@ -72,7 +72,7 @@ impl Service for Carey {
     }
 
     fn blocking_jobs(&self) -> &'static [&'static str] {
-        &["native-migration"]
+        &["native-migration", "native-training"]
     }
 
     fn python_only_features(&self) -> Option<&'static str> {

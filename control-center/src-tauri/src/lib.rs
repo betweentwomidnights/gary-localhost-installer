@@ -1,6 +1,7 @@
 mod ace_client;
 mod carey_migration;
 mod carey_models;
+mod carey_training;
 mod foundation_migration;
 mod foundation_models;
 mod manifest;
@@ -526,6 +527,9 @@ struct CareyAceTrainingState {
     result_path: Option<String>,
     #[serde(default)]
     registered_lora_name: Option<String>,
+    /// "acestep.cpp" for a native job; Python jobs leave it unset.
+    #[serde(default)]
+    runtime: Option<String>,
     #[serde(default)]
     log_tail: String,
 }
@@ -4298,6 +4302,7 @@ fn default_carey_ace_training_state() -> CareyAceTrainingState {
         training_plan_path: None,
         result_path: None,
         registered_lora_name: None,
+        runtime: None,
         log_tail: String::new(),
     }
 }
@@ -4310,6 +4315,9 @@ fn read_carey_ace_training_status_file(path: &Path) -> CareyAceTrainingState {
 
     if let Some(log_path) = state.log_path.as_ref().map(PathBuf::from) {
         state.log_tail = read_text_tail(&log_path, 16 * 1024);
+        if state.runtime.is_some() {
+            return state;
+        }
         if let Some((epoch, maximum)) = parse_carey_epoch_progress(&state.log_tail) {
             state.current_step = Some(state.current_step.unwrap_or(0).max(epoch));
             if let Some(maximum) = maximum {
@@ -6194,6 +6202,7 @@ pub fn run() {
             get_carey_ace_lora_training_state,
             get_carey_ace_lora_name_availability,
             start_carey_ace_lora_training,
+            get_carey_training_recommendations,
             cancel_carey_ace_lora_training,
             get_sa3_lora_state,
             upsert_sa3_lora,
@@ -7500,6 +7509,13 @@ async fn activate_carey_lora_checkpoint(
         ));
     }
 
+    let native = catalog
+        .get(&normalized_name)
+        .is_some_and(|entry| carey_training::is_native_job(entry.training_job_id.as_deref()));
+    if native {
+        // ace-server loads the adapter from its own folder, not the catalog path.
+        carey_training::publish_adapter(repo_root.inner(), &normalized_name, &source)?;
+    }
     if let Some(entry) = catalog.get_mut(&normalized_name) {
         entry.path = source.to_string_lossy().to_string();
         entry.selected_training_checkpoint = Some(checkpoint.id);
@@ -7518,6 +7534,7 @@ async fn remove_carey_lora(
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
     let mut catalog = read_carey_lora_catalog()?;
+    carey_training::unpublish_adapter(repo_root.inner(), &normalized_name)?;
     catalog.remove(&normalized_name);
     save_carey_lora_catalog(&catalog)?;
 
@@ -7593,6 +7610,7 @@ async fn delete_carey_trained_lora(
     for path in &artifact_paths {
         resolve_managed_path(path, &managed_root)?;
     }
+    carey_training::unpublish_adapter(repo_root.inner(), &normalized_name)?;
     for path in artifact_paths {
         remove_managed_path(&path, &managed_root)?;
     }
@@ -7836,12 +7854,42 @@ async fn start_carey_ace_lora_training(
     loss_weighting: String,
     snr_gamma: f64,
     max_duration: f64,
+    native_dit: Option<String>,
+    window_min_seconds: Option<f64>,
+    window_max_seconds: Option<f64>,
     manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    app_handle: tauri::AppHandle,
 ) -> Result<CareyAceTrainingState, String> {
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
     require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
+    if manager.lock().await.is_native("carey") {
+        if auto_caption || prepare_only {
+            return Err("C++ auto-captioning is coming next. Complete the dataset's sidecars in the dataset editor, then train without auto-captioning.".into());
+        }
+        let options = carey_training::Options {
+            name: normalized_name,
+            dataset: PathBuf::from(dataset_path.trim()),
+            dit: native_dit.ok_or("Choose the C++ model to train on.")?,
+            adapter_type: adapter_type.trim().to_string(),
+            profile: module_profile.trim().to_string(),
+            rank,
+            epochs,
+            checkpoint_every: save_every,
+            batch_size,
+            accumulation: gradient_accumulation,
+            learning_rate,
+            cfg_dropout: cfg_ratio,
+            timestep_mu,
+            min_snr: (loss_weighting.trim() == "min_snr").then_some(snr_gamma),
+            genre_ratio,
+            trigger: trigger.trim().to_string(),
+            window_min_seconds: window_min_seconds.unwrap_or(45.0),
+            window_max_seconds: window_max_seconds.unwrap_or(60.0),
+        };
+        return start_native_carey_training(options, repo_root.inner(), manager.inner(), app_handle).await;
+    }
     let model = resolve_carey_training_model(&model)?;
     let adapter_type = match adapter_type.trim() {
         "lora" => "lora",
@@ -8177,11 +8225,103 @@ async fn start_carey_ace_lora_training(
     Ok(read_carey_ace_lora_training_state())
 }
 
+/// Start ace-train for Carey: a native workload, so Carey stays stopped and
+/// its runtime and models are left alone until the job is done.
+async fn start_native_carey_training(
+    options: carey_training::Options,
+    root: &Path,
+    manager: &ManagerState,
+    app_handle: tauri::AppHandle,
+) -> Result<CareyAceTrainingState, String> {
+    let _launch = carey_training::LAUNCH
+        .try_lock()
+        .map_err(|_| "A Carey training launch is already in progress")?;
+    if storage::storage_info(root).pending_restart {
+        return Err("Restart before training in your chosen storage folder.".into());
+    }
+    let current = read_carey_ace_lora_training_state();
+    if matches!(current.status.as_str(), "starting" | "running") {
+        return Err("Carey training is already active.".into());
+    }
+    let (exe, backend, path) = {
+        let mut services = manager.lock().await;
+        // Training needs the GPU Carey's server would hold.
+        services.stop_if_native("carey");
+        if let Some(blocker) = services.native_mutation_blocker("carey") {
+            return Err(format!("Cannot start C++ training: {blocker}."));
+        }
+        let (def, dir) = services.native_service("carey").ok_or("Carey has no C++ runtime")?;
+        let installed = native_runtime::installed("carey", &dir, &def.executable)
+            .ok_or("Prepare Carey's C++ runtime first.")?;
+        let exe = installed.dir.join("ace-train.exe");
+        let path = native_runtime::path_with_runtimes(root, &installed.runtimes);
+        services.begin_native_workload("carey", "native-training", "Carey C++ training")?;
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+        (exe, installed.backend, path)
+    };
+    let job = match carey_training::start(root, &exe, &backend, path.as_deref(), options).await {
+        Ok(job) => job,
+        Err(error) => {
+            let mut services = manager.lock().await;
+            services.end_native_workload("carey", "native-training");
+            let _ = app_handle.emit("services-updated", services.get_service_info());
+            return Err(error);
+        }
+    };
+    let status_path = job.status_path().to_path_buf();
+    let manager = manager.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = job.monitor().await {
+            let _ = mark_carey_ace_training_failed(&status_path, &error, None);
+        }
+        let mut services = manager.lock().await;
+        services.end_native_workload("carey", "native-training");
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+    });
+    Ok(read_carey_ace_lora_training_state())
+}
+
+/// The best precision to train each base model at on this GPU, once the
+/// runtime's install probe has measured it.
+#[tauri::command]
+async fn get_carey_training_recommendations(
+    manager: tauri::State<'_, ManagerState>,
+) -> Result<BTreeMap<String, String>, String> {
+    let (def, native_dir) = {
+        let services = manager.lock().await;
+        services.native_service("carey").ok_or("Carey has no C++ runtime")?
+    };
+    let info = native_runtime::runtime_info("carey", &native_dir, &def, native_backend_preference("carey"));
+    Ok(native_runtime::accelerator_memory(&info)
+        .map(|memory| {
+            carey_training::TRAINABLE_DITS
+                .iter()
+                .map(|variant| {
+                    (variant.to_string(), carey_training::recommended_training_tier(variant, memory).to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 #[tauri::command]
 fn cancel_carey_ace_lora_training() -> Result<CareyAceTrainingState, String> {
     let state = read_carey_ace_lora_training_state();
     if !matches!(state.status.as_str(), "starting" | "running") {
         return Ok(state);
+    }
+    // ace-train saves its adapter at the next optimizer update once asked;
+    // killing it would lose that save.
+    if state.runtime.as_deref() == Some("acestep.cpp") {
+        let path = state.cancel_path.as_deref().map(PathBuf::from).ok_or("The training job has no cancel file")?;
+        write_cancel_marker(&path)?;
+        if let Some(status_path) = carey_ace_current_training_status_path() {
+            patch_carey_ace_training_status(
+                &status_path,
+                &[("message", serde_json::json!("Cancellation requested: finishing the current update and saving the adapter."))],
+            )?;
+        }
+        return Ok(read_carey_ace_lora_training_state());
     }
 
     let cancel_path = state.cancel_path.as_deref().map(PathBuf::from).or_else(|| {

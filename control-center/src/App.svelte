@@ -1106,6 +1106,7 @@
     open={careyAceTrainingModalOpen}
     serviceStatus={careyService?.status ?? "stopped"}
     serviceEnvExists={careyService?.env_exists ?? false}
+    nativeRuntime={careyService?.runtime === "native"}
     onClose={closeCareyAceTraining}
     onShowModels={() => {
       // The models panel lives in the main window behind this modal, so
