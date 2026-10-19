@@ -311,12 +311,14 @@
     }
   }
 
-  async function startJob(prepareOnly: boolean) {
+  // `overwriteAll` recaptions every track, as the sidecar editor's auto-label does.
+  async function startJob(prepareOnly: boolean, overwriteAll = false) {
     starting = true;
     error = null;
     autoScrollLog = true;
     try {
-      if (!(await checkNameAvailability(true))) return;
+      // C++ captioning writes sidecars, not a LoRA, so it needs no name.
+      if (!(nativeRuntime && prepareOnly) && !(await checkNameAvailability(true))) return;
       trainingState = await invoke<CareyAceTrainingState>("start_carey_ace_lora_training", {
         name: formName,
         datasetPath,
@@ -327,7 +329,7 @@
         timestepMu,
         autoCaption: prepareOnly,
         captionLmModel,
-        overwriteCaptions,
+        overwriteCaptions: overwriteAll || overwriteCaptions,
         genreRatio,
         prepareOnly,
         includeAutoTimesignature: false,
@@ -427,9 +429,20 @@
   );
   let windowValid = $derived(windowMin >= 1 && windowMax >= windowMin && windowMax <= 600);
   let nativeLmReady = $derived(nativeLmSizes.includes(captionLmModel.replace("acestep-5Hz-lm-", "")));
-  let canPrepare = $derived(nativeRuntime
-    ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && nativeLmReady
-    : commonValid && hasModel);
+  // C++ captioning needs a dataset, the tokenizer model and the LM, not a LoRA name.
+  let canCaptionNative = $derived(
+    open && serviceEnvExists && !starting && !cancelling && !isTraining && !!datasetPath.trim() &&
+      !!nativeDit && nativeChoices.includes(nativeDit) && nativeLmReady
+  );
+  let canPrepare = $derived(nativeRuntime ? canCaptionNative : commonValid && hasModel);
+  let captionBlocker = $derived(
+    canPrepare ? null
+      : isTraining ? "A Carey job is running."
+      : nativeRuntime && !(nativeDit && nativeChoices.includes(nativeDit)) ? "Choose a training model in the trainer first: its tokenizer reads the audio."
+      : nativeRuntime && !nativeLmReady ? `Download the ${captionLmModel.replace("acestep-5Hz-lm-", "")} language model from Carey's models.`
+      : nativeRuntime ? null
+      : "Complete the trainer's settings first."
+  );
   let canTrain = $derived(nativeRuntime
     ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && windowValid && batchSize === 1
     : commonValid && hasModel);
@@ -886,6 +899,13 @@
     {datasetPath}
     sharedTrigger={trigger}
     defaultInstrumental={false}
+    bind:captionLmModel
+    canAutoLabel={canPrepare}
+    autoLabelBlocker={captionBlocker}
+    onAutoLabel={async () => {
+      await startJob(true, true);
+      if (error) throw new Error(error);
+    }}
     onClose={() => sidecarModalOpen = false}
   />
 {/if}

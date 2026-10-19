@@ -7862,10 +7862,17 @@ async fn start_carey_ace_lora_training(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<CareyAceTrainingState, String> {
-    let normalized_name = sanitize_lora_name(&name)
-        .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
-    require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
-    if manager.lock().await.is_native("carey") {
+    let native = manager.lock().await.is_native("carey");
+    // Captioning writes sidecars, not a LoRA: its name only labels the job.
+    let normalized_name = match sanitize_lora_name(&name) {
+        Some(name) => name,
+        None if native && (auto_caption || prepare_only) => "dataset".to_string(),
+        None => return Err("LoRA name must use lowercase letters, numbers, '-' or '_'".to_string()),
+    };
+    if !(native && (auto_caption || prepare_only)) {
+        require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
+    }
+    if native {
         if auto_caption || prepare_only {
             let dit = native_dit.ok_or("Choose the base model whose tokenizer captions the dataset.")?;
             let dit = carey_models::models()

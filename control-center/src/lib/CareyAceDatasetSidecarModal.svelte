@@ -44,14 +44,77 @@
     datasetPath,
     sharedTrigger,
     defaultInstrumental,
+    captionLmModel = $bindable("acestep-5Hz-lm-1.7B"),
+    canAutoLabel = false,
+    autoLabelBlocker = null,
+    onAutoLabel,
     onClose,
   }: {
     open: boolean;
     datasetPath: string;
     sharedTrigger: string;
     defaultInstrumental: boolean;
+    // Auto-label runs the trainer's caption job over every track, overwriting
+    // existing sidecars as SA3's auto-label does.
+    captionLmModel?: string;
+    canAutoLabel?: boolean;
+    autoLabelBlocker?: string | null;
+    onAutoLabel?: () => Promise<void>;
     onClose: () => void;
   } = $props();
+
+  interface CaptionJob { status: string; phase: string; message: string; currentFile: number | null; totalFiles: number | null; }
+  let captionJob = $state<CaptionJob | null>(null);
+  let captionPoll: ReturnType<typeof setInterval> | null = null;
+  const captionRunning = $derived(!!captionJob && ["starting", "running"].includes(captionJob.status));
+
+  function stopCaptionPolling() {
+    if (captionPoll !== null) clearInterval(captionPoll);
+    captionPoll = null;
+  }
+  async function pollCaptionJob() {
+    try {
+      const state = await invoke<CaptionJob>("get_carey_ace_lora_training_state");
+      const wasRunning = captionRunning;
+      captionJob = state;
+      if (wasRunning && !["starting", "running"].includes(state.status)) {
+        stopCaptionPolling();
+        await loadSidecars();
+        if (state.status === "completed") message = state.message;
+        else error = state.message;
+      }
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+  async function startAutoLabel() {
+    error = null;
+    message = null;
+    if (dirtyCount) {
+      error = "Save or discard your unsaved sidecar changes before auto-labeling.";
+      return;
+    }
+    if (!onAutoLabel) return;
+    try {
+      await onAutoLabel();
+      await pollCaptionJob();
+      stopCaptionPolling();
+      captionPoll = setInterval(() => void pollCaptionJob(), 1500);
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+  async function cancelAutoLabel() {
+    try {
+      captionJob = await invoke<CaptionJob>("cancel_carey_ace_lora_training");
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+  $effect(() => {
+    if (!open) stopCaptionPolling();
+    return stopCaptionPolling;
+  });
 
   let entries: DraftEntry[] = $state([]);
   let selectedIndex = $state(0);
@@ -249,7 +312,7 @@ singer goes (yeah!)
           <div class="title" id="ace-sidecar-title">edit training sidecars</div>
         </div>
         <div class="header-actions">
-          <button type="button" onclick={loadSidecars} disabled={loading || saving}>refresh</button>
+          <button type="button" onclick={loadSidecars} disabled={loading || saving || captionRunning}>refresh</button>
           <button type="button" onclick={onClose}>close</button>
         </div>
       </div>
@@ -260,11 +323,40 @@ singer goes (yeah!)
 
       <div class="template-band">
         <div class="template-actions">
-          <button type="button" onclick={replaceAllLyricsWithInstrumental} disabled={loading || !entries.length}>
-            replace all lyrics with [Instrumental]
-          </button>
-          <small>optional cleanup; this overwrites generated lyric descriptions only after you save.</small>
+          <div class="action-buttons">
+            {#if onAutoLabel}
+              <label class="captioner-select">
+                <span>captioner</span>
+                <select bind:value={captionLmModel} disabled={captionRunning}>
+                  <option value="acestep-5Hz-lm-0.6B">0.6B · not recommended</option>
+                  <option value="acestep-5Hz-lm-1.7B">1.7B · good quality</option>
+                  <option value="acestep-5Hz-lm-4B">4B · best quality, large GPU</option>
+                </select>
+              </label>
+              {#if captionRunning}
+                <button type="button" class="danger" onclick={cancelAutoLabel}>
+                  cancel auto-label{captionJob?.totalFiles ? ` (${captionJob.currentFile ?? 0}/${captionJob.totalFiles})` : ""}
+                </button>
+              {:else}
+                <button
+                  type="button"
+                  onclick={startAutoLabel}
+                  disabled={!canAutoLabel || loading || saving || !!dirtyCount || !entries.length}
+                  title={autoLabelBlocker ?? (dirtyCount ? "Save or discard unsaved changes first." : "Caption every track, replacing its sidecar.")}
+                >auto-label all</button>
+              {/if}
+            {/if}
+            <button type="button" onclick={replaceAllLyricsWithInstrumental} disabled={loading || captionRunning || !entries.length}>
+              replace all lyrics with [Instrumental]
+            </button>
+          </div>
+          <small>auto-label replaces every sidecar; lyrics stay blank for you to add. [Instrumental] cleanup applies only after you save.</small>
         </div>
+        {#if captionRunning}
+          <small>{captionJob?.message}</small>
+        {:else if onAutoLabel && !canAutoLabel && autoLabelBlocker}
+          <small>{autoLabelBlocker}</small>
+        {/if}
         <span>{captionedCount} captions, {metadataCount} sidecars, {entries.length} tracks</span>
         {#if defaultInstrumental}
           <small>training is set to instrumental; individual lyric drafts remain your choice.</small>
@@ -381,7 +473,7 @@ singer goes (yeah!)
 
       <div class="footer">
         <span>{dirtyCount ? `${dirtyCount} unsaved change${dirtyCount === 1 ? "" : "s"}` : "all changes saved"}</span>
-        <button type="button" class="accent" onclick={saveSidecars} disabled={saving || !dirtyCount}>
+        <button type="button" class="accent" onclick={saveSidecars} disabled={saving || captionRunning || !dirtyCount}>
           {saving ? "saving..." : "save sidecars"}
         </button>
       </div>
@@ -482,8 +574,38 @@ singer goes (yeah!)
   .editor {
     display: grid;
     grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
-    min-height: 430px;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: hidden;
+  }
+
+  .header,
+  .body,
+  .template-band,
+  .footer,
+  .error-note,
+  .success-note {
+    flex-shrink: 0;
+  }
+
+  .action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  button.danger {
+    color: var(--red);
+    border-color: var(--red);
+  }
+
+  .captioner-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
   }
 
   .track-list {

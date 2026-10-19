@@ -157,11 +157,10 @@ pub fn metadata(fields: &crate::CareyAceSidecarFields, trigger: &str) -> Result<
     }
     let bpm = bpm(&fields.bpm)?;
     let beats = signature(&fields.timesignature)?;
+    // Empty lyrics on a vocal song train as empty lyric conditioning, as in
+    // PyTorch Carey; only an instrumental gets the [Instrumental] marker.
     let mut lyrics = fields.lyrics.trim().replace("\r\n", "\n");
-    if lyrics.is_empty() {
-        if !fields.is_instrumental {
-            return Err("a vocal song needs its lyrics; add them, or mark it instrumental".into());
-        }
+    if lyrics.is_empty() && fields.is_instrumental {
         lyrics = "[Instrumental]".into();
     }
     let tag = if trigger.trim().is_empty() { scalar(&fields.custom_tag) } else { scalar(trigger) };
@@ -222,6 +221,21 @@ pub struct Staged {
     pub captions: Vec<String>,
 }
 
+/// "no BPM: a.wav, b.wav and 3 more; no caption: c.wav"
+fn problem_summary(problems: &[(String, Vec<String>)]) -> String {
+    problems
+        .iter()
+        .map(|(kind, songs)| {
+            let shown = songs.iter().take(2).cloned().collect::<Vec<_>>().join(", ");
+            match songs.len() {
+                0..=2 => format!("{kind}: {shown}"),
+                more => format!("{kind}: {shown} and {} more", more - 2),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// Stage `dataset` into `dest` as numbered WAV and metadata pairs. Every
 /// sidecar problem is reported at once, before any audio is decoded.
 pub async fn stage(dataset: &Path, dest: &Path, trigger: &str) -> Result<Staged, String> {
@@ -229,23 +243,20 @@ pub async fn stage(dataset: &Path, dest: &Path, trigger: &str) -> Result<Staged,
     if entries.is_empty() {
         return Err(format!("{} has no audio files to train on.", dataset.display()));
     }
-    let mut problems = Vec::new();
+    // Problems grouped by kind, each naming a few songs: one short line.
+    let mut problems: Vec<(String, Vec<String>)> = Vec::new();
     let mut staged = Vec::new();
     for entry in &entries {
         match metadata(&entry.fields, trigger) {
             Ok(text) => staged.push((PathBuf::from(&entry.audio_path), text, scalar(&entry.fields.caption))),
-            Err(problem) => problems.push(format!("{}: {problem}", entry.relative_path)),
+            Err(problem) => match problems.iter_mut().find(|(kind, _)| *kind == problem) {
+                Some((_, songs)) => songs.push(entry.relative_path.clone()),
+                None => problems.push((problem, vec![entry.relative_path.clone()])),
+            },
         }
     }
     if !problems.is_empty() {
-        let shown = problems.iter().take(8).cloned().collect::<Vec<_>>().join("; ");
-        let more = problems.len().saturating_sub(8);
-        return Err(format!(
-            "{} of {} songs need their sidecars completed in the dataset editor before C++ training: {shown}{}",
-            problems.len(),
-            entries.len(),
-            if more > 0 { format!("; and {more} more") } else { String::new() }
-        ));
+        return Err(format!("Fix these sidecars in the editor first: {}.", problem_summary(&problems)));
     }
     std::fs::create_dir_all(dest).map_err(|error| error.to_string())?;
     let mut manifest = Vec::new();
@@ -751,6 +762,9 @@ mod tests {
         let text = metadata(&vocal, "").unwrap();
         assert!(text.ends_with("custom_tag: \nlyrics: [verse]\nline one\nline two\n"), "{text}");
         assert!(text.contains("signature: 4\n"), "a missing signature is ACE-Step's 4/4");
+        // A captioned vocal song arrives with no lyrics, and trains on none.
+        let unlyrical = metadata(&fields("caption: whispered pop\nbpm: 90\nis_instrumental: false\n"), "").unwrap();
+        assert!(unlyrical.ends_with("is_instrumental: false\ncustom_tag: \nlyrics: \n"), "{unlyrical}");
     }
 
     #[test]
@@ -758,9 +772,11 @@ mod tests {
         assert_eq!(metadata(&fields("bpm: 120\n"), "").unwrap_err(), "no caption");
         assert_eq!(metadata(&fields("caption: x\n"), "").unwrap_err(), "no BPM");
         assert!(metadata(&fields("caption: x\nbpm: fast\n"), "").unwrap_err().contains("not a number"));
-        assert!(metadata(&fields("caption: x\nbpm: 90\nis_instrumental: false\n"), "")
-            .unwrap_err()
-            .contains("needs its lyrics"));
+        let summary = problem_summary(&[
+            ("no BPM".into(), vec!["a.wav".into(), "b.wav".into(), "c.wav".into(), "d.wav".into()]),
+            ("no caption".into(), vec!["e.wav".into()]),
+        ]);
+        assert_eq!(summary, "no BPM: a.wav, b.wav and 2 more; no caption: e.wav");
         assert!(metadata(&fields("caption: x\nbpm: 90\ntimesignature: waltz\nis_instrumental: true\n"), "").is_err());
         assert_eq!(signature("6/8").unwrap(), 6);
     }
@@ -862,9 +878,11 @@ mod tests {
                 writer.write_sample(sample / 2).unwrap();
             }
             writer.finalize().unwrap();
+            // The nested song is a vocal one with no lyrics, as the captioner leaves it.
+            let instrumental = bits == 16;
             std::fs::write(
                 path.with_extension("txt"),
-                "caption: soft sustained tones\nbpm: 120\nkeyscale: C major\ntimesignature: 4/4\nis_instrumental: true\nlyrics:\n",
+                format!("caption: soft sustained tones\nbpm: 120\nkeyscale: C major\ntimesignature: 4/4\nis_instrumental: {instrumental}\nlyrics:\n"),
             )
             .unwrap();
         }
@@ -872,7 +890,9 @@ mod tests {
         let staged = stage(&dataset, &staged_dir, "smoke-tag").await.unwrap();
         assert_eq!(staged.count, 2);
         assert_eq!(staged.captions, ["soft sustained tones"]);
-        assert!(std::fs::read_to_string(staged_dir.join("0001.txt")).unwrap().contains("custom_tag: smoke-tag\n"));
+        assert!(std::fs::read_to_string(staged_dir.join("0001.txt"))
+            .unwrap()
+            .ends_with("is_instrumental: false\ncustom_tag: smoke-tag\nlyrics: \n"));
         let options = Options {
             dit: "carey-native::base::BF16".into(),
             epochs: 2,
