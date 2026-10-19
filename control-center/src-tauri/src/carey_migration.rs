@@ -150,17 +150,21 @@ fn file_of(id: &str) -> Result<String, String> {
     Ok(file.filename.clone())
 }
 
-/// Check a WAV is 48 kHz stereo and within `tolerance` samples of `samples`.
-fn check_wav_near(wav: &[u8], samples: u32, tolerance: u32, what: &str) -> Result<(), String> {
-    let reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
+/// Check a WAV rendered from LM audio codes: 48 kHz stereo, with sound, and
+/// a song's length. The LM decides how long a song it writes (the 1.7B wrote
+/// 24 s for a 4 s request), so the length is only bounded, never exact.
+fn check_lm_wav(wav: &[u8], what: &str) -> Result<(), String> {
+    let mut reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
     let spec = reader.spec();
-    if spec.sample_rate != SAMPLE_RATE || spec.channels != 2 || reader.duration().abs_diff(samples) > tolerance {
+    let seconds = reader.duration() as f64 / SAMPLE_RATE as f64;
+    if spec.sample_rate != SAMPLE_RATE || spec.channels != 2 || !(1.0..=600.0).contains(&seconds) {
         return Err(format!(
-            "{what} check returned {} Hz, {} channels, {} samples; expected {SAMPLE_RATE} Hz stereo, about {samples}",
-            spec.sample_rate,
-            spec.channels,
-            reader.duration()
+            "{what} check returned {} Hz, {} channels, {seconds:.1} s; expected {SAMPLE_RATE} Hz stereo, 1 s to 10 min",
+            spec.sample_rate, spec.channels,
         ));
+    }
+    if reader.samples::<i16>().filter_map(Result::ok).all(|sample| sample == 0) {
+        return Err(format!("{what} check returned silence"));
     }
     Ok(())
 }
@@ -276,7 +280,7 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
                 return Err(format!("{label} wrote no audio codes"));
             }
             let audio = synth_audio(client, base, Body::Json(&first), wait, &label).await?;
-            check_wav_near(&audio, 4 * SAMPLE_RATE, SAMPLE_RATE / 2, &label)?;
+            check_lm_wav(&audio, &label)?;
         } else {
             let audio = synth_audio(client, base, Body::Json(&request(&file, json!({}))), wait, &label).await?;
             check_wav_at(&audio, SAMPLE_RATE, 4 * SAMPLE_RATE, &label)?;
@@ -320,6 +324,25 @@ mod tests {
         assert_eq!(Carey.launch_args(&args, Some("Q4_K_M")).unwrap(), args);
         assert_eq!(Carey.launch_args(&[], None).unwrap(), Vec::<String>::new());
         assert!(Carey.launch_args(&args, Some("../x")).is_err());
+    }
+
+    #[test]
+    fn an_lm_render_is_checked_for_sound_not_for_the_requested_length() {
+        let wav = |channels: u16, seconds: f64, sample: i16| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            let spec = hound::WavSpec { channels, sample_rate: SAMPLE_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+            let mut writer = hound::WavWriter::new(&mut bytes, spec).unwrap();
+            for _ in 0..(seconds * SAMPLE_RATE as f64) as u32 * channels as u32 {
+                writer.write_sample(sample).unwrap();
+            }
+            writer.finalize().unwrap();
+            bytes.into_inner()
+        };
+        // The 1.7B LM wrote 24.24 s of codes for a 4 s request.
+        assert!(check_lm_wav(&wav(2, 24.24, 900), "LM").is_ok());
+        assert!(check_lm_wav(&wav(2, 4.0, 0), "LM").unwrap_err().contains("silence"));
+        assert!(check_lm_wav(&wav(1, 4.0, 900), "LM").is_err());
+        assert!(check_lm_wav(&wav(2, 0.5, 900), "LM").is_err());
     }
 
     #[test]
