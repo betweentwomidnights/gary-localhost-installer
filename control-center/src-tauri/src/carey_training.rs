@@ -615,7 +615,7 @@ pub async fn start(
         &[
             ("pid", json!(child.id())),
             ("launcherPid", json!(child.id())),
-            ("runDir", json!(run.to_string_lossy())),
+            ("runDir", json!(crate::user_facing_windows_path(&run))),
             ("phase", json!("loading")),
             ("totalFiles", json!(staged.count)),
             ("message", json!(format!("Training on {} songs with ace-train.", staged.count))),
@@ -659,8 +659,9 @@ impl Job {
                         progress.message
                     }),
                 ),
-                ("currentStep", json!(progress.step)),
-                ("maxSteps", json!(progress.max_steps)),
+                // The dialog reports epochs, as Python Carey's log does.
+                ("currentStep", json!(progress.epoch)),
+                ("maxSteps", json!(self.options.epochs)),
             ],
         )
     }
@@ -729,9 +730,9 @@ impl Job {
                 ("status", json!(status)),
                 ("phase", json!(status)),
                 ("message", json!(message)),
-                ("currentStep", json!(terminal.step)),
-                ("maxSteps", json!(terminal.max_steps)),
-                ("finalCheckpointPath", json!(registered.as_ref().map(|path| path.to_string_lossy()))),
+                ("currentStep", json!(terminal.epoch)),
+                ("maxSteps", json!(self.options.epochs)),
+                ("finalCheckpointPath", json!(registered.as_deref().map(crate::user_facing_windows_path))),
                 ("registeredLoraName", json!(registered.as_ref().map(|_| self.options.name.clone()))),
                 ("pid", serde_json::Value::Null),
                 ("ownerPid", serde_json::Value::Null),

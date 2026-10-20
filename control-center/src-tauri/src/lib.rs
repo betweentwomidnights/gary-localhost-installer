@@ -1941,7 +1941,7 @@ fn is_sa3_dataset_audio_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn user_facing_windows_path(path: &Path) -> String {
+pub(crate) fn user_facing_windows_path(path: &Path) -> String {
     let value = path.to_string_lossy();
     if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
         return format!(r"\\{}", unc_path);
@@ -4394,9 +4394,9 @@ fn write_carey_ace_training_launch_state(
         "status": "starting",
         "phase": "starting",
         "message": message,
-        "runDir": run_dir.to_string_lossy(),
-        "logPath": log_path.to_string_lossy(),
-        "cancelPath": cancel_path.to_string_lossy(),
+        "runDir": user_facing_windows_path(run_dir),
+        "logPath": user_facing_windows_path(log_path),
+        "cancelPath": user_facing_windows_path(cancel_path),
         "currentStep": 0,
         "maxSteps": max_steps,
         "ownerPid": std::process::id(),
@@ -4994,9 +4994,9 @@ fn write_sa3_training_launch_state(
         "status": "starting",
         "phase": "starting",
         "message": "Launching SA3 LoRA training.",
-        "runDir": run_dir.to_string_lossy(),
-        "logPath": log_path.to_string_lossy(),
-        "cancelPath": cancel_path.to_string_lossy(),
+        "runDir": user_facing_windows_path(run_dir),
+        "logPath": user_facing_windows_path(log_path),
+        "cancelPath": user_facing_windows_path(cancel_path),
         "currentStep": 0,
         "maxSteps": max_steps,
         "ownerPid": std::process::id(),
