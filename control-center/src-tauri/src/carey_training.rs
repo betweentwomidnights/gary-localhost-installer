@@ -515,6 +515,12 @@ pub struct Job {
     captions: Vec<String>,
 }
 
+/// `path` without the `\\?\` prefix canonicalizing adds. ace-train up to
+/// v0.1.2 appends checkpoint folders with `/`, which a `\\?\` path rejects.
+fn plain(path: PathBuf) -> PathBuf {
+    PathBuf::from(crate::user_facing_windows_path(&path))
+}
+
 /// Launch a native training job: stage the dataset, then start ace-train on
 /// `backend` with the job's progress and cancel files. The job record is
 /// Carey's usual status file, so the training dialog follows it unchanged.
@@ -532,8 +538,8 @@ pub async fn start(
     if let Some(missing) = models.missing(root, &needed) {
         return Err(format!("Download {missing} from Carey's models before training."));
     }
-    let model_dir = models.checked_models_dir(root)?;
-    let jobs = crate::sa3_training::checked_folder(root, &["carey", "training", "jobs"])?;
+    let model_dir = plain(models.checked_models_dir(root)?);
+    let jobs = plain(crate::sa3_training::checked_folder(root, &["carey", "training", "jobs"])?);
     let id = format!(
         "native-{}-{}-{}",
         options.name,
@@ -575,7 +581,7 @@ pub async fn start(
         .map_err(fail)?;
     crate::sa3_training::save(&job.join("native-options.json"), &options).map_err(fail)?;
     // Shared across jobs: ace-train keys every entry by its inputs and settings.
-    let cache = crate::sa3_training::checked_folder(root, &["carey", "training", "native-cache"]).map_err(fail)?;
+    let cache = plain(crate::sa3_training::checked_folder(root, &["carey", "training", "native-cache"]).map_err(fail)?);
     let mut command = tokio::process::Command::new(executable);
     crate::hide_console_window(&mut command);
     command
