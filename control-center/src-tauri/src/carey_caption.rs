@@ -260,8 +260,9 @@ pub fn sidecar_fields(
         key_source: key.source.into(),
         lm_keyscale: key.lm,
         local_keyscale: key.local,
-        // The Python job writes the LM's time signature only on request, and the dialog never asks.
-        timesignature: String::new(),
+        // The LM's time signature, as the editor's optional field; staging
+        // reads "4" or "4/4", and an empty one trains as 4/4.
+        timesignature: result["time_signature"].as_str().unwrap_or_default().trim().to_string(),
         language: if instrumental {
             "unknown".into()
         } else {
@@ -477,7 +478,7 @@ mod tests {
         };
         let result = json!({
             "caption": " Dusty boom bap with a mellow Rhodes. ", "genre": "", "is_instrumental": null,
-            "lyrics": "[verse]\n[chorus]", "bpm": 120, "keyscale": "C major", "language": "en",
+            "lyrics": "[verse]\n[chorus]", "bpm": 120, "keyscale": "C major", "language": "en", "time_signature": "3",
             "local_analysis": {"bpm": 92, "bpm_confidence": 1.8, "keyscale": "F minor", "key_confidence": 0.3},
         });
         let fields = sidecar_fields(Path::new("song.wav"), &result, &options);
@@ -487,9 +488,10 @@ mod tests {
         assert!(fields.is_instrumental, "section markers alone are an instrumental");
         assert_eq!(fields.language, "unknown");
         assert_eq!(fields.custom_tag, "my-tag");
+        assert_eq!(fields.timesignature, "3");
         assert!(fields.lyrics.is_empty());
         let staged = crate::carey_training::metadata(&fields, "").unwrap();
-        assert!(staged.contains("bpm: 92\nkey: F minor\n") && staged.ends_with("lyrics: [Instrumental]\n"), "{staged}");
+        assert!(staged.contains("bpm: 92\nkey: F minor\nsignature: 3\n") && staged.ends_with("lyrics: [Instrumental]\n"), "{staged}");
         let vocal = json!({"caption": "A sad piano ballad with soft vocals.", "lyrics": "I walked alone", "bpm": 70, "language": "en"});
         let without_analysis = Options { bpm_analysis: false, key_analysis: false, ..options };
         let fields = sidecar_fields(Path::new("ballad_bpm68.wav"), &vocal, &without_analysis);

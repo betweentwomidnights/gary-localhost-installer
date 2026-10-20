@@ -531,6 +531,9 @@ struct CareyAceTrainingState {
     /// "acestep.cpp" for a native job; Python jobs leave it unset.
     #[serde(default)]
     runtime: Option<String>,
+    /// The dataset-relative path a native caption job is on.
+    #[serde(default)]
+    current_track: Option<String>,
     #[serde(default)]
     log_tail: String,
 }
@@ -4304,6 +4307,7 @@ fn default_carey_ace_training_state() -> CareyAceTrainingState {
         result_path: None,
         registered_lora_name: None,
         runtime: None,
+        current_track: None,
         log_tail: String::new(),
     }
 }
@@ -8395,6 +8399,7 @@ async fn start_native_carey_captioning(
                             ("phase", serde_json::json!("captioning")),
                             ("message", serde_json::json!(format!("Captioning {}", progress.name))),
                             ("currentFile", serde_json::json!(progress.index)),
+                            ("currentTrack", serde_json::json!(progress.name)),
                             ("totalFiles", serde_json::json!(progress.total)),
                             ("captionedCount", serde_json::json!(progress.index - 1)),
                         ],
@@ -8418,6 +8423,7 @@ async fn start_native_carey_captioning(
                 vec![
                     ("status", serde_json::json!("completed")),
                     ("phase", serde_json::json!("captioned")),
+                    ("currentTrack", serde_json::Value::Null),
                     ("message", serde_json::json!(message)),
                     ("captionedCount", serde_json::json!(captioned)),
                 ]
@@ -8427,6 +8433,7 @@ async fn start_native_carey_captioning(
                 let cancelled = cancel_path.exists();
                 vec![
                     ("status", serde_json::json!(if cancelled { "cancelled" } else { "failed" })),
+                    ("currentTrack", serde_json::Value::Null),
                     ("phase", serde_json::json!(if cancelled { "cancelled" } else { "failed" })),
                     ("message", serde_json::json!(error)),
                     ("error", if cancelled { serde_json::Value::Null } else { serde_json::json!(error) }),

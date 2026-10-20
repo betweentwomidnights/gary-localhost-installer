@@ -63,7 +63,7 @@
     onClose: () => void;
   } = $props();
 
-  interface CaptionJob { status: string; phase: string; message: string; currentFile: number | null; totalFiles: number | null; }
+  interface CaptionJob { status: string; phase: string; message: string; currentFile: number | null; totalFiles: number | null; currentTrack: string | null; }
   let captionJob = $state<CaptionJob | null>(null);
   let captionPoll: ReturnType<typeof setInterval> | null = null;
   const captionRunning = $derived(!!captionJob && ["starting", "running"].includes(captionJob.status));
@@ -72,11 +72,28 @@
     if (captionPoll !== null) clearInterval(captionPoll);
     captionPoll = null;
   }
+  // Rows the captioner has finished, refreshed from disk without the
+  // scanning flash; any row with unsaved edits is left as it is.
+  async function refreshFinishedRows() {
+    try {
+      const fresh = toDrafts(await invoke<CareyAceDatasetSidecarEntry[]>("get_carey_ace_dataset_sidecars", { datasetPath }));
+      entries = entries.map((entry) => {
+        const updated = fresh.find((candidate) => candidate.relativePath === entry.relativePath);
+        return updated && signature(entry.fields) === entry.originalFields ? updated : entry;
+      });
+    } catch {
+      /* the final reload reports any error */
+    }
+  }
   async function pollCaptionJob() {
     try {
       const state = await invoke<CaptionJob>("get_carey_ace_lora_training_state");
       const wasRunning = captionRunning;
+      const previousTrack = captionJob?.currentTrack ?? null;
       captionJob = state;
+      if (state.currentTrack && previousTrack && state.currentTrack !== previousTrack) {
+        void refreshFinishedRows();
+      }
       if (wasRunning && !["starting", "running"].includes(state.status)) {
         stopCaptionPolling();
         await loadSidecars();
@@ -386,7 +403,11 @@ singer goes (yeah!)
               >
                 <span class="track-name">{entry.relativePath}</span>
                 <span class:filled={!!entry.fields.caption.trim()} class="track-state">
-                  {entry.fields.caption.trim() ? "caption" : entry.exists ? "txt" : "none"}
+                  {#if captionRunning && captionJob?.currentTrack === entry.relativePath}
+                    <span class="spinner" aria-label="captioning"></span>
+                  {:else}
+                    {entry.fields.caption.trim() ? "caption" : entry.exists ? "txt" : "none"}
+                  {/if}
                 </span>
               </button>
             {/each}
@@ -593,6 +614,23 @@ singer goes (yeah!)
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: carey-spin 0.7s linear infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes carey-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   button.danger {
