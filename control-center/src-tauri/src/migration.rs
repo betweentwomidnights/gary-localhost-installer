@@ -245,6 +245,12 @@ pub trait Service: Sync {
     ) -> Result<Option<Box<dyn ClientAdapter>>, String> {
         Ok(None)
     }
+
+    /// Bring the files the native server reads at startup up to date, just
+    /// before it starts.
+    fn prepare_launch(&self, _root: &Path) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// `args` with `--encoding` set to `tier`, added when the manifest left it out.

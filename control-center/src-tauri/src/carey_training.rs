@@ -532,6 +532,40 @@ pub fn unpublish_adapter(root: &Path, name: &str) -> Result<(), String> {
     }
 }
 
+/// Write what Carey's clients read about each published adapter beside it, as
+/// the adapter_info.json ace-server returns under GET /props: the model family
+/// the adapter was trained on and the captions it was trained with, which the
+/// plugin's dice button picks from. Folders the catalog does not know are left
+/// alone.
+pub fn write_adapter_info(root: &Path) -> Result<(), String> {
+    let adapters = root.join("carey").join("adapters");
+    if !adapters.is_dir() {
+        return Ok(());
+    }
+    let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(root))?;
+    let pools: serde_json::Value = std::fs::read(root.join("carey").join("captions.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    for entry in std::fs::read_dir(&adapters).map_err(|error| error.to_string())?.flatten() {
+        let Some(name) = entry.file_name().to_str().map(String::from) else {
+            continue;
+        };
+        let Some(lora) = catalog.get(&name) else {
+            continue;
+        };
+        if !entry.path().join("adapter_model.safetensors").is_file() {
+            continue;
+        }
+        let captions = pools.get(&name).filter(|captions| captions.is_array()).cloned().unwrap_or(json!([]));
+        crate::sa3_training::save(
+            &entry.path().join("adapter_info.json"),
+            &json!({"model_family": lora.model_family, "captions": captions}),
+        )?;
+    }
+    Ok(())
+}
+
 /// Whether a catalog entry came from the C++ trainer, whose adapters ace-server
 /// loads from the adapters folder.
 pub fn is_native_job(job_id: Option<&str>) -> bool {
@@ -585,6 +619,7 @@ pub fn register(
         .unwrap_or_default();
     pools.insert(options.name.clone(), json!(captions));
     crate::sa3_training::save(&pools_path, &pools)?;
+    write_adapter_info(root)?;
     Ok(generation)
 }
 
@@ -1161,6 +1196,37 @@ mod tests {
         for changed in [Options { rank: 32, ..asked.clone() }, Options { name: "other".into(), ..asked.clone() }] {
             assert!(continuation(&root, Options { resume: resume(&job.join("run"), ResumeMode::Weights), ..changed }).is_err());
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn published_adapters_carry_their_family_and_captions() {
+        let root = std::env::temp_dir().join(format!("gary-carey-info-{}-{}", std::process::id(), NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
+        for name in ["tones", "stranger"] {
+            std::fs::create_dir_all(root.join("carey/adapters").join(name)).unwrap();
+            std::fs::write(root.join("carey/adapters").join(name).join("adapter_model.safetensors"), b"weights").unwrap();
+        }
+        let mut catalog = std::collections::BTreeMap::new();
+        catalog.insert(
+            "tones".to_string(),
+            crate::CareyLoraCatalogEntry {
+                path: String::new(),
+                captions_path: None,
+                scale: 1.0,
+                backends: crate::default_lora_backends(),
+                model_family: "xl".into(),
+                training_job_id: Some("native-tones-1-0".into()),
+                training_checkpoints: Vec::new(),
+                selected_training_checkpoint: None,
+            },
+        );
+        crate::save_carey_lora_catalog_to(&crate::carey_lora_catalog_path_for(&root), &catalog).unwrap();
+        std::fs::write(root.join("carey/captions.json"), r#"{"tones":["soft tones","loud tones"]}"#).unwrap();
+        write_adapter_info(&root).unwrap();
+        let info: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("carey/adapters/tones/adapter_info.json")).unwrap()).unwrap();
+        assert_eq!(info, json!({"model_family": "xl", "captions": ["soft tones", "loud tones"]}));
+        assert!(!root.join("carey/adapters/stranger/adapter_info.json").exists(), "only cataloged adapters are described");
         std::fs::remove_dir_all(root).unwrap();
     }
 

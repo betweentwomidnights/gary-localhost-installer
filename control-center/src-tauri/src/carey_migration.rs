@@ -87,6 +87,11 @@ impl Service for Carey {
         Ok(args.to_vec())
     }
 
+    /// ace-server reads each adapter's adapter_info.json once, at startup.
+    fn prepare_launch(&self, root: &Path) -> Result<(), String> {
+        crate::carey_training::write_adapter_info(root)
+    }
+
     fn verify<'a>(&'a self, run: Run<'a>) -> Proof<'a, Selection> {
         Box::pin(verify_native(run))
     }

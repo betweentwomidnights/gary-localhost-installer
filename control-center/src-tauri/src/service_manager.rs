@@ -1120,6 +1120,9 @@ impl ServiceManager {
                 svc.display_name
             )
         })?;
+        if let Some(service) = crate::migration::service(&svc.id) {
+            service.prepare_launch(&self.repo_root)?;
+        }
         // A migrated service keeps its Python-era client contract on the public
         // port while the native server listens privately.
         let adapter = match crate::migration::service(&svc.id) {

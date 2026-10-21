@@ -7528,6 +7528,9 @@ async fn activate_carey_lora_checkpoint(
         entry.selected_training_checkpoint = Some(checkpoint.id);
     }
     save_carey_lora_catalog(&catalog)?;
+    if native {
+        carey_training::write_adapter_info(repo_root.inner())?;
+    }
     let state = build_carey_lora_state(repo_root.inner())?;
     let _ = try_reload_carey_admin().await;
     Ok(state)
