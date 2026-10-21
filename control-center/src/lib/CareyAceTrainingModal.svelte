@@ -149,6 +149,76 @@
   let windowMin = $state(45);
   let windowMax = $state(60);
 
+  // C++ runs a new run can continue: exactly from full trainer state, or from
+  // a checkpoint's weights under new settings.
+  type ResumePoint = { name: string; jobId: string; path: string; epoch: number; epochs: number; midEpoch: boolean; exact: boolean };
+  type NativeOptions = {
+    name: string; dataset: string; dit: string; adapterType: "lora" | "dora"; profile: "attention" | "balanced";
+    rank: number; epochs: number; checkpointEvery: number; accumulation: number; learningRate: number;
+    timestepMu: number; minSnr: number | null; genreRatio: number; trigger: string;
+    windowMinSeconds: number; windowMaxSeconds: number;
+  };
+  let resumePoints = $state<ResumePoint[]>([]);
+  let resumeCheckpoint = $state("");
+  let resumeMode = $state<"exact" | "weights">("exact");
+  let loadingResume = $state(false);
+  let resumePoint = $derived(resumePoints.find((point) => point.path === resumeCheckpoint) ?? null);
+  let resumeNames = $derived([...new Set(resumePoints.map((point) => point.name))]);
+  let resuming = $derived(nativeRuntime && !!resumePoint);
+  // An exact resume trains with its run's settings; from weights, only what
+  // the weights' shapes depend on stays.
+  let lockAll = $derived(resuming && resumeMode === "exact");
+
+  function resumeLabel(point: ResumePoint): string {
+    const at = point.midEpoch ? `stopped during epoch ${point.epoch + 1}` : `epoch ${point.epoch}`;
+    return `${at} of ${point.epochs} · ${point.jobId}`;
+  }
+
+  async function loadResumePoints() {
+    try {
+      resumePoints = await invoke<ResumePoint[]>("get_carey_native_resume_points");
+    } catch (e) {
+      console.error("Failed to read Carey's training history:", e);
+    }
+  }
+
+  async function chooseResume() {
+    error = null;
+    const point = resumePoint;
+    if (!point) {
+      void checkNameAvailability();
+      return;
+    }
+    loadingResume = true;
+    try {
+      const options = await invoke<NativeOptions>("get_carey_native_resume_options", { checkpoint: point.path });
+      formName = options.name;
+      nameNotice = null;
+      datasetPath = options.dataset;
+      nativeDit = options.dit;
+      adapterType = options.adapterType;
+      moduleProfile = options.profile;
+      rank = options.rank;
+      epochs = options.epochs;
+      saveEvery = options.checkpointEvery;
+      gradientAccumulation = options.accumulation;
+      learningRateText = String(options.learningRate);
+      timestepMuText = options.timestepMu === 0 ? "0.0" : String(options.timestepMu);
+      lossWeighting = options.minSnr === null ? "none" : "min_snr";
+      if (options.minSnr !== null) snrGamma = options.minSnr;
+      genreRatio = options.genreRatio;
+      trigger = options.trigger;
+      windowMin = options.windowMinSeconds;
+      windowMax = options.windowMaxSeconds;
+      resumeMode = point.exact ? "exact" : "weights";
+    } catch (e) {
+      error = describeError(e);
+      resumeCheckpoint = "";
+    } finally {
+      loadingResume = false;
+    }
+  }
+
   function describeError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
   }
@@ -318,7 +388,8 @@
     autoScrollLog = true;
     try {
       // C++ captioning writes sidecars, not a LoRA, so it needs no name.
-      if (!(nativeRuntime && prepareOnly) && !(await checkNameAvailability(true))) return;
+      // A resumed run keeps its LoRA's name.
+      if (!(nativeRuntime && prepareOnly) && !(resuming && !prepareOnly) && !(await checkNameAvailability(true))) return;
       trainingState = await invoke<CareyAceTrainingState>("start_carey_ace_lora_training", {
         name: formName,
         datasetPath,
@@ -349,7 +420,10 @@
         nativeDit: nativeRuntime ? nativeDit : null,
         windowMinSeconds: nativeRuntime ? windowMin : null,
         windowMaxSeconds: nativeRuntime ? windowMax : null,
+        resumeCheckpoint: resuming && !prepareOnly ? resumeCheckpoint : null,
+        resumeMode: resuming && !prepareOnly ? resumeMode : null,
       });
+      if (!prepareOnly) resumeCheckpoint = "";
       shouldRevealLog = true;
       await revealLogOutput();
     } catch (e) {
@@ -444,7 +518,8 @@
       : "Complete the trainer's settings first."
   );
   let canTrain = $derived(nativeRuntime
-    ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && windowValid && batchSize === 1
+    ? commonValid && !!nativeDit && nativeChoices.includes(nativeDit) && windowValid && batchSize === 1 &&
+      !loadingResume && !(resuming && resumeMode === "exact" && !resumePoint?.exact)
     : commonValid && hasModel);
 
   // Prefer the precision recommended for training on this GPU, then XL.
@@ -458,6 +533,10 @@
   });
   $effect(() => {
     if (nativeRuntime && batchSize !== 1) batchSize = 1;
+  });
+  // Each finished, cancelled or failed run adds checkpoints to resume.
+  $effect(() => {
+    if (open && nativeRuntime && !isTraining) void loadResumePoints();
   });
 
   async function loadDownloadedModels() {
@@ -574,6 +653,44 @@
         <div class="warning">Starting the trainer will stop Carey inference first so the captioner/trainer can own GPU memory.</div>
       {/if}
 
+      {#if nativeRuntime && resumePoints.length && !isTraining}
+        <div class="section-label">resume</div>
+        <div class="form-grid">
+          <label class="field wide">
+            <span>resume training</span>
+            <select bind:value={resumeCheckpoint} disabled={starting || loadingResume} onchange={() => void chooseResume()}>
+              <option value="">start a new LoRA</option>
+              {#each resumeNames as name (name)}
+                <optgroup label={name}>
+                  {#each resumePoints.filter((point) => point.name === name) as point (point.path)}
+                    <option value={point.path}>{resumeLabel(point)}</option>
+                  {/each}
+                </optgroup>
+              {/each}
+            </select>
+            <small>choosing a checkpoint restores the settings its run trained with. each resume is a new run; earlier checkpoints stay as they are.</small>
+          </label>
+          {#if resumePoint}
+            <label class="toggle-field" class:unavailable={!resumePoint.exact}>
+              <input type="radio" value="exact" bind:group={resumeMode} disabled={!resumePoint.exact} />
+              <span>
+                <strong>resume exactly</strong>
+                <small>{resumePoint.exact
+                  ? `continues to epoch ${resumePoint.epochs} with the saved optimizer and schedule, using this run's settings and staged dataset.`
+                  : `this checkpoint finished its ${resumePoint.epochs} epochs: continue from its weights to train further.`}</small>
+              </span>
+            </label>
+            <label class="toggle-field">
+              <input type="radio" value="weights" bind:group={resumeMode} />
+              <span>
+                <strong>continue from these weights</strong>
+                <small>trains the epochs below starting from these weights, with a fresh optimizer, warmup and schedule. the model, adapter type, coverage and rank stay; the dataset and other settings can change.</small>
+              </span>
+            </label>
+          {/if}
+        </div>
+      {/if}
+
       <div class="section-label">dataset</div>
       <div class="form-grid">
         <label class="field">
@@ -582,21 +699,22 @@
             type="text"
             bind:value={formName}
             placeholder="my-ace-style"
+            disabled={resuming}
             oninput={() => nameNotice = null}
-            onblur={() => void checkNameAvailability()}
+            onblur={() => { if (!resuming) void checkNameAvailability(); }}
           />
           {#if nameNotice}<small class="name-notice">{nameNotice}</small>{/if}
         </label>
         <label class="field">
           <span>trigger tag</span>
-          <input type="text" bind:value={trigger} placeholder="my-trigger" />
+          <input type="text" bind:value={trigger} placeholder="my-trigger" disabled={lockAll} />
         </label>
 
         <label class="field wide">
           <span>audio folder</span>
           <div class="path-row">
-            <input type="text" bind:value={datasetPath} placeholder="C:\\path\\to\\ace dataset" />
-            <button type="button" onclick={pickDatasetFolder}>pick folder</button>
+            <input type="text" bind:value={datasetPath} placeholder="C:\\path\\to\\ace dataset" disabled={lockAll} />
+            <button type="button" onclick={pickDatasetFolder} disabled={lockAll}>pick folder</button>
             <button type="button" onclick={() => sidecarModalOpen = true} disabled={!datasetPath.trim()}>
               edit prompts / sidecars
             </button>
@@ -609,7 +727,7 @@
       <div class="settings-grid">
         <label class="field">
           <span>training model</span>
-          <select bind:value={nativeDit} disabled={nativeChoices.length === 0}>
+          <select bind:value={nativeDit} disabled={nativeChoices.length === 0 || resuming}>
             {#each nativeChoices as id (id)}
               <option value={id}>{nativeLabel(id)}</option>
             {/each}
@@ -694,7 +812,7 @@
       <div class="settings-grid">
         <label class="field">
           <span>adapter type</span>
-          <select bind:value={adapterType}>
+          <select bind:value={adapterType} disabled={resuming}>
             <option value="dora">DoRA</option>
             <option value="lora">LoRA</option>
           </select>
@@ -702,20 +820,20 @@
         </label>
         <label class="field">
           <span>epochs</span>
-          <input type="number" min="1" step="1" bind:value={epochs} />
-          <small>one epoch is one pass over every track.</small>
+          <input type="number" min="1" step="1" bind:value={epochs} disabled={lockAll} />
+          <small>{resuming && resumeMode === "weights" ? "epochs to train from these weights." : "one epoch is one pass over every track."}</small>
         </label>
         <label class="field">
           <span>learning rate</span>
-          <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} />
+          <input type="text" inputmode="decimal" spellcheck="false" bind:value={learningRateText} disabled={lockAll} />
           <small class:invalid={learningRateDecimal === "invalid"}>1e-4 trains lightly; 3e-4 trains hard. Current: {learningRateDecimal}.</small>
         </label>
         {#if nativeRuntime}
         <label class="field">
           <span>training window seconds</span>
           <div class="path-row">
-            <input type="number" min="1" step="1" bind:value={windowMin} aria-label="shortest training window" />
-            <input type="number" min="1" step="1" bind:value={windowMax} aria-label="longest training window" />
+            <input type="number" min="1" step="1" bind:value={windowMin} aria-label="shortest training window" disabled={lockAll} />
+            <input type="number" min="1" step="1" bind:value={windowMax} aria-label="longest training window" disabled={lockAll} />
           </div>
           <small class:invalid={!windowValid}>each update trains on a {windowMin}–{windowMax} s crop while conditioning on the whole song. longer windows need more VRAM; 45–60 fits 8 GB with XL Q4_K_M.</small>
         </label>
@@ -738,7 +856,7 @@
         <div class="settings-grid advanced-grid">
         <label class="field">
           <span>timestep μ</span>
-          <select bind:value={timestepMuText}>
+          <select bind:value={timestepMuText} disabled={lockAll}>
             <option value="-0.4">default · μ −0.4</option>
             <option value="0.0">experimental vocal · μ 0.0</option>
           </select>
@@ -746,7 +864,7 @@
         </label>
         <label class="field">
           <span>adapter coverage</span>
-          <select bind:value={moduleProfile}>
+          <select bind:value={moduleProfile} disabled={resuming}>
             <option value="balanced">balanced attention + MLP</option>
             <option value="attention">attention only · legacy</option>
           </select>
@@ -754,12 +872,12 @@
         </label>
         <label class="field">
           <span>rank</span>
-          <input type="number" min="1" step="1" bind:value={rank} />
+          <input type="number" min="1" step="1" bind:value={rank} disabled={resuming} />
           <small>{moduleProfile === "balanced" ? "reference rank; projection families scale around it." : "uniform attention rank."}</small>
         </label>
         <label class="field">
           <span>save every</span>
-          <input type="number" min="1" step="1" bind:value={saveEvery} />
+          <input type="number" min="1" step="1" bind:value={saveEvery} disabled={lockAll} />
         </label>
         <label class="field">
           <span>batch size</span>
@@ -768,23 +886,23 @@
         </label>
         <label class="field">
           <span>grad accum</span>
-          <input type="number" min="1" step="1" bind:value={gradientAccumulation} />
+          <input type="number" min="1" step="1" bind:value={gradientAccumulation} disabled={lockAll} />
         </label>
         <label class="field">
           <span>loss weighting</span>
-          <select bind:value={lossWeighting}>
+          <select bind:value={lossWeighting} disabled={lockAll}>
             <option value="min_snr">Min-SNR (recommended)</option>
             <option value="none">none (flat MSE)</option>
           </select>
         </label>
         <label class="field">
           <span>Min-SNR gamma</span>
-          <input type="number" min="0.1" step="0.1" bind:value={snrGamma} disabled={lossWeighting === "none"} />
+          <input type="number" min="0.1" step="0.1" bind:value={snrGamma} disabled={lockAll || lossWeighting === "none"} />
           <small>5.0 is the reference setting.</small>
         </label>
         <label class="field">
           <span>genre prompt ratio</span>
-          <input type="number" min="0" max="100" step="1" bind:value={genreRatio} />
+          <input type="number" min="0" max="100" step="1" bind:value={genreRatio} disabled={lockAll} />
           <small>Each epoch, {genreRatio}% of tracks use genre instead of caption.</small>
         </label>
         </div>
@@ -809,7 +927,7 @@
 
       <div class="actions">
         <button type="button" class="accent-secondary" onclick={() => void startJob(false)} disabled={!canTrain}>
-          {starting ? "launching..." : `train ${adapterType === "dora" ? "DoRA" : "LoRA"}`}
+          {starting ? "launching..." : `${!resuming ? "train" : resumeMode === "exact" ? "resume" : "continue"} ${adapterType === "dora" ? "DoRA" : "LoRA"}`}
         </button>
         {#if isTraining}
           <button type="button" class="danger" onclick={cancelTraining} disabled={cancelling}>
@@ -1114,6 +1232,11 @@
   .toggle-field strong {
     font-size: 11px;
     font-weight: 600;
+  }
+
+  .toggle-field.unavailable {
+    cursor: default;
+    opacity: 0.6;
   }
 
   .toggle-field small {

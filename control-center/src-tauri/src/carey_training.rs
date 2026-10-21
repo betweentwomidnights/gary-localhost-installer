@@ -39,6 +39,47 @@ pub struct Options {
     pub trigger: String,
     pub window_min_seconds: f64,
     pub window_max_seconds: f64,
+    /// The earlier checkpoint this run continues from, if any.
+    #[serde(default)]
+    pub resume: Option<Resume>,
+}
+
+/// How a run continues from an earlier run's checkpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResumeMode {
+    /// From its full trainer state: the original settings and epoch budget,
+    /// continuing at the update where it stopped. ace-train refuses anything
+    /// else, since its cosine schedule spans the whole budget.
+    Exact,
+    /// From its weights alone, under new settings: the optimizer, warmup and
+    /// schedule start over.
+    Weights,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resume {
+    /// An earlier run's checkpoint folder: its `run`, or a `checkpoint-epoch-N`.
+    pub checkpoint: PathBuf,
+    pub mode: ResumeMode,
+}
+
+/// A checkpoint a new run can continue from.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumePoint {
+    pub name: String,
+    pub job_id: String,
+    pub path: String,
+    /// Epochs the checkpoint had completed, out of its run's budget.
+    pub epoch: u32,
+    pub epochs: u32,
+    /// Saved part way through an epoch, as cancelling does.
+    pub mid_epoch: bool,
+    /// Whether it holds the trainer state an exact resume needs, with epochs
+    /// left to train.
+    pub exact: bool,
 }
 
 /// The DiTs a LoRA can train on: lego, extract and complete need a base model,
@@ -336,6 +377,128 @@ pub fn run_checkpoints(run: &Path, final_label: &str) -> Vec<crate::CareyTrainin
     checkpoints
 }
 
+/// The checkpoint at `dir`, one of `options`' run's saves, as a resume point.
+fn resume_point(dir: &Path, options: &Options, job_id: &str) -> Option<ResumePoint> {
+    let generation = resolve_checkpoint(dir).ok()?;
+    let state: serde_json::Value = std::fs::read(generation.join("trainer_state.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())?;
+    let epoch = u32::try_from(state["completed_epochs"].as_u64()?).ok()?;
+    let mid_epoch = state["continuation"]["next_batch"].as_u64().unwrap_or(0) > 0;
+    let full = generation.join("checkpoint_manifest.json").is_file()
+        && generation.join("optimizer_state.safetensors").is_file();
+    Some(ResumePoint {
+        name: options.name.clone(),
+        job_id: job_id.into(),
+        path: dir.to_string_lossy().into_owned(),
+        epoch,
+        epochs: options.epochs,
+        mid_epoch,
+        exact: full && epoch < options.epochs,
+    })
+}
+
+/// Every checkpoint of every C++ training run, cancelled and failed ones
+/// included, with the options its run recorded.
+fn resume_sources(root: &Path) -> Vec<(ResumePoint, Options, PathBuf)> {
+    let jobs = root.join("carey").join("training").join("jobs");
+    let mut sources = Vec::new();
+    for entry in std::fs::read_dir(jobs).into_iter().flatten().flatten() {
+        let job = entry.path();
+        let Some(job_id) = entry.file_name().to_str().filter(|id| is_native_job(Some(id))).map(String::from) else {
+            continue;
+        };
+        let Some(options) = std::fs::read(job.join("native-options.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Options>(&raw).ok())
+        else {
+            continue;
+        };
+        let run = job.join("run");
+        let mut dirs: Vec<(u32, PathBuf)> = std::fs::read_dir(&run)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let epoch = entry.file_name().to_str()?.strip_prefix("checkpoint-epoch-")?.parse().ok()?;
+                Some((epoch, entry.path()))
+            })
+            .collect();
+        dirs.sort_by_key(|(epoch, _)| *epoch);
+        dirs.push((u32::MAX, run));
+        for (_, dir) in dirs {
+            if let Some(point) = resume_point(&dir, &options, &job_id) {
+                sources.push((point, options.clone(), job.clone()));
+            }
+        }
+    }
+    sources.sort_by(|(a, ..), (b, ..)| {
+        (&a.name, &a.job_id, a.epoch, a.mid_epoch).cmp(&(&b.name, &b.job_id, b.epoch, b.mid_epoch))
+    });
+    sources
+}
+
+/// The checkpoints a new run can continue from, oldest first per LoRA.
+pub fn resume_points(root: &Path) -> Vec<ResumePoint> {
+    resume_sources(root).into_iter().map(|(point, ..)| point).collect()
+}
+
+/// The resume point at `checkpoint`, its run's options and its job folder.
+fn find_resume_source(root: &Path, checkpoint: &Path) -> Result<(ResumePoint, Options, PathBuf), String> {
+    let requested = checkpoint.canonicalize().map_err(|error| error.to_string())?;
+    resume_sources(root)
+        .into_iter()
+        .find(|(point, ..)| Path::new(&point.path).canonicalize().is_ok_and(|path| path == requested))
+        .ok_or_else(|| "Choose a checkpoint from Carey's C++ training history.".into())
+}
+
+/// The options the run that saved `checkpoint` trained with, for the dialog
+/// to restore.
+pub fn resume_options(root: &Path, checkpoint: &Path) -> Result<Options, String> {
+    find_resume_source(root, checkpoint).map(|(_, options, _)| Options { resume: None, ..options })
+}
+
+/// Hard-link `source` to `dest`, or copy it where the volume cannot link.
+fn link_or_copy(source: &Path, dest: &Path) -> Result<(), String> {
+    if std::fs::hard_link(source, dest).is_err() {
+        std::fs::copy(source, dest).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Give a new job an earlier job's staged dataset, which an exact resume needs
+/// unchanged: ace-train checks every file's contents against its plan.
+fn link_dataset(source: &Path, dest: &Path) -> Result<Staged, String> {
+    std::fs::create_dir_all(dest).map_err(|error| error.to_string())?;
+    let mut files: Vec<PathBuf> = std::fs::read_dir(source)
+        .map_err(|error| format!("The earlier run's staged dataset is gone: {error}"))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .collect();
+    files.sort();
+    let (mut count, mut captions) = (0, Vec::new());
+    for file in &files {
+        link_or_copy(file, &dest.join(file.file_name().ok_or("Invalid staged file")?))?;
+        match file.extension().and_then(|extension| extension.to_str()) {
+            Some("wav") => count += 1,
+            Some("txt") => {
+                let text = std::fs::read_to_string(file).map_err(|error| error.to_string())?;
+                if let Some(caption) = text.lines().find_map(|line| line.strip_prefix("caption: ")) {
+                    if !captions.iter().any(|known| known == caption) {
+                        captions.push(caption.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if count == 0 {
+        return Err("The earlier run's staged dataset has no audio.".into());
+    }
+    Ok(Staged { count, captions })
+}
+
 /// Expose `generation` to ace-server as the adapter `name`: its folder under
 /// the adapters folder ace-server scans, holding the generation's weights and
 /// config. Links when the volume allows, since generations never change.
@@ -346,10 +509,7 @@ pub fn publish_adapter(root: &Path, name: &str, generation: &Path) -> Result<Pat
     std::fs::create_dir(&stage).map_err(|error| error.to_string())?;
     let result = (|| {
         for file in ["adapter_model.safetensors", "adapter_config.json"] {
-            let source = generation.join(file);
-            if std::fs::hard_link(&source, stage.join(file)).is_err() {
-                std::fs::copy(&source, stage.join(file)).map_err(|error| error.to_string())?;
-            }
+            link_or_copy(&generation.join(file), &stage.join(file))?;
         }
         if dest.exists() {
             std::fs::remove_dir_all(&dest).map_err(|error| error.to_string())?;
@@ -385,6 +545,7 @@ fn model_family(dit: &str) -> &'static str {
 
 /// Register a finished run's adapter as `name`: its catalog entry with every
 /// checkpoint, the caption pool, and the adapters folder ace-server loads.
+/// `earlier` are the checkpoints an exact resume continued, listed first.
 pub fn register(
     root: &Path,
     options: &Options,
@@ -392,9 +553,11 @@ pub fn register(
     run: &Path,
     captions: &[String],
     cancelled: bool,
+    earlier: &[crate::CareyTrainingCheckpoint],
 ) -> Result<PathBuf, String> {
     let final_label = if cancelled { "where training stopped" } else { "final epoch" };
-    let checkpoints = run_checkpoints(run, final_label);
+    let mut checkpoints = earlier.to_vec();
+    checkpoints.extend(run_checkpoints(run, final_label));
     let last = checkpoints.last().ok_or("The trainer saved no adapter to register")?;
     let (selected, selected_id) = (last.path.clone(), last.id.clone());
     let generation = PathBuf::from(&selected);
@@ -513,12 +676,48 @@ pub struct Job {
     run: PathBuf,
     options: Options,
     captions: Vec<String>,
+    earlier: Vec<crate::CareyTrainingCheckpoint>,
 }
 
 /// `path` without the `\\?\` prefix canonicalizing adds. ace-train up to
 /// v0.1.2 appends checkpoint folders with `/`, which a `\\?\` path rejects.
 fn plain(path: PathBuf) -> PathBuf {
     PathBuf::from(crate::user_facing_windows_path(&path))
+}
+
+/// What a resume continues from, once checked against its run.
+struct Continuation {
+    mode: ResumeMode,
+    point: ResumePoint,
+    /// The job folder of the run that saved the checkpoint.
+    source: PathBuf,
+}
+
+/// The options a run actually trains with. An exact resume takes its source
+/// run's; continuing from weights keeps what the weights' shapes depend on.
+fn continuation(root: &Path, options: Options) -> Result<(Options, Option<Continuation>), String> {
+    let Some(resume) = options.resume.clone() else {
+        return Ok((options, None));
+    };
+    let (point, original, source) = find_resume_source(root, &resume.checkpoint)?;
+    if original.name != options.name {
+        return Err(format!("A resumed run keeps its LoRA's name, {}.", original.name));
+    }
+    let options = match resume.mode {
+        ResumeMode::Exact if !point.exact => {
+            return Err("That checkpoint has no epochs left to resume: continue from its weights instead.".into());
+        }
+        ResumeMode::Exact => Options { resume: Some(resume.clone()), ..original },
+        ResumeMode::Weights => {
+            if (&original.dit, &original.adapter_type, &original.profile, original.rank)
+                != (&options.dit, &options.adapter_type, &options.profile, options.rank)
+            {
+                return Err("Continuing from weights keeps the original model, adapter type, coverage and rank.".into());
+            }
+            options
+        }
+    };
+    Ok((options, Some(Continuation { mode: resume.mode, point, source })))
 }
 
 /// Launch a native training job: stage the dataset, then start ace-train on
@@ -531,6 +730,7 @@ pub async fn start(
     runtime_path: Option<&std::ffi::OsStr>,
     options: Options,
 ) -> Result<Job, String> {
+    let (options, continuation) = continuation(root, options)?;
     validate(&options)?;
     probe(executable, runtime_path).await?;
     let models = carey_models::models();
@@ -576,9 +776,35 @@ pub async fn start(
         let _ = crate::mark_carey_ace_training_failed(&status_path, &message, None);
         message
     };
-    let staged = stage(&options.dataset, &job.join("dataset"), &options.trigger)
-        .await
-        .map_err(fail)?;
+    let staged = match &continuation {
+        Some(Continuation { mode: ResumeMode::Exact, source, .. }) => {
+            link_dataset(&source.join("dataset"), &job.join("dataset")).map_err(fail)?
+        }
+        _ => stage(&options.dataset, &job.join("dataset"), &options.trigger).await.map_err(fail)?,
+    };
+    // ace-train reads full trainer state from a checkpoint folder, and only
+    // weights from a folder holding nothing else.
+    let resume_from = match &continuation {
+        Some(Continuation { mode: ResumeMode::Exact, point, .. }) => Some(PathBuf::from(&point.path)),
+        Some(Continuation { mode: ResumeMode::Weights, point, .. }) => {
+            let generation = resolve_checkpoint(Path::new(&point.path)).map_err(fail)?;
+            let weights = job.join("resume-weights");
+            std::fs::create_dir(&weights).map_err(|error| fail(error.to_string()))?;
+            for file in ["adapter_model.safetensors", "adapter_config.json"] {
+                link_or_copy(&generation.join(file), &weights.join(file)).map_err(fail)?;
+            }
+            Some(weights)
+        }
+        None => None,
+    };
+    // An exact resume's earlier saves stay in its catalog entry.
+    let earlier = match &continuation {
+        Some(Continuation { mode: ResumeMode::Exact, point, source }) => run_checkpoints(&source.join("run"), "")
+            .into_iter()
+            .filter(|checkpoint| checkpoint.epoch.is_some_and(|epoch| epoch <= point.epoch))
+            .collect(),
+        _ => Vec::new(),
+    };
     crate::sa3_training::save(&job.join("native-options.json"), &options).map_err(fail)?;
     // Shared across jobs: ace-train keys every entry by its inputs and settings.
     let cache = plain(crate::sa3_training::checked_folder(root, &["carey", "training", "native-cache"]).map_err(fail)?);
@@ -598,6 +824,7 @@ pub async fn start(
         .arg(&progress_path)
         .arg("--cancel-file")
         .arg(&cancel_path)
+        .args(resume_from.iter().flat_map(|dir| [std::ffi::OsString::from("--resume"), plain(dir.clone()).into()]))
         .env("GGML_BACKEND", backend)
         .current_dir(executable.parent().ok_or("Invalid native trainer path").map_err(|e| fail(e.into()))?)
         .kill_on_drop(true);
@@ -624,7 +851,19 @@ pub async fn start(
             ("runDir", json!(crate::user_facing_windows_path(&run))),
             ("phase", json!("loading")),
             ("totalFiles", json!(staged.count)),
-            ("message", json!(format!("Training on {} songs with ace-train.", staged.count))),
+            (
+                "message",
+                json!(match &continuation {
+                    Some(Continuation { mode: ResumeMode::Exact, point, .. }) => {
+                        format!("Resuming from epoch {} of {} with ace-train.", point.epoch, point.epochs)
+                    }
+                    Some(Continuation { mode: ResumeMode::Weights, point, .. }) => format!(
+                        "Training {} epochs on {} songs from the epoch {} weights with ace-train.",
+                        options.epochs, staged.count, point.epoch
+                    ),
+                    None => format!("Training on {} songs with ace-train.", staged.count),
+                }),
+            ),
         ],
     )
     .map_err(fail)?;
@@ -638,6 +877,7 @@ pub async fn start(
         run,
         options,
         captions: staged.captions,
+        earlier,
     })
 }
 
@@ -720,7 +960,7 @@ impl Job {
             if output != self.run.canonicalize().map_err(|error| error.to_string())? {
                 return Err("ace-train reported an adapter outside its run folder".into());
             }
-            Some(register(&self.root, &self.options, &self.id, &self.run, &self.captions, cancelled)?)
+            Some(register(&self.root, &self.options, &self.id, &self.run, &self.captions, cancelled, &self.earlier)?)
         };
         let message = match (&registered, cancelled) {
             (Some(_), false) => format!("Training completed; {} is registered for Carey.", self.options.name),
@@ -816,6 +1056,7 @@ mod tests {
             trigger: String::new(),
             window_min_seconds: 45.0,
             window_max_seconds: 60.0,
+            resume: None,
         }
     }
 
@@ -857,6 +1098,81 @@ mod tests {
         std::fs::write(run.join("checkpoint.current"), "../elsewhere").unwrap();
         assert!(resolve_checkpoint(&run).is_err());
         std::fs::remove_dir_all(run).unwrap();
+    }
+
+    /// A runtime root holding one ten-epoch job that saved epoch 5 and then
+    /// its final epoch; `final_state` writes the final save's trainer state.
+    fn resume_root(final_state: &str) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("gary-carey-resume-{}-{}", std::process::id(), NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
+        let job = root.join("carey/training/jobs/native-tones-1-0");
+        let save = |dir: &Path, n: u32, state: &str| {
+            let path = dir.join(".checkpoint-generations").join(format!("generation-{n}"));
+            std::fs::create_dir_all(&path).unwrap();
+            for file in ["adapter_model.safetensors", "adapter_config.json", "checkpoint_manifest.json", "optimizer_state.safetensors"] {
+                std::fs::write(path.join(file), file).unwrap();
+            }
+            std::fs::write(path.join("trainer_state.json"), state).unwrap();
+            std::fs::write(dir.join("checkpoint.current"), format!(".checkpoint-generations/generation-{n}")).unwrap();
+        };
+        save(&job.join("run/checkpoint-epoch-5"), 1, r#"{"completed_epochs":5,"continuation":{"next_batch":0}}"#);
+        save(&job.join("run"), 2, final_state);
+        std::fs::create_dir_all(job.join("dataset")).unwrap();
+        for (stem, caption) in [("0000", "soft tones"), ("0001", "soft tones"), ("0002", "loud tones")] {
+            std::fs::write(job.join(format!("dataset/{stem}.wav")), stem).unwrap();
+            std::fs::write(job.join(format!("dataset/{stem}.txt")), format!("caption: {caption}\ngenre: ambient\n")).unwrap();
+        }
+        let options = Options { name: "tones".into(), epochs: 10, ..options() };
+        crate::sa3_training::save(&job.join("native-options.json"), &options).unwrap();
+        (root, job)
+    }
+
+    #[test]
+    fn every_save_of_every_run_is_a_resume_point() {
+        let (root, job) = resume_root(r#"{"completed_epochs":7,"continuation":{"next_batch":4}}"#);
+        let points = resume_points(&root);
+        let summary: Vec<_> = points.iter().map(|point| (point.epoch, point.mid_epoch, point.exact)).collect();
+        // Epoch 5, then where the cancelled run stopped part way through epoch 8.
+        assert_eq!(summary, [(5, false, true), (7, true, true)]);
+        assert!(points.iter().all(|point| point.name == "tones" && point.job_id == "native-tones-1-0" && point.epochs == 10));
+        assert_eq!(resume_options(&root, &job.join("run")).unwrap().epochs, 10);
+        assert!(resume_options(&root, &root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+
+        // A run that finished its budget continues only from its weights.
+        let (root, _) = resume_root(r#"{"completed_epochs":10,"continuation":{"next_batch":0}}"#);
+        assert!(!resume_points(&root).last().unwrap().exact);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exact_resumes_take_the_original_settings_and_weights_keep_their_shape() {
+        let (root, job) = resume_root(r#"{"completed_epochs":10,"continuation":{"next_batch":0}}"#);
+        let resume = |checkpoint: &Path, mode| Some(Resume { checkpoint: checkpoint.to_path_buf(), mode });
+        let asked = Options { name: "tones".into(), epochs: 40, learning_rate: 1e-4, ..options() };
+
+        let epoch_5 = job.join("run/checkpoint-epoch-5");
+        let (exact, from) = continuation(&root, Options { resume: resume(&epoch_5, ResumeMode::Exact), ..asked.clone() }).unwrap();
+        assert_eq!((exact.epochs, exact.learning_rate), (10, 3e-4), "an exact resume ignores changed settings");
+        assert_eq!(from.unwrap().point.epoch, 5);
+        assert!(continuation(&root, Options { resume: resume(&job.join("run"), ResumeMode::Exact), ..asked.clone() }).is_err(), "nothing left to resume");
+
+        let (weights, _) = continuation(&root, Options { resume: resume(&job.join("run"), ResumeMode::Weights), ..asked.clone() }).unwrap();
+        assert_eq!((weights.epochs, weights.learning_rate), (40, 1e-4));
+        for changed in [Options { rank: 32, ..asked.clone() }, Options { name: "other".into(), ..asked.clone() }] {
+            assert!(continuation(&root, Options { resume: resume(&job.join("run"), ResumeMode::Weights), ..changed }).is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_exact_resume_reuses_the_staged_dataset_and_its_captions() {
+        let (root, job) = resume_root(r#"{"completed_epochs":7,"continuation":{"next_batch":0}}"#);
+        let dest = root.join("new-dataset");
+        let staged = link_dataset(&job.join("dataset"), &dest).unwrap();
+        assert_eq!(staged.count, 3);
+        assert_eq!(staged.captions, ["soft tones", "loud tones"]);
+        assert_eq!(std::fs::read(dest.join("0002.wav")).unwrap(), b"0002");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// GARY4LOCAL_CAREY_TRAIN_SMOKE_ROOT (a new folder), _MODELS (a folder
@@ -933,7 +1249,7 @@ mod tests {
         assert!(status.success());
         let terminal = crate::sa3_training::read_progress(&progress).unwrap();
         assert_eq!(terminal.status, "completed");
-        let generation = register(&root, &options, "smoke-job", &run, &staged.captions, false).unwrap();
+        let generation = register(&root, &options, "smoke-job", &run, &staged.captions, false, &[]).unwrap();
         let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(&root)).unwrap();
         let entry = &catalog["my-lora"];
         assert_eq!(entry.path, generation.to_string_lossy());
@@ -942,5 +1258,96 @@ mod tests {
         assert!(root.join("carey/adapters/my-lora/adapter_model.safetensors").is_file());
         let pools: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("carey/captions.json")).unwrap()).unwrap();
         assert_eq!(pools["my-lora"], json!(["soft sustained tones"]));
+    }
+
+    /// GARY4LOCAL_CAREY_RESUME_SMOKE_ROOT (a new folder on the models' volume),
+    /// _MODELS (a folder holding the 2B base BF16 and shared GGUFs), _TRAINER
+    /// (an installed ace-train.exe) and optionally _BACKEND (default vulkan).
+    /// Through `start`, trains three epochs, resumes exactly from epoch 1 and
+    /// must reproduce the uninterrupted final adapter, then continues one epoch
+    /// from the final weights.
+    #[tokio::test]
+    #[ignore = "trains with a real ace-train on real model GGUFs"]
+    async fn real_native_training_resumes_exactly_and_from_weights() {
+        let var = |name: &str| std::env::var(format!("GARY4LOCAL_CAREY_RESUME_SMOKE_{name}")).ok();
+        let root = PathBuf::from(var("ROOT").expect("a new isolated root is required"));
+        assert!(!root.exists(), "the smoke root must not exist yet");
+        let models = PathBuf::from(var("MODELS").expect("a model folder is required"));
+        let trainer = PathBuf::from(var("TRAINER").expect("an ace-train is required"));
+        let backend = var("BACKEND").unwrap_or_else(|| "vulkan".into());
+        let dit = "carey-native::base::BF16";
+        std::fs::create_dir_all(root.join("models/carey")).unwrap();
+        for id in [dit, carey_models::SHARED] {
+            for file in &carey_models::models().component(id).unwrap().files {
+                std::fs::hard_link(models.join(&file.filename), root.join("models/carey").join(&file.filename)).unwrap();
+            }
+        }
+        let dataset = root.join("dataset");
+        std::fs::create_dir_all(&dataset).unwrap();
+        for (name, frequency) in [("low", 220.0), ("high", 440.0)] {
+            let spec = hound::WavSpec { channels: 2, sample_rate: 48_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+            let mut writer = hound::WavWriter::create(dataset.join(format!("{name}.wav")), spec).unwrap();
+            for i in 0..48_000 * 4 {
+                let sample = ((i as f32 / 48_000.0 * frequency * std::f32::consts::TAU).sin() * 8_000.0) as i16;
+                writer.write_sample(sample).unwrap();
+                writer.write_sample(sample).unwrap();
+            }
+            writer.finalize().unwrap();
+            std::fs::write(
+                dataset.join(format!("{name}.txt")),
+                format!("caption: {name} sustained tone\nbpm: 120\nkeyscale: C major\ntimesignature: 4/4\nis_instrumental: true\nlyrics:\n"),
+            )
+            .unwrap();
+        }
+        let options = Options {
+            name: "resume-smoke".into(),
+            dataset: dataset.clone(),
+            dit: dit.into(),
+            epochs: 3,
+            checkpoint_every: 1,
+            rank: 8,
+            window_min_seconds: 2.0,
+            window_max_seconds: 2.0,
+            ..options()
+        };
+        let train = |options: Options| {
+            let (root, trainer, backend) = (root.clone(), trainer.clone(), backend.clone());
+            async move {
+                let job = start(&root, &trainer, &backend, None, options).await.unwrap();
+                let status = job.status_path().to_path_buf();
+                job.monitor().await.unwrap();
+                let status: serde_json::Value = serde_json::from_slice(&std::fs::read(&status).unwrap()).unwrap();
+                assert_eq!(status["status"], "completed", "{status}");
+                status["finalCheckpointPath"].as_str().unwrap().to_string()
+            }
+        };
+        let adapter = |generation: &str| std::fs::read(Path::new(generation).join("adapter_model.safetensors")).unwrap();
+
+        let uninterrupted = train(options.clone()).await;
+        let points = resume_points(&root);
+        assert_eq!(points.iter().map(|point| (point.epoch, point.exact)).collect::<Vec<_>>(), [(1, true), (2, true), (3, false)]);
+
+        // Changed settings are ignored: an exact resume trains as its run did.
+        let resumed = train(Options {
+            epochs: 40,
+            resume: Some(Resume { checkpoint: PathBuf::from(&points[0].path), mode: ResumeMode::Exact }),
+            ..options.clone()
+        })
+        .await;
+        assert_eq!(adapter(&resumed), adapter(&uninterrupted), "an exact resume must reproduce the uninterrupted run");
+        let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(&root)).unwrap();
+        let ids: Vec<_> = catalog["resume-smoke"].training_checkpoints.iter().map(|checkpoint| checkpoint.id.as_str()).collect();
+        assert_eq!(ids, ["epoch-1", "epoch-2", "final"], "the resumed entry keeps the epoch it continued");
+
+        let continued = train(Options {
+            epochs: 1,
+            resume: Some(Resume { checkpoint: PathBuf::from(&points[2].path), mode: ResumeMode::Weights }),
+            ..options.clone()
+        })
+        .await;
+        assert_ne!(adapter(&continued), adapter(&uninterrupted), "one more epoch changes the weights");
+        let log = std::fs::read_to_string(Path::new(&continued).ancestors().nth(3).unwrap().join("training.log")).unwrap();
+        assert!(log.contains("PEFT weight-only restart"), "continuing from weights restarts the optimizer");
+        println!("PASS exact resume reproduced the uninterrupted adapter; weights continued for one epoch");
     }
 }

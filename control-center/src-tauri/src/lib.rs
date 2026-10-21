@@ -6251,6 +6251,8 @@ pub fn run() {
             prepare_sa3_native_loras,
             select_sa3_native_checkpoint,
             get_sa3_native_resume_options,
+            get_carey_native_resume_points,
+            get_carey_native_resume_options,
             get_runtime_cache_info,
             clear_uv_cache,
             get_service_envs,
@@ -7862,6 +7864,8 @@ async fn start_carey_ace_lora_training(
     native_dit: Option<String>,
     window_min_seconds: Option<f64>,
     window_max_seconds: Option<f64>,
+    resume_checkpoint: Option<String>,
+    resume_mode: Option<String>,
     manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
@@ -7873,7 +7877,8 @@ async fn start_carey_ace_lora_training(
         None if native && (auto_caption || prepare_only) => "dataset".to_string(),
         None => return Err("LoRA name must use lowercase letters, numbers, '-' or '_'".to_string()),
     };
-    if !(native && (auto_caption || prepare_only)) {
+    // A resumed run keeps its LoRA's name, which the run registered.
+    if !(native && (auto_caption || prepare_only || resume_checkpoint.is_some())) {
         require_available_lora_name(&carey_lora_name_availability(&normalized_name)?)?;
     }
     if native {
@@ -7922,6 +7927,16 @@ async fn start_carey_ace_lora_training(
             trigger: trigger.trim().to_string(),
             window_min_seconds: window_min_seconds.unwrap_or(45.0),
             window_max_seconds: window_max_seconds.unwrap_or(60.0),
+            resume: resume_checkpoint
+                .map(|checkpoint| {
+                    let mode = match resume_mode.as_deref() {
+                        None | Some("exact") => carey_training::ResumeMode::Exact,
+                        Some("weights") => carey_training::ResumeMode::Weights,
+                        Some(other) => return Err(format!("Unknown resume mode: {other}")),
+                    };
+                    Ok(carey_training::Resume { checkpoint: PathBuf::from(checkpoint), mode })
+                })
+                .transpose()?,
         };
         return start_native_carey_training(options, repo_root.inner(), manager.inner(), app_handle).await;
     }
@@ -11038,6 +11053,29 @@ async fn select_sa3_native_checkpoint(
     let _ = app_handle.emit("sa3-native-loras-updated", &state);
     result?;
     Ok(state)
+}
+
+/// Every C++ Carey checkpoint a new run can continue from.
+#[tauri::command]
+async fn get_carey_native_resume_points(
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<Vec<carey_training::ResumePoint>, String> {
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || carey_training::resume_points(&root))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The settings the run that saved `checkpoint` trained with.
+#[tauri::command]
+async fn get_carey_native_resume_options(
+    checkpoint: String,
+    repo_root: tauri::State<'_, PathBuf>,
+) -> Result<carey_training::Options, String> {
+    let root = repo_root.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || carey_training::resume_options(&root, Path::new(&checkpoint)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
