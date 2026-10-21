@@ -205,6 +205,9 @@ pub struct Progress {
     pub message: String,
     pub error: String,
     pub step: u32,
+    /// Written by ace-train, which counts epochs; sa3-train counts steps only.
+    #[serde(default)]
+    pub epoch: u32,
     pub max_steps: u32,
     pub final_adapter: String,
     pub adapter_checkpoint: String,
@@ -560,9 +563,9 @@ pub async fn start(
         owner_pid: Some(std::process::id()),
         launcher_pid: child.id(),
         child_pid: None,
-        run_dir: Some(output.to_string_lossy().into()),
-        log_path: Some(log_path.to_string_lossy().into()),
-        cancel_path: Some(cancel_path.to_string_lossy().into()),
+        run_dir: Some(crate::user_facing_windows_path(&output)),
+        log_path: Some(crate::user_facing_windows_path(&log_path)),
+        cancel_path: Some(crate::user_facing_windows_path(&cancel_path)),
         final_checkpoint_path: None,
         current_step: Some(0),
         max_steps: Some(options.steps),

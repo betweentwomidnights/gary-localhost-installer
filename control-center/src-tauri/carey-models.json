@@ -1,0 +1,555 @@
+[
+  {
+    "id": "carey-native::shared",
+    "label": "ACE-Step text encoder and VAE",
+    "description": "What every Carey model needs: the Qwen3 text encoder (Q8_0) and the ACE-Step VAE (BF16).",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+        "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321",
+        "bytes": 784144960
+      },
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "vae-BF16.gguf",
+        "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8",
+        "bytes": 337420928
+      }
+    ]
+  },
+  {
+    "id": "carey-native::base::BF16",
+    "label": "ACE-Step 1.5 2B base BF16",
+    "description": "Every task, including lego, extract and complete. Carey's default. BF16: reference precision.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-base-BF16.gguf",
+        "sha256": "ef880d77ffec8e6638f268c6237b73a8965af24bdd10fd5cfc27432c9d19ee57",
+        "bytes": 4791642016
+      }
+    ]
+  },
+  {
+    "id": "carey-native::sft::BF16",
+    "label": "ACE-Step 1.5 2B sft BF16",
+    "description": "Supervised finetune of the 2B base. BF16: reference precision.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-sft-BF16.gguf",
+        "sha256": "82db4849bfa9fd6438f049a5bce3fbd57b70f57e7433238db2d97becd0eee282",
+        "bytes": 4791642016
+      }
+    ]
+  },
+  {
+    "id": "carey-native::turbo::BF16",
+    "label": "ACE-Step 1.5 2B turbo BF16",
+    "description": "Few-step generation; no lego, extract or complete. BF16: reference precision.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-turbo-BF16.gguf",
+        "sha256": "c7b463b728cdce2f3d4e5205fc5747d0344ebfea37f19542f5236cd8a76cf462",
+        "bytes": 4791642080
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-base::BF16",
+    "label": "ACE-Step 1.5 XL base BF16",
+    "description": "Every task, at XL size. The base for LoRA training. BF16: reference precision.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-base-BF16.gguf",
+        "sha256": "3ebd8e3ff0951dfe9f424a7f7a8e829f05875669b5939bde5c16cf09a940d982",
+        "bytes": 9978530784
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-sft::BF16",
+    "label": "ACE-Step 1.5 XL sft BF16",
+    "description": "Supervised finetune of the XL base. BF16: reference precision.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-sft-BF16.gguf",
+        "sha256": "c998effb0c3b447202c49242fd9ebf55ea7afccf766d4b4dd4ecedaed92bcbbb",
+        "bytes": 9978530784
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-turbo::BF16",
+    "label": "ACE-Step 1.5 XL turbo BF16",
+    "description": "Few-step XL generation; no lego, extract or complete. BF16: reference precision.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-turbo-BF16.gguf",
+        "sha256": "10d445a71653a8fef9a16a8457d9fb66da432ac500b357cce028f36c489c1b63",
+        "bytes": 9978530816
+      }
+    ]
+  },
+  {
+    "id": "carey-native::base::Q8_0",
+    "label": "ACE-Step 1.5 2B base Q8_0",
+    "description": "Every task, including lego, extract and complete. Carey's default. Q8_0: near-transparent.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-base-Q8_0.gguf",
+        "sha256": "10329f321010cedc3571c24b6371d002ce49238f48be47def4a1c76bf27ee150",
+        "bytes": 2549527936
+      }
+    ]
+  },
+  {
+    "id": "carey-native::sft::Q8_0",
+    "label": "ACE-Step 1.5 2B sft Q8_0",
+    "description": "Supervised finetune of the 2B base. Q8_0: near-transparent.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-sft-Q8_0.gguf",
+        "sha256": "17f1984e48aaab27b3eb8ccbf0b754a6656e677884c60ea7003845cfc0059b70",
+        "bytes": 2549527936
+      }
+    ]
+  },
+  {
+    "id": "carey-native::turbo::Q8_0",
+    "label": "ACE-Step 1.5 2B turbo Q8_0",
+    "description": "Few-step generation; no lego, extract or complete. Q8_0: near-transparent.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-turbo-Q8_0.gguf",
+        "sha256": "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b",
+        "bytes": 2549528000
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-base::Q8_0",
+    "label": "ACE-Step 1.5 XL base Q8_0",
+    "description": "Every task, at XL size. The base for LoRA training. Q8_0: near-transparent.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-base-Q8_0.gguf",
+        "sha256": "45d05b88ccbfa0ea27208ea618d7f0749b2be040b457cfa661d37646ea39f207",
+        "bytes": 5305828704
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-sft::Q8_0",
+    "label": "ACE-Step 1.5 XL sft Q8_0",
+    "description": "Supervised finetune of the XL base. Q8_0: near-transparent.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-sft-Q8_0.gguf",
+        "sha256": "d7b06fadab214375ef5ebcfa44bf4a10489ea364b119f5b9ecbcd870408bdab9",
+        "bytes": 5305828704
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-turbo::Q8_0",
+    "label": "ACE-Step 1.5 XL turbo Q8_0",
+    "description": "Few-step XL generation; no lego, extract or complete. Q8_0: near-transparent.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-turbo-Q8_0.gguf",
+        "sha256": "4f1044fb646374fb5730e10f64325766883eb2fc02a643c1b403f2d61f39dc19",
+        "bytes": 5305828736
+      }
+    ]
+  },
+  {
+    "id": "carey-native::base::Q6_K",
+    "label": "ACE-Step 1.5 2B base Q6_K",
+    "description": "Every task, including lego, extract and complete. Carey's default. Q6_K: smaller, close to Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-base-Q6_K.gguf",
+        "sha256": "08cf80fcc73f518c9eddfdc1e0ddcb786dc04f7d260479482794f371925b0207",
+        "bytes": 1970472000
+      }
+    ]
+  },
+  {
+    "id": "carey-native::sft::Q6_K",
+    "label": "ACE-Step 1.5 2B sft Q6_K",
+    "description": "Supervised finetune of the 2B base. Q6_K: smaller, close to Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-sft-Q6_K.gguf",
+        "sha256": "8ebf354d21058283fc65f377ceb3488901159cfc96866dd23f2c49347535061b",
+        "bytes": 1970472000
+      }
+    ]
+  },
+  {
+    "id": "carey-native::turbo::Q6_K",
+    "label": "ACE-Step 1.5 2B turbo Q6_K",
+    "description": "Few-step generation; no lego, extract or complete. Q6_K: smaller, close to Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-turbo-Q6_K.gguf",
+        "sha256": "693fc82977d9af2b5569238e363c11ae9b055d464f036d51127fba4eab016693",
+        "bytes": 1970472064
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-base::Q6_K",
+    "label": "ACE-Step 1.5 XL base Q6_K",
+    "description": "Every task, at XL size. The base for LoRA training. Q6_K: smaller, close to Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-base-Q6_K.gguf",
+        "sha256": "44f14805faffa9ee3a28ba02a69915dcc0f0d44218c91292d1e2c0896ac4ee82",
+        "bytes": 4098812960
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-sft::Q6_K",
+    "label": "ACE-Step 1.5 XL sft Q6_K",
+    "description": "Supervised finetune of the XL base. Q6_K: smaller, close to Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-sft-Q6_K.gguf",
+        "sha256": "b7af16f54b3181c5f0e4558410245cfa4d73dd2f0635cd7d14a76668fc49660c",
+        "bytes": 4098812960
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-turbo::Q6_K",
+    "label": "ACE-Step 1.5 XL turbo Q6_K",
+    "description": "Few-step XL generation; no lego, extract or complete. Q6_K: smaller, close to Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-turbo-Q6_K.gguf",
+        "sha256": "e1f6665567e9bc0331b8dfd95c2b43a84e8bf114075c9b16abdd25ae97dc58fe",
+        "bytes": 4098812992
+      }
+    ]
+  },
+  {
+    "id": "carey-native::base::Q5_K_M",
+    "label": "ACE-Step 1.5 2B base Q5_K_M",
+    "description": "Every task, including lego, extract and complete. Carey's default. Q5_K_M: smaller again.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-base-Q5_K_M.gguf",
+        "sha256": "b7a5c6d1b0729ab8630c96fabc14a47640a708e9bddff60666d8d07279aa57a7",
+        "bytes": 1700140160
+      }
+    ]
+  },
+  {
+    "id": "carey-native::sft::Q5_K_M",
+    "label": "ACE-Step 1.5 2B sft Q5_K_M",
+    "description": "Supervised finetune of the 2B base. Q5_K_M: smaller again.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-sft-Q5_K_M.gguf",
+        "sha256": "ad8fd75d58c53b3e6a6b23c2660df8f65d96603118a2a5e3c67a744c470efb82",
+        "bytes": 1700140160
+      }
+    ]
+  },
+  {
+    "id": "carey-native::turbo::Q5_K_M",
+    "label": "ACE-Step 1.5 2B turbo Q5_K_M",
+    "description": "Few-step generation; no lego, extract or complete. Q5_K_M: smaller again.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-turbo-Q5_K_M.gguf",
+        "sha256": "a241c9a721e3704cb04b17ce6a40c9aa714d3ee5cf49c2219972020eb761f5a4",
+        "bytes": 1700140224
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-base::Q5_K_M",
+    "label": "ACE-Step 1.5 XL base Q5_K_M",
+    "description": "Every task, at XL size. The base for LoRA training. Q5_K_M: smaller again.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-base-Q5_K_M.gguf",
+        "sha256": "c8d639af9f37dca6b02255ef736e6ebbac9318287c9d043db4a30dddc3a2fc3c",
+        "bytes": 3527566432
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-sft::Q5_K_M",
+    "label": "ACE-Step 1.5 XL sft Q5_K_M",
+    "description": "Supervised finetune of the XL base. Q5_K_M: smaller again.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-sft-Q5_K_M.gguf",
+        "sha256": "e7c5fdfa5075d666def2585b76f6537bba478ceedc54eec4d041538ce2fe3842",
+        "bytes": 3527566432
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-turbo::Q5_K_M",
+    "label": "ACE-Step 1.5 XL turbo Q5_K_M",
+    "description": "Few-step XL generation; no lego, extract or complete. Q5_K_M: smaller again.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-turbo-Q5_K_M.gguf",
+        "sha256": "108dbf1b1a5cfe41c46b23ee7481a1c6f6d21f7254bed4ac15ff8f307df69d3d",
+        "bytes": 3527566464
+      }
+    ]
+  },
+  {
+    "id": "carey-native::base::Q4_K_M",
+    "label": "ACE-Step 1.5 2B base Q4_K_M",
+    "description": "Every task, including lego, extract and complete. Carey's default. Q4_K_M: smallest; fits XL training on 8 GB.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-base-Q4_K_M.gguf",
+        "sha256": "942ec6a7bc11a40809af5f337063f2af2acc63e4fcd4a92b0cb42dc2bc7c41e8",
+        "bytes": 1445710208
+      }
+    ]
+  },
+  {
+    "id": "carey-native::sft::Q4_K_M",
+    "label": "ACE-Step 1.5 2B sft Q4_K_M",
+    "description": "Supervised finetune of the 2B base. Q4_K_M: smallest; fits XL training on 8 GB.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-sft-Q4_K_M.gguf",
+        "sha256": "2531bb61b9e5017fbc8875446e02f54b052eeec41ba3200dd72c6061b59b33d0",
+        "bytes": 1445710208
+      }
+    ]
+  },
+  {
+    "id": "carey-native::turbo::Q4_K_M",
+    "label": "ACE-Step 1.5 2B turbo Q4_K_M",
+    "description": "Few-step generation; no lego, extract or complete. Q4_K_M: smallest; fits XL training on 8 GB.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-turbo-Q4_K_M.gguf",
+        "sha256": "55b4d8514850f3d0f82536f37e99673aaf48df802b5ae5b153eea32a2e2daa5e",
+        "bytes": 1445710272
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-base::Q4_K_M",
+    "label": "ACE-Step 1.5 XL base Q4_K_M",
+    "description": "Every task, at XL size. The base for LoRA training. Q4_K_M: smallest; fits XL training on 8 GB.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-base-Q4_K_M.gguf",
+        "sha256": "13b08ac84e0cdca8ac770d6bc12842046113c9479ddcedd2672ac87ac458ff78",
+        "bytes": 2989922656
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-sft::Q4_K_M",
+    "label": "ACE-Step 1.5 XL sft Q4_K_M",
+    "description": "Supervised finetune of the XL base. Q4_K_M: smallest; fits XL training on 8 GB.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-sft-Q4_K_M.gguf",
+        "sha256": "fa144d3ea8a892a11a43753070e40bb2105c5bfddb57c99d542fda22297bb1b5",
+        "bytes": 2989922656
+      }
+    ]
+  },
+  {
+    "id": "carey-native::xl-turbo::Q4_K_M",
+    "label": "ACE-Step 1.5 XL turbo Q4_K_M",
+    "description": "Few-step XL generation; no lego, extract or complete. Q4_K_M: smallest; fits XL training on 8 GB.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-v15-xl-turbo-Q4_K_M.gguf",
+        "sha256": "475e60e8644b1f91eebc0cd25f24c060bed06e64a862b4e60ffafe634c740478",
+        "bytes": 2989922688
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-0.6B::BF16",
+    "label": "ACE-Step 5Hz LM 0.6B BF16",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 0.6B at BF16.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-0.6B-BF16.gguf",
+        "sha256": "8bc3e1de50fc91751ab893965c78c17589323bf4d2a9c1be2750ada7c7fabfaa",
+        "bytes": 1331108128
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-0.6B::Q8_0",
+    "label": "ACE-Step 5Hz LM 0.6B Q8_0",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 0.6B at Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-0.6B-Q8_0.gguf",
+        "sha256": "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec",
+        "bytes": 709846656
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-1.7B::BF16",
+    "label": "ACE-Step 5Hz LM 1.7B BF16",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 1.7B at BF16.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-1.7B-BF16.gguf",
+        "sha256": "6e1b625ca8dc0bfe912fa7e16a563ec6e8c44e4199b612e3157e1e320a7d3077",
+        "bytes": 3713827104
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-1.7B::Q8_0",
+    "label": "ACE-Step 5Hz LM 1.7B Q8_0",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 1.7B at Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-1.7B-Q8_0.gguf",
+        "sha256": "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6",
+        "bytes": 1975837568
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-4B::BF16",
+    "label": "ACE-Step 5Hz LM 4B BF16",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 4B at BF16.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-4B-BF16.gguf",
+        "sha256": "9fca9915919a1108da33d8d98fbe6c1a07bfee101d27098416650dcbde037b72",
+        "bytes": 8384454592
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-4B::Q8_0",
+    "label": "ACE-Step 5Hz LM 4B Q8_0",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 4B at Q8_0.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-4B-Q8_0.gguf",
+        "sha256": "972f91147a167f0c041f1b158d67985a82c0f6a852e68cdf70e46030cf08b1bc",
+        "bytes": 4457323648
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-4B::Q6_K",
+    "label": "ACE-Step 5Hz LM 4B Q6_K",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 4B at Q6_K.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-4B-Q6_K.gguf",
+        "sha256": "d39b8b5070fa617a0f57dcc26e710f8096a293c21721c5f714318bab7b40cfdb",
+        "bytes": 3442713504
+      }
+    ]
+  },
+  {
+    "id": "carey-native::lm-4B::Q5_K_M",
+    "label": "ACE-Step 5Hz LM 4B Q5_K_M",
+    "description": "Language model for standard generation: writes lyrics, metadata and audio codes. 4B at Q5_K_M.",
+    "files": [
+      {
+        "repo": "Serveurperso/ACE-Step-1.5-GGUF",
+        "revision": "666ac70204440867d8c01ba4b119cc79c95b370a",
+        "filename": "acestep-5Hz-lm-4B-Q5_K_M.gguf",
+        "sha256": "938ed7067c8897f66acf4c3a86fc1fa8113d5cd1a5f13e6edec2e03207514e2d",
+        "bytes": 3025965984
+      }
+    ]
+  }
+]
