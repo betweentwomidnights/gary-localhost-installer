@@ -147,6 +147,18 @@ fn downloaded_options(root: &Path, encoding: &str) -> Result<Vec<String>, String
     Ok(options)
 }
 
+/// Whether an optional model could load on the GPU the test server selected:
+/// its weights plus the headroom the recommendations allow. Unknown memory
+/// counts as fitting, so the model is still tested.
+fn fits_gpu(id: &str, memory: Option<u64>) -> bool {
+    let Some(memory) = memory else {
+        return true;
+    };
+    carey_models::models().component(id).is_none_or(|component| {
+        component.files.iter().map(|file| file.bytes).sum::<u64>() + carey_models::HEADROOM_BYTES <= memory
+    })
+}
+
 fn file_of(id: &str) -> Result<String, String> {
     let component = carey_models::models().component(id).ok_or("Unknown Carey model")?;
     let [file] = component.files.as_slice() else {
@@ -269,9 +281,18 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
     .await?;
     check_wav_at(&stem, SAMPLE_RATE, 4 * SAMPLE_RATE, "Carey lego")?;
 
+    let memory = props
+        .pointer("/hardware/memory_total_bytes")
+        .and_then(|value| value.as_u64())
+        .filter(|bytes| *bytes > 0);
     for id in options {
         let file = file_of(&id)?;
         let label = carey_models::models().component(&id).map_or(id.clone(), |component| component.label.clone());
+        // A download too large for this GPU is the user's choice to make, not a broken runtime.
+        if !fits_gpu(&id, memory) {
+            (run.progress)(&format!("Skipping {label}: it needs more memory than this GPU has."));
+            continue;
+        }
         (run.progress)(&format!("Testing {label}..."));
         if id.starts_with("carey-native::lm-") {
             // Standard generation: the LM writes the audio codes the base DiT
@@ -311,6 +332,16 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_models_too_large_for_the_gpu_are_skipped() {
+        const GIB: u64 = 1 << 30;
+        // An 8 GB card holds XL turbo at Q4_K_M but not at BF16.
+        assert!(!fits_gpu("carey-native::xl-turbo::BF16", Some(8 * GIB)));
+        assert!(fits_gpu("carey-native::xl-turbo::Q4_K_M", Some(8 * GIB)));
+        assert!(fits_gpu("carey-native::xl-turbo::BF16", Some(24 * GIB)));
+        assert!(fits_gpu("carey-native::xl-turbo::BF16", None), "unknown memory still tests the model");
+    }
 
     fn temp_root(label: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
