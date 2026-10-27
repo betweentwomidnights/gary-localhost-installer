@@ -532,6 +532,41 @@ pub fn unpublish_adapter(root: &Path, name: &str) -> Result<(), String> {
     }
 }
 
+/// Whether `dir` is a PEFT adapter ace-server can load as it is: LoRA or DoRA
+/// weights beside their adapter_config.json.
+pub fn is_peft_adapter_dir(dir: &Path) -> bool {
+    dir.join("adapter_model.safetensors").is_file() && dir.join("adapter_config.json").is_file()
+}
+
+/// Publish every catalog LoRA ace-server can load into the adapters folder it
+/// scans, under its catalog name: LoRAs added by hand and ones trained in
+/// Python as well as C++-trained ones. One already published unchanged is
+/// left alone; one that cannot be published is skipped, not fatal.
+pub fn publish_catalog_adapters(root: &Path) -> Result<(), String> {
+    let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(root))?;
+    let adapters = root.join("carey").join("adapters");
+    for (name, entry) in catalog {
+        let source = Path::new(&entry.path);
+        if !is_peft_adapter_dir(source) {
+            continue;
+        }
+        let dest = adapters.join(&name);
+        let unchanged = std::fs::metadata(dest.join("adapter_model.safetensors"))
+            .ok()
+            .zip(std::fs::metadata(source.join("adapter_model.safetensors")).ok())
+            .is_some_and(|(published, original)| published.len() == original.len())
+            && std::fs::read(dest.join("adapter_config.json")).ok()
+                == std::fs::read(source.join("adapter_config.json")).ok();
+        if unchanged {
+            continue;
+        }
+        if let Err(error) = publish_adapter(root, &name, source) {
+            eprintln!("[carey] could not publish LoRA {name}: {error}");
+        }
+    }
+    Ok(())
+}
+
 /// Write what Carey's clients read about each published adapter beside it, as
 /// the adapter_info.json ace-server returns under GET /props: the model family
 /// the adapter was trained on and the captions it was trained with, which the
@@ -1196,6 +1231,45 @@ mod tests {
         for changed in [Options { rank: 32, ..asked.clone() }, Options { name: "other".into(), ..asked.clone() }] {
             assert!(continuation(&root, Options { resume: resume(&job.join("run"), ResumeMode::Weights), ..changed }).is_err());
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn added_peft_loras_are_published_for_the_native_server() {
+        let root = std::env::temp_dir().join(format!("gary-carey-publish-{}-{}", std::process::id(), NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
+        let peft = root.join("downloads/added");
+        let single = root.join("downloads/single");
+        std::fs::create_dir_all(&peft).unwrap();
+        std::fs::create_dir_all(&single).unwrap();
+        std::fs::write(peft.join("adapter_model.safetensors"), b"weights").unwrap();
+        std::fs::write(peft.join("adapter_config.json"), br#"{"use_dora": true}"#).unwrap();
+        std::fs::write(single.join("pytorch_lora_weights.safetensors"), b"weights").unwrap();
+        let entry = |path: &Path| crate::CareyLoraCatalogEntry {
+            path: path.to_string_lossy().into_owned(),
+            captions_path: None,
+            scale: 1.0,
+            backends: crate::default_lora_backends(),
+            model_family: "xl".into(),
+            training_job_id: None,
+            training_checkpoints: Vec::new(),
+            selected_training_checkpoint: None,
+        };
+        let mut catalog = std::collections::BTreeMap::new();
+        catalog.insert("added".to_string(), entry(&peft));
+        catalog.insert("single".to_string(), entry(&single));
+        crate::save_carey_lora_catalog_to(&crate::carey_lora_catalog_path_for(&root), &catalog).unwrap();
+
+        publish_catalog_adapters(&root).unwrap();
+        let published = root.join("carey/adapters/added");
+        assert_eq!(std::fs::read(published.join("adapter_model.safetensors")).unwrap(), b"weights");
+        assert_eq!(std::fs::read(published.join("adapter_config.json")).unwrap(), br#"{"use_dora": true}"#);
+        assert!(!root.join("carey/adapters/single").exists(), "only PEFT folders load as they are");
+
+        // Publishing again leaves an unchanged LoRA alone; a changed one is replaced.
+        publish_catalog_adapters(&root).unwrap();
+        std::fs::write(peft.join("adapter_config.json"), br#"{"use_dora": false}"#).unwrap();
+        publish_catalog_adapters(&root).unwrap();
+        assert_eq!(std::fs::read(published.join("adapter_config.json")).unwrap(), br#"{"use_dora": false}"#);
         std::fs::remove_dir_all(root).unwrap();
     }
 

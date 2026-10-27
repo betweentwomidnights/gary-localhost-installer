@@ -5352,6 +5352,33 @@ fn discover_carey_ace_training_pids(_state: &CareyAceTrainingState) -> Vec<u32> 
     Vec::new()
 }
 
+/// Make Carey see its LoRA catalog. The Python wrapper reloads it on request.
+/// The C++ server reads its adapters folder once, at startup, so a running one
+/// restarts; publishing the catalog's LoRAs is part of every start.
+async fn refresh_carey_loras(root: &Path, manager: &ManagerState) {
+    let (native, running) = {
+        let services = manager.lock().await;
+        (services.is_native("carey"), services.is_running("carey"))
+    };
+    if !native {
+        let _ = try_reload_carey_admin().await;
+        return;
+    }
+    if !running {
+        if let Err(error) = carey_training::publish_catalog_adapters(root)
+            .and_then(|_| carey_training::write_adapter_info(root))
+        {
+            eprintln!("[carey] could not publish LoRAs: {error}");
+        }
+        return;
+    }
+    let _ = manager.lock().await.stop("carey");
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    if let Err(error) = manager.lock().await.start("carey") {
+        eprintln!("[carey] could not restart after a LoRA change: {error}");
+    }
+}
+
 async fn try_reload_carey_admin() -> bool {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(4))
@@ -7421,6 +7448,7 @@ async fn upsert_carey_lora(
     captions_path: Option<String>,
     model_family: Option<String>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
@@ -7428,6 +7456,12 @@ async fn upsert_carey_lora(
     if !looks_like_lora_checkpoint_dir(&checkpoint_dir) {
         return Err(format!(
             "{} does not look like a LoRA checkpoint folder",
+            checkpoint_dir.display()
+        ));
+    }
+    if manager.lock().await.is_native("carey") && !carey_training::is_peft_adapter_dir(&checkpoint_dir) {
+        return Err(format!(
+            "Carey's C++ runtime loads PEFT LoRA folders: {} needs adapter_model.safetensors and adapter_config.json.",
             checkpoint_dir.display()
         ));
     }
@@ -7470,7 +7504,7 @@ async fn upsert_carey_lora(
     save_carey_lora_catalog(&catalog)?;
 
     let state = build_carey_lora_state(repo_root.inner())?;
-    let _ = try_reload_carey_admin().await;
+    refresh_carey_loras(repo_root.inner(), manager.inner()).await;
     Ok(state)
 }
 
@@ -7479,6 +7513,7 @@ async fn activate_carey_lora_checkpoint(
     name: String,
     checkpoint_id: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
@@ -7532,7 +7567,7 @@ async fn activate_carey_lora_checkpoint(
         carey_training::write_adapter_info(repo_root.inner())?;
     }
     let state = build_carey_lora_state(repo_root.inner())?;
-    let _ = try_reload_carey_admin().await;
+    refresh_carey_loras(repo_root.inner(), manager.inner()).await;
     Ok(state)
 }
 
@@ -7540,6 +7575,7 @@ async fn activate_carey_lora_checkpoint(
 async fn remove_carey_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
@@ -7549,7 +7585,7 @@ async fn remove_carey_lora(
     save_carey_lora_catalog(&catalog)?;
 
     let state = build_carey_lora_state(repo_root.inner())?;
-    let _ = try_reload_carey_admin().await;
+    refresh_carey_loras(repo_root.inner(), manager.inner()).await;
     Ok(state)
 }
 
@@ -7570,6 +7606,7 @@ fn carey_current_job_matches(job_id: &str) -> bool {
 async fn delete_carey_trained_lora(
     name: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
@@ -7629,7 +7666,7 @@ async fn delete_carey_trained_lora(
     catalog.remove(&normalized_name);
     save_carey_lora_catalog(&catalog)?;
     let state = build_carey_lora_state(repo_root.inner())?;
-    let _ = try_reload_carey_admin().await;
+    refresh_carey_loras(repo_root.inner(), manager.inner()).await;
     Ok(state)
 }
 

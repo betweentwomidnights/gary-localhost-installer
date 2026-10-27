@@ -89,6 +89,7 @@ impl Service for Carey {
 
     /// ace-server reads each adapter's adapter_info.json once, at startup.
     fn prepare_launch(&self, root: &Path) -> Result<(), String> {
+        crate::carey_training::publish_catalog_adapters(root)?;
         crate::carey_training::write_adapter_info(root)
     }
 
