@@ -85,6 +85,10 @@ pub struct LegacyDef {
     /// these are removed there; the folder itself is user data.
     #[serde(default)]
     pub staged: Option<LegacyStaged>,
+    /// Folders directly inside the service folder holding weights only the
+    /// Python service downloads and loads, removed whole.
+    #[serde(default)]
+    pub weight_dirs: Vec<LegacyWeightDir>,
     /// Bundled Python source, removable only where unedited.
     #[serde(default)]
     pub code: LegacyCode,
@@ -99,6 +103,14 @@ pub struct LegacyRepo {
     /// What it is for, when a native replacement must exist before it goes.
     #[serde(default)]
     pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyWeightDir {
+    /// A plain folder name inside the service folder.
+    pub dir: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -225,12 +225,9 @@ pub fn is_instrumental(result: &serde_json::Value) -> bool {
     lyrics.is_empty() || lyrics.to_lowercase().contains("[instrumental]") || lyrics_are_structural_only(lyrics)
 }
 
-/// The Carey sidecar fields for `audio` from one /caption result.
-pub fn sidecar_fields(
-    audio: &Path,
-    result: &serde_json::Value,
-    options: &Options,
-) -> crate::CareyAceSidecarFields {
+/// The tempo and key for `audio` from one /caption result: a filename BPM
+/// first, then the LM corrected by local analysis where it is confident.
+fn tempo_and_key(audio: &Path, result: &serde_json::Value, options: &Options) -> (BpmDecision, KeyDecision) {
     let local = &result["local_analysis"];
     let local_bpm = options
         .bpm_analysis
@@ -246,6 +243,16 @@ pub fn sidecar_fields(
     let name = audio.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     let bpm = choose_bpm(filename_bpm(&name), bpm_value(&result["bpm"]), local_bpm);
     let key = choose_key(result["keyscale"].as_str().unwrap_or_default(), local_key);
+    (bpm, key)
+}
+
+/// The Carey sidecar fields for `audio` from one /caption result.
+pub fn sidecar_fields(
+    audio: &Path,
+    result: &serde_json::Value,
+    options: &Options,
+) -> crate::CareyAceSidecarFields {
+    let (bpm, key) = tempo_and_key(audio, result, options);
     let instrumental = is_instrumental(result);
     let text = |value: Option<f64>| value.map(|number| number.to_string()).unwrap_or_default();
     crate::CareyAceSidecarFields {
@@ -289,6 +296,30 @@ pub fn lm_file(root: &Path, size: &str) -> Result<String, String> {
         .find(|component| models.missing(root, std::slice::from_ref(&component.id)).is_none())
         .map(|component| component.files[0].filename.clone())
         .ok_or_else(|| format!("Download the {size} language model from Carey's models to caption with it."))
+}
+
+/// The shared VAE every Carey tier downloads.
+pub fn vae_file() -> Result<String, String> {
+    crate::carey_models::models()
+        .component(crate::carey_models::SHARED)
+        .map(|shared| shared.files[1].filename.clone())
+        .ok_or_else(|| "Carey's catalog has no shared models".into())
+}
+
+/// A downloaded DiT whose audio tokenizer feeds the LM, for callers that do
+/// not choose one: the 2B models before XL, best precision first. Every
+/// Carey tier downloads 2B base, so one is there once Carey is migrated.
+pub fn caption_dit(root: &Path) -> Result<String, String> {
+    use crate::carey_models::{DEFAULT_DIT, SIBLING_DITS, TIERS, XL_DITS};
+    let models = crate::carey_models::models();
+    std::iter::once(DEFAULT_DIT)
+        .chain(SIBLING_DITS.iter().copied())
+        .chain(XL_DITS.iter().copied())
+        .flat_map(|variant| TIERS.iter().map(move |tier| crate::carey_models::dit_component(variant, tier)))
+        .filter_map(|id| models.component(&id))
+        .find(|component| models.missing(root, std::slice::from_ref(&component.id)).is_none())
+        .map(|component| component.files[0].filename.clone())
+        .ok_or_else(|| "Download one of Carey's models to caption with.".into())
 }
 
 /// `audio` as WAV bytes /caption accepts: the file itself when it is a WAV of
@@ -360,6 +391,25 @@ async fn caption_once(server: &PrivateServer, options: &Options, audio: &[u8], w
     serde_json::from_slice(&body).map_err(|error| format!("{what} returned unreadable JSON: {error}"))
 }
 
+/// /caption's result for `audio`, asked again on a centered two-minute
+/// excerpt when `check` finds the whole song's unusable. The inner `Err` is
+/// why the excerpt's is unusable too.
+async fn caption_checked(
+    server: &PrivateServer,
+    options: &Options,
+    audio: &Path,
+    scratch: &Path,
+    what: &str,
+    check: impl Fn(&serde_json::Value) -> Option<String>,
+) -> Result<Result<serde_json::Value, String>, String> {
+    let result = caption_once(server, options, &caption_audio(audio, scratch, None).await?, what).await?;
+    if check(&result).is_none() {
+        return Ok(Ok(result));
+    }
+    let result = caption_once(server, options, &caption_audio(audio, scratch, Some(EXCERPT_SECONDS)).await?, what).await?;
+    Ok(check(&result).map_or(Ok(result), Err))
+}
+
 /// What a caption run reports as it goes.
 pub struct Progress<'a> {
     pub index: usize,
@@ -387,33 +437,82 @@ pub async fn caption_dataset(
         progress(Progress { index: index + 1, total: pending.len(), name: &entry.relative_path });
         let audio = PathBuf::from(&entry.audio_path);
         let what = format!("Captioning {}", entry.relative_path);
-        let mut result = caption_once(server, options, &caption_audio(&audio, scratch, None).await?, &what).await?;
         let check = |result: &serde_json::Value| {
             quality_error(result["caption"].as_str().unwrap_or_default(), "caption").or_else(|| {
                 let genre = result["genre"].as_str().unwrap_or_default();
                 (!genre.trim().is_empty()).then(|| quality_error(genre, "genre")).flatten()
             })
         };
-        if check(&result).is_some() {
-            result = caption_once(
-                server,
-                options,
-                &caption_audio(&audio, scratch, Some(EXCERPT_SECONDS)).await?,
-                &what,
-            )
-            .await?;
-        }
-        if let Some(reason) = check(&result) {
-            return Err(format!(
+        let result = caption_checked(server, options, &audio, scratch, &what, check).await?.map_err(|reason| {
+            format!(
                 "The LM wrote an unusable caption for {}: {reason}. Try another LM size, or write that sidecar in the dataset editor.",
                 entry.relative_path
-            ));
-        }
+            )
+        })?;
         let fields = sidecar_fields(&audio, &result, options);
         std::fs::write(&entry.sidecar_path, crate::render_carey_ace_sidecar(&fields))
             .map_err(|error| format!("Cannot write {}: {error}", entry.sidecar_path))?;
     }
     Ok((pending.len(), entries.len()))
+}
+
+// ---------------------------------------------------------------------------
+// SA3 auto-label: the same captioner, keeping only the genre, tempo and key
+// for SA3's one-line sidecars. Ported from services/carey/sa3_autolabel.py.
+
+/// The LM's genre for an SA3 sidecar, or why it is unusable.
+pub fn sa3_genre(result: &serde_json::Value) -> Result<String, String> {
+    let genre = result["genre"].as_str().unwrap_or_default().trim();
+    if genre.is_empty() || ["n/a", "na", "none", "null", "unknown"].contains(&genre.to_lowercase().as_str()) {
+        return Err("no genre".into());
+    }
+    quality_error(genre, "genre").map_or_else(|| Ok(genre.to_string()), Err)
+}
+
+/// An SA3 sidecar: "genre, 145 bpm, C minor", or with `labeled` the style of
+/// SA3's own training data.
+pub fn sa3_sidecar(labeled: bool, genre: &str, bpm: Option<u32>, keyscale: &str) -> String {
+    if labeled {
+        let mut parts = vec!["TrackType: Music".to_string(), "VocalType: Instrumental".to_string()];
+        parts.extend((!genre.is_empty()).then(|| format!("Genre: {genre}")));
+        parts.extend(bpm.map(|bpm| format!("BPM: {bpm}")));
+        parts.extend((!keyscale.is_empty()).then(|| format!("Key: {keyscale}")));
+        return parts.join(", ");
+    }
+    let bpm = bpm.map(|bpm| format!("{bpm} bpm")).unwrap_or_default();
+    [genre, &bpm, keyscale].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(", ")
+}
+
+/// Label every song in `files`, overwriting the `.txt` sidecar beside each.
+/// `cancelled` is checked between songs.
+pub async fn label_sa3_dataset(
+    server: &PrivateServer,
+    options: &Options,
+    files: &[PathBuf],
+    labeled: bool,
+    scratch: &Path,
+    mut progress: impl FnMut(Progress<'_>),
+    cancelled: impl Fn() -> bool,
+) -> Result<(), String> {
+    for (index, audio) in files.iter().enumerate() {
+        if cancelled() {
+            return Err("Auto-label cancelled.".into());
+        }
+        let name = audio.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        progress(Progress { index: index + 1, total: files.len(), name: &name });
+        let what = format!("Labeling {name}");
+        let result = caption_checked(server, options, audio, scratch, &what, |result| sa3_genre(result).err())
+            .await?
+            .map_err(|reason| {
+                format!("The LM gave {name} an unusable genre ({reason}). Try another LM size, or write that sidecar by hand.")
+            })?;
+        let genre = sa3_genre(&result)?;
+        let (bpm, key) = tempo_and_key(audio, &result, options);
+        let sidecar = audio.with_extension("txt");
+        std::fs::write(&sidecar, sa3_sidecar(labeled, &genre, bpm.bpm, &key.keyscale) + "\n")
+            .map_err(|error| format!("Cannot write {}: {error}", sidecar.display()))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -499,10 +598,27 @@ mod tests {
         assert!(!fields.is_instrumental && fields.lyrics.is_empty(), "vocal lyrics are the user's to write");
     }
 
+    #[test]
+    fn a_caption_result_becomes_an_sa3_sidecar_as_the_python_helper_wrote_it() {
+        assert_eq!(sa3_genre(&json!({"genre": " lo-fi hip hop "})).unwrap(), "lo-fi hip hop");
+        for unusable in [json!({}), json!({"genre": "N/A"}), json!({"genre": "unknown"}), json!({"genre": "<|audio_code_12|>"})] {
+            assert!(sa3_genre(&unusable).is_err(), "{unusable}");
+        }
+        assert_eq!(sa3_sidecar(false, "techno", Some(145), "C minor"), "techno, 145 bpm, C minor");
+        assert_eq!(sa3_sidecar(false, "techno", None, ""), "techno");
+        assert_eq!(
+            sa3_sidecar(true, "techno", Some(145), "C minor"),
+            "TrackType: Music, VocalType: Instrumental, Genre: techno, BPM: 145, Key: C minor"
+        );
+        assert_eq!(sa3_sidecar(true, "techno", None, ""), "TrackType: Music, VocalType: Instrumental, Genre: techno");
+    }
+
     /// GARY4LOCAL_CAREY_CAPTION_SMOKE_ROOT (a new folder), _MODELS (a folder
-    /// with the 2B base, the shared GGUFs and the 0.6B LM) and _SERVER (an
-    /// ace-server.exe). Renders two songs, captions them as Carey would and
-    /// stages the sidecars it wrote for training.
+    /// with the 2B base, the shared GGUFs and an LM: _LM names it, the 0.6B
+    /// Q8_0 by default) and _SERVER (an ace-server.exe; _BACKEND, cuda by
+    /// default, names its build). Renders two songs, captions them as Carey
+    /// would, stages the sidecars it wrote for training, then auto-labels the
+    /// same songs as SA3 would.
     #[tokio::test]
     #[ignore = "captions real renders with a real ace-server and LM"]
     async fn real_native_captioning_writes_trainable_sidecars() {
@@ -514,7 +630,7 @@ mod tests {
         std::fs::create_dir_all(root.join("dataset/nested")).unwrap();
         let installed = crate::native_runtime::NativeInstall {
             dir: server_exe.parent().unwrap().into(),
-            backend: "cuda".into(),
+            backend: var("BACKEND").unwrap_or_else(|| "cuda".into()),
             runtimes: Vec::new(),
             version: None,
             fallback_reason: None,
@@ -541,7 +657,7 @@ mod tests {
         }
         let options = Options {
             dataset: root.join("dataset"),
-            lm: "acestep-5Hz-lm-0.6B-Q8_0.gguf".into(),
+            lm: var("LM").unwrap_or_else(|| "acestep-5Hz-lm-0.6B-Q8_0.gguf".into()),
             dit: dit.into(),
             vae: "vae-BF16.gguf".into(),
             overwrite: false,
@@ -554,7 +670,6 @@ mod tests {
         }, || false)
         .await
         .unwrap();
-        server.stop().await.unwrap();
         assert_eq!((captioned, total), (2, 2));
         for sidecar in ["dataset/groove_bpm96.txt", "dataset/nested/pad.txt"] {
             let raw = std::fs::read_to_string(root.join(sidecar)).unwrap();
@@ -568,5 +683,19 @@ mod tests {
         }
         let groove = crate::parse_carey_ace_sidecar_content(&std::fs::read_to_string(root.join("dataset/groove_bpm96.txt")).unwrap());
         assert_eq!((groove.bpm.as_str(), groove.bpm_source.as_str()), ("96", "filename"));
+
+        // SA3's auto-label overwrites the same sidecars with one line each.
+        let files = [root.join("dataset/groove_bpm96.wav"), root.join("dataset/nested/pad.wav")];
+        label_sa3_dataset(&server, &Options { overwrite: true, trigger: String::new(), ..options }, &files, false, &root, |_| {}, || false)
+            .await
+            .unwrap();
+        server.stop().await.unwrap();
+        for sidecar in ["dataset/groove_bpm96.txt", "dataset/nested/pad.txt"] {
+            let raw = std::fs::read_to_string(root.join(sidecar)).unwrap();
+            println!("--- SA3 {sidecar}: {raw}");
+            assert_eq!(raw.lines().count(), 1, "{raw}");
+        }
+        let groove = std::fs::read_to_string(root.join("dataset/groove_bpm96.txt")).unwrap();
+        assert!(groove.contains(", 96 bpm"), "the filename BPM wins: {groove}");
     }
 }

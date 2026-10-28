@@ -7773,8 +7773,17 @@ async fn delete_carey_training_checkpoint(
 #[tauri::command]
 async fn build_carey_lora_captions(
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyCaptionsBuildResult, String> {
     let initial_state = build_carey_lora_state(repo_root.inner())?;
+    // captions.json is Python Carey's /captions pool. The C++ server's clients
+    // read each LoRA's captions from its adapter_info.json, written at launch.
+    if manager.lock().await.is_native("carey") {
+        return Ok(CareyCaptionsBuildResult {
+            state: initial_state,
+            output: "Carey's C++ server needs no captions.json: each LoRA's captions are published with it when Carey starts.".into(),
+        });
+    }
     let python_exe = repo_root
         .join("services")
         .join("carey")
@@ -7930,17 +7939,11 @@ async fn start_carey_ace_lora_training(
                 .files[0]
                 .filename
                 .clone();
-            let size = caption_lm_model.trim().trim_start_matches("acestep-5Hz-lm-").to_string();
             let options = carey_caption::Options {
                 dataset: PathBuf::from(dataset_path.trim()),
-                lm: carey_caption::lm_file(repo_root.inner(), &size)?,
+                lm: carey_caption::lm_file(repo_root.inner(), carey_caption_lm_size(&caption_lm_model))?,
                 dit,
-                vae: carey_models::models()
-                    .component(carey_models::SHARED)
-                    .ok_or("Carey's catalog has no shared models")?
-                    .files[1]
-                    .filename
-                    .clone(),
+                vae: carey_caption::vae_file()?,
                 overwrite: overwrite_captions,
                 bpm_analysis,
                 key_analysis,
@@ -9620,12 +9623,33 @@ fn build_sa3_autolabel_availability(
     }
 }
 
+/// On C++ Carey the captioner is the LM GGUF of that size, beside the DiT and
+/// VAE every Carey tier downloads.
+fn native_sa3_autolabel_availability(repo_root: &Path, caption_lm_model: &str) -> Sa3AutolabelAvailability {
+    let captioner_downloaded = carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model)).is_ok()
+        && carey_caption::caption_dit(repo_root).is_ok();
+    Sa3AutolabelAvailability {
+        available: captioner_downloaded,
+        carey_built: true,
+        captioner_downloaded,
+    }
+}
+
+/// "1.7B" from "acestep-5Hz-lm-1.7B".
+fn carey_caption_lm_size(caption_lm_model: &str) -> &str {
+    caption_lm_model.trim().trim_start_matches("acestep-5Hz-lm-")
+}
+
 #[tauri::command]
-fn get_sa3_autolabel_availability(
+async fn get_sa3_autolabel_availability(
     caption_lm_model: String,
+    manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3AutolabelAvailability, String> {
     let caption_lm_model = validate_carey_caption_lm_model(&caption_lm_model)?;
+    if manager.lock().await.is_native("carey") {
+        return Ok(native_sa3_autolabel_availability(repo_root.inner(), caption_lm_model));
+    }
     Ok(build_sa3_autolabel_availability(
         repo_root.inner(),
         caption_lm_model,
@@ -9644,6 +9668,7 @@ async fn start_sa3_autolabel(
     caption_lm_model: String,
     manager: tauri::State<'_, ManagerState>,
     repo_root: tauri::State<'_, std::path::PathBuf>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Sa3AutolabelState, String> {
     let style = match style.trim() {
         "bare" => "bare",
@@ -9656,6 +9681,9 @@ async fn start_sa3_autolabel(
     let current = read_reconciled_sa3_autolabel_state();
     if matches!(current.status.as_str(), "starting" | "running") {
         return Err("An auto-label job is already running.".to_string());
+    }
+    if manager.lock().await.is_native("carey") {
+        return start_native_sa3_autolabel(root, style, caption_lm_model, repo_root.inner(), manager.inner(), app_handle).await;
     }
 
     let availability = build_sa3_autolabel_availability(repo_root.inner(), caption_lm_model);
@@ -9767,6 +9795,177 @@ async fn start_sa3_autolabel(
         });
     }
 
+    Ok(read_sa3_autolabel_state())
+}
+
+fn update_sa3_autolabel_state(update: impl FnOnce(&mut Sa3AutolabelState)) {
+    let mut state = read_sa3_autolabel_state();
+    update(&mut state);
+    let _ = write_sa3_autolabel_state(&sa3_autolabel_status_path(), &state);
+}
+
+/// SA3 auto-label on C++ Carey: a private ace-server captions each song as
+/// Carey's own dataset captioning does. It reports through the status file
+/// the Python helper wrote, so the SA3 modal polls and cancels it the same way.
+async fn start_native_sa3_autolabel(
+    dataset: PathBuf,
+    style: &str,
+    caption_lm_model: &str,
+    repo_root: &Path,
+    manager: &ManagerState,
+    app_handle: tauri::AppHandle,
+) -> Result<Sa3AutolabelState, String> {
+    if matches!(read_carey_ace_lora_training_state().status.as_str(), "starting" | "running") {
+        return Err("Wait for Carey's training to finish: auto-label runs on the same GPU.".into());
+    }
+    let options = carey_caption::Options {
+        dataset: dataset.clone(),
+        lm: carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model))?,
+        dit: carey_caption::caption_dit(repo_root)?,
+        vae: carey_caption::vae_file()?,
+        overwrite: true,
+        bpm_analysis: true,
+        key_analysis: true,
+        trigger: String::new(),
+    };
+    let mut files = Vec::new();
+    collect_sa3_dataset_audio_files(&dataset, &dataset, &mut std::collections::HashSet::new(), &mut files)?;
+
+    let dir = sa3_autolabel_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create {}: {}", dir.display(), e))?;
+    let status_path = sa3_autolabel_status_path();
+    let cancel_path = sa3_autolabel_cancel_path();
+    let log_path = sa3_autolabel_log_path();
+    let _ = std::fs::remove_file(&cancel_path);
+    // Each run's private server logs beside the status; keep only this run's.
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("server-") && name.ends_with(".log") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    if files.is_empty() {
+        let state = Sa3AutolabelState {
+            status: "completed".into(),
+            phase: "done".into(),
+            message: "No audio files found".into(),
+            style: style.into(),
+            ..Default::default()
+        };
+        write_sa3_autolabel_state(&status_path, &state)?;
+        return Ok(state);
+    }
+    write_sa3_autolabel_launch_state(&status_path, style)?;
+
+    let reserved = {
+        let mut services = manager.lock().await;
+        services.stop_if_native("carey");
+        let reserved = services
+            .native_mutation_blocker("carey")
+            .map_or(Ok(()), |blocker| Err(format!("Cannot auto-label: {blocker}.")))
+            .and_then(|_| services.migration_launch("carey", carey_models::TIERS[0]))
+            .and_then(|(_, _, launch)| {
+                services.begin_native_workload("carey", "native-autolabel", "SA3 auto-label")?;
+                Ok(launch)
+            });
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+        reserved
+    };
+    let launch = match reserved {
+        Ok(launch) => launch,
+        Err(error) => {
+            let _ = mark_sa3_autolabel_failed(&error, None);
+            return Err(error);
+        }
+    };
+    let total = files.len() as u32;
+    let _ = std::fs::write(
+        &log_path,
+        format!("Auto-labeling {} tracks in {} with {}\n", total, user_facing_windows_path(&dataset), options.lm),
+    );
+    update_sa3_autolabel_state(|state| {
+        state.status = "running".into();
+        state.phase = "loading-model".into();
+        state.message = "Loading caption models".into();
+        state.total = total;
+    });
+
+    let labeled = style == "labeled";
+    let manager = manager.clone();
+    tauri::async_runtime::spawn(async move {
+        let log = |line: &str| {
+            use std::io::Write;
+            if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+                let _ = writeln!(file, "{line}");
+            }
+        };
+        let outcome = async {
+            let server = migration_verify::PrivateServer::start(&launch, &dir, "SA3 auto-label captioner", &[]).await?;
+            let result = carey_caption::label_sa3_dataset(
+                &server,
+                &options,
+                &files,
+                labeled,
+                &dir,
+                |progress| {
+                    log(&format!("[{}/{}] {}", progress.index, progress.total, progress.name));
+                    // A cancelled job's state is already terminal.
+                    if cancel_path.exists() {
+                        return;
+                    }
+                    let current = user_facing_windows_path(&files[progress.index - 1]);
+                    update_sa3_autolabel_state(|state| {
+                        state.status = "running".into();
+                        state.phase = "analyzing".into();
+                        state.message = format!("Analyzing {}", progress.name);
+                        state.current_path = current;
+                        state.done = (progress.index - 1) as u32;
+                    });
+                },
+                || cancel_path.exists(),
+            )
+            .await;
+            let _ = server.stop().await;
+            result
+        }
+        .await;
+        let cancelled = cancel_path.exists();
+        log(match &outcome {
+            _ if cancelled => "Auto-label cancelled",
+            Ok(()) => "Done",
+            Err(error) => error,
+        });
+        update_sa3_autolabel_state(|state| {
+            state.current_path.clear();
+            state.pid = None;
+            state.owner_pid = None;
+            if cancelled {
+                state.status = "cancelled".into();
+                state.phase = "cancelled".into();
+                state.message = "Auto-label cancelled".into();
+                state.error = None;
+                return;
+            }
+            match outcome {
+                Ok(()) => {
+                    state.status = "completed".into();
+                    state.phase = "done".into();
+                    state.message = format!("Auto-labeled {total} track{}", if total == 1 { "" } else { "s" });
+                    state.done = total;
+                    state.error = None;
+                }
+                Err(error) => {
+                    state.status = "failed".into();
+                    state.phase = "error".into();
+                    state.message = error.clone();
+                    state.error = Some(error);
+                }
+            }
+        });
+        let mut services = manager.lock().await;
+        services.end_native_workload("carey", "native-autolabel");
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+    });
     Ok(read_sa3_autolabel_state())
 }
 

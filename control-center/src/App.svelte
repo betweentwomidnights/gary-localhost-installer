@@ -1100,6 +1100,7 @@
     serviceStatus={careyService?.status ?? "stopped"}
     serviceEnvExists={careyService?.env_exists ?? false}
     careyXlEnabled={appSettings.careyUseXlModels}
+    nativeRuntime={careyService?.runtime === "native"}
     onClose={closeCareyLoras}
   />
   <CareyAceTrainingModal

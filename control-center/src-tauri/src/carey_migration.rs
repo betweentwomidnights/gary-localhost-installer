@@ -4,15 +4,15 @@
 //! the proof exercises ace-server's contract directly: the tasks gary4juce's
 //! Carey tab will send, on the models this profile has downloaded.
 //!
-//! Python Carey also owns LoRA training, its LoRA registry and the caption
-//! helpers, none of which run natively in gary4local yet. Until they do, a
-//! fresh install still sets Python up and cleanup refuses to remove it, so
-//! switching never loses them.
+//! LoRA training, dataset captioning, SA3's dataset auto-label and LoRA
+//! publishing all run on ace-server too, so cleanup may retire Python Carey
+//! whole: its environment, its PyTorch checkpoints and its unedited code.
+//! The LoRAs, captions and datasets its catalog names are protected.
 
 use crate::carey_models::{self, DEFAULT_DIT};
 use crate::migration::{Proof, Run, Selection, Service, Target};
 use crate::migration_inventory::Extras;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -38,13 +38,26 @@ impl Service for Carey {
     }
 
     fn extras(&self, root: &Path, _hub: &Path) -> Extras {
+        let (protected, warnings) = match catalog_paths(root) {
+            Ok(paths) => (paths, Vec::new()),
+            Err(_) => (
+                Vec::new(),
+                vec!["Cannot read the Carey LoRA catalog; cleanup cannot safely account for its LoRAs.".into()],
+            ),
+        };
         Extras {
             selection: crate::migration::read(root, target().def, |selection| self.check_selection(selection)),
-            protected: Vec::new(),
+            protected,
             preserved: Vec::new(),
-            warnings: Vec::new(),
+            warnings,
             training_base_present: false,
         }
+    }
+
+    /// The Python models as the model manager knows them, so cleanup waits
+    /// for their downloads and forgets them afterwards.
+    fn legacy_model_ids(&self) -> Vec<String> {
+        crate::model_manager::CAREY_COMPONENTS.iter().map(|component| format!("carey::{component}")).collect()
     }
 
     fn models(&self) -> &'static crate::native_models::Catalog {
@@ -72,12 +85,7 @@ impl Service for Carey {
     }
 
     fn blocking_jobs(&self) -> &'static [&'static str] {
-        &["native-migration", "native-training"]
-    }
-
-    fn python_only_features(&self) -> Option<&'static str> {
-        // SA3's dataset auto-captioning runs Carey's captioner in Carey's environment.
-        Some("LoRA training, LoRAs, caption helpers and SA3's dataset auto-captioning")
+        &["native-migration", "native-training", "native-autolabel"]
     }
 
     /// ace-server chooses a model per request, so the tier only decides what
@@ -110,6 +118,19 @@ impl Service for Carey {
             Ok(verify_native(run).await?.runtime_fingerprint)
         })
     }
+}
+
+/// What the LoRA catalog points at: each LoRA, its captions and the
+/// checkpoints a training run left, wherever the user keeps them.
+fn catalog_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(root))?;
+    let mut paths = Vec::new();
+    for entry in catalog.values() {
+        paths.push(PathBuf::from(&entry.path));
+        paths.extend(entry.captions_path.iter().map(PathBuf::from));
+        paths.extend(entry.training_checkpoints.iter().map(|checkpoint| PathBuf::from(&checkpoint.path)));
+    }
+    Ok(paths)
 }
 
 /// Size and modification time of what `verify_native` always proves: the
@@ -383,9 +404,65 @@ mod tests {
     }
 
     #[test]
-    fn python_stays_until_training_and_loras_run_natively() {
-        let blocker = Carey.retirement_blocker(Path::new("."), Path::new("."), &[]).unwrap();
-        assert!(blocker.starts_with("Carey's LoRA training"), "{blocker}");
+    fn nothing_keeps_python_carey_once_migrated() {
+        assert_eq!(Carey.retirement_blocker(Path::new("."), Path::new("."), &[]), None);
+        assert!(Carey.blocking_jobs().contains(&"native-autolabel"), "SA3's auto-label holds Carey's GPU");
+    }
+
+    /// Every file the bundle ships at the top of services/carey is declared
+    /// as code, except the default caption pool gary4local still reads.
+    #[test]
+    fn the_manifest_declares_exactly_the_bundled_python_code() {
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../services/carey");
+        let legacy = &target().def.legacy;
+        let code = &legacy.code;
+        for file in &code.files {
+            assert!(bundled.join(file).is_file(), "{file} is declared but not bundled");
+        }
+        for package in &code.packages {
+            assert!(bundled.join(package).is_dir(), "{package} is declared but not bundled");
+        }
+        let output = std::process::Command::new("git").args(["ls-files", "."]).current_dir(&bundled).output().unwrap();
+        for tracked in String::from_utf8(output.stdout).unwrap().lines() {
+            let top = tracked.split('/').next().unwrap();
+            assert!(
+                top == "default_captions.json"
+                    || code.files.iter().any(|file| file == top)
+                    || code.packages.iter().any(|package| package == top),
+                "services/carey/{top} is bundled but not declared in Carey's migration block"
+            );
+        }
+        let weights: Vec<_> = legacy.weight_dirs.iter().map(|weights| weights.dir.as_str()).collect();
+        assert_eq!(weights, ["checkpoints"]);
+    }
+
+    #[test]
+    fn cleanup_retires_the_python_checkpoints_and_keeps_catalogued_loras() {
+        let root = temp_root("cleanup");
+        let write = |path: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"x").unwrap();
+            path
+        };
+        write("services/carey/env/Scripts/python.exe");
+        write("services/carey/checkpoints/acestep-v15-base/model.safetensors");
+        // A LoRA the user keeps inside the Python checkpoints stays, and so
+        // does the folder holding it.
+        let lora = write("services/carey/checkpoints/my-lora/adapter_model.safetensors");
+        let catalog = serde_json::json!({"my-lora": {"path": lora.parent().unwrap()}});
+        write("carey/lora_catalog.json");
+        std::fs::write(root.join("carey/lora_catalog.json"), catalog.to_string()).unwrap();
+        let hub = root.join("hub");
+        let preview = crate::migration_inventory::preview(target(), &root, &hub, Carey.extras(&root, &hub));
+        let candidates: Vec<_> = preview.cleanup_candidates.iter().map(|item| PathBuf::from(&item.path)).collect();
+        assert!(candidates.contains(&root.join("services/carey/env")), "{candidates:?}");
+        assert!(!candidates.contains(&root.join("services/carey/checkpoints")), "{candidates:?}");
+        std::fs::remove_dir_all(root.join("services/carey/checkpoints/my-lora")).unwrap();
+        let preview = crate::migration_inventory::preview(target(), &root, &hub, Carey.extras(&root, &hub));
+        let candidates: Vec<_> = preview.cleanup_candidates.iter().map(|item| PathBuf::from(&item.path)).collect();
+        assert!(candidates.contains(&root.join("services/carey/checkpoints")), "{candidates:?}");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

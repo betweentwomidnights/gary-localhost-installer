@@ -84,6 +84,14 @@ fn legacy_candidates(target: Target, root: &Path, hub: &Path) -> Vec<Candidate> 
             kind: Kind::Environment,
         });
     }
+    for weights in &legacy.weight_dirs {
+        candidates.push(Candidate {
+            label: format!("{label} {}", weights.label),
+            path: service.join(&weights.dir),
+            owner: service.clone(),
+            kind: Kind::Weights,
+        });
+    }
     for repo in &legacy.hf_repos {
         candidates.push(Candidate {
             label: format!("{label} {}", repo.label),

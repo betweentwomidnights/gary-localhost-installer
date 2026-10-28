@@ -1926,14 +1926,12 @@ mod tests {
         };
         let fresh = ServiceManager::new(manifest.services.clone(), root.clone());
         let flags = retired(&fresh);
-        for id in ["sa3", "stable-audio", "foundation"] {
+        for id in ["sa3", "stable-audio", "foundation", "carey"] {
             assert!(flags[id], "{id} should set up on C++ on a fresh install");
         }
         for id in ["gary", "melodyflow"] {
             assert!(!flags[id], "{id} has no C++ migration");
         }
-        // Carey migrates, but its training still needs Python.
-        assert!(!flags["carey"], "carey still sets up Python while its training runs only there");
         // An existing Python environment stays usable until it migrates.
         let python = root.join("services/stable-audio/env/Scripts/python.exe");
         std::fs::create_dir_all(python.parent().unwrap()).unwrap();

@@ -372,8 +372,37 @@
       "migration": {
         "dataDir": "carey",
         "label": "Carey",
+        "dataLabel": "LoRAs, captions, training jobs and checkpoints",
         "legacy": {
-          "envDirs": ["env", ".venv"]
+          "envDirs": ["env", ".venv"],
+          "weightDirs": [
+            { "dir": "checkpoints", "label": "PyTorch models" }
+          ],
+          "code": {
+            "files": [
+              "ACE_TRAINER_PROVENANCE.md",
+              "COVER_NOISE_STRENGTH_VARIANTS.md",
+              "README.md",
+              "SIDESTEP_MIT_LICENSE",
+              "ace_training_dataset.py",
+              "bpm_analysis.py",
+              "build_captions.py",
+              "carey_wrapper.py",
+              "carey_wrapper_test.py",
+              "cli.py",
+              "key_analysis.py",
+              "pyproject.toml",
+              "requirements-acestep.txt",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "sa3_autolabel.py",
+              "start_api_server.bat",
+              "start_api_server.sh",
+              "train.py",
+              "train_lora_job.py"
+            ],
+            "packages": ["acestep", "checkpoint_overrides", "patches", "tests", "wrapper"]
+          }
         }
       },
       "dependsOn": []
