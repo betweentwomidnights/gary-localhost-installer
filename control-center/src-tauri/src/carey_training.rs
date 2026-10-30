@@ -255,11 +255,46 @@ async fn stage_audio(source: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// What staging produced: the flat dataset ace-train reads and the captions
+/// What staging produced: the flat dataset ace-train reads and the prompts
 /// Carey's caption pool takes from it.
 pub struct Staged {
     pub count: usize,
     pub captions: Vec<String>,
+}
+
+/// Add one song's prompts to the dice pool, as Python Carey's
+/// build_captions.py did: its caption, then its genre line with every 2- and
+/// 3-tag subset of that line. Training prompts with the genre at the genre
+/// ratio, so the short prompts are ones the LoRA learned too. Subsets never
+/// mix tags from different songs.
+fn add_prompts(pool: &mut Vec<String>, caption: &str, genre: &str) {
+    let tags: Vec<&str> = genre.split(',').map(str::trim).filter(|tag| !tag.is_empty()).collect();
+    let mut prompts = vec![caption.trim().to_string()];
+    if !tags.is_empty() {
+        prompts.push(tags.join(", "));
+    }
+    for size in [2, 3] {
+        if tags.len() < size {
+            continue;
+        }
+        // Every subset of `size` tags, in the line's order.
+        let mut picks: Vec<usize> = (0..size).collect();
+        loop {
+            prompts.push(picks.iter().map(|&index| tags[index]).collect::<Vec<_>>().join(", "));
+            let Some(slot) = (0..size).rev().find(|&slot| picks[slot] < tags.len() - size + slot) else {
+                break;
+            };
+            picks[slot] += 1;
+            for next in slot + 1..size {
+                picks[next] = picks[next - 1] + 1;
+            }
+        }
+    }
+    for prompt in prompts {
+        if !prompt.is_empty() && !pool.contains(&prompt) {
+            pool.push(prompt);
+        }
+    }
 }
 
 /// "no BPM: a.wav, b.wav and 3 more; no caption: c.wav"
@@ -289,7 +324,12 @@ pub async fn stage(dataset: &Path, dest: &Path, trigger: &str) -> Result<Staged,
     let mut staged = Vec::new();
     for entry in &entries {
         match metadata(&entry.fields, trigger) {
-            Ok(text) => staged.push((PathBuf::from(&entry.audio_path), text, scalar(&entry.fields.caption))),
+            Ok(text) => staged.push((
+                PathBuf::from(&entry.audio_path),
+                text,
+                scalar(&entry.fields.caption),
+                scalar(&entry.fields.genre),
+            )),
             Err(problem) => match problems.iter_mut().find(|(kind, _)| *kind == problem) {
                 Some((_, songs)) => songs.push(entry.relative_path.clone()),
                 None => problems.push((problem, vec![entry.relative_path.clone()])),
@@ -302,14 +342,12 @@ pub async fn stage(dataset: &Path, dest: &Path, trigger: &str) -> Result<Staged,
     std::fs::create_dir_all(dest).map_err(|error| error.to_string())?;
     let mut manifest = Vec::new();
     let mut captions = Vec::new();
-    for (index, (audio, text, caption)) in staged.iter().enumerate() {
+    for (index, (audio, text, caption, genre)) in staged.iter().enumerate() {
         let stem = format!("{index:04}");
         stage_audio(audio, &dest.join(format!("{stem}.wav"))).await?;
         std::fs::write(dest.join(format!("{stem}.txt")), text).map_err(|error| error.to_string())?;
         manifest.push(json!({"staged": stem, "source": audio}));
-        if !captions.contains(caption) {
-            captions.push(caption.clone());
-        }
+        add_prompts(&mut captions, caption, genre);
     }
     crate::sa3_training::save(&dest.join("staging.json"), &manifest)?;
     Ok(Staged { count: staged.len(), captions })
@@ -477,26 +515,38 @@ fn link_dataset(source: &Path, dest: &Path) -> Result<Staged, String> {
         .filter(|path| path.is_file())
         .collect();
     files.sort();
-    let (mut count, mut captions) = (0, Vec::new());
+    let mut count = 0;
     for file in &files {
         link_or_copy(file, &dest.join(file.file_name().ok_or("Invalid staged file")?))?;
-        match file.extension().and_then(|extension| extension.to_str()) {
-            Some("wav") => count += 1,
-            Some("txt") => {
-                let text = std::fs::read_to_string(file).map_err(|error| error.to_string())?;
-                if let Some(caption) = text.lines().find_map(|line| line.strip_prefix("caption: ")) {
-                    if !captions.iter().any(|known| known == caption) {
-                        captions.push(caption.to_string());
-                    }
-                }
-            }
-            _ => {}
+        if file.extension().is_some_and(|extension| extension == "wav") {
+            count += 1;
         }
     }
     if count == 0 {
         return Err("The earlier run's staged dataset has no audio.".into());
     }
-    Ok(Staged { count, captions })
+    Ok(Staged { count, captions: staged_prompts(dest) })
+}
+
+/// The dice pool of a staged dataset, from its numbered sidecars in order.
+fn staged_prompts(dataset: &Path) -> Vec<String> {
+    let mut sidecars: Vec<PathBuf> = std::fs::read_dir(dataset)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "txt"))
+        .collect();
+    sidecars.sort();
+    let mut prompts = Vec::new();
+    for sidecar in sidecars {
+        let Ok(text) = std::fs::read_to_string(&sidecar) else {
+            continue;
+        };
+        let field = |name: &str| text.lines().find_map(|line| line.strip_prefix(name)).unwrap_or_default().to_string();
+        add_prompts(&mut prompts, &field("caption: "), &field("genre: "));
+    }
+    prompts
 }
 
 /// Expose `generation` to ace-server as the adapter `name`: its folder under
@@ -592,7 +642,18 @@ pub fn write_adapter_info(root: &Path) -> Result<(), String> {
         if !entry.path().join("adapter_model.safetensors").is_file() {
             continue;
         }
-        let captions = pools.get(&name).filter(|captions| captions.is_array()).cloned().unwrap_or(json!([]));
+        // A C++-trained LoRA's pool comes from the dataset it was staged
+        // from, so LoRAs trained before the pool took genres get them too.
+        let staged = lora
+            .training_job_id
+            .as_deref()
+            .filter(|job| is_native_job(Some(job)))
+            .map(|job| staged_prompts(&root.join("carey").join("training").join("jobs").join(job).join("dataset")))
+            .filter(|prompts| !prompts.is_empty());
+        let captions = match staged {
+            Some(prompts) => json!(prompts),
+            None => pools.get(&name).filter(|captions| captions.is_array()).cloned().unwrap_or(json!([])),
+        };
         crate::sa3_training::save(
             &entry.path().join("adapter_info.json"),
             &json!({"model_family": lora.model_family, "captions": captions}),
@@ -1301,7 +1362,43 @@ mod tests {
             serde_json::from_slice(&std::fs::read(root.join("carey/adapters/tones/adapter_info.json")).unwrap()).unwrap();
         assert_eq!(info, json!({"model_family": "xl", "captions": ["soft tones", "loud tones"]}));
         assert!(!root.join("carey/adapters/stranger/adapter_info.json").exists(), "only cataloged adapters are described");
+
+        // Once its staged dataset is found, a C++-trained LoRA's pool comes
+        // from there, genres included, whatever captions.json recorded.
+        let dataset = root.join("carey/training/jobs/native-tones-1-0/dataset");
+        std::fs::create_dir_all(&dataset).unwrap();
+        std::fs::write(dataset.join("0000.txt"), "caption: soft tones\ngenre: ambient, drone\nbpm: 60\n").unwrap();
+        write_adapter_info(&root).unwrap();
+        let info: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("carey/adapters/tones/adapter_info.json")).unwrap()).unwrap();
+        assert_eq!(info["captions"], json!(["soft tones", "ambient, drone"]));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_dice_pool_takes_genres_and_their_subsets_like_python_carey() {
+        let mut pool = Vec::new();
+        add_prompts(&mut pool, "A dusty boom bap beat.", "hip hop, boom bap, lo-fi, jazz");
+        add_prompts(&mut pool, " A dusty boom bap beat. ", "neo-soul");
+        add_prompts(&mut pool, "", "");
+        assert_eq!(
+            pool,
+            [
+                "A dusty boom bap beat.",
+                "hip hop, boom bap, lo-fi, jazz",
+                "hip hop, boom bap",
+                "hip hop, lo-fi",
+                "hip hop, jazz",
+                "boom bap, lo-fi",
+                "boom bap, jazz",
+                "lo-fi, jazz",
+                "hip hop, boom bap, lo-fi",
+                "hip hop, boom bap, jazz",
+                "hip hop, lo-fi, jazz",
+                "boom bap, lo-fi, jazz",
+                "neo-soul",
+            ]
+        );
     }
 
     #[test]
@@ -1310,7 +1407,7 @@ mod tests {
         let dest = root.join("new-dataset");
         let staged = link_dataset(&job.join("dataset"), &dest).unwrap();
         assert_eq!(staged.count, 3);
-        assert_eq!(staged.captions, ["soft tones", "loud tones"]);
+        assert_eq!(staged.captions, ["soft tones", "ambient", "loud tones"]);
         assert_eq!(std::fs::read(dest.join("0002.wav")).unwrap(), b"0002");
         std::fs::remove_dir_all(root).unwrap();
     }
