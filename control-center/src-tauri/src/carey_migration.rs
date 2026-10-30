@@ -1,0 +1,544 @@
+//! Carey's move from its Python ACE-Step service to acestep.cpp's ace-server.
+//! ace-server serves its own job API rather than Python Carey's routes, and
+//! gary4juce moves to that API separately, so there is no client adapter and
+//! the proof exercises ace-server's contract directly: the tasks gary4juce's
+//! Carey tab will send, on the models this profile has downloaded.
+//!
+//! LoRA training, dataset captioning, SA3's dataset auto-label and LoRA
+//! publishing all run on ace-server too, so cleanup may retire Python Carey
+//! whole: its environment, its PyTorch checkpoints and its unedited code.
+//! The LoRAs, captions and datasets its catalog names are protected.
+
+use crate::carey_models::{self, DEFAULT_DIT};
+use crate::migration::{Proof, Run, Selection, Service, Target};
+use crate::migration_inventory::Extras;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+const SAMPLE_RATE: u32 = 48_000;
+
+fn carey() -> &'static crate::manifest::ServiceDef {
+    crate::manifest::bundled()
+        .services
+        .iter()
+        .find(|service| service.id == "carey")
+        .expect("the bundled manifest has a carey entry")
+}
+
+fn target() -> Target<'static> {
+    Target::of(carey()).expect("carey's manifest entry has a migration block")
+}
+
+/// Carey as the shared migration engine sees it.
+pub struct Carey;
+
+impl Service for Carey {
+    fn target(&self) -> Target<'_> {
+        target()
+    }
+
+    fn extras(&self, root: &Path, _hub: &Path) -> Extras {
+        let (protected, warnings) = match catalog_paths(root) {
+            Ok(paths) => (paths, Vec::new()),
+            Err(_) => (
+                Vec::new(),
+                vec!["Cannot read the Carey LoRA catalog; cleanup cannot safely account for its LoRAs.".into()],
+            ),
+        };
+        Extras {
+            selection: crate::migration::read(root, target().def, |selection| self.check_selection(selection)),
+            protected,
+            preserved: Vec::new(),
+            warnings,
+            training_base_present: false,
+        }
+    }
+
+    /// The Python models as the model manager knows them, so cleanup waits
+    /// for their downloads and forgets them afterwards.
+    fn legacy_model_ids(&self) -> Vec<String> {
+        crate::model_manager::CAREY_COMPONENTS.iter().map(|component| format!("carey::{component}")).collect()
+    }
+
+    fn models(&self) -> &'static crate::native_models::Catalog {
+        carey_models::models()
+    }
+
+    fn tiers(&self) -> &'static [&'static str] {
+        carey_models::TIERS
+    }
+
+    fn tier_components(&self, tier: &str) -> Result<Vec<String>, String> {
+        carey_models::tier_components(tier)
+    }
+
+    fn tier_options(&self, tier: &str) -> Vec<String> {
+        carey_models::options(tier)
+    }
+
+    fn options_label(&self) -> Option<&'static str> {
+        Some("more models")
+    }
+
+    fn recommendations(&self, memory_bytes: u64) -> crate::migration::Recommendations {
+        carey_models::recommendations(memory_bytes)
+    }
+
+    fn blocking_jobs(&self) -> &'static [&'static str] {
+        &["native-migration", "native-training", "native-autolabel"]
+    }
+
+    /// ace-server chooses a model per request, so the tier only decides what
+    /// is downloaded; it takes no encoding argument.
+    fn launch_args(&self, args: &[String], encoding: Option<&str>) -> Result<Vec<String>, String> {
+        self.tier_components(encoding.unwrap_or(self.tiers()[0]))?;
+        Ok(args.to_vec())
+    }
+
+    /// ace-server reads each adapter's adapter_info.json once, at startup.
+    fn prepare_launch(&self, root: &Path) -> Result<(), String> {
+        crate::carey_training::publish_catalog_adapters(root)?;
+        crate::carey_training::write_adapter_info(root)
+    }
+
+    fn verify<'a>(&'a self, run: Run<'a>) -> Proof<'a, Selection> {
+        Box::pin(verify_native(run))
+    }
+
+    /// Activation hashed the models and generated privately; cleanup repeats
+    /// that only when the runtime or the tier's models changed since.
+    fn reverify<'a>(&'a self, run: Run<'a>, selection: &'a Selection) -> Proof<'a, Option<String>> {
+        Box::pin(async move {
+            let unchanged = fingerprint(run.root, run.native, run.installed, run.encoding)
+                .is_ok_and(|current| selection.runtime_fingerprint.as_deref() == Some(current.as_str()));
+            if unchanged {
+                (run.progress)("The C++ runtime is unchanged since it was verified.");
+                return Ok(None);
+            }
+            Ok(verify_native(run).await?.runtime_fingerprint)
+        })
+    }
+}
+
+/// What the LoRA catalog points at: each LoRA, its captions and the
+/// checkpoints a training run left, wherever the user keeps them.
+fn catalog_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(root))?;
+    let mut paths = Vec::new();
+    for entry in catalog.values() {
+        paths.push(PathBuf::from(&entry.path));
+        paths.extend(entry.captions_path.iter().map(PathBuf::from));
+        paths.extend(entry.training_checkpoints.iter().map(|checkpoint| PathBuf::from(&checkpoint.path)));
+    }
+    Ok(paths)
+}
+
+/// Size and modification time of what `verify_native` always proves: the
+/// server and the tier's models, with release, backend and tier.
+fn fingerprint(
+    root: &Path,
+    native: &crate::manifest::NativeDef,
+    installed: &crate::native_runtime::NativeInstall,
+    encoding: &str,
+) -> Result<String, String> {
+    let models = carey_models::models();
+    let dir = models.models_dir(root);
+    let mut paths = vec![installed.dir.join(&native.executable)];
+    for id in carey_models::tier_components(encoding)? {
+        let component = models.component(&id).ok_or("Unknown Carey model")?;
+        paths.extend(component.files.iter().map(|file| dir.join(&file.filename)));
+    }
+    Ok(crate::migration_verify::fingerprint(
+        &paths,
+        &serde_json::json!([1, installed.version, installed.backend, encoding]),
+    ))
+}
+
+/// The catalog components on disk beyond the tier's own, DiTs first: every
+/// one of them is something gary4juce may ask the server for.
+fn downloaded_options(root: &Path, encoding: &str) -> Result<Vec<String>, String> {
+    let models = carey_models::models();
+    let needed = carey_models::tier_components(encoding)?;
+    let mut options: Vec<String> = models
+        .components()
+        .iter()
+        .map(|component| component.id.clone())
+        .filter(|id| !needed.contains(id) && models.missing(root, std::slice::from_ref(id)).is_none())
+        .collect();
+    options.sort_by_key(|id| id.starts_with("carey-native::lm-"));
+    Ok(options)
+}
+
+/// Whether an optional model could load on the GPU the test server selected:
+/// its weights plus the headroom the recommendations allow. Unknown memory
+/// counts as fitting, so the model is still tested.
+fn fits_gpu(id: &str, memory: Option<u64>) -> bool {
+    let Some(memory) = memory else {
+        return true;
+    };
+    carey_models::models().component(id).is_none_or(|component| {
+        component.files.iter().map(|file| file.bytes).sum::<u64>() + carey_models::HEADROOM_BYTES <= memory
+    })
+}
+
+fn file_of(id: &str) -> Result<String, String> {
+    let component = carey_models::models().component(id).ok_or("Unknown Carey model")?;
+    let [file] = component.files.as_slice() else {
+        return Err(format!("{id} is not a single model file"));
+    };
+    Ok(file.filename.clone())
+}
+
+/// Check a WAV rendered from LM audio codes: 48 kHz stereo, with sound, and
+/// a song's length. The LM decides how long a song it writes (the 1.7B wrote
+/// 24 s for a 4 s request), so the length is only bounded, never exact.
+fn check_lm_wav(wav: &[u8], what: &str) -> Result<(), String> {
+    let mut reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
+    let spec = reader.spec();
+    let seconds = reader.duration() as f64 / SAMPLE_RATE as f64;
+    if spec.sample_rate != SAMPLE_RATE || spec.channels != 2 || !(1.0..=600.0).contains(&seconds) {
+        return Err(format!(
+            "{what} check returned {} Hz, {} channels, {seconds:.1} s; expected {SAMPLE_RATE} Hz stereo, 1 s to 10 min",
+            spec.sample_rate, spec.channels,
+        ));
+    }
+    if reader.samples::<i16>().filter_map(Result::ok).all(|sample| sample == 0) {
+        return Err(format!("{what} check returned silence"));
+    }
+    Ok(())
+}
+
+/// A short, fixed request: enough to load and run a model end to end.
+fn request(synth_model: &str, extra: serde_json::Value) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "caption": "warm analog synth pad with soft drums",
+        "lyrics": "[Instrumental]",
+        "duration": 4,
+        "bpm": 120,
+        "keyscale": "C major",
+        "timesignature": "4",
+        "seed": 42,
+        "inference_steps": 8,
+        "synth_model": synth_model,
+        "output_format": "wav16",
+    });
+    body.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+    body
+}
+
+/// Prove the installed runtime with the tier being verified, on a private
+/// port: hash the tier's models, then run the tasks gary4juce will send on
+/// the base model, and generate once with every other model downloaded.
+async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
+    use crate::ace_client::{synth_audio, Body};
+    use crate::migration_verify::check_wav_at;
+    use serde_json::json;
+    // Taken before any check, so a file that changes while this runs leaves a
+    // fingerprint that no longer matches, never one that wrongly does.
+    let fingerprint = fingerprint(run.root, run.native, run.installed, run.encoding)?;
+    let ids = carey_models::tier_components(run.encoding)?;
+    carey_models::models().verify(run.root, &ids, run.progress).await?;
+    let options = downloaded_options(run.root, run.encoding)?;
+    (run.progress)("Starting the private native test server...");
+    let dir = crate::sa3_training::checked_folder(run.root, &["carey", "migration-checks"])?;
+    let server = crate::migration_verify::PrivateServer::start(run.launch, &dir, "Carey", &[]).await?;
+    let (client, base) = (&server.client, server.base.as_str());
+    let wait = Duration::from_secs(600);
+
+    (run.progress)("Listing Carey's models...");
+    let props: serde_json::Value = client
+        .get(format!("{base}/props"))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Carey /props failed: {error}"))?
+        .json()
+        .await
+        .map_err(|error| error.to_string())?;
+    let listed = |bucket: &str, file: &str| {
+        props["models"][bucket]
+            .as_array()
+            .is_some_and(|names| names.iter().any(|name| name.as_str() == Some(file)))
+    };
+    let dit = carey_models::dit_file(DEFAULT_DIT, run.encoding);
+    let shared = carey_models::models()
+        .component(carey_models::SHARED)
+        .ok_or("Carey's catalog has no shared models")?;
+    if !listed("dit", &dit)
+        || !listed("embedding", &shared.files[0].filename)
+        || !listed("vae", &shared.files[1].filename)
+    {
+        return Err("Carey's native server does not list the tier's models".into());
+    }
+
+    (run.progress)("Testing native generation...");
+    let generated = synth_audio(client, base, Body::Json(&request(&dit, json!({}))), wait, "Carey generation").await?;
+    check_wav_at(&generated, SAMPLE_RATE, 4 * SAMPLE_RATE, "Carey generation")?;
+
+    // A continuation regenerates from the end of the source to the requested
+    // length, keeping the source as it was.
+    (run.progress)("Testing a continuation...");
+    let continued = synth_audio(
+        client,
+        base,
+        Body::WithAudio(
+            &request(&dit, json!({"task_type": "repaint", "duration": 8, "repainting_start": 4, "repainting_end": 8})),
+            &generated,
+        ),
+        wait,
+        "Carey continuation",
+    )
+    .await?;
+    check_wav_at(&continued, SAMPLE_RATE, 8 * SAMPLE_RATE, "Carey continuation")?;
+
+    (run.progress)("Testing a lego stem...");
+    let stem = synth_audio(
+        client,
+        base,
+        Body::WithAudio(&request(&dit, json!({"task_type": "lego", "track": "drums"})), &generated),
+        wait,
+        "Carey lego",
+    )
+    .await?;
+    check_wav_at(&stem, SAMPLE_RATE, 4 * SAMPLE_RATE, "Carey lego")?;
+
+    let memory = props
+        .pointer("/hardware/memory_total_bytes")
+        .and_then(|value| value.as_u64())
+        .filter(|bytes| *bytes > 0);
+    for id in options {
+        let file = file_of(&id)?;
+        let label = carey_models::models().component(&id).map_or(id.clone(), |component| component.label.clone());
+        // A download too large for this GPU is the user's choice to make, not a broken runtime.
+        if !fits_gpu(&id, memory) {
+            (run.progress)(&format!("Skipping {label}: it needs more memory than this GPU has."));
+            continue;
+        }
+        (run.progress)(&format!("Testing {label}..."));
+        if id.starts_with("carey-native::lm-") {
+            // Standard generation: the LM writes the audio codes the base DiT
+            // renders, and the codes, not the request, decide the length.
+            let lm = request(&dit, json!({"lm_model": file}));
+            let (written, _) =
+                crate::ace_client::run(client, base, "/lm", Body::Json(&lm), wait, &label).await?;
+            let written: serde_json::Value = serde_json::from_slice(&written).map_err(|error| error.to_string())?;
+            let first = written.get(0).cloned().ok_or_else(|| format!("{label} wrote no request"))?;
+            if first["audio_codes"].as_str().unwrap_or_default().is_empty() {
+                return Err(format!("{label} wrote no audio codes"));
+            }
+            let audio = synth_audio(client, base, Body::Json(&first), wait, &label).await?;
+            check_lm_wav(&audio, &label)?;
+        } else {
+            let audio = synth_audio(client, base, Body::Json(&request(&file, json!({}))), wait, &label).await?;
+            check_wav_at(&audio, SAMPLE_RATE, 4 * SAMPLE_RATE, &label)?;
+        }
+    }
+    server.stop().await?;
+
+    Ok(Selection {
+        schema_version: 1,
+        encoding: run.encoding.into(),
+        verified_release: run.installed.version.clone().unwrap_or_else(|| "development".into()),
+        backend: run.installed.backend.clone(),
+        activated_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        cleanup_complete: false,
+        cleanup_errors: Vec::new(),
+        runtime_fingerprint: Some(fingerprint),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_models_too_large_for_the_gpu_are_skipped() {
+        const GIB: u64 = 1 << 30;
+        // An 8 GB card holds XL turbo at Q4_K_M but not at BF16.
+        assert!(!fits_gpu("carey-native::xl-turbo::BF16", Some(8 * GIB)));
+        assert!(fits_gpu("carey-native::xl-turbo::Q4_K_M", Some(8 * GIB)));
+        assert!(fits_gpu("carey-native::xl-turbo::BF16", Some(24 * GIB)));
+        assert!(fits_gpu("carey-native::xl-turbo::BF16", None), "unknown memory still tests the model");
+    }
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "gary-carey-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn ace_server_takes_its_model_from_each_request_not_an_encoding_argument() {
+        let args = vec!["--keep-loaded".to_string()];
+        assert_eq!(Carey.launch_args(&args, Some("Q4_K_M")).unwrap(), args);
+        assert_eq!(Carey.launch_args(&[], None).unwrap(), Vec::<String>::new());
+        assert!(Carey.launch_args(&args, Some("../x")).is_err());
+    }
+
+    #[test]
+    fn an_lm_render_is_checked_for_sound_not_for_the_requested_length() {
+        let wav = |channels: u16, seconds: f64, sample: i16| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            let spec = hound::WavSpec { channels, sample_rate: SAMPLE_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+            let mut writer = hound::WavWriter::new(&mut bytes, spec).unwrap();
+            for _ in 0..(seconds * SAMPLE_RATE as f64) as u32 * channels as u32 {
+                writer.write_sample(sample).unwrap();
+            }
+            writer.finalize().unwrap();
+            bytes.into_inner()
+        };
+        // The 1.7B LM wrote 24.24 s of codes for a 4 s request.
+        assert!(check_lm_wav(&wav(2, 24.24, 900), "LM").is_ok());
+        assert!(check_lm_wav(&wav(2, 4.0, 0), "LM").unwrap_err().contains("silence"));
+        assert!(check_lm_wav(&wav(1, 4.0, 900), "LM").is_err());
+        assert!(check_lm_wav(&wav(2, 0.5, 900), "LM").is_err());
+    }
+
+    #[test]
+    fn nothing_keeps_python_carey_once_migrated() {
+        assert_eq!(Carey.retirement_blocker(Path::new("."), Path::new("."), &[]), None);
+        assert!(Carey.blocking_jobs().contains(&"native-autolabel"), "SA3's auto-label holds Carey's GPU");
+    }
+
+    /// Every file the bundle ships at the top of services/carey is declared
+    /// as code, except the default caption pool gary4local still reads.
+    #[test]
+    fn the_manifest_declares_exactly_the_bundled_python_code() {
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../services/carey");
+        let legacy = &target().def.legacy;
+        let code = &legacy.code;
+        for file in &code.files {
+            assert!(bundled.join(file).is_file(), "{file} is declared but not bundled");
+        }
+        for package in &code.packages {
+            assert!(bundled.join(package).is_dir(), "{package} is declared but not bundled");
+        }
+        let output = std::process::Command::new("git").args(["ls-files", "."]).current_dir(&bundled).output().unwrap();
+        for tracked in String::from_utf8(output.stdout).unwrap().lines() {
+            let top = tracked.split('/').next().unwrap();
+            assert!(
+                top == "default_captions.json"
+                    || code.files.iter().any(|file| file == top)
+                    || code.packages.iter().any(|package| package == top),
+                "services/carey/{top} is bundled but not declared in Carey's migration block"
+            );
+        }
+        let weights: Vec<_> = legacy.weight_dirs.iter().map(|weights| weights.dir.as_str()).collect();
+        assert_eq!(weights, ["checkpoints"]);
+    }
+
+    #[test]
+    fn cleanup_retires_the_python_checkpoints_and_keeps_catalogued_loras() {
+        let root = temp_root("cleanup");
+        let write = |path: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"x").unwrap();
+            path
+        };
+        write("services/carey/env/Scripts/python.exe");
+        write("services/carey/checkpoints/acestep-v15-base/model.safetensors");
+        // A LoRA the user keeps inside the Python checkpoints stays, and so
+        // does the folder holding it.
+        let lora = write("services/carey/checkpoints/my-lora/adapter_model.safetensors");
+        let catalog = serde_json::json!({"my-lora": {"path": lora.parent().unwrap()}});
+        write("carey/lora_catalog.json");
+        std::fs::write(root.join("carey/lora_catalog.json"), catalog.to_string()).unwrap();
+        let hub = root.join("hub");
+        let preview = crate::migration_inventory::preview(target(), &root, &hub, Carey.extras(&root, &hub));
+        let candidates: Vec<_> = preview.cleanup_candidates.iter().map(|item| PathBuf::from(&item.path)).collect();
+        assert!(candidates.contains(&root.join("services/carey/env")), "{candidates:?}");
+        assert!(!candidates.contains(&root.join("services/carey/checkpoints")), "{candidates:?}");
+        std::fs::remove_dir_all(root.join("services/carey/checkpoints/my-lora")).unwrap();
+        let preview = crate::migration_inventory::preview(target(), &root, &hub, Carey.extras(&root, &hub));
+        let candidates: Vec<_> = preview.cleanup_candidates.iter().map(|item| PathBuf::from(&item.path)).collect();
+        assert!(candidates.contains(&root.join("services/carey/checkpoints")), "{candidates:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_tier_starts_with_its_base_model_and_the_shared_components() {
+        let root = temp_root("start");
+        let blocker = Carey.native_start_blocker(&root, None).unwrap();
+        assert!(blocker.contains("2B base BF16"), "{blocker}");
+        let models = carey_models::models();
+        let dir = models.models_dir(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        for id in carey_models::tier_components("BF16").unwrap() {
+            for file in &models.component(&id).unwrap().files {
+                // A sparse file of the pinned size is "present" to an inventory check.
+                std::fs::File::create(dir.join(&file.filename)).unwrap().set_len(file.bytes).unwrap();
+            }
+        }
+        assert!(Carey.native_start_blocker(&root, None).is_none());
+        // Other models on disk are options: each is proved, none is required.
+        let xl = models.component("carey-native::xl-base::Q8_0").unwrap();
+        std::fs::File::create(dir.join(&xl.files[0].filename)).unwrap().set_len(xl.files[0].bytes).unwrap();
+        assert_eq!(downloaded_options(&root, "BF16").unwrap(), ["carey-native::xl-base::Q8_0"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GARY4LOCAL_CAREY_SMOKE_ROOT (a new folder), _MODELS (a folder holding
+    /// the GGUFs) and _BINARY (an ace-server.exe); optionally _TIER and
+    /// _OPTIONS (comma-separated component ids to link and prove as well).
+    #[tokio::test]
+    #[ignore = "verifies a real ace-server against hard-linked model GGUFs"]
+    async fn real_native_runtime_verification() {
+        let var = |name: &str| std::env::var(format!("GARY4LOCAL_CAREY_SMOKE_{name}")).ok();
+        let root = std::path::PathBuf::from(var("ROOT").expect("a new isolated root is required"));
+        assert!(!root.exists(), "the smoke root must not exist yet");
+        let source = std::path::PathBuf::from(var("MODELS").expect("a model folder is required"));
+        let server = std::path::PathBuf::from(var("BINARY").expect("an ace-server is required"));
+        let tier = var("TIER").unwrap_or_else(|| "BF16".into());
+        let mut ids = carey_models::tier_components(&tier).unwrap();
+        ids.extend(var("OPTIONS").into_iter().flat_map(|list| {
+            list.split(',').map(str::to_string).collect::<Vec<_>>()
+        }));
+        let models = carey_models::models();
+        let dir = models.checked_models_dir(&root).unwrap();
+        for id in &ids {
+            for file in &models.component(id).unwrap().files {
+                std::fs::hard_link(source.join(&file.filename), dir.join(&file.filename)).unwrap();
+            }
+        }
+        let native = carey().native.clone().unwrap();
+        let installed = crate::native_runtime::NativeInstall {
+            dir: server.parent().unwrap().into(),
+            backend: "cuda".into(),
+            runtimes: Vec::new(),
+            version: None,
+            fallback_reason: None,
+        };
+        let launch = crate::native_runtime::NativeLaunch::new(
+            &root,
+            &native.executable,
+            &installed,
+            Carey.launch_args(&native.args, Some(&tier)).unwrap(),
+            Vec::new(),
+            &[("ACE_MODELS_DIR".into(), dir.to_string_lossy().into())],
+        );
+        let progress = |message: &str| println!("{message}");
+        let run = Run {
+            root: &root,
+            native: &native,
+            installed: &installed,
+            launch: &launch,
+            encoding: &tier,
+            progress: &progress,
+        };
+        let selection = Carey.verify(run).await.unwrap();
+        assert_eq!(selection.encoding, tier);
+        assert!(selection.runtime_fingerprint.is_some());
+        assert!(!crate::migration::selection_path(&root, target().def).exists(), "verification must not select C++");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

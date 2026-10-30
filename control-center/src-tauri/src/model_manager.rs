@@ -978,26 +978,28 @@ impl ModelManager {
     }
 }
 
+/// The Python Carey components, each a folder of its checkpoints directory
+/// known to the model manager as `carey::<component>`.
+pub const CAREY_COMPONENTS: &[&str] = &[
+    "acestep-v15-base",
+    "acestep-v15-sft",
+    "acestep-v15-turbo",
+    "acestep-v15-xl-base",
+    "acestep-v15-xl-sft",
+    "acestep-v15-xl-turbo",
+    "vae",
+    "scrag-vae",
+    "Qwen3-Embedding-0.6B",
+    "acestep-5Hz-lm-0.6B",
+    "acestep-5Hz-lm-1.7B",
+    "acestep-5Hz-lm-4B",
+];
+
 pub fn carey_component_path(checkpoint_dir: &Path, model_id: &str) -> Result<PathBuf, String> {
     let component = model_id
         .strip_prefix("carey::")
         .ok_or_else(|| format!("'{}' is not a Carey model", model_id))?;
-    let known = matches!(
-        component,
-        "acestep-v15-base"
-            | "acestep-v15-sft"
-            | "acestep-v15-turbo"
-            | "acestep-v15-xl-base"
-            | "acestep-v15-xl-sft"
-            | "acestep-v15-xl-turbo"
-            | "vae"
-            | "scrag-vae"
-            | "Qwen3-Embedding-0.6B"
-            | "acestep-5Hz-lm-0.6B"
-            | "acestep-5Hz-lm-1.7B"
-            | "acestep-5Hz-lm-4B"
-    );
-    if !known {
+    if !CAREY_COMPONENTS.contains(&component) {
         return Err(format!("Unknown Carey component: {}", component));
     }
     Ok(checkpoint_dir.join(component))
