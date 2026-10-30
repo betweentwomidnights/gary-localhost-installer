@@ -1,10 +1,12 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.4.0-rocm.7",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rocm.7/gary4local-rocm_0.4.0-rocm.7_x64-setup.exe",
-    "sha256":  "03bc9bc06432854f5d318d6f1ba902de89c27638d387458734de0ce09f8f5d0a",
-    "published_at":  "2026-10-17T03:33:55.1854954+00:00",
+    "latest_version":  "0.6.0-rocm.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.6.0-rocm.1/gary4local-rocm_0.6.0-rocm.1_x64-setup.exe",
+    "sha256":  "6cfc1759bcac310c6ec795b6ff3f73fe9a543f768297b60a2986468b1ef6cc58",
+    "published_at":  "2026-10-30T20:15:18.0000000+00:00",
     "notes":  [
-                  "jerry and foundation-1 can leave Python too: all three stable audio services now share one C++ runtime under a stable audio header. Press update runtime there first (sa3.cpp v0.1.7), then migrate jerry and foundation-1.\nUse gary4juce v5.0.1-rc.2 for jerry\u0027s finetunes and their dice prompts."
+                  "Carey moves to C++ with native LoRA training and captioning. Migrate Carey in the app.",
+                  "Update runtime for Yuey v0.3.0 and the shared stable audio runtime v0.1.8.",
+                  "SA3 seeds now follow the remote backend; re-convert older adapters. Requires gary4juce v5.0.2-rc.1."
               ]
 }
