@@ -1045,7 +1045,10 @@ impl ServiceManager {
         let Some(target) = crate::migration::Target::of(svc) else {
             return false;
         };
-        if crate::migration::service(&svc.id).is_none() {
+        let Some(service) = crate::migration::service(&svc.id) else {
+            return false;
+        };
+        if service.python_only_features().is_some() {
             return false;
         }
         svc.runtime == ServiceRuntime::Native
@@ -1117,6 +1120,9 @@ impl ServiceManager {
                 svc.display_name
             )
         })?;
+        if let Some(service) = crate::migration::service(&svc.id) {
+            service.prepare_launch(&self.repo_root)?;
+        }
         // A migrated service keeps its Python-era client contract on the public
         // port while the native server listens privately.
         let adapter = match crate::migration::service(&svc.id) {
@@ -1920,10 +1926,10 @@ mod tests {
         };
         let fresh = ServiceManager::new(manifest.services.clone(), root.clone());
         let flags = retired(&fresh);
-        for id in ["sa3", "stable-audio", "foundation"] {
+        for id in ["sa3", "stable-audio", "foundation", "carey"] {
             assert!(flags[id], "{id} should set up on C++ on a fresh install");
         }
-        for id in ["gary", "melodyflow", "carey"] {
+        for id in ["gary", "melodyflow"] {
             assert!(!flags[id], "{id} has no C++ migration");
         }
         // An existing Python environment stays usable until it migrates.

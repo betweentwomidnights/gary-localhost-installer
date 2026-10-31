@@ -337,6 +337,74 @@
         "CAREY_LORA_REGISTRY": "${GARY_RUNTIME}/carey/lora_registry.json",
         "CAREY_CAPTIONS": "${GARY_RUNTIME}/carey/captions.json"
       },
+      "native": {
+        "executable": "ace-server.exe",
+        "modelsDir": "carey",
+        "version": "v0.1.3",
+        "env": {
+          "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
+          "ACE_PORT": "8003",
+          "ACE_DEVICE": "${NATIVE_BACKEND}",
+          "ACE_ADAPTER_MODE": "functional",
+          "ACE_ADAPTERS_DIR": "${GARY_RUNTIME}/carey/adapters"
+        },
+        "platforms": {
+          "windows-x64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-core.zip",
+              "sha256": "ac756270ac9b81cf3ccc8d0da1f91611399dd8ff01e63538673df11d2b0e99c2"
+            },
+            "backends": {
+              "cuda": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-cuda.zip",
+                "sha256": "0c270c2d1d99bfe20b20a40574bf50d806bad0abf6ef14050de243e230401c37",
+                "requires": ["cudart-12.8"]
+              },
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-vulkan.zip",
+                "sha256": "37c8f08adcbf44ba35168621f39df11b8ad4721c1f7b13426ddb91cd12467194"
+              }
+            },
+            "prefer": ["cuda", "vulkan"]
+          }
+        }
+      },
+      "migration": {
+        "dataDir": "carey",
+        "label": "Carey",
+        "dataLabel": "LoRAs, captions, training jobs and checkpoints",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "weightDirs": [
+            { "dir": "checkpoints", "label": "PyTorch models" }
+          ],
+          "code": {
+            "files": [
+              "ACE_TRAINER_PROVENANCE.md",
+              "COVER_NOISE_STRENGTH_VARIANTS.md",
+              "README.md",
+              "SIDESTEP_MIT_LICENSE",
+              "ace_training_dataset.py",
+              "bpm_analysis.py",
+              "build_captions.py",
+              "carey_wrapper.py",
+              "carey_wrapper_test.py",
+              "cli.py",
+              "key_analysis.py",
+              "pyproject.toml",
+              "requirements-acestep.txt",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "sa3_autolabel.py",
+              "start_api_server.bat",
+              "start_api_server.sh",
+              "train.py",
+              "train_lora_job.py"
+            ],
+            "packages": ["acestep", "checkpoint_overrides", "patches", "tests", "wrapper"]
+          }
+        }
+      },
       "dependsOn": []
     },
     {

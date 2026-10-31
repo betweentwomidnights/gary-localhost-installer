@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { runtimeDevice } from "./nativeDevice";
   import { invoke } from "@tauri-apps/api/core";
   import NativeBackendPicker from "./NativeBackendPicker.svelte";
 
@@ -24,6 +25,8 @@
     fallbackReason: string | null;
     offeredBackends: string[];
     devices: { name: string; backend: string; deviceType: string; memoryTotalBytes: number }[];
+    selectedDeviceName: string | null;
+    selectedMemoryBytes: number | null;
   }
   interface Activity { at: number; text: string; failed: boolean; }
 
@@ -45,7 +48,7 @@
   const building = $derived(members.find((member) => member.build_status?.building) ?? null);
   const live = (member: Member) => ["running", "starting", "unhealthy"].includes(member.status);
   const stoppable = $derived(members.filter((member) => member.runtime === "native" && live(member)));
-  const device = $derived(info?.devices.find((entry) => entry.deviceType !== "cpu" && entry.backend.toLowerCase().includes(info?.backend ?? "")));
+  const device = $derived(runtimeDevice(info));
   const action = $derived(!info ? null
     : !info.installed ? "install runtime"
     : info.devOverride ? null

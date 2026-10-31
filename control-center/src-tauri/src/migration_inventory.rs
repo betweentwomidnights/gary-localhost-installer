@@ -31,6 +31,9 @@ pub struct Preview {
     pub warnings: Vec<String>,
     pub native_selection: Option<Selection>,
     pub cleanup_token: String,
+    /// Why cleanup cannot remove Python whatever the review finds: features
+    /// that still run only there.
+    pub python_still_needed: Option<String>,
 }
 
 /// What only the service knows, gathered by the service before an inventory.
@@ -79,6 +82,14 @@ fn legacy_candidates(target: Target, root: &Path, hub: &Path) -> Vec<Candidate> 
             path: service.join(env),
             owner: service.clone(),
             kind: Kind::Environment,
+        });
+    }
+    for weights in &legacy.weight_dirs {
+        candidates.push(Candidate {
+            label: format!("{label} {}", weights.label),
+            path: service.join(&weights.dir),
+            owner: service.clone(),
+            kind: Kind::Weights,
         });
     }
     for repo in &legacy.hf_repos {
@@ -200,6 +211,7 @@ fn inventory(
         warnings: Vec::new(),
         native_selection: None,
         cleanup_token: String::new(),
+        python_still_needed: None,
     };
     match extras.selection {
         Ok(selection) => result.native_selection = selection,

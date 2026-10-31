@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { runtimeDevice } from "./nativeDevice";
   import { invoke } from "@tauri-apps/api/core";
   import NativeBackendPicker from "./NativeBackendPicker.svelte";
   import { chooseYueyTier, loadYueyTiers, type YueyTiers } from "./yueyTiers";
@@ -67,11 +68,7 @@
     serviceStatus === "running" || serviceStatus === "starting" || serviceStatus === "unhealthy"
   );
   // The accelerator the runtime check found for the installed backend.
-  let device = $derived(
-    info?.devices.find(
-      (d) => d.deviceType !== "cpu" && d.backend.toLowerCase().includes(info?.backend ?? "")
-    ) ?? null
-  );
+  let device = $derived(runtimeDevice(info));
   let wantsReinstall = $derived(
     !!info?.installed &&
       !info.devOverride &&

@@ -795,6 +795,10 @@ pub struct NativeRuntimeInfo {
     pub offered_backends: Vec<String>,
     pub devices: Vec<NativeDevice>,
     pub recommended_encoding: Option<String>,
+    /// Memory on the device the server selected, when its probe reports it.
+    pub selected_memory_bytes: Option<u64>,
+    /// That device's name, e.g. "NVIDIA GeForce RTX 5070 Laptop GPU".
+    pub selected_device_name: Option<String>,
 }
 
 pub fn runtime_info(
@@ -862,7 +866,45 @@ pub fn runtime_info(
         offered_backends,
         devices,
         recommended_encoding,
+        selected_memory_bytes: props
+            .as_ref()
+            .and_then(|props| props.pointer("/hardware/memory_total_bytes"))
+            .and_then(|value| value.as_u64())
+            .filter(|bytes| *bytes > 0),
+        selected_device_name: props.as_ref().and_then(|props| {
+            let selected = props.pointer("/hardware/selected_device")?.as_str()?;
+            self::devices(props)
+                .into_iter()
+                .find(|device| device.get("name").and_then(|name| name.as_str()) == Some(selected))?
+                .get("description")?
+                .as_str()
+                .map(str::to_string)
+        }),
     }
+}
+
+/// Memory on the GPU the installed backend runs on, from the install probe:
+/// the device the server selected when the probe names it. Otherwise the
+/// largest dedicated GPU of that backend, which a server picks before an
+/// integrated one; an integrated GPU reports shared system memory, which
+/// would recommend models no dedicated card beside it could hold.
+pub fn accelerator_memory(info: &NativeRuntimeInfo) -> Option<u64> {
+    if let Some(bytes) = info.selected_memory_bytes {
+        return Some(bytes);
+    }
+    let backend = info.backend.as_deref()?.to_ascii_lowercase();
+    let largest = |kind: &str| {
+        info.devices
+            .iter()
+            .filter(|device| {
+                device.backend.to_ascii_lowercase().contains(&backend)
+                    && device.device_type.eq_ignore_ascii_case(kind)
+            })
+            .map(|device| device.memory_total_bytes)
+            .max()
+            .filter(|bytes| *bytes > 0)
+    };
+    largest("gpu").or_else(|| largest("igpu"))
 }
 
 /// The encoding the last runtime check recommended for this machine's memory.
@@ -1418,6 +1460,38 @@ mod loader_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recommendations_use_the_selected_gpu_not_shared_integrated_memory() {
+        let device = |name: &str, kind: &str, gib: u64| NativeDevice {
+            name: name.into(),
+            backend: "Vulkan".into(),
+            device_type: kind.into(),
+            memory_total_bytes: gib << 30,
+        };
+        // A laptop's Intel GPU reports 36 GiB of shared memory beside an 8 GB RTX 5070.
+        let mut info = NativeRuntimeInfo {
+            service_id: "carey".into(),
+            installed: true,
+            dev_override: false,
+            version: None,
+            manifest_version: String::new(),
+            backend: Some("vulkan".into()),
+            preference: "vulkan".into(),
+            fallback_reason: None,
+            offered_backends: Vec::new(),
+            devices: vec![device("Vulkan0", "igpu", 36), device("Vulkan1", "gpu", 8)],
+            recommended_encoding: None,
+            selected_memory_bytes: None,
+            selected_device_name: None,
+        };
+        assert_eq!(accelerator_memory(&info), Some(8 << 30));
+        info.selected_memory_bytes = Some(7 << 30);
+        assert_eq!(accelerator_memory(&info), Some(7 << 30));
+        info.selected_memory_bytes = None;
+        info.devices = vec![device("Vulkan0", "igpu", 36)];
+        assert_eq!(accelerator_memory(&info), Some(36 << 30), "an integrated GPU alone is what runs");
+    }
 
     #[test]
     fn a_native_launch_layers_storage_then_template_then_shared_runtimes() {

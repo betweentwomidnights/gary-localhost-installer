@@ -44,12 +44,14 @@
     serviceStatus,
     serviceEnvExists,
     careyXlEnabled,
+    nativeRuntime,
     onClose,
   }: {
     open: boolean;
     serviceStatus: "stopped" | "starting" | "running" | "unhealthy" | "failed";
     serviceEnvExists: boolean;
     careyXlEnabled: boolean;
+    nativeRuntime: boolean;
     onClose: () => void;
   } = $props();
 
@@ -339,7 +341,9 @@
         xl LoRAs are exposed; when xl is off, standard LoRAs are exposed.
       </div>
 
-      {#if !serviceEnvExists}
+      {#if nativeRuntime}
+        <div class="note">Carey's C++ server publishes each LoRA and its captions when it starts, and restarts when you save or remove one.</div>
+      {:else if !serviceEnvExists}
         <div class="warning">build Carey first. you can still save LoRA entries now, but captions generation is unavailable.</div>
       {:else if serviceStatus !== "running"}
         <div class="warning">Carey is not running. you can save LoRA entries now; start Carey to build captions and hot-reload the registry.</div>
@@ -390,9 +394,11 @@
           {saving ? "saving..." : "save LoRA"}
         </button>
         <button onclick={() => void loadState()} disabled={loading || saving || building}>refresh</button>
-        <button onclick={buildCaptions} disabled={!canBuild}>
-          {building ? "building..." : "build captions"}
-        </button>
+        {#if !nativeRuntime}
+          <button onclick={buildCaptions} disabled={!canBuild}>
+            {building ? "building..." : "build captions"}
+          </button>
+        {/if}
         <button onclick={openExamplesRepo}>open examples repo</button>
         <button onclick={onClose}>close</button>
       </div>
