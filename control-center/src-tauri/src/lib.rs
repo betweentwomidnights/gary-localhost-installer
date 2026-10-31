@@ -11159,11 +11159,24 @@ async fn prepare_native_models(
 #[tauri::command]
 async fn get_sa3_native_lora_state(
     repo_root: tauri::State<'_, PathBuf>,
+    manager: tauri::State<'_, ManagerState>,
 ) -> Result<sa3_loras::NativeLoraState, String> {
+    let converter = {
+        let services = manager.lock().await;
+        services
+            .native_service("sa3")
+            .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
+            .map(|installed| installed.dir.join("sa3-lora-convert.exe"))
+            .filter(|path| path.is_file())
+    };
     let root = repo_root.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || sa3_loras::state(&root))
+    let mut state = tauri::async_runtime::spawn_blocking(move || sa3_loras::state(&root))
         .await
-        .map_err(|error| format!("Cannot read native SA3 adapters: {error}"))?
+        .map_err(|error| format!("Cannot read native SA3 adapters: {error}"))??;
+    if let Some(converter) = converter {
+        state.converter_sha256 = native_runtime::sha256_file(&converter).await.ok();
+    }
+    Ok(state)
 }
 
 #[tauri::command]

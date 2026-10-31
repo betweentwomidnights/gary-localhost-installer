@@ -52,6 +52,7 @@
     strength: number;
     sourcePath: string;
     nativePath: string | null;
+    converterSha256: string | null;
     error: string | null;
     promptsPath: string | null;
     trainingCheckpoints: { jobId: string; step: number; epoch: number | null; path: string; statePath: string }[];
@@ -61,6 +62,7 @@
     entries: NativeLora[];
     preparing: boolean;
     adaptersDir: string;
+    converterSha256?: string;
   }
 
   interface LoraCard {
@@ -85,6 +87,9 @@
   let loraState: Sa3LoraState | null = $state(null);
   let nativeState: NativeLoraState | null = $state(null);
   let nativeRuntime = $state(false);
+  // The installed runtime's converter. Only a full load reports it; update
+  // events leave it alone.
+  let currentConverter: string | null = $state(null);
   let loading = $state(false);
   let busy = $state(false);
   // The LoRA an action is working on, or one of these list-wide actions.
@@ -148,7 +153,10 @@
         invoke<{ id: string; runtime: string }[]>("get_services"),
       ]);
       applyLegacy(legacy);
-      if (native) applyNative(native);
+      if (native) {
+        applyNative(native);
+        currentConverter = native.converterSha256 ?? null;
+      }
       nativeRuntime = services.some((service) => service.id === "sa3" && service.runtime === "native");
     } catch (cause) {
       error = describeError(cause);
@@ -330,8 +338,19 @@
     return !!card.legacy || !!card.native?.nativeOnly || isGguf(card.native?.sourcePath ?? "");
   }
 
-  function readiness(card: LoraCard): { label: string; tone: "ok" | "pending" | "bad" } {
+  // Converted by an earlier runtime's converter: preparing converts it again.
+  function outdated(native: NativeLora | null): boolean {
+    return !!native?.nativePath && !!native.converterSha256 && !!currentConverter
+      && native.converterSha256 !== currentConverter;
+  }
+
+  function readiness(card: LoraCard): { label: string; tone: "ok" | "pending" | "bad"; title?: string } {
     if (card.native?.error) return { label: "failed to prepare", tone: "bad" };
+    if (outdated(card.native)) return {
+      label: "needs preparing",
+      tone: "pending",
+      title: "an earlier sa3.cpp converted this one. prepare it again to pick up the new runtime's fixes",
+    };
     if (card.native?.nativePath) return { label: nativeRuntime ? "ready" : "ready for C++", tone: "ok" };
     if (card.legacy && !card.legacy.registered) return { label: "checkpoint missing", tone: "bad" };
     return { label: nativeRuntime ? "needs preparing" : "not prepared for C++", tone: "pending" };
@@ -348,7 +367,7 @@
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   });
 
-  let unprepared = $derived(cards.filter((card) => card.native && (!card.native.nativePath || card.native.error)).length);
+  let unprepared = $derived(cards.filter((card) => card.native && (!card.native.nativePath || card.native.error || outdated(card.native))).length);
   let legacyCkptPending = $derived(cards.some((card) => card.native && !card.native.nativePath && /\.ckpt$/i.test(card.native.sourcePath)));
   let sa3Active = $derived(["starting", "running", "unhealthy"].includes(serviceStatus));
   let blocked = $derived.by(() => loading || busy || pendingRestart || !!nativeState?.preparing || (nativeRuntime && sa3Active));
@@ -463,7 +482,7 @@
               <div class="entry-top">
                 <div class="entry-heading">
                   <span class="entry-name">{card.name}</span>
-                  <span class="chip {status.tone}">{status.label}</span>
+                  <span class="chip {status.tone}" title={status.title}>{status.label}</span>
                   {#if card.legacy?.trainingJobId || card.native?.trainingCheckpoints.length}
                     <span class="chip">gary-trained</span>
                   {/if}
