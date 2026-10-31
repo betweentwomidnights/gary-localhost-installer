@@ -1,22 +1,22 @@
 {
   "nativeBundles": {
     "sa3": {
-      "version": "v0.1.7",
+      "version": "v0.1.8",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-core.zip",
-            "sha256": "f2a8addbd9e33f542d9ab35f98aca088b4eed8dc92a3035e48aa468492ff9711"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-core.zip",
+            "sha256": "483daf202863ec465bb47efb9e12aeb5614ad4e9eafaae92c91cad0318940620"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-cuda.zip",
-              "sha256": "1fe58d9719e6aaf21db9737164d5df840310972eadbc41b84a82896a8c6d73db",
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-cuda.zip",
+              "sha256": "09650332715df6656a40ede615cd71a1614dee4ebcd979e3bffb9c434cae7daf",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-vulkan.zip",
-              "sha256": "4b09715ab2f036327cc73ee4d6e038bfe2bc8afd817fb20c8d34771525d55287"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-vulkan.zip",
+              "sha256": "e8ce2180d1c4f0a0512191947e4b2b327abf98d99b82514418ad9e1678e58c78"
             }
           },
           "prefer": ["cuda", "vulkan"]
@@ -494,22 +494,22 @@
       "native": {
         "executable": "yue2-server.exe",
         "modelsDir": "yuey",
-        "version": "v0.2.4",
+        "version": "v0.3.0",
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-core.zip",
-              "sha256": "5175174811e5ffbbc2bb324745b3512fedeac005e8eafddc4ba285cdab359493"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-core.zip",
+              "sha256": "92b980a005f55fdfae6844ee6968fec1d89532af3ebb87561ccad0968f439781"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-cuda.zip",
-                "sha256": "c07a1fad96109874ba53bef435d51793e389bc92c61f3210da36dd8590c60bc1",
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-cuda.zip",
+                "sha256": "1910552ed1293832f3d2cb694688a142d6bbfb258fc858afb4b059fc974de595",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-vulkan.zip",
-                "sha256": "d7600536eac3f23f3e239e521a4cdfc22def1ea92c5f91d5b4170fe4e1a80041"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-vulkan.zip",
+                "sha256": "0c0f4159e3bf38eb96df68545584b4c2279938a4e096ab28ed30c76528fcf3d2"
               }
             },
             "prefer": ["cuda", "vulkan"]
