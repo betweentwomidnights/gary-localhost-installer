@@ -4,6 +4,83 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.6.0 - 2026-10-31
+
+### carey moves to acestep.cpp
+
+carey is the fourth service off Python. `migrate runtime` installs
+[acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp)'s
+`ace-server` (pinned at v0.1.3), downloads the models you pick, and starts it
+on a private port to run what gary4juce's carey tab sends: a generation, a
+continuation and a lego stem, then a render with each language model and DiT
+you downloaded. a model too big for the GPU is skipped rather than failing the
+check, since downloading it was your call. only when those pass does carey
+switch. the models panel covers the 2B and XL DiTs and the language models,
+and recommends a precision for each from the GPU the runtime picked, not from
+shared iGPU memory.
+
+ace-server has its own job API rather than Python carey's routes, so local C++
+carey needs gary4juce v5.0.2, whose carey tab speaks it. the remote backend
+serves both APIs, so an older gary4juce keeps working there.
+
+### the rest of carey came with it
+
+LoRA training runs on acestep.cpp's `ace-train`. the training dialog shows
+epochs, saves checkpoints as it goes, and can resume from any saved checkpoint,
+exactly or weights only. dataset captioning uses ace-server's `/caption`: BPM
+and key come from the filename when it has them, then from a local estimate
+when it's confident, and only then from the language model. auto-label works
+from the sidecar editor too, track by track. LoRAs you trained in Python carey,
+or added yourself, publish to the C++ server alongside the new ones.
+
+a published LoRA's dice draw from its captions, its genre lines and their two-
+and three-tag subsets, the same pool Python carey built, so the short genre
+prompts it trained on come back. on C++ the server reads each LoRA's prompts
+from its own adapter info, so `build captions` is gone from the LoRA dialog.
+
+SA3's dataset auto-label used to borrow carey's Python env. on C++ it runs on a
+private ace-server with the same captioning rules, which was the last thing
+keeping Python carey around.
+
+### cleanup retires Python carey whole
+
+once carey runs on C++, cleanup removes its env, the 16 GB of PyTorch
+checkpoints and the bundled Python code. the LoRAs, captions, datasets and
+training checkpoints its catalog names are kept. a fresh install sets carey up
+on C++ alone.
+
+### sa3.cpp v0.1.8: every seed sounds different
+
+the stable audio runtime moves to
+[sa3.cpp v0.1.8](https://github.com/betweentwomidnights/sa3.cpp/releases/tag/v0.1.8),
+which matches stable_audio_3 more closely: with the same seed and LoRA, a
+local SA3 take now comes out very close to the remote one. the cost is that every seed gives a different result
+than it did on v0.1.7, for sa3, jerry and foundation-1 alike. press
+`update runtime` under the `stable audio` header to get it.
+
+v0.1.8 also converts a part of some SA3 LoRAs the old converter dropped, so LoRAs
+prepared on v0.1.7 should be prepared again. the SA3 LoRA manager marks them
+`needs preparing` and counts them in its `prepare for C++` button.
+
+### one list in the SA3 LoRA manager
+
+the manager used to show the C++ registry and the Python one as two lists, and
+most LoRAs were in both, each copy with half the buttons. it's one card per
+LoRA now, with its readiness, checkpoint, strength, prompt count and remove
+or delete on the same card, and the file paths folded away under `files`.
+
+### smaller things
+
+- yuey.cpp is pinned at
+  [v0.3.0](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/v0.3.0).
+  its web UI can train style adapters now; press `update runtime` in yuey's
+  panel to get it. gary4local doesn't have a training UI for yuey yet.
+
+thanks to Kostas for running native carey, its training and the rest of this
+on his Radeon before it came to main.
+
+compatible with gary4juce v5.0.2.
+
 ## v0.5.0 - 2026-10-17
 
 ### sa3, jerry and foundation-1 move to sa3.cpp

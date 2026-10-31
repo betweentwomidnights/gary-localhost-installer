@@ -12,32 +12,29 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 10/17 - v0.5.0
+## update 10/31 - v0.6.0
 
-[download gary4local v0.5.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.5.0).
+[download gary4local v0.6.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.6.0).
 
-the C++ migration has begun. all three stable audio services (sa3, jerry/SAOS
-and foundation-1) can now be migrated from Python to
-[sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp) inside the app. they
-share one C++ runtime, so the service list groups them under a `stable audio`
-header: click it to install or update that runtime and pick its backend (CUDA
-on NVIDIA, Vulkan on AMD and Intel), then press `migrate runtime` on each
-service. gary4local checks the C++ version first, then offers to delete the
-old Python env and its weights.
+carey is off Python. press `migrate runtime` on carey and gary4local installs
+[acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), downloads
+the models you pick, checks a generation, a continuation and a lego stem on
+them, then offers to delete the Python env and its 16 GB of checkpoints. your
+LoRAs, captions and datasets stay. LoRA training, dataset captioning and SA3's
+auto-label all run on the C++ server now, and LoRAs you trained in Python carey
+publish to it too.
 
-if you're installing for the first time, the Python backends for these three
-aren't even an option anymore: `set up runtime` goes straight to C++. if you
-really want the Python versions, an earlier build still has them, and will
-happily eat your storage space.
+local C++ carey needs [gary4juce v5.0.2](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.2),
+which speaks the new server's API. the remote backend serves both, so an older
+gary4juce keeps working there.
 
-jerry's finetunes (kickbass and jerry grunge) download from jerry's models
-panel and show up in gary4juce's jerry dropdown, dice prompts included. jerry
-grunge sounds different now, and that's on purpose: the Python service never
-actually loaded its finetuned weights, so this is the first time you hear it.
+the stable audio runtime moves to sa3.cpp v0.1.8, which matches the remote SA3
+much more closely. heads up: every seed sounds different than it did on
+v0.1.7, for sa3, jerry and foundation-1. once you've updated the runtime, open
+the SA3 LoRA manager and prepare your LoRAs again; it marks the ones that need
+it. that manager is one list now, one card per LoRA.
 
-thanks again to Kostas for running all three on his Radeon.
-
-compatible with [gary4juce v5.0.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.1).
+thanks again to Kostas for running all of it on his Radeon first.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
@@ -53,7 +50,7 @@ build while we tried very hard to break it locally.
 ## roadmap
 
 - [x] replace jerry, foundation-1 and SA3 with [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), which already supports LoRA training in native C++
-- [ ] replace carey with [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), including the LoRA workflow
+- [x] replace carey with [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), including the LoRA workflow
 - [ ] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
 - [ ] dig into a LoRA training UI for YuE2
 - [ ] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac) once the native migration is ready
