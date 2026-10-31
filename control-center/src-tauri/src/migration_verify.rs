@@ -199,11 +199,16 @@ pub async fn run_sync_audio(
 
 /// Check a proof's WAV is 44.1 kHz stereo and exactly `samples` long.
 pub fn check_wav(wav: &[u8], samples: u32, what: &str) -> Result<(), String> {
+    check_wav_at(wav, 44_100, samples, what)
+}
+
+/// Check a proof's WAV is stereo at `rate` and exactly `samples` long.
+pub fn check_wav_at(wav: &[u8], rate: u32, samples: u32, what: &str) -> Result<(), String> {
     let reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
     let spec = reader.spec();
-    if spec.sample_rate != 44100 || spec.channels != 2 || reader.duration() != samples {
+    if spec.sample_rate != rate || spec.channels != 2 || reader.duration() != samples {
         return Err(format!(
-            "{what} check returned {} Hz, {} channels, {} samples; expected 44100 Hz stereo, {samples}",
+            "{what} check returned {} Hz, {} channels, {} samples; expected {rate} Hz stereo, {samples}",
             spec.sample_rate,
             spec.channels,
             reader.duration()

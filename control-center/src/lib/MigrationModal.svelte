@@ -17,6 +17,7 @@
     warnings: string[];
     nativeSelection: Selection | null;
     cleanupToken: string;
+    pythonStillNeeded: string | null;
   }
   interface Profile {
     serviceId: string;
@@ -31,6 +32,7 @@
   interface Service { id: string; status: string; build_status: { building: boolean; step_label: string } | null; }
   interface Download { model_id: string; progress: number; status: string; message: string; error: string | null; }
   interface Component { id: string; label: string; files: { bytes: number }[]; }
+  interface Recommendations { tier: string | null; components: string[]; }
   type Stage = "setup" | "cleanup" | "complete";
   type Task = "runtime" | "models" | "adapters" | "verify";
 
@@ -53,6 +55,10 @@
   let task: Task | null = $state(null);
   let downloads: Download[] = $state([]);
   let encoding = $state("F16");
+  // Whether the precision was picked by hand, so a recommendation measured
+  // once the runtime is installed never overrides it.
+  let encodingPicked = $state(false);
+  let recommended = $state<Recommendations>({ tier: null, components: [] });
   let trainingBase = $state("F16");
   let includeTraining = $state(false);
   let includeDecoder = $state(false);
@@ -74,7 +80,12 @@
   const taskIndex = $derived(task ? tasks.findIndex((entry) => entry.id === task) : -1);
   const stepNumber = $derived(stage === "setup" ? working && task === "verify" ? 2 : 1 : 3);
   const blocked = $derived(loading || working || pendingRestart || !!services.find((entry) => entry.id === serviceId)?.build_status?.building);
-  const tierOptions = $derived((profile?.tierOptions[encoding] ?? []).flatMap((id) => catalog.filter((entry) => entry.id === id)));
+  // The tier's own options, then anything recommended for this GPU that the
+  // tier neither needs nor offers (such as a model family at its own tier).
+  const tierOptions = $derived([...new Set([
+    ...(profile?.tierOptions[encoding] ?? []),
+    ...recommended.components.filter((id) => !(profile?.tierComponents[encoding] ?? []).includes(id)),
+  ])].flatMap((id) => catalog.filter((entry) => entry.id === id)));
   const pickedOptions = $derived(tierOptions.filter((_, index) => optionPicks[index]));
   const modelIds = $derived([
     ...(profile?.tierComponents[encoding] ?? []),
@@ -107,17 +118,20 @@
     downloads = [];
     task = null;
     try {
-      const [details, storage, components, currentServices] = await Promise.all([
+      const [details, storage, components, currentServices, recommendations] = await Promise.all([
         invoke<Profile>("get_migration_profile", { serviceId }),
         invoke<Preview>("get_migration_preview", { serviceId }),
         invoke<Component[]>("get_native_model_catalog", { serviceId }),
         invoke<Service[]>("get_services"),
+        invoke<Recommendations>("get_native_model_recommendations", { serviceId }),
       ]);
       profile = details;
       preview = storage;
       catalog = components;
       services = currentServices;
-      encoding = storage.nativeSelection?.encoding ?? details.tiers[0];
+      recommended = recommendations;
+      encodingPicked = false;
+      encoding = storage.nativeSelection?.encoding ?? recommendations.tier ?? details.tiers[0];
       includeTraining = has("training-base") && storage.trainingBasePresent;
       if (has("training-base")) {
         const hardware = await invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId });
@@ -197,6 +211,12 @@
       await stopService();
       progress = "Installing and checking the runtime for your hardware...";
       await invoke("prepare_native_runtime", { serviceId });
+      // The install probe has now measured this GPU.
+      recommended = await invoke<Recommendations>("get_native_model_recommendations", { serviceId });
+      if (!encodingPicked && !preview?.nativeSelection && recommended.tier && recommended.tier !== encoding) {
+        encoding = recommended.tier;
+        progress = `Using ${encoding}, recommended for this GPU.`;
+      }
       task = "models";
       progress = "Downloading and verifying model files. Existing components are reused.";
       await invoke("prepare_native_models", { serviceId, componentIds: modelIds, waitForCompletion: true });
@@ -221,7 +241,7 @@
   }
 
   async function cleanup() {
-    if (blocked || !preview || preview.warnings.length) return;
+    if (blocked || !preview || preview.warnings.length || preview.pythonStillNeeded) return;
     working = true;
     error = null;
     progress = "Verifying C++ again before removing reviewed Python files...";
@@ -273,9 +293,9 @@
             <details>
               <summary>Model options</summary>
               <div class="options">
-                <label>{has("training-base") ? "Inference precision" : "Precision"}<select bind:value={encoding} disabled={blocked}>{#each profile.tiers as tier}<option>{tier}</option>{/each}</select></label>
+                <label>{has("training-base") ? "Inference precision" : "Precision"}<select bind:value={encoding} onchange={() => encodingPicked = true} disabled={blocked}>{#each profile.tiers as tier}<option value={tier}>{tier}{recommended.tier === tier ? " (recommended)" : ""}</option>{/each}</select></label>
                 {#each tierOptions as option, index (option.id)}
-                  <label class="check"><input type="checkbox" bind:checked={optionPicks[index]} disabled={blocked} />{option.label} · {formatBytes(option.files.reduce((sum, file) => sum + file.bytes, 0))}</label>
+                  <label class="check"><input type="checkbox" bind:checked={optionPicks[index]} disabled={blocked} />{option.label} · {formatBytes(option.files.reduce((sum, file) => sum + file.bytes, 0))}{recommended.components.includes(option.id) ? " · recommended" : ""}</label>
                 {/each}
               </div>
               {#if tierOptions.length}<p>Downloaded {profile.optionsLabel ?? "options"} are offered in gary4juce alongside the base model, and are checked too. You can add or remove them later from Models.</p>{/if}
@@ -297,6 +317,12 @@
               <ul class="tasks" aria-label="Preparation progress">{#each tasks as entry, index}<li class:active={index === taskIndex} class:finished={index < taskIndex}><span>{index < taskIndex ? "✓" : index === taskIndex ? "•" : "○"}</span>{entry.label}</li>{/each}</ul>
               {#if task === "models"}{#each selectedDownloads.filter((entry) => entry.error) as download}<p class="error" role="alert">{download.error}</p>{/each}{/if}
             {/if}
+          {:else if stage === "cleanup" && preview.pythonStillNeeded}
+            <h3>{label} runs on C++; Python stays for now</h3>
+            <p class="passed">✓ Automatic runtime and {checks} checks passed.</p>
+            <p>{preview.pythonStillNeeded}</p>
+            <div class="summary">About {formatBytes(preview.estimatedCleanupBytes)} in reviewed Python files<small>Cleanup can remove these once nothing needs them. Open this again from migrate runtime then.</small></div>
+            <details><summary>Files cleanup will remove ({preview.cleanupCandidates.length})</summary><div class="file-list">{#each preview.cleanupCandidates as entry}<div class="file"><span>{entry.label}</span><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>{/each}</div></details>
           {:else if stage === "cleanup"}
             <h3>Remove the old {label} Python installation</h3>
             <p class="passed">✓ Automatic runtime and {checks} checks passed.</p>
@@ -327,6 +353,7 @@
       </div>
       <footer>
         {#if stage === "setup"}<button type="button" onclick={close} disabled={working || loading}>later</button><button class="primary" type="button" onclick={migrate} disabled={blocked || !preview}>{working ? "migrating…" : error && task ? "retry migration" : preview?.nativeSelection ? "check and finish migration" : "prepare and switch to C++"}</button>
+        {:else if stage === "cleanup" && preview?.pythonStillNeeded}<button class="primary" type="button" onclick={close}>done</button>
         {:else if stage === "cleanup"}<button type="button" onclick={close} disabled={working || loading}>keep Python for now</button><button class="primary" type="button" onclick={cleanup} disabled={blocked || !!preview?.warnings.length}>{working ? "cleaning up…" : "clean up Python and finish"}</button>
         {:else}<button class="primary" type="button" onclick={close}>done</button>{/if}
       </footer>

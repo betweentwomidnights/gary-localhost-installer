@@ -1,22 +1,22 @@
 {
   "nativeBundles": {
     "sa3": {
-      "version": "v0.1.7",
+      "version": "v0.1.8",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-core.zip",
-            "sha256": "f2a8addbd9e33f542d9ab35f98aca088b4eed8dc92a3035e48aa468492ff9711"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-core.zip",
+            "sha256": "483daf202863ec465bb47efb9e12aeb5614ad4e9eafaae92c91cad0318940620"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-cuda.zip",
-              "sha256": "1fe58d9719e6aaf21db9737164d5df840310972eadbc41b84a82896a8c6d73db",
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-cuda.zip",
+              "sha256": "09650332715df6656a40ede615cd71a1614dee4ebcd979e3bffb9c434cae7daf",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.7/sa3-v0.1.7-windows-x64-vulkan.zip",
-              "sha256": "4b09715ab2f036327cc73ee4d6e038bfe2bc8afd817fb20c8d34771525d55287"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-vulkan.zip",
+              "sha256": "e8ce2180d1c4f0a0512191947e4b2b327abf98d99b82514418ad9e1678e58c78"
             }
           },
           "prefer": ["cuda", "vulkan"]
@@ -337,6 +337,74 @@
         "CAREY_LORA_REGISTRY": "${GARY_RUNTIME}/carey/lora_registry.json",
         "CAREY_CAPTIONS": "${GARY_RUNTIME}/carey/captions.json"
       },
+      "native": {
+        "executable": "ace-server.exe",
+        "modelsDir": "carey",
+        "version": "v0.1.3",
+        "env": {
+          "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
+          "ACE_PORT": "8003",
+          "ACE_DEVICE": "${NATIVE_BACKEND}",
+          "ACE_ADAPTER_MODE": "functional",
+          "ACE_ADAPTERS_DIR": "${GARY_RUNTIME}/carey/adapters"
+        },
+        "platforms": {
+          "windows-x64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-core.zip",
+              "sha256": "ac756270ac9b81cf3ccc8d0da1f91611399dd8ff01e63538673df11d2b0e99c2"
+            },
+            "backends": {
+              "cuda": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-cuda.zip",
+                "sha256": "0c270c2d1d99bfe20b20a40574bf50d806bad0abf6ef14050de243e230401c37",
+                "requires": ["cudart-12.8"]
+              },
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-vulkan.zip",
+                "sha256": "37c8f08adcbf44ba35168621f39df11b8ad4721c1f7b13426ddb91cd12467194"
+              }
+            },
+            "prefer": ["cuda", "vulkan"]
+          }
+        }
+      },
+      "migration": {
+        "dataDir": "carey",
+        "label": "Carey",
+        "dataLabel": "LoRAs, captions, training jobs and checkpoints",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "weightDirs": [
+            { "dir": "checkpoints", "label": "PyTorch models" }
+          ],
+          "code": {
+            "files": [
+              "ACE_TRAINER_PROVENANCE.md",
+              "COVER_NOISE_STRENGTH_VARIANTS.md",
+              "README.md",
+              "SIDESTEP_MIT_LICENSE",
+              "ace_training_dataset.py",
+              "bpm_analysis.py",
+              "build_captions.py",
+              "carey_wrapper.py",
+              "carey_wrapper_test.py",
+              "cli.py",
+              "key_analysis.py",
+              "pyproject.toml",
+              "requirements-acestep.txt",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "sa3_autolabel.py",
+              "start_api_server.bat",
+              "start_api_server.sh",
+              "train.py",
+              "train_lora_job.py"
+            ],
+            "packages": ["acestep", "checkpoint_overrides", "patches", "tests", "wrapper"]
+          }
+        }
+      },
       "dependsOn": []
     },
     {
@@ -426,22 +494,22 @@
       "native": {
         "executable": "yue2-server.exe",
         "modelsDir": "yuey",
-        "version": "v0.2.4",
+        "version": "v0.3.0",
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-core.zip",
-              "sha256": "5175174811e5ffbbc2bb324745b3512fedeac005e8eafddc4ba285cdab359493"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-core.zip",
+              "sha256": "92b980a005f55fdfae6844ee6968fec1d89532af3ebb87561ccad0968f439781"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-cuda.zip",
-                "sha256": "c07a1fad96109874ba53bef435d51793e389bc92c61f3210da36dd8590c60bc1",
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-cuda.zip",
+                "sha256": "1910552ed1293832f3d2cb694688a142d6bbfb258fc858afb4b059fc974de595",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.2.4/yuey-v0.2.4-windows-x64-vulkan.zip",
-                "sha256": "d7600536eac3f23f3e239e521a4cdfc22def1ea92c5f91d5b4170fe4e1a80041"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-vulkan.zip",
+                "sha256": "0c0f4159e3bf38eb96df68545584b4c2279938a4e096ab28ed30c76528fcf3d2"
               }
             },
             "prefer": ["cuda", "vulkan"]

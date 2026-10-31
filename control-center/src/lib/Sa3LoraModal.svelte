@@ -1,8 +1,20 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { rememberedDialogDirectory, rememberDialogSelection } from "./dialogMemory";
-  import Sa3NativeLoras from "./Sa3NativeLoras.svelte";
+
+  // One list of SA3 LoRAs. Two registries sit behind it: the legacy catalog
+  // (Python-era entries and Python training runs) and the native catalog
+  // (C++ imports and C++ training runs, plus a prepared copy of every legacy
+  // entry). Each LoRA shows once, and each action goes to whichever registry
+  // owns it.
+
+  interface Sa3TrainingCheckpoint {
+    step: number;
+    epoch: number;
+    path: string;
+  }
 
   interface Sa3LoraEntry {
     name: string;
@@ -21,12 +33,6 @@
     selectedTrainingStep: number | null;
   }
 
-  interface Sa3TrainingCheckpoint {
-    step: number;
-    epoch: number;
-    path: string;
-  }
-
   interface Sa3LoraState {
     entries: Sa3LoraEntry[];
     pools: Record<string, number>;
@@ -38,6 +44,31 @@
   interface Sa3PromptsBuildResult {
     state: Sa3LoraState;
     output: string;
+  }
+
+  interface NativeLora {
+    name: string;
+    nativeOnly: boolean;
+    strength: number;
+    sourcePath: string;
+    nativePath: string | null;
+    converterSha256: string | null;
+    error: string | null;
+    promptsPath: string | null;
+    trainingCheckpoints: { jobId: string; step: number; epoch: number | null; path: string; statePath: string }[];
+  }
+
+  interface NativeLoraState {
+    entries: NativeLora[];
+    preparing: boolean;
+    adaptersDir: string;
+    converterSha256?: string;
+  }
+
+  interface LoraCard {
+    name: string;
+    legacy: Sa3LoraEntry | null;
+    native: NativeLora | null;
   }
 
   let {
@@ -54,84 +85,133 @@
   } = $props();
 
   let loraState: Sa3LoraState | null = $state(null);
-  let loading = $state(false);
+  let nativeState: NativeLoraState | null = $state(null);
   let nativeRuntime = $state(false);
-  let saving = $state(false);
-  let building = $state(false);
-  let switchingName = $state<string | null>(null);
-  let deletingName = $state<string | null>(null);
-  let checkpointSelections = $state<Record<string, number>>({});
+  // The installed runtime's converter. Only a full load reports it; update
+  // events leave it alone.
+  let currentConverter: string | null = $state(null);
+  let loading = $state(false);
+  let busy = $state(false);
+  // The LoRA an action is working on, or one of these list-wide actions.
+  // Neither can be a LoRA name, which never contains "+".
+  const ADDING = "+add";
+  const PREPARING = "+prepare";
+  let busyName = $state<string | null>(null);
   let message: string | null = $state(null);
   let error: string | null = $state(null);
   let buildOutput: string | null = $state(null);
 
+  let legacySteps = $state<Record<string, number>>({});
+  let nativeCheckpoints = $state<Record<string, string>>({});
+  let strengths = $state<Record<string, number>>({});
+
   let formName = $state("");
-  let checkpointPath = $state("");
+  let sourcePath = $state("");
+  let configPath = $state("");
   let promptsPath = $state("");
 
-  function describeError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+  function describeError(cause: unknown): string {
+    return cause instanceof Error ? cause.message : String(cause);
   }
 
-  async function revealPath(path: string) {
-    error = null;
-    try {
-      await invoke("reveal_path", { path });
-    } catch (e) {
-      error = describeError(e);
-    }
-  }
-
-  function basename(path: string): string {
-    const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
-    const parts = normalized.split("/");
-    return parts[parts.length - 1] || "";
+  function isGguf(path: string): boolean {
+    return /\.gguf$/i.test(path.trim());
   }
 
   function suggestName(path: string): string {
-    return basename(path)
-      .replace(/\.(ckpt|safetensors)$/i, "")
+    const parts = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/");
+    return (parts[parts.length - 1] || "")
+      .replace(/\.(gguf|ckpt|safetensors)$/i, "")
       .toLowerCase()
       .replace(/[^a-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 64);
   }
 
-  function clearForm() {
-    formName = "";
-    checkpointPath = "";
-    promptsPath = "";
+  function applyLegacy(state: Sa3LoraState) {
+    loraState = state;
   }
 
-  async function loadState() {
+  function applyNative(state: NativeLoraState) {
+    nativeState = state;
+    strengths = Object.fromEntries(state.entries.map((entry) => [entry.name, entry.strength]));
+  }
+
+  // `keepNotes`: an action's outcome stays on screen across its refresh.
+  async function loadState(keepNotes = false) {
     loading = true;
-    error = null;
+    if (!keepNotes) error = null;
     try {
-      const [state,services] = await Promise.all([invoke<Sa3LoraState>("get_sa3_lora_state"),invoke<{id:string;runtime:string}[]>("get_services")]);
-      loraState = state; nativeRuntime = services.some((service) => service.id === "sa3" && service.runtime === "native");
-    } catch (e) {
-      error = describeError(e);
+      const [legacy, native, services] = await Promise.all([
+        invoke<Sa3LoraState>("get_sa3_lora_state"),
+        // A legacy entry the native registry cannot take fails only this
+        // half: the list still shows, with that reason.
+        invoke<NativeLoraState>("get_sa3_native_lora_state").catch((cause) => {
+          error ??= describeError(cause);
+          return null;
+        }),
+        invoke<{ id: string; runtime: string }[]>("get_services"),
+      ]);
+      applyLegacy(legacy);
+      if (native) {
+        applyNative(native);
+        currentConverter = native.converterSha256 ?? null;
+      }
+      nativeRuntime = services.some((service) => service.id === "sa3" && service.runtime === "native");
+    } catch (cause) {
+      error = describeError(cause);
     } finally {
       loading = false;
     }
   }
 
-  async function pickCheckpointFile() {
-    const selected = await openDialog({
-      directory: false,
-      multiple: false,
-      defaultPath: rememberedDialogDirectory("sa3-lora-checkpoint"),
-      filters: [{ name: "SA3 LoRA", extensions: ["ckpt", "safetensors"] }],
-    });
-    if (typeof selected !== "string") return;
-    rememberDialogSelection("sa3-lora-checkpoint", selected, "file");
-    checkpointPath = selected;
-    if (!formName.trim()) {
-      formName = suggestName(selected);
+  // Run one action: clear the notes, mark the LoRA busy, and refresh both
+  // registries afterwards, since an action on one can change the other.
+  async function run(name: string | null, action: () => Promise<string | void>) {
+    busy = true;
+    busyName = name;
+    error = null;
+    message = null;
+    buildOutput = null;
+    try {
+      const done = await action();
+      if (done) message = done;
+    } catch (cause) {
+      error = describeError(cause);
+    } finally {
+      busy = false;
+      busyName = null;
+      await loadState(true);
     }
   }
 
-  async function pickPromptsFolder() {
+  async function pickSource() {
+    const key = nativeRuntime ? "sa3-native-lora-source" : "sa3-lora-checkpoint";
+    const selected = await openDialog({
+      directory: false,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory(key),
+      filters: [{ name: "SA3 LoRA", extensions: nativeRuntime ? ["gguf", "safetensors", "ckpt"] : ["ckpt", "safetensors"] }],
+    });
+    if (typeof selected !== "string") return;
+    rememberDialogSelection(key, selected, "file");
+    sourcePath = selected;
+    if (!formName.trim()) formName = suggestName(selected);
+  }
+
+  async function pickConfig() {
+    const selected = await openDialog({
+      directory: false,
+      multiple: false,
+      defaultPath: rememberedDialogDirectory("sa3-native-lora-config"),
+      filters: [{ name: "LoRA configuration", extensions: ["json"] }],
+    });
+    if (typeof selected !== "string") return;
+    rememberDialogSelection("sa3-native-lora-config", selected, "file");
+    configPath = selected;
+  }
+
+  async function pickPrompts() {
     const selected = await openDialog({
       directory: true,
       multiple: false,
@@ -140,330 +220,357 @@
     if (typeof selected !== "string") return;
     rememberDialogSelection("sa3-lora-prompts", selected, "directory");
     promptsPath = selected;
-    if (!formName.trim()) {
-      formName = suggestName(selected);
-    }
+    if (!formName.trim()) formName = suggestName(selected);
   }
 
-  async function saveLora() {
-    saving = true;
-    error = null;
-    message = null;
-    buildOutput = null;
-    try {
-      loraState = await invoke<Sa3LoraState>("upsert_sa3_lora", {
-        name: formName,
-        checkpointPath,
-        promptsPath: promptsPath.trim() ? promptsPath : null,
-      });
-      message = `saved ${formName.trim().toLowerCase()}`;
-      clearForm();
-    } catch (e) {
-      error = describeError(e);
-    } finally {
-      saving = false;
-    }
+  function addLora() {
+    const name = formName.trim();
+    void run(ADDING, async () => {
+      if (nativeRuntime) {
+        await invoke<NativeLoraState>("import_sa3_native_lora", {
+          name,
+          checkpointPath: sourcePath,
+          configPath: isGguf(sourcePath) ? null : configPath.trim() || null,
+          promptsPath: promptsPath.trim() || null,
+        });
+      } else {
+        await invoke<Sa3LoraState>("upsert_sa3_lora", {
+          name,
+          checkpointPath: sourcePath,
+          promptsPath: promptsPath.trim() || null,
+        });
+      }
+      formName = "";
+      sourcePath = "";
+      configPath = "";
+      promptsPath = "";
+      return `added ${name.toLowerCase()}. the source file is preserved.`;
+    });
   }
 
-  function selectedCheckpointStep(entry: Sa3LoraEntry): number {
-    const selected = checkpointSelections[entry.name];
-    if (selected !== undefined) return selected;
-    if (entry.selectedTrainingStep !== null) return entry.selectedTrainingStep;
-    return entry.trainingCheckpoints[entry.trainingCheckpoints.length - 1]?.step ?? 0;
+  function prepare() {
+    void run(PREPARING, async () => {
+      const state = await invoke<NativeLoraState>("prepare_sa3_native_loras");
+      const prepared = state.entries.filter((entry) => entry.nativePath && !entry.error).length;
+      return `${prepared} of ${state.entries.length} LoRAs ready for C++. originals are preserved.`;
+    });
   }
 
-  function chooseCheckpoint(name: string, event: Event) {
-    const target = event.currentTarget as HTMLSelectElement;
-    checkpointSelections = {
-      ...checkpointSelections,
-      [name]: Number(target.value),
-    };
+  function buildAllPrompts() {
+    void run(null, async () => {
+      const result = await invoke<Sa3PromptsBuildResult>("build_sa3_lora_prompts");
+      buildOutput = result.output;
+      return "prompt pools rebuilt";
+    });
   }
 
-  async function activateCheckpoint(entry: Sa3LoraEntry) {
-    const step = selectedCheckpointStep(entry);
-    switchingName = entry.name;
-    error = null;
-    message = null;
-    buildOutput = null;
-    try {
-      loraState = await invoke<Sa3LoraState>("activate_sa3_lora_checkpoint", {
-        name: entry.name,
-        step,
-      });
-      checkpointSelections = { ...checkpointSelections, [entry.name]: step };
-      message = `${entry.name} now uses training step ${step}.${
-        serviceStatus === "running" ? " restart SA3 to load it." : ""
-      }`;
-    } catch (e) {
-      error = describeError(e);
-    } finally {
-      switchingName = null;
-    }
+  function rebuildPrompts(card: LoraCard) {
+    void run(card.name, async () => {
+      await invoke("update_sa3_native_lora", { name: card.name, change: { action: "build_prompts" } });
+      return `rebuilt ${card.name}'s prompts`;
+    });
   }
 
-  async function removeLora(name: string) {
-    error = null;
-    message = null;
-    buildOutput = null;
-    try {
-      loraState = await invoke<Sa3LoraState>("remove_sa3_lora", { name });
-      message = `removed ${name}`;
-    } catch (e) {
-      error = describeError(e);
-    }
+  function saveStrength(card: LoraCard) {
+    void run(card.name, async () => {
+      await invoke("update_sa3_native_lora", { name: card.name, change: { action: "strength", value: strengths[card.name] } });
+      return `saved ${card.name}'s strength`;
+    });
   }
 
-  async function deleteTrainedLora(entry: Sa3LoraEntry) {
+  function legacyStep(card: LoraCard): number {
+    const legacy = card.legacy!;
+    return legacySteps[card.name]
+      ?? legacy.selectedTrainingStep
+      ?? legacy.trainingCheckpoints[legacy.trainingCheckpoints.length - 1]?.step
+      ?? 0;
+  }
+
+  function useCheckpoint(card: LoraCard) {
+    void run(card.name, async () => {
+      if (usesLegacyCheckpoints(card)) {
+        const step = legacyStep(card);
+        await invoke("activate_sa3_lora_checkpoint", { name: card.name, step });
+        return `${card.name} now uses training step ${step}${nativeRuntime ? ". prepare it again for C++." : ""}`;
+      }
+      await invoke("select_sa3_native_checkpoint", { name: card.name, checkpoint: nativeCheckpoints[card.name] });
+      return `${card.name} now uses the chosen checkpoint. training originals are preserved.`;
+    });
+  }
+
+  function remove(card: LoraCard) {
+    void run(card.name, async () => {
+      if (card.legacy) {
+        await invoke("remove_sa3_lora", { name: card.name });
+      } else {
+        await invoke("update_sa3_native_lora", { name: card.name, change: { action: "remove" } });
+      }
+      return `removed ${card.name}. its files are preserved.`;
+    });
+  }
+
+  function deleteFiles(card: LoraCard) {
     const confirmed = window.confirm(
-      `Permanently delete '${entry.name}' and all files from its Gary training run?\n\n` +
+      `Permanently delete '${card.name}' and all files from its Gary training run?\n\n` +
       `This deletes the managed LoRA, saved checkpoints, training cache/logs, and generated prompt JSON. ` +
       `Your original audio dataset and sidecars will not be changed.`
     );
     if (!confirmed) return;
+    void run(card.name, async () => {
+      await invoke("delete_sa3_trained_lora", { name: card.name });
+      return `deleted ${card.name} and its Gary training files`;
+    });
+  }
 
-    deletingName = entry.name;
-    error = null;
-    message = null;
-    buildOutput = null;
+  async function reveal(path: string) {
     try {
-      loraState = await invoke<Sa3LoraState>("delete_sa3_trained_lora", {
-        name: entry.name,
-      });
-      message = `deleted ${entry.name} and its Gary training files`;
-    } catch (e) {
-      error = describeError(e);
-    } finally {
-      deletingName = null;
+      await invoke("reveal_path", { path });
+    } catch (cause) {
+      error = describeError(cause);
     }
   }
 
-  async function buildPrompts() {
-    building = true;
-    error = null;
-    message = null;
-    buildOutput = null;
-    try {
-      const result = await invoke<Sa3PromptsBuildResult>("build_sa3_lora_prompts");
-      loraState = result.state;
-      buildOutput = result.output;
-      message = "prompt JSONs updated";
-    } catch (e) {
-      error = describeError(e);
-    } finally {
-      building = false;
-    }
+  function usesLegacyCheckpoints(card: LoraCard): boolean {
+    return (card.legacy?.trainingCheckpoints.length ?? 0) > 1;
   }
 
-  let registryBlocked = $derived(loading || saving || building || pendingRestart || switchingName !== null || deletingName !== null || (nativeRuntime && ["starting", "running", "unhealthy"].includes(serviceStatus)));
-  let canBuild = $derived(open && !registryBlocked);
+  function canRemove(card: LoraCard): boolean {
+    return !!card.legacy || !!card.native?.nativeOnly || isGguf(card.native?.sourcePath ?? "");
+  }
 
-  let poolSummary: [string, number][] = $derived.by(() => {
-    if (!loraState) return [];
-    const entries = Object.entries(loraState.pools) as [string, number][];
-    entries.sort((a, b) => a[0].localeCompare(b[0]));
-    return entries;
+  // Converted by an earlier runtime's converter: preparing converts it again.
+  function outdated(native: NativeLora | null): boolean {
+    return !!native?.nativePath && !!native.converterSha256 && !!currentConverter
+      && native.converterSha256 !== currentConverter;
+  }
+
+  function readiness(card: LoraCard): { label: string; tone: "ok" | "pending" | "bad"; title?: string } {
+    if (card.native?.error) return { label: "failed to prepare", tone: "bad" };
+    if (outdated(card.native)) return {
+      label: "needs preparing",
+      tone: "pending",
+      title: "an earlier sa3.cpp converted this one. prepare it again to pick up the new runtime's fixes",
+    };
+    if (card.native?.nativePath) return { label: nativeRuntime ? "ready" : "ready for C++", tone: "ok" };
+    if (card.legacy && !card.legacy.registered) return { label: "checkpoint missing", tone: "bad" };
+    return { label: nativeRuntime ? "needs preparing" : "not prepared for C++", tone: "pending" };
+  }
+
+  let cards: LoraCard[] = $derived.by(() => {
+    const byName = new Map<string, LoraCard>();
+    for (const entry of loraState?.entries ?? []) byName.set(entry.name, { name: entry.name, legacy: entry, native: null });
+    for (const entry of nativeState?.entries ?? []) {
+      const card = byName.get(entry.name);
+      if (card) card.native = entry;
+      else byName.set(entry.name, { name: entry.name, legacy: null, native: entry });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   });
 
+  let unprepared = $derived(cards.filter((card) => card.native && (!card.native.nativePath || card.native.error || outdated(card.native))).length);
+  let legacyCkptPending = $derived(cards.some((card) => card.native && !card.native.nativePath && /\.ckpt$/i.test(card.native.sourcePath)));
+  let sa3Active = $derived(["starting", "running", "unhealthy"].includes(serviceStatus));
+  let blocked = $derived.by(() => loading || busy || pendingRestart || !!nativeState?.preparing || (nativeRuntime && sa3Active));
+
   $effect(() => {
-    if (open) {
-      void loadState();
-    }
+    if (open) void loadState();
+  });
+
+  // Preparation reports each adapter as it goes.
+  $effect(() => {
+    if (!open) return;
+    const stop = listen<NativeLoraState>("sa3-native-loras-updated", (event) => applyNative(event.payload));
+    return () => void stop.then((unlisten) => unlisten());
   });
 </script>
 
 {#if open}
   <div class="overlay">
     <button type="button" class="backdrop" aria-label="close sa3 lora manager" onclick={onClose}></button>
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sa3-lora-title"
-      tabindex="-1"
-    >
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sa3-lora-title" tabindex="-1">
       <div class="eyebrow">sa3 lora manager</div>
-      <div class="title" id="sa3-lora-title">{nativeRuntime ? "manage native LoRAs and prompt pools" : "add local LoRAs and prompt pools"}</div>
+      <div class="title" id="sa3-lora-title">SA3 LoRAs</div>
       <div class="body">
-        pick the SA3 LoRA checkpoint file. if you still have the training dataset folder with txt sidecars,
-        add that folder too and gary4local can build a prompt dice pool for the plugin.
+        add a LoRA file, and optionally the dataset folder it was trained on: its txt sidecars become the plugin's
+        prompt dice for that LoRA.
+        {nativeRuntime
+          ? "SA3 must be stopped while you change LoRAs. refresh the plugin's LoRA menu afterwards."
+          : "SA3 loads LoRAs at startup: restart it to use a new or changed one."}
       </div>
 
-      <div class="note">
-        {nativeRuntime ? "Stop SA3 before importing or changing native adapters. Refresh the plugin LoRA menu after updating entries." : "SA3 loads LoRAs into the model at startup. Restart SA3 before testing a newly added LoRA when its model is already resident."}
-      </div>
+      {#if pendingRestart}<div class="warning">restart gary4local to use the selected storage before changing LoRAs.</div>{/if}
+      {#if nativeRuntime && sa3Active}<div class="warning">stop SA3 to add, prepare or change LoRAs.</div>{/if}
 
-      {#if pendingRestart}<div class="warning">Restart gary4local to use the selected storage before changing LoRAs.</div>{/if}
-
-      {#if serviceStatus !== "running"}
-        <div class="warning">SA3 is not running. you can save LoRA entries now; start SA3 before generation testing.</div>
-      {/if}
-
-      {#if !nativeRuntime}
-      <div class="section-label">new entry</div>
+      <div class="section-label">add a LoRA</div>
       <div class="form-grid">
         <label class="field">
-          <span>LoRA name</span>
-          <input type="text" bind:value={formName} placeholder="kev" />
+          <span>name</span>
+          <input type="text" bind:value={formName} placeholder="my-lora" disabled={blocked} />
         </label>
-
-        <label class="field wide">
-          <span>checkpoint file</span>
+        <label class="field">
+          <span>LoRA file</span>
           <div class="path-row">
-            <input type="text" bind:value={checkpointPath} placeholder="C:\\path\\to\\your.ckpt" />
-            <button type="button" onclick={pickCheckpointFile}>pick file</button>
+            <input type="text" bind:value={sourcePath} disabled={blocked}
+              placeholder={nativeRuntime ? "GGUF, safetensors or CKPT" : "C:\\path\\to\\your.ckpt"} />
+            <button type="button" onclick={pickSource} disabled={blocked}>pick file</button>
           </div>
         </label>
-
-        <label class="field wide">
-          <span>dataset/prompts source folder (optional)</span>
+        <label class="field">
+          <span>dataset folder for prompts (optional)</span>
           <div class="path-row">
-            <input type="text" bind:value={promptsPath} placeholder="C:\\path\\to\\training dataset" />
-            <button type="button" onclick={pickPromptsFolder}>pick folder</button>
+            <input type="text" bind:value={promptsPath} disabled={blocked} placeholder="C:\\path\\to\\training dataset" />
+            <button type="button" onclick={pickPrompts} disabled={blocked}>pick folder</button>
           </div>
         </label>
+        {#if nativeRuntime && sourcePath.trim() && !isGguf(sourcePath)}
+          <details>
+            <summary>advanced: separate configuration file</summary>
+            <div class="note">
+              most adapters carry their configuration or have a matching JSON beside them, which gary finds itself.
+              choose one only when your safetensors or CKPT export needs a separate model/LoRA configuration.
+            </div>
+            <div class="path-row">
+              <input type="text" bind:value={configPath} disabled={blocked} placeholder="use the configuration supplied with your adapter" />
+              <button type="button" onclick={pickConfig} disabled={blocked}>pick JSON</button>
+            </div>
+          </details>
+        {/if}
       </div>
-
-      <div class="note">
-        the prompt builder reads each txt sidecar, strips the bpm/key tail, and writes one JSON per LoRA.
-      </div>
-
-      {/if}
-      <div class="actions top-actions">
-        {#if !nativeRuntime}<button
-          class="accent"
-          onclick={saveLora}
-          disabled={registryBlocked || !formName.trim() || !checkpointPath.trim()}
-        >
-          {saving ? "saving..." : "save LoRA"}
-        </button>{/if}
-        <button onclick={() => void loadState()} disabled={loading || saving || building}>refresh</button>
-        <button onclick={buildPrompts} disabled={!canBuild} title="Replaces LoRA prompt pools using their caption datasets">
-          {building ? "building..." : "rebuild all LoRA prompts"}
+      <div class="actions">
+        <button class="accent" onclick={addLora} disabled={blocked || !formName.trim() || !sourcePath.trim()}>
+          {busyName === ADDING ? "adding..." : "add LoRA"}
         </button>
-        <button onclick={onClose}>close</button>
       </div>
 
-      {#if message}
-        <div class="success-note">{message}</div>
-      {/if}
-      {#if error}
-        <div class="error-note">{error}</div>
-      {/if}
-      {#if buildOutput}
-        <pre class="output">{buildOutput}</pre>
+      {#if message}<div class="success-note" role="status">{message}</div>{/if}
+      {#if error}<div class="error-note" role="alert">{error}</div>{/if}
+      {#if buildOutput}<pre class="output">{buildOutput}</pre>{/if}
+
+      <div class="list-header">
+        <div class="section-label">your LoRAs{cards.length ? ` (${cards.length})` : ""}</div>
+        <div class="actions">
+          {#if unprepared > 0}
+            <button class="accent" onclick={prepare} disabled={blocked}
+              title="convert LoRAs for the C++ runtime. originals are preserved">
+              {nativeState?.preparing || busyName === PREPARING ? "preparing..." : `prepare ${unprepared} for C++`}
+            </button>
+          {/if}
+          <button onclick={buildAllPrompts} disabled={blocked} title="rebuild every LoRA's prompt pool from its dataset folder">
+            rebuild all prompts
+          </button>
+          <button onclick={() => void loadState()} disabled={loading || busy}>refresh</button>
+          <button onclick={onClose}>close</button>
+        </div>
+      </div>
+      {#if legacyCkptPending}
+        <div class="note">
+          .ckpt LoRAs are converted with SA3's Python environment: prepare them before cleaning up Python.
+        </div>
       {/if}
 
-      <div class="section-label">registered LoRAs</div>
-      <Sa3NativeLoras refreshKey={loraState} allowImport={nativeRuntime} {pendingRestart} />
-      {#if nativeRuntime && loraState?.entries.length}<div class="section-label">legacy source entries</div>{/if}
       {#if loading && !loraState}
         <div class="empty">loading...</div>
-      {:else if loraState && loraState.entries.length > 0}
+      {:else if cards.length === 0}
+        <div class="empty">no LoRAs yet.</div>
+      {:else}
         <div class="entry-list">
-          {#each loraState.entries as entry}
+          {#each cards as card (card.name)}
+            {@const status = readiness(card)}
+            {@const prompts = loraState?.pools[card.name] ?? card.legacy?.promptCount ?? 0}
+            {@const promptSource = card.legacy?.promptsPath ?? card.native?.promptsPath ?? null}
             <div class="entry-card">
               <div class="entry-top">
-                <div>
-                  <div class="entry-name">{entry.name}</div>
-                  <div class="entry-meta">strength {entry.strength}</div>
+                <div class="entry-heading">
+                  <span class="entry-name">{card.name}</span>
+                  <span class="chip {status.tone}" title={status.title}>{status.label}</span>
+                  {#if card.legacy?.trainingJobId || card.native?.trainingCheckpoints.length}
+                    <span class="chip">gary-trained</span>
+                  {/if}
                 </div>
                 <div class="entry-actions">
-                  <button
-                    class="danger"
-                    onclick={() => removeLora(entry.name)}
-                    disabled={registryBlocked}
-                  >remove</button>
-                  {#if entry.trainingJobId}
-                    <button
-                      class="danger delete-files"
-                      onclick={() => deleteTrainedLora(entry)}
-                      disabled={registryBlocked}
-                    >{deletingName === entry.name ? "deleting..." : "delete files"}</button>
+                  {#if canRemove(card)}
+                    <button class="danger" onclick={() => remove(card)} disabled={blocked}
+                      title="take it off the list. its files are preserved">remove</button>
+                  {/if}
+                  {#if card.legacy?.trainingJobId}
+                    <button class="danger delete-files" onclick={() => deleteFiles(card)} disabled={blocked}>
+                      delete files
+                    </button>
                   {/if}
                 </div>
               </div>
 
-              {#if entry.trainingCheckpoints.length > 0}
-                <div class="checkpoint-switcher">
-                  <div class="entry-meta trained-meta">
-                    Gary-trained{entry.trainingJobId ? ` / ${entry.trainingJobId}` : ""}
-                    {#if entry.selectedTrainingStep !== null}
-                      / active step {entry.selectedTrainingStep}
-                    {/if}
-                  </div>
-                  {#if entry.trainingCheckpoints.length > 1}
-                    <div class="checkpoint-row">
-                      <label class="checkpoint-field">
-                        <span>training checkpoint</span>
-                        <select
-                          value={selectedCheckpointStep(entry)}
-                          onchange={(event) => chooseCheckpoint(entry.name, event)}
-                          disabled={registryBlocked}
-                        >
-                          {#each entry.trainingCheckpoints as checkpoint}
-                            <option value={checkpoint.step} title={checkpoint.path}>
-                              step {checkpoint.step} / epoch {checkpoint.epoch}
-                            </option>
-                          {/each}
-                        </select>
-                      </label>
-                      <button
-                        type="button"
-                        class="checkpoint-action"
-                        onclick={() => activateCheckpoint(entry)}
-                        disabled={registryBlocked || selectedCheckpointStep(entry) === entry.selectedTrainingStep}
-                      >
-                        {switchingName === entry.name ? "switching..." : "use checkpoint"}
-                      </button>
-                    </div>
-                    <div class="note">switching keeps this LoRA name and prompt pool unchanged.</div>
-                  {/if}
-                </div>
-              {/if}
+              <div class="controls">
+                {#if usesLegacyCheckpoints(card)}
+                  <label class="inline-field">
+                    <span>checkpoint</span>
+                    <select value={legacyStep(card)} disabled={blocked}
+                      onchange={(event) => (legacySteps = { ...legacySteps, [card.name]: Number(event.currentTarget.value) })}>
+                      {#each card.legacy!.trainingCheckpoints as checkpoint}
+                        <option value={checkpoint.step} title={checkpoint.path}>
+                          step {checkpoint.step} / epoch {checkpoint.epoch}{checkpoint.step === card.legacy!.selectedTrainingStep ? " (in use)" : ""}
+                        </option>
+                      {/each}
+                    </select>
+                  </label>
+                  <button onclick={() => useCheckpoint(card)}
+                    disabled={blocked || legacyStep(card) === card.legacy!.selectedTrainingStep}>use</button>
+                {:else if card.native?.trainingCheckpoints.length}
+                  <label class="inline-field">
+                    <span>checkpoint</span>
+                    <select bind:value={nativeCheckpoints[card.name]} disabled={blocked}>
+                      <option value="">choose a checkpoint</option>
+                      {#each card.native.trainingCheckpoints as checkpoint (checkpoint.path)}
+                        <option value={checkpoint.path}>
+                          step {checkpoint.step}{checkpoint.epoch === null ? "" : ` / epoch ${checkpoint.epoch}`}{checkpoint.path === card.native.sourcePath ? " (in use)" : ""}
+                        </option>
+                      {/each}
+                    </select>
+                  </label>
+                  <button onclick={() => useCheckpoint(card)} disabled={blocked || !nativeCheckpoints[card.name]}>use</button>
+                {/if}
 
-              <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.path)} title="Show checkpoint in folder">
-                checkpoint: {entry.path}
-              </button>
-              {#if entry.promptsPath}
-                <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.promptsPath!)} title="Open prompt source folder">
-                  prompt source: {entry.promptsPath}
-                </button>
-              {:else if entry.resolvedPromptsPath}
-                <div class="entry-path">prompt source: using checkpoint folder sidecars</div>
-              {:else}
-                <div class="entry-path">prompt source: not set</div>
-              {/if}
-              <button type="button" class="entry-path path-link" onclick={() => void revealPath(entry.promptFilePath)} title="Show prompt JSON in folder">
-                prompt JSON: {entry.promptFilePath}
-              </button>
+                {#if card.native}
+                  <label class="inline-field strength">
+                    <span>strength</span>
+                    <input type="number" min="-4" max="4" step="0.05" bind:value={strengths[card.name]} disabled={blocked} />
+                  </label>
+                  <button onclick={() => saveStrength(card)}
+                    disabled={blocked || !Number.isFinite(strengths[card.name]) || strengths[card.name] === card.native.strength}>save</button>
+                {:else}
+                  <span class="entry-meta">strength {card.legacy?.strength}</span>
+                {/if}
 
-              <div class="entry-meta">
-                {entry.captionCount} txt sidecars detected, {entry.promptCount} prompts built
-                {#if !entry.registered}
-                  - checkpoint file missing or invalid
+                <span class="entry-meta prompts">
+                  {promptSource ? `${prompts} prompts` : "no prompt dataset: the plugin's dice use defaults"}
+                </span>
+                {#if promptSource && card.native}
+                  <button onclick={() => rebuildPrompts(card)} disabled={blocked}
+                    title="rebuild this LoRA's prompt pool from its dataset folder">rebuild prompts</button>
                 {/if}
               </div>
 
-              {#if entry.captionCount === 0}
-                <div class="note">
-                  no txt sidecars found. the dice button will use defaults until a prompt JSON exists.
-                </div>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="empty">no LoRAs added yet.</div>
-      {/if}
+              {#if card.native?.error}<div class="error-note">{card.native.error}</div>{/if}
 
-      {#if poolSummary.length > 0}
-        <div class="section-label">prompt pools</div>
-        <div class="pool-list">
-          {#each poolSummary as [name, count]}
-            <div class="pool-row">
-              <span>{name}</span>
-              <span>{count}</span>
+              <details class="paths">
+                <summary>files</summary>
+                {#if card.legacy || card.native}
+                  {@const source = card.legacy?.path ?? card.native!.sourcePath}
+                  <button type="button" class="path-link" onclick={() => void reveal(source)}>LoRA: {source}</button>
+                {/if}
+                {#if card.native?.nativePath}
+                  <button type="button" class="path-link" onclick={() => void reveal(card.native!.nativePath!)}>C++ copy: {card.native.nativePath}</button>
+                {/if}
+                {#if promptSource}
+                  <button type="button" class="path-link" onclick={() => void reveal(promptSource)}>prompt dataset: {promptSource}</button>
+                {:else if card.legacy?.resolvedPromptsPath}
+                  <div class="entry-path">prompt dataset: the sidecars beside the LoRA</div>
+                {/if}
+                {#if card.legacy?.promptFileExists}
+                  <button type="button" class="path-link" onclick={() => void reveal(card.legacy!.promptFilePath)}>prompt pool: {card.legacy.promptFilePath}</button>
+                {/if}
+                {#if card.legacy?.trainingJobId}<div class="entry-path">training run: {card.legacy.trainingJobId}</div>{/if}
+              </details>
             </div>
           {/each}
         </div>
@@ -542,22 +649,6 @@
     color: var(--text-secondary);
   }
 
-  .path-link {
-    display: block;
-    width: 100%;
-    border: none;
-    background: transparent;
-    padding: 0;
-    text-align: left;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .path-link:hover,
-  .path-link:focus-visible {
-    text-decoration: underline;
-  }
-
   .warning {
     color: #ffcb8f;
   }
@@ -590,13 +681,10 @@
     gap: 6px;
   }
 
-  .field span {
+  .field span,
+  .inline-field span {
     font-size: 11px;
     color: var(--text-secondary);
-  }
-
-  .field.wide {
-    grid-column: 1 / -1;
   }
 
   .path-row {
@@ -605,26 +693,43 @@
     gap: 8px;
   }
 
+  details summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
   .actions {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    margin-top: 14px;
+    margin-top: 12px;
   }
 
-  .top-actions {
-    margin-top: 16px;
-  }
-
-  .actions .accent {
+  .accent {
     background: var(--accent);
     border-color: var(--accent);
     color: white;
   }
 
-  .actions .accent:hover:not(:disabled) {
+  .accent:hover:not(:disabled) {
     background: var(--accent);
     border-color: var(--accent-hover);
+  }
+
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .list-header .actions {
+    margin-top: 0;
   }
 
   .output {
@@ -641,21 +746,29 @@
 
   .entry-list {
     display: grid;
-    gap: 12px;
+    gap: 10px;
     margin-top: 12px;
   }
 
   .entry-card {
     border: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.02);
-    padding: 12px;
+    padding: 10px 12px;
   }
 
   .entry-top {
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    align-items: flex-start;
+    align-items: center;
+  }
+
+  .entry-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
   }
 
   .entry-name {
@@ -664,54 +777,82 @@
     color: var(--text-primary);
   }
 
-  .entry-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+  .chip {
+    font-size: 10px;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    white-space: nowrap;
   }
 
-  .delete-files {
-    background: #6f2020;
-  }
-
-  .checkpoint-switcher {
-    margin-top: 10px;
-    padding: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.09);
-    background: rgba(0, 0, 0, 0.16);
-  }
-
-  .trained-meta {
-    margin-top: 0;
+  .chip.ok {
+    border-color: #3d6b48;
     color: #9bd8aa;
   }
 
-  .checkpoint-row {
-    display: grid;
-    grid-template-columns: minmax(220px, 280px) auto;
-    justify-content: start;
+  .chip.pending {
+    border-color: #7a5a2e;
+    color: #ffcb8f;
+  }
+
+  .chip.bad {
+    border-color: #b24a4a;
+    color: #ff8f8f;
+  }
+
+  .entry-actions {
+    display: flex;
     gap: 8px;
-    align-items: end;
+    flex-shrink: 0;
+  }
+
+  .controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
     margin-top: 8px;
   }
 
-  .checkpoint-field {
+  .inline-field {
     display: grid;
-    gap: 5px;
+    gap: 4px;
   }
 
-  .checkpoint-field span {
+  .inline-field select {
+    min-width: 200px;
+  }
+
+  .strength input {
+    width: 80px;
+  }
+
+  .prompts {
+    margin: 0 0 6px 8px;
+  }
+
+  .paths {
+    margin-top: 8px;
+  }
+
+  .path-link {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    font: inherit;
     font-size: 11px;
     color: var(--text-secondary);
+    cursor: pointer;
+    word-break: break-word;
   }
 
-  .checkpoint-field select {
-    width: 100%;
-  }
-
-  .checkpoint-action {
-    white-space: nowrap;
+  .path-link:hover,
+  .path-link:focus-visible {
+    text-decoration: underline;
   }
 
   .danger {
@@ -724,22 +865,8 @@
     color: white;
   }
 
-  .pool-list {
-    margin-top: 12px;
-    border: 1px solid var(--border);
-  }
-
-  .pool-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 8px 10px;
-    font-size: 12px;
-    color: var(--text-primary);
-  }
-
-  .pool-row + .pool-row {
-    border-top: 1px solid var(--border);
+  .delete-files {
+    background: #6f2020;
   }
 
   .empty {
@@ -758,8 +885,7 @@
       max-height: 94vh;
     }
 
-    .path-row,
-    .checkpoint-row {
+    .path-row {
       grid-template-columns: 1fr;
     }
   }

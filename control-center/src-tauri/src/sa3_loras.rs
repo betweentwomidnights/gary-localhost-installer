@@ -92,6 +92,11 @@ pub struct NativeLoraState {
     pub preparing: bool,
     pub catalog_path: String,
     pub adapters_dir: String,
+    /// The installed runtime's converter, so an adapter an older one converted
+    /// can be offered for preparing again. Only `get_sa3_native_lora_state`
+    /// fills this in; it needs the runtime install.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub converter_sha256: Option<String>,
 }
 
 pub fn adapters_dir(root: &Path) -> PathBuf {
@@ -649,6 +654,7 @@ pub fn state(root: &Path) -> Result<NativeLoraState, String> {
         preparing: PREPARATION.try_lock().is_err(),
         catalog_path: catalog_path(root).to_string_lossy().into(),
         adapters_dir: adapters_dir(root).to_string_lossy().into(),
+        converter_sha256: None,
     })
 }
 
