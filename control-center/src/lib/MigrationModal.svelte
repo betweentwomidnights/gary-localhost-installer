@@ -298,7 +298,7 @@
                   <label class="check"><input type="checkbox" bind:checked={optionPicks[index]} disabled={blocked} />{option.label} · {formatBytes(option.files.reduce((sum, file) => sum + file.bytes, 0))}{recommended.components.includes(option.id) ? " · recommended" : ""}</label>
                 {/each}
               </div>
-              {#if tierOptions.length}<p>Downloaded {profile.optionsLabel ?? "options"} are offered in gary4juce alongside the base model, and are checked too. You can add or remove them later from Models.</p>{/if}
+              {#if tierOptions.length}<p>Each one you pick is downloaded, checked, and offered in gary4juce as well. You can add or remove them later from Models.</p>{/if}
               {#if has("training-base")}<p>{includeTraining ? `Your existing training setup was detected. Gary includes its ${trainingBase} C++ replacement automatically.` : "No existing training base was found. You can add training models later from Models."}</p>{/if}
             </details>
             {:else}

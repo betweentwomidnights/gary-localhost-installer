@@ -5,7 +5,8 @@
   import TokenPermissionHelp from "./TokenPermissionHelp.svelte";
   import Sa3NativeModels from "./Sa3NativeModels.svelte";
   import NativeTierModels from "./NativeTierModels.svelte";
-  import CareyNativeModels from "./CareyNativeModels.svelte";
+  import NativeVariantModels from "./NativeVariantModels.svelte";
+  import { variantLayouts } from "./nativeVariants";
   import { chooseYueyTier, loadYueyTiers } from "./yueyTiers";
 
   interface ModelEntry {
@@ -537,7 +538,7 @@
       {/if}
     {:else if isCarey}
       {#if hasTierModels}
-        <CareyNativeModels models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        <NativeVariantModels {serviceId} layout={variantLayouts.carey} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
       {/if}
       <!-- Carey's Python models go once it runs native. -->
       {#if pythonModels}
@@ -821,7 +822,10 @@
       </div>
 
     {:else}
-      {#if hasTierModels}
+      {#if hasTierModels && variantLayouts[serviceId]}
+        <NativeVariantModels {serviceId} layout={variantLayouts[serviceId]} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        {#if serviceModels.length}<div class="size-label">Python models</div>{/if}
+      {:else if hasTierModels}
         <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
         {#if serviceModels.length}<div class="size-label">Python models</div>{/if}
       {/if}
