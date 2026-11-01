@@ -3,6 +3,7 @@ mod carey_migration;
 mod carey_caption;
 mod carey_models;
 mod carey_training;
+mod audiocraft_migration;
 mod foundation_migration;
 mod foundation_models;
 mod manifest;
@@ -1054,7 +1055,8 @@ mod native_backend_key_tests {
         assert_eq!(super::native_backend_key("foundation"), "sa3");
         assert_eq!(super::native_backend_key("sa3"), "sa3");
         assert_eq!(super::native_backend_key("yuey"), "yuey");
-        assert_eq!(super::native_backend_key("gary"), "gary");
+        assert_eq!(super::native_backend_key("gary"), "audiocraft");
+        assert_eq!(super::native_backend_key("melodyflow"), "audiocraft");
     }
 }
 

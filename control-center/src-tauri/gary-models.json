@@ -1,0 +1,37 @@
+[
+  {
+    "id": "gary-native::shared",
+    "label": "EnCodec and T5",
+    "description": "MusicGen's 32 kHz codec (F32) and the T5-base text encoder (F16) every finetune shares.",
+    "files": [
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "c8764f3bbc6cc5f027bd96b3b303b3b89bfdd30a",
+        "filename": "encodec-32khz-v1.0-F32.gguf",
+        "sha256": "d4f153157d37a8d5b87ade02829ed8a29fe20d195efcaedcce358ab616ead275",
+        "bytes": 231642048
+      },
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "c8764f3bbc6cc5f027bd96b3b303b3b89bfdd30a",
+        "filename": "t5-base-encoder-0.1B-v1.0-F16.gguf",
+        "sha256": "ba301ccda03edfc4971ed32a3e69d5793e52e18e42dfd0f436d344f17205a446",
+        "bytes": 219954752
+      }
+    ]
+  },
+  {
+    "id": "gary-native::vanya_ai_dnb_0.1",
+    "label": "vanya_ai_dnb_0.1",
+    "description": "thepatch's drum and bass finetune of MusicGen small, F16.",
+    "files": [
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "c8764f3bbc6cc5f027bd96b3b303b3b89bfdd30a",
+        "filename": "musicgen-vanya-dnb-0.4B-v1.0-F16.gguf",
+        "sha256": "f13d9997061a6753d0072a5f67bee4132bcf96c73edfe03e1a4d8c9f1764a578",
+        "bytes": 841063296
+      }
+    ]
+  }
+]

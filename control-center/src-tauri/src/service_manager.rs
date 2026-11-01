@@ -1647,31 +1647,36 @@ mod tests {
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut defs = manifest.services;
-        let terry = defs.iter_mut().find(|service| service.id == "melodyflow").unwrap();
-        terry.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap());
+        // A service with a manifest block and no implementation yet, whose
+        // selection's encoding nothing checks.
+        let mut newcomer = defs.iter().find(|service| service.id == "melodyflow").unwrap().clone();
+        newcomer.id = "newcomer".into();
+        newcomer.native.as_mut().unwrap().models_dir = Some("newcomer".into());
+        newcomer.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "newcomer"})).unwrap());
+        defs.push(newcomer);
         let info = |manager: &ServiceManager, id: &str| {
             manager.get_service_info().into_iter().find(|service| service.id == id).unwrap()
         };
 
         let untouched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(!untouched.is_native("melodyflow") && !info(&untouched, "melodyflow").migration_complete);
+        assert!(!untouched.is_native("newcomer") && !info(&untouched, "newcomer").migration_complete);
 
         let selection = crate::migration::Selection {
             schema_version: 1, encoding: "anything".into(), verified_release: "v0.1.0".into(),
             backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         };
-        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap();
+        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "newcomer"})).unwrap();
         crate::migration::save(&root, &def, &selection, |_| Ok(())).unwrap();
         let switched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(switched.is_native("melodyflow"));
-        assert_eq!(switched.selection("melodyflow").unwrap().verified_release, "v0.1.0");
-        assert!(info(&switched, "melodyflow").migration_complete);
+        assert!(switched.is_native("newcomer"));
+        assert_eq!(switched.selection("newcomer").unwrap().verified_release, "v0.1.0");
+        assert!(info(&switched, "newcomer").migration_complete);
         assert!(!switched.is_native("sa3"), "SA3 has its own selection, and none exists");
 
         std::fs::write(crate::migration::selection_path(&root, &def), "{}").unwrap();
         let unreadable = ServiceManager::new(defs, root.clone());
-        assert!(unreadable.is_native("melodyflow"), "an unreadable selection still means it moved");
-        assert!(info(&unreadable, "melodyflow").start_blocker.unwrap().contains("native selection"));
+        assert!(unreadable.is_native("newcomer"), "an unreadable selection still means it moved");
+        assert!(info(&unreadable, "newcomer").start_blocker.unwrap().contains("native selection"));
         assert!(!info(&unreadable, "sa3").start_blocker.is_some_and(|blocker| blocker.contains("native selection")));
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
     }
@@ -1926,11 +1931,8 @@ mod tests {
         };
         let fresh = ServiceManager::new(manifest.services.clone(), root.clone());
         let flags = retired(&fresh);
-        for id in ["sa3", "stable-audio", "foundation", "carey"] {
+        for id in ["sa3", "stable-audio", "foundation", "carey", "gary", "melodyflow"] {
             assert!(flags[id], "{id} should set up on C++ on a fresh install");
-        }
-        for id in ["gary", "melodyflow"] {
-            assert!(!flags[id], "{id} has no C++ migration");
         }
         // An existing Python environment stays usable until it migrates.
         let python = root.join("services/stable-audio/env/Scripts/python.exe");
@@ -1954,10 +1956,14 @@ mod tests {
         for id in ["sa3", "stable-audio", "foundation"] {
             assert_eq!(groups[id].as_deref(), Some("sa3"), "{id}");
         }
+        for id in ["gary", "melodyflow"] {
+            assert_eq!(groups[id].as_deref(), Some("audiocraft"), "{id}");
+        }
         assert_eq!(groups["yuey"], None);
-        assert_eq!(groups["gary"], None);
+        assert_eq!(groups["carey"], None);
         assert_eq!(manager.runtime_members("foundation"), ["stable-audio", "sa3", "foundation"]);
-        assert_eq!(manager.runtime_members("gary"), ["gary"]);
+        assert_eq!(manager.runtime_members("gary"), ["gary", "melodyflow"]);
+        assert_eq!(manager.runtime_members("yuey"), ["yuey"]);
     }
 
     #[test]

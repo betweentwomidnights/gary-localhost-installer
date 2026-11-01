@@ -111,6 +111,19 @@ pub async fn run_audio_job(
     body: &serde_json::Value,
     what: &str,
 ) -> Result<Vec<u8>, String> {
+    Ok(run_session_job(server, path, "/poll_status", body, what).await?.1)
+}
+
+/// `run_audio_job` for a server that polls at `poll`/<id>, such as the
+/// `/api/juce/poll_status` the Python services' contract uses. Returns the
+/// session id with the WAV, for routes that take a session back.
+pub async fn run_session_job(
+    server: &PrivateServer,
+    path: &str,
+    poll: &str,
+    body: &serde_json::Value,
+    what: &str,
+) -> Result<(String, Vec<u8>), String> {
     use base64::Engine;
     let submitted: serde_json::Value = server
         .client
@@ -138,7 +151,7 @@ pub async fn run_audio_job(
     loop {
         let status: serde_json::Value = server
             .client
-            .get(format!("{}/poll_status/{id}", server.base))
+            .get(format!("{}{poll}/{id}", server.base))
             .send()
             .await
             .map_err(|error| error.to_string())?
@@ -149,13 +162,14 @@ pub async fn run_audio_job(
             .map_err(|error| error.to_string())?;
         match status["status"].as_str() {
             Some("completed") => {
-                return base64::engine::general_purpose::STANDARD
+                let audio = base64::engine::general_purpose::STANDARD
                     .decode(
                         status["audio_data"]
                             .as_str()
                             .ok_or_else(|| format!("{what} returned no audio"))?,
                     )
-                    .map_err(|error| error.to_string());
+                    .map_err(|error| error.to_string())?;
+                return Ok((id, audio));
             }
             Some("failed") => return Err(format!("{what} failed: {}", status["error"])),
             _ => {}
@@ -204,11 +218,16 @@ pub fn check_wav(wav: &[u8], samples: u32, what: &str) -> Result<(), String> {
 
 /// Check a proof's WAV is stereo at `rate` and exactly `samples` long.
 pub fn check_wav_at(wav: &[u8], rate: u32, samples: u32, what: &str) -> Result<(), String> {
+    check_wav_spec(wav, rate, 2, samples, what)
+}
+
+/// Check a proof's WAV has `channels` at `rate` and is exactly `samples` long.
+pub fn check_wav_spec(wav: &[u8], rate: u32, channels: u16, samples: u32, what: &str) -> Result<(), String> {
     let reader = hound::WavReader::new(std::io::Cursor::new(wav)).map_err(|error| error.to_string())?;
     let spec = reader.spec();
-    if spec.sample_rate != rate || spec.channels != 2 || reader.duration() != samples {
+    if spec.sample_rate != rate || spec.channels != channels || reader.duration() != samples {
         return Err(format!(
-            "{what} check returned {} Hz, {} channels, {} samples; expected {rate} Hz stereo, {samples}",
+            "{what} check returned {} Hz, {} channels, {} samples; expected {rate} Hz, {channels} channels, {samples}",
             spec.sample_rate,
             spec.channels,
             reader.duration()

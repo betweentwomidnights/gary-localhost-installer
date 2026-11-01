@@ -22,6 +22,29 @@
           "prefer": ["cuda", "vulkan"]
         }
       }
+    },
+    "audiocraft": {
+      "version": "v0.1.0",
+      "platforms": {
+        "windows-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.0/audiocraft-v0.1.0-windows-x64-core.zip",
+            "sha256": "476ce59e42bdd912de24ef54f67e51eee585f16b092173a9f4b3acf8c61fd322"
+          },
+          "backends": {
+            "cuda": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.0/audiocraft-v0.1.0-windows-x64-cuda.zip",
+              "sha256": "4772ee873797346cb7a7be6a442efbd743f9a9bea0d049a1c89796012370cb82",
+              "requires": ["cudart-12.8"]
+            },
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.0/audiocraft-v0.1.0-windows-x64-vulkan.zip",
+              "sha256": "e2c6fca9d5c77fdab75e82d09dd05fb639253e181da996e712152dd038c3f16a"
+            }
+          },
+          "prefer": ["cuda", "vulkan"]
+        }
+      }
     }
   },
   "version": "2.0",
@@ -62,6 +85,52 @@
         "PYTHONIOENCODING": "utf-8",
         "PYTHONLEGACYWINDOWSSTDIO": "1"
       },
+      "native": {
+        "bundle": "audiocraft",
+        "executable": "musicgen-server.exe",
+        "modelsDir": "gary",
+        "env": {
+          "AC_MUSICGEN_PORT": "8000",
+          "AC_DEVICE": "${NATIVE_BACKEND}",
+          "AC_MODELS_DIR": "${MODELS_DIR}/gary"
+        }
+      },
+      "migration": {
+        "dataDir": "gary",
+        "label": "gary",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [
+            {"repo": "thepatch/vanya_ai_dnb_0.1", "label": "PyTorch vanya_ai_dnb_0.1 finetune"},
+            {"repo": "thepatch/gary_orchestra_2", "label": "PyTorch gary_orchestra_2 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-small-8", "label": "PyTorch keygen-gary-v2-small-8 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-small-12", "label": "PyTorch keygen-gary-v2-small-12 finetune"},
+            {"repo": "thepatch/bleeps-medium", "label": "PyTorch bleeps-medium finetune"},
+            {"repo": "thepatch/keygen-gary-medium-12", "label": "PyTorch keygen-gary-medium-12 finetune"},
+            {"repo": "thepatch/hoenn_lofi", "label": "PyTorch hoenn_lofi finetune"},
+            {"repo": "thepatch/bleeps-large-6", "label": "PyTorch bleeps-large-6 finetune"},
+            {"repo": "thepatch/bleeps-large-8", "label": "PyTorch bleeps-large-8 finetune"},
+            {"repo": "thepatch/bleeps-large-10", "label": "PyTorch bleeps-large-10 finetune"},
+            {"repo": "thepatch/bleeps-large-14", "label": "PyTorch bleeps-large-14 finetune"},
+            {"repo": "thepatch/bleeps-large-20", "label": "PyTorch bleeps-large-20 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-large-12", "label": "PyTorch keygen-gary-v2-large-12 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-large-16", "label": "PyTorch keygen-gary-v2-large-16 finetune"},
+            {"repo": "facebook/encodec_32khz", "label": "PyTorch EnCodec"}
+          ],
+          "code": {
+            "files": [
+              "g4l_localhost.py",
+              "g4laudio.py",
+              "musicgen_fast.py",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "setup.cfg",
+              "setup.py"
+            ],
+            "packages": ["audiocraft"]
+          }
+        }
+      },
       "dependsOn": []
     },
     {
@@ -94,6 +163,37 @@
       "env": {
         "PYTHONIOENCODING": "utf-8",
         "PYTHONLEGACYWINDOWSSTDIO": "1"
+      },
+      "native": {
+        "bundle": "audiocraft",
+        "executable": "melodyflow-server.exe",
+        "modelsDir": "melodyflow",
+        "env": {
+          "AC_MELODYFLOW_PORT": "8002",
+          "AC_DEVICE": "${NATIVE_BACKEND}",
+          "AC_MODELS_DIR": "${MODELS_DIR}/melodyflow"
+        }
+      },
+      "migration": {
+        "dataDir": "melodyflow",
+        "label": "terry",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [
+            {"repo": "facebook/melodyflow-t24-30secs", "label": "PyTorch MelodyFlow model"}
+          ],
+          "code": {
+            "files": [
+              "localhost_melodyflow.py",
+              "melodyflow_fast.py",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "seed_test.py",
+              "variations.py"
+            ],
+            "packages": ["audiocraft"]
+          }
+        }
       },
       "dependsOn": []
     },

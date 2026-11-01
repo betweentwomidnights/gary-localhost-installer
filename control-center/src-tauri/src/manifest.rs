@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn python_services_default_to_the_python_runtime() {
+    fn a_service_starts_on_python_until_it_migrates() {
         let manifest = bundled();
         let gary = manifest
             .services
@@ -368,9 +368,10 @@ mod tests {
             .find(|service| service.id == "gary")
             .expect("bundled manifest should define gary");
 
+        // Its native block is what it can migrate to, not how it starts.
         assert_eq!(gary.runtime, ServiceRuntime::Python);
         assert_eq!(gary.entry_point, "g4l_localhost.py");
-        assert!(gary.native.is_none());
+        assert_eq!(gary.native.as_ref().and_then(|native| native.bundle.as_deref()), Some("audiocraft"));
     }
 
     #[test]

@@ -395,6 +395,8 @@ pub fn service(id: &str) -> Option<&'static dyn Service> {
         "foundation" => Some(&crate::foundation_migration::Foundation),
         "stable-audio" => Some(&crate::stable_audio_migration::StableAudio),
         "carey" => Some(&crate::carey_migration::Carey),
+        "gary" => Some(&crate::audiocraft_migration::Gary),
+        "melodyflow" => Some(&crate::audiocraft_migration::Terry),
         _ => None,
     }
 }
