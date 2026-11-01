@@ -3,6 +3,7 @@ mod carey_migration;
 mod carey_caption;
 mod carey_models;
 mod carey_training;
+mod audiocraft_migration;
 mod foundation_migration;
 mod foundation_models;
 mod manifest;
@@ -1054,7 +1055,8 @@ mod native_backend_key_tests {
         assert_eq!(super::native_backend_key("foundation"), "sa3");
         assert_eq!(super::native_backend_key("sa3"), "sa3");
         assert_eq!(super::native_backend_key("yuey"), "yuey");
-        assert_eq!(super::native_backend_key("gary"), "gary");
+        assert_eq!(super::native_backend_key("gary"), "audiocraft");
+        assert_eq!(super::native_backend_key("melodyflow"), "audiocraft");
     }
 }
 
@@ -6212,7 +6214,7 @@ pub fn run() {
             stop_service,
             restart_service,
             rebuild_env,
-            rebuild_all_envs,
+            update_native_runtimes,
             get_service_log,
             get_native_runtime_info,
             get_yuey_tiers,
@@ -6383,48 +6385,47 @@ async fn rebuild_env(
     Ok(())
 }
 
+/// Install every C++ runtime that is missing or behind the manifest, once per
+/// shared runtime, stopping the services on it first. Returns when all are
+/// done, with whatever failed.
 #[tauri::command]
-async fn rebuild_all_envs(
+async fn update_native_runtimes(
+    repo_root: tauri::State<'_, PathBuf>,
     manager: tauri::State<'_, ManagerState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let build_infos = {
-        let mgr = manager.lock().await;
-        mgr.get_all_build_infos()
-    };
-
-    let mgr_clone = manager.inner().clone();
-    let handle = app_handle.clone();
-
-    // Run builds sequentially in a single background task,
-    // selecting each service in the UI as it starts building.
-    tauri::async_runtime::spawn(async move {
-        for info in build_infos {
-            let sid = info.service_id.clone();
-
-            // Tell the UI to select/highlight this service
-            let _ = handle.emit("select-service", &sid);
-
-            {
-                let mut mgr = mgr_clone.lock().await;
-                mgr.set_build_started(&sid, info.total_steps());
+    if storage::storage_info(repo_root.inner()).pending_restart {
+        return Err("Restart to use your chosen storage before updating runtimes.".into());
+    }
+    let outdated = manager.lock().await.outdated_native_runtimes();
+    let mut errors = Vec::new();
+    for service_id in outdated {
+        let info = {
+            let mut mgr = manager.lock().await;
+            for member in mgr.runtime_members(&service_id) {
+                mgr.stop_if_native(&member);
             }
-
-            let result = run_build(info, mgr_clone.clone(), handle.clone()).await;
-
-            {
-                let mut mgr = mgr_clone.lock().await;
-                match result {
-                    Ok(()) => mgr.set_build_done(&sid, None),
-                    Err(e) => mgr.set_build_done(&sid, Some(e.clone())),
+            match mgr.get_build_info(&service_id) {
+                Ok(info) => {
+                    mgr.set_build_started(&service_id, info.total_steps());
+                    info
                 }
-                let info = mgr.get_service_info();
-                let _ = handle.emit("services-updated", &info);
+                Err(error) => {
+                    errors.push(error);
+                    continue;
+                }
             }
+        };
+        let _ = app_handle.emit("select-service", &service_id);
+        let result = run_build(info, manager.inner().clone(), app_handle.clone()).await;
+        let mut mgr = manager.lock().await;
+        mgr.set_build_done(&service_id, result.as_ref().err().cloned());
+        let _ = app_handle.emit("services-updated", mgr.get_service_info());
+        if let Err(error) = result {
+            errors.push(format!("{service_id}: {error}"));
         }
-    });
-
-    Ok(())
+    }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
 // ---------------------------------------------------------------------------
@@ -11613,7 +11614,10 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
                 .map(|env| env.display_name.as_str())
                 .collect();
             let blocked_reason = if !used_by.is_empty() {
-                Some(format!("used by {}", used_by.join(", ")))
+                Some(format!(
+                    "used by {}: reinstall them on another backend to free it",
+                    used_by.join(", ")
+                ))
             } else if native_building {
                 Some("wait for the runtime install to finish".to_string())
             } else {

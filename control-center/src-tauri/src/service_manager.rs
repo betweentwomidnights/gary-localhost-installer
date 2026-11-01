@@ -1385,28 +1385,25 @@ impl ServiceManager {
         }
     }
 
-    pub fn get_all_build_infos(&self) -> Vec<BuildInfo> {
-        self.services
-            .iter()
-            .filter_map(|svc| {
-                match svc.runtime {
-                    ServiceRuntime::Python if svc.build_steps.is_empty() => return None,
-                    // Never build Python for a service that sets up on C++.
-                    ServiceRuntime::Python if self.python_retired(svc) => return None,
-                    // A running native service cannot have its runtime swapped.
-                    ServiceRuntime::Native if self.running.contains_key(&svc.id) => return None,
-                    _ => {}
-                }
-                if self
-                    .build_statuses
-                    .get(&svc.id)
-                    .map_or(false, |b| b.building)
-                {
-                    return None;
-                }
-                Some(self.build_info_for(svc))
-            })
-            .collect()
+    /// The C++ services whose runtime is missing or behind the manifest, one
+    /// per runtime, since services sharing one install it together. A
+    /// development build has no version and is left alone.
+    pub fn outdated_native_runtimes(&self) -> Vec<String> {
+        let mut seen = Vec::new();
+        let mut outdated = Vec::new();
+        for svc in &self.services {
+            let Some(native) = svc.native.as_ref() else { continue };
+            if svc.runtime != ServiceRuntime::Native { continue; }
+            let dir = self.native_dir(svc);
+            if seen.contains(&dir) { continue; }
+            seen.push(dir);
+            let behind = match self.native_install(svc) {
+                None => true,
+                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version),
+            };
+            if behind { outdated.push(svc.id.clone()); }
+        }
+        outdated
     }
 
     pub fn get_log(&self, service_id: &str) -> Result<String, String> {
@@ -1614,7 +1611,7 @@ mod tests {
         std::fs::create_dir_all(python.parent().unwrap()).unwrap();
         std::fs::write(&python, b"leftover legacy environment").unwrap();
         let mut manager = ServiceManager::new(defs.clone(), root.clone());
-        let queued = manager.get_all_build_infos().into_iter().find(|info| info.service_id == "sa3").unwrap();
+        let queued = manager.get_build_info("sa3").unwrap();
         assert_eq!(queued.runtime, ServiceRuntime::Python);
         assert!(manager.validate_build_runtime(&queued).is_ok());
         let candidate = manager.get_native_build_info("sa3").unwrap();
@@ -1626,12 +1623,11 @@ mod tests {
         for selected in [&manager, &ServiceManager::new(defs.clone(), root.clone())] {
             assert!(selected.validate_build_runtime(&queued).unwrap_err().contains("Python environment cannot be rebuilt"));
             assert_eq!(selected.get_build_info("sa3").unwrap().runtime, ServiceRuntime::Native);
-            assert_eq!(selected.get_all_build_infos().into_iter().find(|info| info.service_id == "sa3").unwrap().runtime, ServiceRuntime::Native);
         }
         // A profile with no Python environment sets up on C++ only.
         let fresh = ServiceManager::new(defs.clone(), root.join("other-storage-profile"));
         assert!(fresh.get_build_info("sa3").err().unwrap().contains("C++"));
-        assert!(fresh.get_all_build_infos().iter().all(|info| info.service_id != "sa3"));
+        assert!(!fresh.outdated_native_runtimes().contains(&"sa3".to_string()));
         assert!(fresh.validate_build_runtime(&queued).unwrap_err().contains("C++"));
         std::fs::write(crate::sa3_runtime::selection_path(&root), "{}").unwrap();
         let corrupted = ServiceManager::new(defs, root.clone());
@@ -1647,31 +1643,36 @@ mod tests {
         let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut defs = manifest.services;
-        let terry = defs.iter_mut().find(|service| service.id == "melodyflow").unwrap();
-        terry.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap());
+        // A service with a manifest block and no implementation yet, whose
+        // selection's encoding nothing checks.
+        let mut newcomer = defs.iter().find(|service| service.id == "melodyflow").unwrap().clone();
+        newcomer.id = "newcomer".into();
+        newcomer.native.as_mut().unwrap().models_dir = Some("newcomer".into());
+        newcomer.migration = Some(serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "newcomer"})).unwrap());
+        defs.push(newcomer);
         let info = |manager: &ServiceManager, id: &str| {
             manager.get_service_info().into_iter().find(|service| service.id == id).unwrap()
         };
 
         let untouched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(!untouched.is_native("melodyflow") && !info(&untouched, "melodyflow").migration_complete);
+        assert!(!untouched.is_native("newcomer") && !info(&untouched, "newcomer").migration_complete);
 
         let selection = crate::migration::Selection {
             schema_version: 1, encoding: "anything".into(), verified_release: "v0.1.0".into(),
             backend: "cuda".into(), activated_at: 1, cleanup_complete: true, cleanup_errors: vec![], runtime_fingerprint: None,
         };
-        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "melodyflow"})).unwrap();
+        let def = serde_json::from_value::<MigrationDef>(serde_json::json!({"dataDir": "newcomer"})).unwrap();
         crate::migration::save(&root, &def, &selection, |_| Ok(())).unwrap();
         let switched = ServiceManager::new(defs.clone(), root.clone());
-        assert!(switched.is_native("melodyflow"));
-        assert_eq!(switched.selection("melodyflow").unwrap().verified_release, "v0.1.0");
-        assert!(info(&switched, "melodyflow").migration_complete);
+        assert!(switched.is_native("newcomer"));
+        assert_eq!(switched.selection("newcomer").unwrap().verified_release, "v0.1.0");
+        assert!(info(&switched, "newcomer").migration_complete);
         assert!(!switched.is_native("sa3"), "SA3 has its own selection, and none exists");
 
         std::fs::write(crate::migration::selection_path(&root, &def), "{}").unwrap();
         let unreadable = ServiceManager::new(defs, root.clone());
-        assert!(unreadable.is_native("melodyflow"), "an unreadable selection still means it moved");
-        assert!(info(&unreadable, "melodyflow").start_blocker.unwrap().contains("native selection"));
+        assert!(unreadable.is_native("newcomer"), "an unreadable selection still means it moved");
+        assert!(info(&unreadable, "newcomer").start_blocker.unwrap().contains("native selection"));
         assert!(!info(&unreadable, "sa3").start_blocker.is_some_and(|blocker| blocker.contains("native selection")));
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
     }
@@ -1926,11 +1927,8 @@ mod tests {
         };
         let fresh = ServiceManager::new(manifest.services.clone(), root.clone());
         let flags = retired(&fresh);
-        for id in ["sa3", "stable-audio", "foundation", "carey"] {
+        for id in ["sa3", "stable-audio", "foundation", "carey", "gary", "melodyflow"] {
             assert!(flags[id], "{id} should set up on C++ on a fresh install");
-        }
-        for id in ["gary", "melodyflow"] {
-            assert!(!flags[id], "{id} has no C++ migration");
         }
         // An existing Python environment stays usable until it migrates.
         let python = root.join("services/stable-audio/env/Scripts/python.exe");
@@ -1954,10 +1952,14 @@ mod tests {
         for id in ["sa3", "stable-audio", "foundation"] {
             assert_eq!(groups[id].as_deref(), Some("sa3"), "{id}");
         }
+        for id in ["gary", "melodyflow"] {
+            assert_eq!(groups[id].as_deref(), Some("audiocraft"), "{id}");
+        }
         assert_eq!(groups["yuey"], None);
-        assert_eq!(groups["gary"], None);
+        assert_eq!(groups["carey"], None);
         assert_eq!(manager.runtime_members("foundation"), ["stable-audio", "sa3", "foundation"]);
-        assert_eq!(manager.runtime_members("gary"), ["gary"]);
+        assert_eq!(manager.runtime_members("gary"), ["gary", "melodyflow"]);
+        assert_eq!(manager.runtime_members("yuey"), ["yuey"]);
     }
 
     #[test]
@@ -2090,6 +2092,46 @@ mod tests {
         let info = manager.get_service_info().into_iter().find(|info| info.id == "yuey").unwrap();
         assert!(!info.migration_complete);
         assert_eq!(info.start_blocker, crate::yuey_missing_models(&manager.models_dir()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_missing_or_outdated_runtime_is_updated_once() {
+        let root = std::env::temp_dir().join(format!(
+            "gary-outdated-runtimes-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut manifest: crate::manifest::Manifest =
+            serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+        manifest.resolve_native_bundles().unwrap();
+        let mut manager = ServiceManager::new(manifest.services, root.clone());
+        // gary and terry share one runtime; the rest are still on Python.
+        for service in manager.services.iter_mut().filter(|service| ["gary", "melodyflow"].contains(&service.id.as_str())) {
+            service.runtime = ServiceRuntime::Native;
+        }
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "yuey"]);
+
+        let svc = manager.find_service("gary").unwrap();
+        let native = svc.native.clone().unwrap();
+        let native_dir = manager.native_dir(svc);
+        std::fs::create_dir_all(&native_dir).unwrap();
+        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        let stamp = |version: &str| native_runtime::NativeStamp {
+            version: version.into(),
+            platform: native_runtime::current_platform().into(),
+            backend: "cuda".into(),
+            requested_backend: "auto".into(),
+            fallback_reason: None,
+            runtimes: vec![],
+        };
+        std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
+        assert_eq!(manager.outdated_native_runtimes(), ["yuey"]);
+        std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp("v0.0.1")).unwrap()).unwrap();
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "yuey"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

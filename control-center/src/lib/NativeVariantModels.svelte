@@ -2,13 +2,16 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import DownloadProgress from "./DownloadProgress.svelte";
+  import type { VariantLayout } from "./nativeVariants";
   import { onMount } from "svelte";
 
   interface Component { id: string; label: string; description: string; files: { bytes: number }[]; }
   interface Model { id: string; status: "available" | "downloading" | "downloaded" | "failed"; downloaded_bytes: number | null; }
   interface Progress { model_id: string; progress: number; status: string; message: string; error: string | null; }
   interface Recommendations { tier: string | null; components: string[]; }
-  let { models, progress, nativeSelected, onDownload, onRemove, removingId }: {
+  let { serviceId, layout, models, progress, nativeSelected, onDownload, onRemove, removingId }: {
+    serviceId: string;
+    layout: VariantLayout;
     models: Model[];
     progress: Map<string, Progress>;
     nativeSelected: boolean;
@@ -17,14 +20,10 @@
     removingId: string | null;
   } = $props();
 
-  // ace-server keeps every downloaded model in one registry and gary4juce names
-  // the one it wants, so each model is its own choice of precision. The base
-  // model at the active precision is the one Carey needs to start.
-  const groups = [
-    { label: "2B models", hint: "The base model runs every task, including lego, extract and complete, and Carey needs it to start. sft and turbo are optional.", variants: ["base", "sft", "turbo"] },
-    { label: "XL models", hint: "Optional. XL is larger and needs more GPU memory than 2B at the same precision. Some tasks, such as lego, can sound better on 2B.", variants: ["xl-base", "xl-sft", "xl-turbo"] },
-    { label: "language models", hint: "Optional. A language model writes lyrics, metadata and audio codes for standard generation; Carey's DAW tasks run without one.", variants: ["lm-0.6B", "lm-1.7B", "lm-4B"] },
-  ];
+  // The server keeps every downloaded model in one registry and gary4juce
+  // names the one it wants, so each model is its own choice of precision.
+  // The required model at the active precision is the one the service needs
+  // to start.
   let catalog = $state<Component[]>([]);
   let recommended = $state<Recommendations>({ tier: null, components: [] });
   let activeEncoding = $state<string | null>(null);
@@ -34,28 +33,28 @@
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
 
-  const shared = $derived(catalog.find((entry) => entry.id === "carey-native::shared"));
-  const status = (id: string) => models.find((model) => model.id === id)?.status;
-  const downloading = $derived(models.some((model) => model.id.startsWith("carey-native::") && model.status === "downloading"));
-  const precisions = (variant: string) => catalog.filter((entry) => entry.id.startsWith(`carey-native::${variant}::`)).map((entry) => entry.id.split("::")[2]);
+  const id = (variant: string, tier: string) => `${layout.prefix}::${variant}::${tier}`;
+  const shared = $derived(catalog.find((entry) => entry.id === `${layout.prefix}::shared`));
+  const status = (modelId: string) => models.find((model) => model.id === modelId)?.status;
+  const downloading = $derived(models.some((model) => model.id.startsWith(`${layout.prefix}::`) && model.status === "downloading"));
+  const precisions = (variant: string) => catalog.filter((entry) => entry.id.startsWith(`${layout.prefix}::${variant}::`)).map((entry) => entry.id.split("::")[2]);
   // A row shows what was picked, else what is active or on disk, else the recommendation.
   function shown(variant: string) {
     const options = precisions(variant);
-    const id = (tier: string) => `carey-native::${variant}::${tier}`;
     return picked[variant]
-      ?? (variant === "base" && activeEncoding && options.includes(activeEncoding) ? activeEncoding : undefined)
-      ?? options.find((tier) => status(id(tier)) === "downloaded")
-      ?? options.find((tier) => recommended.components.includes(id(tier)))
+      ?? (variant === layout.required && activeEncoding && options.includes(activeEncoding) ? activeEncoding : undefined)
+      ?? options.find((tier) => status(id(variant, tier)) === "downloaded")
+      ?? options.find((tier) => recommended.components.includes(id(variant, tier)))
       ?? options[0];
   }
-  const onDisk = (variant: string) => precisions(variant).filter((tier) => status(`carey-native::${variant}::${tier}`) === "downloaded");
+  const onDisk = (variant: string) => precisions(variant).filter((tier) => status(id(variant, tier)) === "downloaded");
   function size(bytes: number) { return `${(bytes / 1024 ** 3).toFixed(2)} GB`; }
   function bytesOf(entry: Component) { return entry.files.reduce((sum, file) => sum + file.bytes, 0); }
 
   async function refresh() {
     const [selection, recommendations] = await Promise.all([
-      invoke<{ encoding: string } | null>("get_native_runtime_selection", { serviceId: "carey" }),
-      invoke<Recommendations>("get_native_model_recommendations", { serviceId: "carey" }),
+      invoke<{ encoding: string } | null>("get_native_runtime_selection", { serviceId }),
+      invoke<Recommendations>("get_native_model_recommendations", { serviceId }),
     ]);
     activeEncoding = selection?.encoding ?? null;
     recommended = recommendations;
@@ -63,20 +62,20 @@
   $effect(() => { void nativeSelected; void refresh().catch((cause) => error = String(cause)); });
   onMount(() => {
     let disposed = false;
-    void invoke<Component[]>("get_native_model_catalog", { serviceId: "carey" })
+    void invoke<Component[]>("get_native_model_catalog", { serviceId })
       .then((entries) => { if (!disposed) catalog = entries; })
       .catch((cause) => { if (!disposed) error = String(cause); });
     const listener = listen<{ serviceId: string; encoding: string }>("native-model-selected", (event) => {
-      if (!disposed && event.payload.serviceId === "carey") activeEncoding = event.payload.encoding;
+      if (!disposed && event.payload.serviceId === serviceId) activeEncoding = event.payload.encoding;
     });
     return () => { disposed = true; void listener.then((stop) => stop()); };
   });
   async function useTier(tier: string) {
     busy = true; error = null; message = null;
     try {
-      const selection = await invoke<{ encoding: string }>("select_native_model", { serviceId: "carey", encoding: tier });
+      const selection = await invoke<{ encoding: string }>("select_native_model", { serviceId, encoding: tier });
       activeEncoding = selection.encoding;
-      message = `Carey will need the 2B base at ${tier} next time it starts.`;
+      message = `${layout.label} will need ${layout.requiredLabel} at ${tier} next time it starts.`;
     } catch (cause) { error = String(cause); }
     finally { busy = false; }
   }
@@ -89,8 +88,8 @@
     <DownloadProgress value={download?.progress ?? 0} label={`${entry.label} download`} />
   {:else if model?.status === "downloaded"}
     <div class="actions">
-      {#if tier && nativeSelected && activeEncoding !== tier}<button class="download" disabled={busy || downloading || removingId !== null || status("carey-native::shared") !== "downloaded"} title={`Require the 2B base at ${tier} next time Carey starts`} onclick={() => useTier(tier)}>use</button>{/if}
-      <button disabled={busy || downloading || removingId !== null || (tier !== null && nativeSelected && activeEncoding === tier)} title={tier !== null && nativeSelected && activeEncoding === tier ? "Carey needs this model to start" : undefined} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
+      {#if tier && nativeSelected && activeEncoding !== tier}<button class="download" disabled={busy || downloading || removingId !== null || status(`${layout.prefix}::shared`) !== "downloaded"} title={`Require ${layout.requiredLabel} at ${tier} next time ${layout.label} starts`} onclick={() => useTier(tier)}>use</button>{/if}
+      <button disabled={busy || downloading || removingId !== null || (tier !== null && nativeSelected && activeEncoding === tier)} title={tier !== null && nativeSelected && activeEncoding === tier ? `${layout.label} needs this model to start` : undefined} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
     </div>
   {:else}<button class="download" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
 {/snippet}
@@ -112,14 +111,14 @@
   </section>
 {/if}
 
-{#each groups as group (group.label)}
+{#each layout.groups as group (group.label)}
   <section aria-label={group.label}>
     <div class="group-label">{group.label}</div>
     <p>{group.hint}
-      {#if group.variants[0] === "base" && activeEncoding}Carey is set to the 2B base at {activeEncoding}. Stop Carey before changing it.{/if}</p>
+      {#if group.variants.includes(layout.required) && activeEncoding}{layout.label} is set to {layout.requiredLabel} at {activeEncoding}. Stop {layout.label} before changing it.{/if}</p>
     {#each group.variants as variant (variant)}
       {@const tier = shown(variant)}
-      {@const entry = catalog.find((item) => item.id === `carey-native::${variant}::${tier}`)}
+      {@const entry = catalog.find((item) => item.id === id(variant, tier))}
       {#if entry}
         {@const download = progress.get(entry.id)}
         {@const others = onDisk(variant).filter((other) => other !== tier)}
@@ -127,23 +126,23 @@
           <div class="model-info">
             <span class="model-name">{entry.label.replace(` ${tier}`, "")}
               <select aria-label={`${entry.label.replace(` ${tier}`, "")} precision`} value={tier} disabled={busy} onchange={(event) => picked[variant] = event.currentTarget.value}>
-                {#each precisions(variant) as option (option)}<option value={option}>{option}{recommended.components.includes(`carey-native::${variant}::${option}`) ? " (recommended)" : ""}</option>{/each}
+                {#each precisions(variant) as option (option)}<option value={option}>{option}{recommended.components.includes(id(variant, option)) ? " (recommended)" : ""}</option>{/each}
               </select>
-              {#if variant === "base" && activeEncoding === tier}<span class="badge active">active</span>{/if}
+              {#if variant === layout.required && activeEncoding === tier}<span class="badge active">active</span>{/if}
               {#if recommended.components.includes(entry.id)}<span class="badge">recommended</span>{/if}
             </span>
             <span class="model-size">{size(bytesOf(entry))}{status(entry.id) === "downloaded" ? " on disk" : " download"}{others.length ? ` · also on disk: ${others.join(", ")}` : ""}</span>
             {#if status(entry.id) === "downloading"}<span class="model-size" role="status">{download?.message ?? "Queued for download"}</span>{/if}
             {#if download?.error}<span class="error" role="alert">{download.error}</span>{/if}
           </div>
-          {@render actions(entry, variant === "base" ? tier : null)}
+          {@render actions(entry, variant === layout.required ? tier : null)}
         </div>
       {/if}
     {/each}
   </section>
 {/each}
 {#if !recommended.tier}<p>Recommendations appear once the C++ runtime is installed and has checked this GPU.</p>{/if}
-{#if !nativeSelected}<p>Use migrate runtime on the Carey service row to switch to C++ after downloading.</p>{/if}
+{#if !nativeSelected}<p>Use migrate runtime on the {layout.label} service row to switch to C++ after downloading.</p>{/if}
 {#if message}<p role="status">{message}</p>{/if}
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 

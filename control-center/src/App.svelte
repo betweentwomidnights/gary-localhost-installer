@@ -860,7 +860,7 @@
       if (storageModalOpen && finishedBuild) void loadServiceEnvs();
     });
 
-    // When "Rebuild All" is running, the backend tells us which service to focus on
+    // While all runtimes update, the backend says which service to focus on
     const unlistenSelect = listen<string>("select-service", (event) => {
       selectService(event.payload);
     });
@@ -1002,7 +1002,8 @@
               onShowModels={() => showModels("carey")}
             />
           {/if}
-        {:else if selectedServiceId === "gary"}
+        {:else if selectedServiceId === "gary" && selectedService?.runtime !== "native"}
+          <!-- Python gary's setting; musicgen-server always runs its F16 model. -->
           <GaryFp16Banner
             enabled={appSettings.garyUseFp16}
             serviceStatus={selectedService?.status ?? "stopped"}
@@ -1022,7 +1023,7 @@
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onYueyGenerationSettingUpdated}
           />
-        {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
+        {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner && selectedService?.runtime !== "native"}
           <MelodyflowFlashBanner
             enabled={appSettings.melodyflowUseFlashAttn}
             serviceStatus={selectedService?.status ?? "stopped"}
