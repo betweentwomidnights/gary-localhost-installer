@@ -11614,7 +11614,10 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
                 .map(|env| env.display_name.as_str())
                 .collect();
             let blocked_reason = if !used_by.is_empty() {
-                Some(format!("used by {}", used_by.join(", ")))
+                Some(format!(
+                    "used by {}: reinstall them on another backend to free it",
+                    used_by.join(", ")
+                ))
             } else if native_building {
                 Some("wait for the runtime install to finish".to_string())
             } else {
