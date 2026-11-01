@@ -860,7 +860,7 @@
       if (storageModalOpen && finishedBuild) void loadServiceEnvs();
     });
 
-    // When "Rebuild All" is running, the backend tells us which service to focus on
+    // While all runtimes update, the backend says which service to focus on
     const unlistenSelect = listen<string>("select-service", (event) => {
       selectService(event.payload);
     });

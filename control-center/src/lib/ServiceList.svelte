@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import ServiceRow from "./ServiceRow.svelte";
   import { runtimeGroupLabel } from "./runtimeGroups";
+  import { setUpWithDefaults } from "./runtimeSetup";
 
   interface BuildStatus {
     building: boolean;
@@ -47,12 +48,42 @@
     onMigrateRuntime: (id: string) => void;
   } = $props();
 
-  async function rebuildAll() {
-    try {
-      await invoke("rebuild_all_envs");
-    } catch (e) {
-      console.error("Rebuild all failed:", e);
+  // Services never set up (no Python to migrate), and C++ runtimes that are
+  // missing or behind; services sharing a runtime update it once.
+  const toSetUp = $derived(services.filter((service) => service.has_migration && service.runtime === "python" && service.python_retired));
+  const toUpdate = $derived(services.filter((service) => service.runtime === "native" && (!service.env_exists || service.native_update_available)));
+  let runningAll = $state(false);
+  let allProgress = $state("");
+  let allErrors = $state<string[]>([]);
+  const allLabel = $derived(
+    runningAll ? "working…"
+    : toSetUp.length ? "set up all runtimes"
+    : toUpdate.length ? "update all runtimes"
+    : "runtimes up to date"
+  );
+
+  // Each setup runs with the defaults its setup modal starts from, one at a
+  // time, then the runtimes still behind are updated.
+  async function setUpAll() {
+    runningAll = true;
+    allErrors = [];
+    const pending = [...toSetUp];
+    for (const [index, service] of pending.entries()) {
+      onSelect(service.id);
+      try {
+        await setUpWithDefaults(service.id, (_, message) => allProgress = `${service.display_name} (${index + 1}/${pending.length}): ${message}`);
+      } catch (e) {
+        allErrors = [...allErrors, `${service.display_name}: ${e}`];
+      }
     }
+    allProgress = "Updating runtimes…";
+    try {
+      await invoke("update_native_runtimes");
+    } catch (e) {
+      allErrors = [...allErrors, ...String(e).split("\n")];
+    }
+    allProgress = "";
+    runningAll = false;
   }
 
   // Jerry's and SA3's Python models come from gated Hugging Face repos, so
@@ -113,8 +144,10 @@
 <div class="service-list">
   <div class="list-header">
     <span class="label">services</span>
-    <button onclick={rebuildAll}>rebuild all envs</button>
+    <button onclick={setUpAll} disabled={runningAll || (!toSetUp.length && !toUpdate.length)}>{allLabel}</button>
   </div>
+  {#if allProgress}<div class="all-status" role="status">{allProgress}</div>{/if}
+  {#each allErrors as message}<div class="all-error" role="alert">{message}</div>{/each}
   {#each entries as entry ("group" in entry ? `group:${entry.group}` : entry.service.id)}
     {#if "group" in entry}
       <div class="runtime-group">
@@ -153,6 +186,12 @@
     color: var(--text-secondary);
     font-weight: 600;
   }
+  .all-status, .all-error {
+    padding: 0 12px 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .all-error { color: var(--red); }
   .empty {
     padding: 20px;
     text-align: center;

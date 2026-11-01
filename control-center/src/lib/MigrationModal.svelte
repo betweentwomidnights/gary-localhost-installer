@@ -2,39 +2,15 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount, tick } from "svelte";
-  import { recommendQuantizedSa3Training, type Sa3TrainingHardware } from "./sa3NativeTraining";
+  import {
+    checksLabel, cleanUp, componentIds, hasFeature, loadSetup, onlyBundledCode, runSetup, stopService,
+    type Component, type Preview, type Profile, type Recommendations, type SetupChoices, type SetupTask,
+  } from "./runtimeSetup";
 
-  interface Item { label: string; path: string; bytes: number; kind: string | null; }
-  interface Selection { encoding: string; verifiedRelease: string; cleanupComplete: boolean; cleanupErrors: string[]; }
-  interface Preview {
-    activeRoot: string;
-    hfHubCache: string;
-    cleanupCandidates: Item[];
-    legacyRuntimePresent: boolean;
-    trainingBasePresent: boolean;
-    estimatedCleanupBytes: number;
-    preservedPaths: Item[];
-    warnings: string[];
-    nativeSelection: Selection | null;
-    cleanupToken: string;
-    pythonStillNeeded: string | null;
-  }
-  interface Profile {
-    serviceId: string;
-    label: string;
-    dataLabel: string | null;
-    tiers: string[];
-    tierComponents: Record<string, string[]>;
-    features: string[];
-    tierOptions: Record<string, string[]>;
-    optionsLabel: string | null;
-  }
   interface Service { id: string; status: string; build_status: { building: boolean; step_label: string } | null; }
   interface Download { model_id: string; progress: number; status: string; message: string; error: string | null; }
-  interface Component { id: string; label: string; files: { bytes: number }[]; }
-  interface Recommendations { tier: string | null; components: string[]; }
   type Stage = "setup" | "cleanup" | "complete";
-  type Task = "runtime" | "models" | "adapters" | "verify";
+  type Task = SetupTask;
 
   let { open, serviceId, pendingRestart, onClose, onReveal }: {
     open: boolean;
@@ -67,15 +43,17 @@
   let elapsedSeconds = $state(0);
   let services: Service[] = $state([]);
   let dialog: HTMLDivElement | undefined = $state();
+  // A first setup rather than a migration: no Python installation to review.
+  let fresh = $state(false);
 
   // SA3's extra steps; other services offer none of these.
-  const has = (feature: string) => profile?.features.includes(feature) ?? false;
+  const has = (feature: string) => hasFeature(profile, feature);
   const label = $derived(profile?.label ?? serviceId);
   const tasks = $derived<{ id: Task; label: string }[]>([
     { id: "runtime", label: "Prepare the C++ runtime" },
     { id: "models", label: "Prepare model files" },
     ...(has("adapters") ? [{ id: "adapters" as Task, label: "Prepare your LoRAs" }] : []),
-    { id: "verify", label: "Verify and switch to C++" },
+    { id: "verify", label: fresh ? "Verify the runtime" : "Verify and switch to C++" },
   ]);
   const taskIndex = $derived(task ? tasks.findIndex((entry) => entry.id === task) : -1);
   const stepNumber = $derived(stage === "setup" ? working && task === "verify" ? 2 : 1 : 3);
@@ -87,12 +65,13 @@
     ...recommended.components.filter((id) => !(profile?.tierComponents[encoding] ?? []).includes(id)),
   ])].flatMap((id) => catalog.filter((entry) => entry.id === id)));
   const pickedOptions = $derived(tierOptions.filter((_, index) => optionPicks[index]));
-  const modelIds = $derived([
-    ...(profile?.tierComponents[encoding] ?? []),
-    ...pickedOptions.map((entry) => entry.id),
-    ...(has("training-base") && includeTraining ? [`sa3-native::medium-base-${trainingBase}`] : []),
-    ...(has("decoder-correction") && includeDecoder ? ["sa3-native::decoder-correction"] : []),
-  ]);
+  const choices = $derived<SetupChoices>({
+    encoding,
+    options: pickedOptions.map((entry) => entry.id),
+    training: has("training-base") && includeTraining ? trainingBase : null,
+    decoder: has("decoder-correction") && includeDecoder,
+  });
+  const modelIds = $derived(profile ? componentIds(profile, choices) : []);
   const modelBytes = $derived(catalog.filter((entry) => modelIds.includes(entry.id)).reduce((sum, entry) => sum + entry.files.reduce((bytes, file) => bytes + file.bytes, 0), 0));
   const hasCleanup = $derived.by(() => !!preview && (preview.cleanupCandidates.length > 0 || preview.legacyRuntimePresent || (preview.nativeSelection?.cleanupErrors.length ?? 0) > 0));
   const selectedDownloads = $derived(downloads.filter((entry) => modelIds.includes(entry.model_id)));
@@ -101,7 +80,7 @@
     const download = selectedDownloads.find((download) => download.model_id === entry.id);
     return sum + entry.files.reduce((bytes, file) => bytes + file.bytes, 0) * (download?.status === "downloaded" ? 1 : Math.min(1, Math.max(0, download?.progress ?? 0)));
   }, 0));
-  const checks = $derived(has("training-base") && includeTraining ? "generation, training and checkpoint saving" : "generation");
+  const checks = $derived(checksLabel(choices));
   const dataLabel = $derived(profile?.dataLabel ?? "data and other services");
 
   function formatBytes(bytes: number) { return `${(bytes / 1024 ** 3).toFixed(1)} GB`; }
@@ -118,28 +97,19 @@
     downloads = [];
     task = null;
     try {
-      const [details, storage, components, currentServices, recommendations] = await Promise.all([
-        invoke<Profile>("get_migration_profile", { serviceId }),
-        invoke<Preview>("get_migration_preview", { serviceId }),
-        invoke<Component[]>("get_native_model_catalog", { serviceId }),
-        invoke<Service[]>("get_services"),
-        invoke<Recommendations>("get_native_model_recommendations", { serviceId }),
-      ]);
-      profile = details;
+      const [setup, currentServices] = await Promise.all([loadSetup(serviceId), invoke<Service[]>("get_services")]);
+      const storage = setup.preview;
+      profile = setup.profile;
       preview = storage;
-      catalog = components;
+      catalog = setup.catalog;
       services = currentServices;
-      recommended = recommendations;
+      recommended = setup.recommended;
       encodingPicked = false;
-      encoding = storage.nativeSelection?.encoding ?? recommendations.tier ?? details.tiers[0];
-      includeTraining = has("training-base") && storage.trainingBasePresent;
-      if (has("training-base")) {
-        const hardware = await invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId });
-        trainingBase = recommendQuantizedSa3Training(hardware) ? "Q4_K_M" : "F16";
-      }
-      if (has("decoder-correction")) {
-        includeDecoder = (await invoke<{ enabled: boolean }>("get_sa3_native_decoder_state")).enabled;
-      }
+      encoding = setup.choices.encoding;
+      includeTraining = setup.choices.training !== null;
+      trainingBase = setup.choices.training ?? "F16";
+      includeDecoder = setup.choices.decoder;
+      fresh = !storage.nativeSelection && onlyBundledCode(storage);
       stage = storage.nativeSelection?.cleanupComplete
         && !storage.nativeSelection.cleanupErrors.length
         && !storage.legacyRuntimePresent ? "complete" : "setup";
@@ -193,48 +163,26 @@
     return () => { disposed = true; for (const listener of listeners) void listener.then((stop) => stop()); };
   });
 
-  async function stopService() {
-    const current = await invoke<Service[]>("get_services");
-    if (current.some((entry) => entry.id === serviceId && ["running", "starting", "unhealthy"].includes(entry.status))) {
-      await invoke("stop_service", { serviceId });
-    }
-  }
-
   async function migrate() {
-    if (blocked || !preview) return;
+    if (blocked || !preview || !profile) return;
     working = true;
     error = null;
     downloads = [];
     try {
-      task = "runtime";
-      progress = `Stopping ${label} before migration...`;
-      await stopService();
-      progress = "Installing and checking the runtime for your hardware...";
-      await invoke("prepare_native_runtime", { serviceId });
-      // The install probe has now measured this GPU.
-      recommended = await invoke<Recommendations>("get_native_model_recommendations", { serviceId });
-      if (!encodingPicked && !preview?.nativeSelection && recommended.tier && recommended.tier !== encoding) {
-        encoding = recommended.tier;
-        progress = `Using ${encoding}, recommended for this GPU.`;
-      }
-      task = "models";
-      progress = "Downloading and verifying model files. Existing components are reused.";
-      await invoke("prepare_native_models", { serviceId, componentIds: modelIds, waitForCompletion: true });
-      if (has("decoder-correction") && includeDecoder) {
-        progress = "Preparing your decoder squeak fix...";
-        await invoke("prepare_sa3_native_decoder");
-      }
-      if (has("adapters")) {
-        task = "adapters";
-        progress = "Preparing native copies of your registered LoRAs...";
-        const loras = await invoke<{ entries: { name: string; nativePath: string | null; error: string | null }[] }>("prepare_sa3_native_loras");
-        const failed = loras.entries.filter((entry) => !entry.nativePath || entry.error);
-        if (failed.length) throw new Error(failed.map((entry) => `${entry.name}: ${entry.error ?? "Native copy is missing"}`).join("\n"));
-      }
-      task = "verify";
-      progress = `Verifying the server, model files and native ${checks}...`;
-      await invoke<Selection>("activate_native_runtime", { serviceId, encoding });
+      await runSetup(serviceId, profile, (measured) => {
+        // The install probe has now measured this GPU.
+        recommended = measured;
+        if (!encodingPicked && !preview?.nativeSelection && measured.tier) encoding = measured.tier;
+        return choices;
+      }, (current, message) => { task = current; progress = message; });
       await scan();
+      // Nothing of the user's to review: finish without asking.
+      if (preview && onlyBundledCode(preview)) {
+        progress = "Checking again and removing unused bundled Python files...";
+        const result = await cleanUp(serviceId, preview);
+        await scan();
+        if (result.errors.length) error = result.errors.join("\n");
+      }
       stage = hasCleanup ? "cleanup" : "complete";
     } catch (cause) { error = String(cause); }
     finally { working = false; }
@@ -246,9 +194,8 @@
     error = null;
     progress = "Verifying C++ again before removing reviewed Python files...";
     try {
-      await stopService();
-      // The current review token binds this action to the paths shown below.
-      const result = await invoke<{ selection: Selection; errors: string[] }>("cleanup_legacy_installation", { serviceId, reviewToken: preview.cleanupToken });
+      await stopService(serviceId);
+      const result = await cleanUp(serviceId, preview);
       await scan();
       if (result.selection.cleanupComplete) stage = "complete";
       if (result.errors.length) error = result.errors.join("\n");
@@ -273,11 +220,11 @@
     <button class="backdrop" type="button" aria-label="Close runtime migration" onclick={close} disabled={working || loading}></button>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="migration-title" aria-busy={working || loading} tabindex="-1" bind:this={dialog} onkeydown={handleKeys}>
       <header>
-        <div><div class="eyebrow">{label} runtime</div><h2 id="migration-title">{stage === "complete" ? "C++ is ready" : `Migrate ${label} to C++`}</h2></div>
+        <div><div class="eyebrow">{label} runtime</div><h2 id="migration-title">{stage === "complete" ? "C++ is ready" : fresh ? `Set up ${label}` : `Migrate ${label} to C++`}</h2></div>
         <button type="button" class="close" aria-label="Close runtime migration" onclick={close} disabled={working || loading}>×</button>
       </header>
       <ol class="steps" aria-label="Migration steps">
-        {#each ["Prepare", "Automatic checks", "Clean up"] as step, index}
+        {#each fresh ? ["Prepare", "Automatic checks"] : ["Prepare", "Automatic checks", "Clean up"] as step, index}
           <li class:current={stepNumber === index + 1} class:done={stepNumber > index + 1 || stage === "complete"} aria-current={stepNumber === index + 1 ? "step" : undefined}><span>{stepNumber > index + 1 || stage === "complete" ? "✓" : index + 1}</span>{step}</li>
         {/each}
       </ol>
@@ -286,9 +233,9 @@
         {:else if preview && profile}
           {#if stage === "setup"}
             {#if !working}
-            <h3>One action to prepare and switch</h3>
-            <p>Gary will prepare the runtime{has("adapters") ? ", models and your LoRAs" : " and models"}, then automatically check {checks} before offering cleanup.</p>
-            <p>{preview.legacyRuntimePresent ? "Your Python installation stays available until the checks pass and you choose to clean it up." : `Your ${dataLabel} stay in place.`} {label} will stop while migration runs.</p>
+            <h3>{fresh ? "One action to set up" : "One action to prepare and switch"}</h3>
+            <p>Gary will prepare the runtime{has("adapters") ? ", models and your LoRAs" : " and models"}, then automatically check {checks}{fresh ? "" : " before offering cleanup"}.</p>
+            {#if !fresh}<p>{preview.legacyRuntimePresent ? "Your Python installation stays available until the checks pass and you choose to clean it up." : `Your ${dataLabel} stay in place.`} {label} will stop while migration runs.</p>{/if}
             <div class="summary">{encoding} {has("training-base") ? "inference" : "generation"}{has("training-base") && includeTraining ? ` · ${trainingBase} training` : ""}{pickedOptions.length ? ` · ${pickedOptions.length} ${profile.optionsLabel ?? "options"}` : ""}{modelBytes ? ` · ${formatBytes(modelBytes)} of model files` : ""}<small>Existing model components and shared runtimes are reused.</small></div>
             <details>
               <summary>Model options</summary>
@@ -335,8 +282,8 @@
             {#if preview.warnings.length}<p>Resolve these storage warnings, then check again before cleanup.</p><button type="button" onclick={initialize} disabled={blocked}>check again</button>{/if}
             {#each preview.nativeSelection?.cleanupErrors ?? [] as issue}<p class="error">{issue}</p>{/each}
           {:else}
-            <h3>{preview.nativeSelection?.cleanupComplete ? "Migration complete" : `Ready to use ${label} C++`}</h3>
-            <p>{preview.nativeSelection?.cleanupComplete ? `The reviewed Python files have been cleaned up. ${label} now uses the C++ runtime.` : "C++ is selected and there are no reviewed Python files to clean up."}</p>
+            <h3>{fresh ? `${label} is set up` : preview.nativeSelection?.cleanupComplete ? "Migration complete" : `Ready to use ${label} C++`}</h3>
+            <p>{fresh ? `${label} runs on C++ and passed its checks on this machine.` : preview.nativeSelection?.cleanupComplete ? `The reviewed Python files have been cleaned up. ${label} now uses the C++ runtime.` : "C++ is selected and there are no reviewed Python files to clean up."}</p>
             {#if profile.dataLabel}<p>Your {profile.dataLabel} remain available.</p>{/if}
           {/if}
           <details class="storage"><summary>Using your current storage folder</summary><button class="path" type="button" onclick={() => onReveal(preview!.activeRoot)}>{preview.activeRoot}</button><p>PyTorch cache: {preview.hfHubCache}</p></details>
@@ -352,7 +299,7 @@
         {#if error}<p class="error" role="alert">{error}</p>{#if !preview}<button type="button" onclick={initialize} disabled={working || loading}>check again</button>{/if}{/if}
       </div>
       <footer>
-        {#if stage === "setup"}<button type="button" onclick={close} disabled={working || loading}>later</button><button class="primary" type="button" onclick={migrate} disabled={blocked || !preview}>{working ? "migrating…" : error && task ? "retry migration" : preview?.nativeSelection ? "check and finish migration" : "prepare and switch to C++"}</button>
+        {#if stage === "setup"}<button type="button" onclick={close} disabled={working || loading}>later</button><button class="primary" type="button" onclick={migrate} disabled={blocked || !preview}>{working ? fresh ? "setting up…" : "migrating…" : error && task ? fresh ? "retry setup" : "retry migration" : preview?.nativeSelection ? "check and finish migration" : fresh ? `set up ${label}` : "prepare and switch to C++"}</button>
         {:else if stage === "cleanup" && preview?.pythonStillNeeded}<button class="primary" type="button" onclick={close}>done</button>
         {:else if stage === "cleanup"}<button type="button" onclick={close} disabled={working || loading}>keep Python for now</button><button class="primary" type="button" onclick={cleanup} disabled={blocked || !!preview?.warnings.length}>{working ? "cleaning up…" : "clean up Python and finish"}</button>
         {:else}<button class="primary" type="button" onclick={close}>done</button>{/if}
