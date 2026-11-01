@@ -24,22 +24,22 @@
       }
     },
     "audiocraft": {
-      "version": "v0.1.1",
+      "version": "v0.1.2",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.1/audiocraft-v0.1.1-windows-x64-core.zip",
-            "sha256": "5b446e2cd8ba8df0354ed20bdf853ca574e2983ffe4b0c5f891943888b0dfe5c"
+            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.2/audiocraft-v0.1.2-windows-x64-core.zip",
+            "sha256": "53f7c0eee8cfab80ffdddbb86bab79420e8147838431fddb97c37b8ed0855e46"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.1/audiocraft-v0.1.1-windows-x64-cuda.zip",
-              "sha256": "dd7babddc65c5e096597fbbad6b5eb1f3b75a21db89214044c3fac31dad255ad",
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.2/audiocraft-v0.1.2-windows-x64-cuda.zip",
+              "sha256": "20c2bba394d963e389b16612dbc4f0dc893d7222c2b98a02ac7096cfebdeec75",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.1/audiocraft-v0.1.1-windows-x64-vulkan.zip",
-              "sha256": "1ae1f359f61fea2c8a31cea1347dde5321d2186cb124f160b158f9dc432016c4"
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.2/audiocraft-v0.1.2-windows-x64-vulkan.zip",
+              "sha256": "5a7843cb45cf5c5f831d08c5745fd0d7934bc10904bb29aed07ee64f2e2b24ec"
             }
           },
           "prefer": ["cuda", "vulkan"]
