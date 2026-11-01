@@ -33,5 +33,61 @@
         "bytes": 841063296
       }
     ]
+  },
+  {
+    "id": "gary-native::hoenn_lofi::Q8_0",
+    "label": "hoenn_lofi Q8_0",
+    "description": "thepatch's lofi finetune of MusicGen large, Q8_0 (3.2 GB).",
+    "files": [
+      {
+        "repo": "thepatch/hoenn_lofi-GGUF",
+        "revision": "fa233199390082a3ada93cf18cdc949c54b75dfa",
+        "filename": "musicgen-hoenn-lofi-3.3B-v1.0-Q8_0.gguf",
+        "sha256": "4970d811d5be01cb1d48b65badfa7f91620520de141f35f1c975b73f253d02c5",
+        "bytes": 3462304096
+      }
+    ]
+  },
+  {
+    "id": "gary-native::hoenn_lofi::Q4_K_M",
+    "label": "hoenn_lofi Q4_K_M",
+    "description": "thepatch's lofi finetune of MusicGen large, Q4_K_M (2.0 GB, for smaller GPUs).",
+    "files": [
+      {
+        "repo": "thepatch/hoenn_lofi-GGUF",
+        "revision": "fa233199390082a3ada93cf18cdc949c54b75dfa",
+        "filename": "musicgen-hoenn-lofi-3.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "a78fb88169f6c7ce6343a1a5f3c07cbbe2d67138a438020c7e0fda42e5e3a24b",
+        "bytes": 2154203616
+      }
+    ]
+  },
+  {
+    "id": "gary-native::keygen-gary-v2-large-12::Q8_0",
+    "label": "keygen-gary-v2-large-12 Q8_0",
+    "description": "thepatch's keygen-music finetune of MusicGen large, epoch 12, Q8_0 (3.2 GB).",
+    "files": [
+      {
+        "repo": "thepatch/keygen-gary-v2-large-12-GGUF",
+        "revision": "0e09820443731be5b4ec201556c507e25a7ac7ec",
+        "filename": "musicgen-keygen-gary-v2-large-12-3.3B-v1.0-Q8_0.gguf",
+        "sha256": "7d68c6f7492545d2e9d48a3c937fb4366d6d97572895de1b074b2532d9f4d3f3",
+        "bytes": 3462304160
+      }
+    ]
+  },
+  {
+    "id": "gary-native::keygen-gary-v2-large-12::Q4_K_M",
+    "label": "keygen-gary-v2-large-12 Q4_K_M",
+    "description": "thepatch's keygen-music finetune of MusicGen large, epoch 12, Q4_K_M (2.0 GB, for smaller GPUs).",
+    "files": [
+      {
+        "repo": "thepatch/keygen-gary-v2-large-12-GGUF",
+        "revision": "0e09820443731be5b4ec201556c507e25a7ac7ec",
+        "filename": "musicgen-keygen-gary-v2-large-12-3.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "b1ce72b1690ecb0a9d2e0c1d982861b9b430b35ceddf6758e41f877703ddc554",
+        "bytes": 2154203680
+      }
+    ]
   }
 ]

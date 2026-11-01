@@ -23,6 +23,34 @@ const GARY_SHARED: &str = "gary-native::shared";
 const GARY_VANYA: &str = "gary-native::vanya_ai_dnb_0.1";
 const TERRY_F16: &str = "melodyflow-native::F16";
 
+/// The finetunes gary can add, each published at these precisions, most
+/// faithful first. They are musicgen-large: 6.6 GB at F16, too much for an
+/// 8 GB GPU beside the KV cache, so they ship quantized.
+const GARY_FINETUNES: &[&str] = &["hoenn_lofi", "keygen-gary-v2-large-12"];
+const FINETUNE_TIERS: &[&str] = &["Q8_0", "Q4_K_M"];
+
+/// What generating needs beside a finetune's weights: a 30-second KV cache
+/// for each guidance stream, the graph, and what the driver keeps.
+const GARY_HEADROOM_BYTES: u64 = 3 << 30;
+
+fn finetune_component(finetune: &str, tier: &str) -> String {
+    format!("gary-native::{finetune}::{tier}")
+}
+
+fn component_bytes(id: &str) -> u64 {
+    gary_models().component(id).map_or(0, |component| component.files.iter().map(|file| file.bytes).sum())
+}
+
+/// The precision of `finetune` to badge for a GPU with `memory_bytes`: the
+/// most faithful one that fits beside the headroom, else the smallest.
+fn recommended_tier(finetune: &str, memory_bytes: u64) -> &'static str {
+    FINETUNE_TIERS
+        .iter()
+        .copied()
+        .find(|tier| component_bytes(&finetune_component(finetune, tier)) + GARY_HEADROOM_BYTES <= memory_bytes)
+        .unwrap_or(FINETUNE_TIERS[FINETUNE_TIERS.len() - 1])
+}
+
 /// The preset terry's proof transforms with.
 const TERRY_VARIATION: &str = "accordion_folk";
 
@@ -68,15 +96,21 @@ impl Service for Gary {
 
     fn extras(&self, root: &Path, hub: &Path) -> Extras {
         // Python downloads any of gary4juce's finetunes on demand; C++ gary
-        // lists only what has been converted. Say so before cleanup takes
-        // the Python copies away.
+        // lists only what has been converted, which is what has a -GGUF repo
+        // in the catalog. Say so before cleanup takes the Python copies away.
+        let converted: Vec<&str> = gary_models()
+            .components()
+            .iter()
+            .flat_map(|component| &component.files)
+            .filter_map(|file| file.repo.strip_suffix("-GGUF"))
+            .collect();
         let others: Vec<&str> = self
             .target()
             .def
             .legacy
             .hf_repos
             .iter()
-            .filter(|repo| repo.repo.starts_with("thepatch/") && repo.repo != GARY_MODEL)
+            .filter(|repo| repo.repo.starts_with("thepatch/") && !converted.contains(&repo.repo.as_str()))
             .filter(|repo| hub.join(repo.cache_dir_name()).exists())
             .map(|repo| repo.repo.trim_start_matches("thepatch/"))
             .collect();
@@ -84,7 +118,7 @@ impl Service for Gary {
             Vec::new()
         } else {
             vec![format!(
-                "C++ gary runs vanya_ai_dnb_0.1 for now. These finetunes you downloaded for Python aren't converted yet: {}.",
+                "C++ gary runs the finetunes converted so far. These ones you downloaded for Python aren't converted yet: {}.",
                 others.join(", ")
             )]
         };
@@ -101,6 +135,30 @@ impl Service for Gary {
 
     fn tier_components(&self, tier: &str) -> Result<Vec<String>, String> {
         check_tier(tier, &[GARY_SHARED, GARY_VANYA])
+    }
+
+    fn tier_options(&self, tier: &str) -> Vec<String> {
+        if !TIERS.contains(&tier) {
+            return Vec::new();
+        }
+        GARY_FINETUNES
+            .iter()
+            .flat_map(|finetune| FINETUNE_TIERS.iter().map(move |precision| finetune_component(finetune, precision)))
+            .collect()
+    }
+
+    fn options_label(&self) -> Option<&'static str> {
+        Some("finetunes")
+    }
+
+    fn recommendations(&self, memory_bytes: u64) -> crate::migration::Recommendations {
+        crate::migration::Recommendations {
+            tier: Some(TIERS[0].into()),
+            components: GARY_FINETUNES
+                .iter()
+                .map(|finetune| finetune_component(finetune, recommended_tier(finetune, memory_bytes)))
+                .collect(),
+        }
     }
 
     fn launch_args(&self, args: &[String], encoding: Option<&str>) -> Result<Vec<String>, String> {
@@ -276,6 +334,37 @@ async fn get_json(server: &crate::migration_verify::PrivateServer, path: &str, w
         .map_err(|error| error.to_string())
 }
 
+/// Whether gary's model list offers `path`, alone or as a checkpoint in a
+/// group, in any size.
+fn lists(models: &serde_json::Value, path: &str) -> bool {
+    models["models"].as_object().is_some_and(|sizes| {
+        sizes.values().filter_map(|entries| entries.as_array()).flatten().any(|entry| {
+            entry["path"] == path
+                || entry["checkpoints"]
+                    .as_array()
+                    .is_some_and(|checkpoints| checkpoints.iter().any(|checkpoint| checkpoint["path"] == path))
+        })
+    })
+}
+
+/// The memory of the GPU the server will use, from its own `--props` probe:
+/// the largest device of the runtime's backend, as the server prefers it.
+async fn gpu_memory(run: &Run<'_>) -> Option<u64> {
+    let mut command = run.launch.tokio_command();
+    crate::hide_console_window(&mut command);
+    let output = command.arg("--props").kill_on_drop(true).output().await.ok()?;
+    let props: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    props["devices"]
+        .as_array()?
+        .iter()
+        .filter(|device| device["type"] != "cpu")
+        .filter(|device| {
+            device["backend"].as_str().is_some_and(|name| name.to_ascii_lowercase().contains(&run.installed.backend))
+        })
+        .filter_map(|device| device["memory_total_bytes"].as_u64())
+        .max()
+}
+
 /// Run every route gary4juce calls on gary: the model list, a generation
 /// from each end of the recording, and a retry of one.
 async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
@@ -336,6 +425,39 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
     )
     .await?;
     check_wav_spec(&retried, 32_000, 1, SAMPLES, "gary retry_music")?;
+
+    // Each downloaded finetune, at the precision the server runs: its most
+    // faithful downloaded one. One too big for this GPU is the user's choice
+    // to have downloaded, not a broken runtime, so it is listed but not run.
+    let memory = gpu_memory(&run).await;
+    for finetune in GARY_FINETUNES {
+        let Some(component) = FINETUNE_TIERS
+            .iter()
+            .map(|precision| finetune_component(finetune, precision))
+            .find(|id| gary_models().missing(run.root, std::slice::from_ref(id)).is_none())
+        else {
+            continue;
+        };
+        let repo = format!("thepatch/{finetune}");
+        if !lists(&listed, &repo) {
+            return Err(format!("gary's C++ server does not list {finetune}"));
+        }
+        if memory.is_some_and(|memory| component_bytes(&component) + GARY_HEADROOM_BYTES > memory) {
+            (run.progress)(&format!("Skipping {finetune}: it needs more memory than this GPU has."));
+            continue;
+        }
+        (run.progress)(&format!("Testing {finetune}..."));
+        let what = format!("gary {finetune}");
+        let (_, generated) = run_session_job(
+            &server,
+            "/api/juce/process_audio",
+            POLL,
+            &json!({"audio_data": recording, "model_name": repo, "prompt_duration": 4, "duration": 6, "seed": 42}),
+            &what,
+        )
+        .await?;
+        check_wav_spec(&generated, 32_000, 1, 6 * 32_000, &what)?;
+    }
     server.stop().await?;
     Ok(verified(&run, fingerprint))
 }
@@ -441,14 +563,19 @@ mod tests {
 
     #[test]
     fn every_model_is_pinned_and_each_bundle_is_complete() {
-        for (catalog, repo) in [
-            (gary_models(), "thepatch/vanya_ai_dnb_0.1-GGUF"),
-            (terry_models(), "thepatch/melodyflow-t24-30secs-GGUF"),
-        ] {
+        // Each finetune comes from its own repo; the shared files and vanya
+        // from vanya's, and terry's from MelodyFlow's.
+        let repo_of = |id: &str| match id.split("::").nth(1) {
+            Some("shared") | Some("vanya_ai_dnb_0.1") => "thepatch/vanya_ai_dnb_0.1-GGUF".to_string(),
+            Some("F16") => "thepatch/melodyflow-t24-30secs-GGUF".to_string(),
+            Some(finetune) => format!("thepatch/{finetune}-GGUF"),
+            None => unreachable!(),
+        };
+        for catalog in [gary_models(), terry_models()] {
             for entry in catalog.components() {
                 for file in &entry.files {
                     file.validate().unwrap();
-                    assert_eq!(file.repo, repo);
+                    assert_eq!(file.repo, repo_of(&entry.id), "{}", entry.id);
                 }
             }
         }
@@ -545,13 +672,15 @@ mod tests {
         std::fs::create_dir_all(hub.join("models--thepatch--hoenn_lofi")).unwrap();
         let warnings = Gary.extras(&root, &hub).warnings;
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].ends_with("converted yet: hoenn_lofi, bleeps-large-6."), "{warnings:?}");
+        // hoenn_lofi is converted now, so only bleeps-large-6 is named.
+        assert!(warnings[0].ends_with("converted yet: bleeps-large-6."), "{warnings:?}");
         std::fs::remove_dir_all(root).unwrap();
     }
 
     /// GARY4LOCAL_AUDIOCRAFT_SMOKE_ROOT (a new folder), _MODELS (a folder
     /// holding the GGUFs) and _BIN (the folder with both servers); optionally
-    /// _BACKEND (cuda by default).
+    /// _BACKEND (cuda by default) and _OPTIONS (comma-separated gary finetune
+    /// components to link and prove as well).
     #[tokio::test]
     #[ignore = "verifies real audiocraft.cpp servers against hard-linked model GGUFs"]
     async fn real_native_runtime_verification() {
@@ -561,10 +690,13 @@ mod tests {
         let source = std::path::PathBuf::from(var("MODELS").expect("a model folder is required"));
         let bin = std::path::PathBuf::from(var("BIN").expect("the servers' folder is required"));
         let backend = var("BACKEND").unwrap_or_else(|| "cuda".into());
+        let options: Vec<String> = var("OPTIONS").map_or_else(Vec::new, |list| list.split(',').map(str::to_string).collect());
         for (id, service) in services() {
             let models = service.models();
             let dir = models.checked_models_dir(&root).unwrap();
-            for component in service.tier_components("F16").unwrap() {
+            let mut components = service.tier_components("F16").unwrap();
+            components.extend(options.iter().filter(|option| models.component(option).is_some()).cloned());
+            for component in components {
                 for file in &models.component(&component).unwrap().files {
                     std::fs::hard_link(source.join(&file.filename), dir.join(&file.filename)).unwrap();
                 }
@@ -596,6 +728,64 @@ mod tests {
             assert!(!crate::migration::selection_path(&root, service.target().def).exists(), "verification must not select C++");
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_large_finetunes_are_optional_at_each_precision() {
+        let options = Gary.tier_options("F16");
+        assert_eq!(options, [
+            "gary-native::hoenn_lofi::Q8_0",
+            "gary-native::hoenn_lofi::Q4_K_M",
+            "gary-native::keygen-gary-v2-large-12::Q8_0",
+            "gary-native::keygen-gary-v2-large-12::Q4_K_M",
+        ]);
+        for id in &options {
+            let component = gary_models().component(id).unwrap();
+            let [file] = component.files.as_slice() else { panic!("{id} is one file") };
+            // musicgen-server names a model by the part before its size label
+            // and ranks the -<ENCODING> suffix.
+            let precision = id.rsplit("::").next().unwrap();
+            assert!(file.filename.starts_with("musicgen-") && file.filename.ends_with(&format!("-3.3B-v1.0-{precision}.gguf")), "{}", file.filename);
+        }
+        assert!(Gary.tier_options("Q8_0").is_empty());
+        assert!(Terry.tier_options("F16").is_empty());
+        assert_eq!(Gary.options_label(), Some("finetunes"));
+    }
+
+    #[test]
+    fn a_finetune_is_recommended_at_the_best_precision_that_fits() {
+        const MIB: u64 = 1 << 20;
+        // The RTX 5070 Laptop GPU reports 8151 MiB, and a guided 30-second
+        // hoenn_lofi continuation peaked at 5,853 MiB over idle with Q8_0.
+        let laptop = Gary.recommendations(8151 * MIB);
+        assert_eq!(laptop.tier.as_deref(), Some("F16"));
+        assert_eq!(laptop.components, ["gary-native::hoenn_lofi::Q8_0", "gary-native::keygen-gary-v2-large-12::Q8_0"]);
+        // A 6 GB card gets Q4_K_M (peak 4,609 MiB over idle).
+        assert_eq!(Gary.recommendations(6 * 1024 * MIB).components, [
+            "gary-native::hoenn_lofi::Q4_K_M",
+            "gary-native::keygen-gary-v2-large-12::Q4_K_M",
+        ]);
+        // Smaller still is offered the smallest rather than nothing.
+        assert_eq!(recommended_tier("hoenn_lofi", 2 * 1024 * MIB), "Q4_K_M");
+    }
+
+    #[test]
+    fn a_finetune_is_listed_alone_or_as_a_checkpoint() {
+        let listed = serde_json::json!({"models": {
+            "small": [{"name": "vanya_ai_dnb_0.1", "path": "thepatch/vanya_ai_dnb_0.1", "type": "single"}],
+            "medium": [],
+            "large": [
+                {"name": "hoenn_lofi", "path": "thepatch/hoenn_lofi", "type": "single"},
+                {"name": "keygen-gary-v2-large", "type": "group", "checkpoints": [
+                    {"name": "keygen-gary-v2-large-12", "path": "thepatch/keygen-gary-v2-large-12", "epoch": 12}
+                ]}
+            ]
+        }});
+        for path in [GARY_MODEL, "thepatch/hoenn_lofi", "thepatch/keygen-gary-v2-large-12"] {
+            assert!(lists(&listed, path), "{path}");
+        }
+        assert!(!lists(&listed, "thepatch/keygen-gary-v2-large-16"));
+        assert!(!lists(&serde_json::json!({"models": {"small": ["thepatch/hoenn_lofi"]}}), "thepatch/hoenn_lofi"));
     }
 
     #[test]
