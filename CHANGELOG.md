@@ -4,7 +4,7 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
-## v0.7.0-rocm.1 - unreleased preview
+## v0.7.0-rocm.1 - 2026-11-07 preview
 
 brings the audiocraft.cpp migration and fresh-install UX from v0.7.0 into the
 ROCm build. native services use Vulkan on AMD. existing Python ROCm environments
@@ -12,10 +12,10 @@ keep their legacy build settings until migration; gary and terry's cleanup also
 accounts for their ROCm compatibility helpers. the ROCm app identity, storage
 roots and preview updater endpoints are preserved.
 
-this preview is being prepared for Kostas's AMD testing. the main migration PR
-stays open, and no v0.7.0 updater feed has been published yet.
+this preview is for Kostas's AMD testing. the main migration PR stays open
+until that testing is complete.
 
-planned companion: gary4juce v5.0.3.
+compatible with gary4juce v5.0.3 pre-release.
 
 ## v0.7.0 - unreleased
 

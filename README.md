@@ -12,7 +12,7 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.7.0-rocm.1 - preparing
+## v0.7.0-rocm.1 - Windows preview
 
 gary and terry move to [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp).
 that was the last Python migration: all seven services now set up on C++ on a
@@ -30,8 +30,8 @@ this also tidies up fresh-install training controls, optional decoder setup,
 Python-only settings and uninstall cleanup. native runtime pins are
 sa3.cpp v0.2.1, audiocraft.cpp v0.1.3, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
 
-this ROCm preview is being prepared alongside gary4juce v5.0.3. the preview
-will go to Kostas first; AMD validation is still pending.
+this ROCm preview accompanies gary4juce v5.0.3 for Kostas's AMD and JSON-export
+testing. AMD validation is still pending.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
