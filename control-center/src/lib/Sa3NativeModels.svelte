@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { useNativeModel } from "./runtimeSetup";
   import { listen } from "@tauri-apps/api/event";
   import DownloadProgress from "./DownloadProgress.svelte";
   import { onMount } from "svelte";
@@ -66,12 +67,12 @@
     return () => { disposed = true; for (const listener of listeners) void listener.then((stop) => stop()); };
   });
   async function useTier(tier: string) {
-    busy = true; error = null; message = null;
+    busy = true; error = null; message = "Selecting the model and checking native readiness...";
     try {
-      const selection = await invoke<{ encoding: string }>("select_native_model", { serviceId: "sa3", encoding: tier });
+      const selection = await useNativeModel("sa3", tier);
       activeEncoding = selection.encoding;
       message = `SA3 will use ${tier} next time it starts.`;
-    } catch (cause) { error = String(cause); }
+    } catch (cause) { message = null; error = String(cause); }
     finally { busy = false; }
   }
   async function convertDecoder() {

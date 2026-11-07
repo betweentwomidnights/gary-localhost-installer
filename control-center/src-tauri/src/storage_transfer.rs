@@ -1228,27 +1228,29 @@ mod tests {
 
     #[test]
     fn a_service_added_to_the_manifest_is_carried_without_naming_it_here() {
-        // Terry as it would arrive: native models and a migration
+        // A service as it would arrive: native models and a migration
         // block, with no line of this module mentioning it.
         let mut services = crate::manifest::bundled().services.clone();
-        let terry = services.iter_mut().find(|service| service.id == "melodyflow").unwrap();
-        terry.native = Some(
+        let mut newcomer = services.iter().find(|service| service.id == "melodyflow").unwrap().clone();
+        newcomer.id = "newcomer".into();
+        newcomer.native = Some(
             serde_json::from_value(serde_json::json!({
-                "executable": "terry-server.exe",
-                "modelsDir": "melodyflow"
+                "executable": "newcomer-server.exe",
+                "modelsDir": "newcomer"
             }))
             .unwrap(),
         );
-        terry.migration = Some(
-            serde_json::from_value(serde_json::json!({"dataDir": "melodyflow", "label": "Terry"}))
+        newcomer.migration = Some(
+            serde_json::from_value(serde_json::json!({"dataDir": "newcomer", "label": "Newcomer"}))
                 .unwrap(),
         );
+        services.push(newcomer);
         let layout = Layout::from_services(&services);
         let fixture = Fixture::new();
         let source = fixture.root("default");
         let target = fixture.root("custom");
-        Fixture::write(&source, "models/melodyflow/terry-F16.gguf", b"weights");
-        Fixture::write(&source, "melodyflow/presets/user.json", b"{\"preset\":1}");
+        Fixture::write(&source, "models/newcomer/newcomer-F16.gguf", b"weights");
+        Fixture::write(&source, "newcomer/presets/user.json", b"{\"preset\":1}");
         let selection = crate::migration::Selection {
             schema_version: 1,
             encoding: "F16".into(),
@@ -1259,36 +1261,36 @@ mod tests {
             cleanup_errors: Vec::new(),
             runtime_fingerprint: None,
         };
-        let def = terry_def(&services);
+        let def = newcomer_def(&services);
         crate::migration::save(&source, &def, &selection, |_| Ok(())).unwrap();
-        Fixture::write(&source, "services/melodyflow/env/python.exe", b"not portable");
+        Fixture::write(&source, "services/newcomer/env/python.exe", b"not portable");
 
         let entries = inventory(&source, &layout).unwrap();
         assert_eq!(
             entries.last().unwrap().relative,
-            Path::new("melodyflow").join("native-runtime.json"),
+            Path::new("newcomer").join("native-runtime.json"),
             "the selection is committed last"
         );
         assert!(!Layout::bundled().contains_native_models(&source));
         assert!(layout.contains_native_models(&source));
 
         run_with(&layout, &source, &target, |_| {}).unwrap();
-        assert!(target.join("models/melodyflow/terry-F16.gguf").is_file());
-        assert!(target.join("melodyflow/presets/user.json").is_file());
-        assert!(!target.join("services/melodyflow/env").exists());
+        assert!(target.join("models/newcomer/newcomer-F16.gguf").is_file());
+        assert!(target.join("newcomer/presets/user.json").is_file());
+        assert!(!target.join("services/newcomer/env").exists());
         let copied = crate::migration::read(&target, &def, |_| Ok(())).unwrap().unwrap();
         assert_eq!(copied.activated_at, 7);
         // A different profile's selection blocks the transfer, named by service.
         let other = fixture.root("other");
         crate::migration::save(&other, &def, &crate::migration::Selection { activated_at: 8, ..selection }, |_| Ok(())).unwrap();
         let error = run_with(&layout, &source, &other, |_| {}).unwrap_err();
-        assert!(error.contains("different Terry migration"), "{error}");
+        assert!(error.contains("different Newcomer migration"), "{error}");
     }
 
-    fn terry_def(services: &[crate::manifest::ServiceDef]) -> crate::manifest::MigrationDef {
+    fn newcomer_def(services: &[crate::manifest::ServiceDef]) -> crate::manifest::MigrationDef {
         services
             .iter()
-            .find(|service| service.id == "melodyflow")
+            .find(|service| service.id == "newcomer")
             .and_then(|service| service.migration.clone())
             .unwrap()
     }
@@ -1391,13 +1393,13 @@ mod tests {
             .start_blocker
             .as_deref()
             .is_some_and(|s| s.contains("restart"))));
-        assert!(manager.get_build_info("gary").is_err());
+        assert!(manager.get_native_build_info("gary").is_err());
         assert!(manager.get_native_build_info("sa3").is_err());
         assert!(manager
             .begin_native_workload("sa3", "test", "training")
             .is_err());
         manager.set_storage_change_pending(false);
-        assert!(manager.get_build_info("gary").is_ok());
+        assert!(manager.get_native_build_info("gary").is_ok());
     }
 
     #[tokio::test]

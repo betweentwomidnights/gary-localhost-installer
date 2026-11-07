@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "gary4local-rocm",
-  "version": "0.6.0-rocm.2",
+  "version": "0.7.0-rocm.1",
   "identifier": "com.betweentwomidnights.gary4local.rocm",
   "build": {
     "frontendDist": "../dist",
@@ -35,7 +35,9 @@
         "installerIcon": "./icons/icon.ico",
         "headerImage": "./windows/installer-header.bmp",
         "sidebarImage": "./windows/installer-sidebar.bmp",
-        "languages": ["English"],
+        "languages": [
+          "English"
+        ],
         "customLanguageFiles": {
           "English": "./windows/installer-english.nsh"
         }

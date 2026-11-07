@@ -15,6 +15,8 @@
   import YueyRuntimeBanner from "./lib/YueyRuntimeBanner.svelte";
   import Sa3RuntimeBanner from "./lib/Sa3RuntimeBanner.svelte";
   import NativeRuntimeBanner from "./lib/NativeRuntimeBanner.svelte";
+  import RecommendedModelDownload from "./lib/RecommendedModelDownload.svelte";
+  import { downloadRecommendedModels } from "./lib/runtimeSetup";
   import YueyGenerationPanel, { type YueyGenerationSettings } from "./lib/YueyGenerationPanel.svelte";
   import CareyLoraModal from "./lib/CareyLoraModal.svelte";
   import CareyAceTrainingModal from "./lib/CareyAceTrainingModal.svelte";
@@ -48,6 +50,7 @@
     build_status: BuildStatus | null;
     runtime: "python" | "native";
     native_backend: string | null;
+    native_runtime_installed: boolean;
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
@@ -301,6 +304,18 @@
     selectedServiceId = serviceId;
     modelServiceId = serviceId;
     rightPanel = "models";
+  }
+
+  let recommendedDownloadService = $state<string | null>(null);
+  let recommendedDownloadError = $state<{ serviceId: string; message: string } | null>(null);
+  async function downloadRecommended(serviceId: string) {
+    if (recommendedDownloadService) return;
+    recommendedDownloadService = serviceId;
+    recommendedDownloadError = null;
+    showModels(serviceId);
+    try { await downloadRecommendedModels(serviceId); }
+    catch (cause) { recommendedDownloadError = { serviceId, message: String(cause) }; }
+    finally { recommendedDownloadService = null; }
   }
 
   function showCareyLoras() {
@@ -860,7 +875,7 @@
       if (storageModalOpen && finishedBuild) void loadServiceEnvs();
     });
 
-    // When "Rebuild All" is running, the backend tells us which service to focus on
+    // While all runtimes update, the backend says which service to focus on
     const unlistenSelect = listen<string>("select-service", (event) => {
       selectService(event.payload);
     });
@@ -952,10 +967,11 @@
           onMigrate={showMigration}
         />
       {:else if rightPanel === "models" && modelServiceId}
+        {#if recommendedDownloadError?.serviceId === modelServiceId}<div class="recommended-error" role="alert">{recommendedDownloadError.message}</div>{/if}
         {#key modelServiceId}<ModelPanel serviceId={modelServiceId} serviceRuntime={services.find((service) => service.id === modelServiceId)?.runtime ?? "python"} hasMigration={services.find((service) => service.id === modelServiceId)?.has_migration ?? false} pythonRetired={services.find((service) => service.id === modelServiceId)?.python_retired ?? false} onBack={backToLogs} />{/key}
       {:else}
         {#if selectedServiceId === "stable-audio" || selectedServiceId === "sa3"}
-          <TokenBanner serviceId={selectedServiceId ?? "stable-audio"} {onTokenChange} />
+          {#if selectedService?.runtime === "python" && !selectedService.python_retired}<TokenBanner serviceId={selectedServiceId} {onTokenChange} />{/if}
           {#if selectedServiceId === "sa3"}
             {#if selectedService?.runtime === "native"}
               <Sa3RuntimeBanner
@@ -963,7 +979,6 @@
                 nativeBackend={selectedService.native_backend}
                 envExists={selectedService.env_exists}
                 building={selectedService.build_status?.building ?? false}
-                onShowModels={() => showModels("sa3")}
               />
             {/if}
             <Sa3DecoderLoraBanner
@@ -979,7 +994,7 @@
             />
           {/if}
         {:else if selectedServiceId === "carey"}
-          {#if selectedService?.runtime === "native"}
+          {#if selectedService && (selectedService.runtime === "native" || selectedService.python_retired)}
             <!-- ace-server picks XL or 2B per request; the XL and scrag VAE switches are Python Carey's. -->
             <NativeRuntimeBanner
               serviceId="carey"
@@ -987,9 +1002,8 @@
               serviceStatus={selectedService.status}
               nativeBackend={selectedService.native_backend}
               building={selectedService.build_status?.building ?? false}
-              onShowModels={() => showModels("carey")}
             />
-          {:else}
+          {:else if selectedService?.runtime === "python" && !selectedService.python_retired}
             <CareyXlBanner
               enabled={appSettings.careyUseXlModels}
               serviceStatus={selectedService?.status ?? "stopped"}
@@ -1002,7 +1016,8 @@
               onShowModels={() => showModels("carey")}
             />
           {/if}
-        {:else if selectedServiceId === "gary"}
+        {:else if selectedServiceId === "gary" && selectedService?.runtime === "python" && !selectedService.python_retired}
+          <!-- Python gary's setting; musicgen-server always runs its F16 model. -->
           <GaryFp16Banner
             enabled={appSettings.garyUseFp16}
             serviceStatus={selectedService?.status ?? "stopped"}
@@ -1015,19 +1030,28 @@
             envExists={selectedService?.env_exists ?? false}
             building={selectedService?.build_status?.building ?? false}
             startBlocker={selectedService?.start_blocker ?? null}
-            onShowModels={() => showModels("yuey")}
           />
           <YueyGenerationPanel
             settings={appSettings.yueyGeneration}
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onYueyGenerationSettingUpdated}
           />
-        {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner}
+        {:else if selectedServiceId === "melodyflow" && showMelodyflowFlashBanner && selectedService?.runtime === "python" && !selectedService.python_retired}
           <MelodyflowFlashBanner
             enabled={appSettings.melodyflowUseFlashAttn}
             serviceStatus={selectedService?.status ?? "stopped"}
             onUpdated={onMelodyflowFlashSettingUpdated}
           />
+        {/if}
+        {#if selectedService && (selectedService.runtime === "native" || selectedService.python_retired)}
+          {#key `${selectedService.id}:${selectedService.native_backend}`}
+          <RecommendedModelDownload
+            serviceId={selectedService.id}
+            ready={selectedService.native_runtime_installed && !selectedService.build_status?.building}
+            busy={recommendedDownloadService !== null}
+            onDownload={() => void downloadRecommended(selectedService.id)}
+          />
+          {/key}
         {/if}
         <LogViewer
           serviceId={selectedServiceId}
@@ -1098,16 +1122,16 @@
   <CareyLoraModal
     open={careyLoraModalOpen}
     serviceStatus={careyService?.status ?? "stopped"}
-    serviceEnvExists={careyService?.env_exists ?? false}
+    serviceEnvExists={(careyService?.runtime === "native" || careyService?.python_retired ? careyService?.native_runtime_installed : careyService?.env_exists) ?? false}
     careyXlEnabled={appSettings.careyUseXlModels}
-    nativeRuntime={careyService?.runtime === "native"}
+    nativeRuntime={careyService?.runtime === "native" || !!careyService?.python_retired}
     onClose={closeCareyLoras}
   />
   <CareyAceTrainingModal
     open={careyAceTrainingModalOpen}
     serviceStatus={careyService?.status ?? "stopped"}
-    serviceEnvExists={careyService?.env_exists ?? false}
-    nativeRuntime={careyService?.runtime === "native"}
+    serviceEnvExists={(careyService?.runtime === "native" || careyService?.python_retired ? careyService?.native_runtime_installed : careyService?.env_exists) ?? false}
+    nativeRuntime={careyService?.runtime === "native" || !!careyService?.python_retired}
     onClose={closeCareyAceTraining}
     onShowModels={() => {
       // The models panel lives in the main window behind this modal, so
@@ -1119,7 +1143,7 @@
   <Sa3LoraModal
     open={sa3LoraModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}
-    serviceEnvExists={sa3Service?.env_exists ?? false}
+    serviceEnvExists={(sa3Service?.runtime === "native" || sa3Service?.python_retired ? sa3Service?.native_runtime_installed : sa3Service?.env_exists) ?? false}
     pendingRestart={storageInfo?.pendingRestart ?? false}
     onClose={closeSa3Loras}
   />
@@ -1137,13 +1161,14 @@
   <Sa3LoraTrainingModal
     open={sa3LoraTrainingModalOpen}
     serviceStatus={sa3Service?.status ?? "stopped"}
-    serviceEnvExists={sa3Service?.env_exists ?? false}
-    serviceRuntime={sa3Service?.runtime ?? "python"}
+    serviceEnvExists={(sa3Service?.runtime === "native" || sa3Service?.python_retired ? sa3Service?.native_runtime_installed : sa3Service?.env_exists) ?? false}
+    serviceRuntime={sa3Service?.python_retired ? "native" : sa3Service?.runtime ?? "python"}
     onClose={closeSa3LoraTraining}
   />
 </main>
 
 <style>
+  .recommended-error { padding: 10px 16px; color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
   main {
     display: flex;
     flex-direction: column;

@@ -1,12 +1,12 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.5.0",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.5.0/gary4local_0.5.0_x64-setup.exe",
-    "sha256":  "a1a20071e3d9c6bd44686c4d6e193f2b25fe2fca9f0a1a51191f3b89775fb04f",
-    "published_at":  "2026-10-18T08:01:31.0384541+00:00",
+    "latest_version":  "0.6.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.6.0/gary4local_0.6.0_x64-setup.exe",
+    "sha256":  "c240fa9f1dcdb8d5930534b1363e31819fe5ff26664a705a94fc94334340f51a",
+    "published_at":  "2026-11-01T00:00:10.0000000+00:00",
     "notes":  [
-                  "sa3, jerry and foundation-1 can move to C++: use migrate runtime under the new stable audio header.",
-                  "Fresh installs set these three up on C++ only, with no Python.",
-                  "jerry grunge now loads its real finetune, so it sounds different. Compatible with gary4juce v5.0.1."
+                  "Carey can leave Python: press migrate runtime on Carey. LoRA training and captioning run on C++ too.",
+                  "Heads up: sa3.cpp v0.1.8 changes every seed\u0027s result for sa3, jerry and foundation-1. After updating the runtime, prepare your SA3 LoRAs again.",
+                  "The SA3 LoRA manager shows one card per LoRA. Local Carey needs gary4juce v5.0.2."
               ]
 }

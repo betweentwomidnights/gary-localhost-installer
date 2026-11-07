@@ -277,13 +277,17 @@ async fn transfer_pinned_files(
         }
         let label = format!("{} ({}/{})", file.filename, index + 1, files.len());
         progress(done, &format!("Verifying {label}"));
+        let file_started = Instant::now();
+        let mut first_received = None;
         let mut file_progress = |received: u64, _: Option<u64>| {
+            let initial = *first_received.get_or_insert(received);
+            let rate = received.saturating_sub(initial) as f64 / file_started.elapsed().as_secs_f64().max(0.001) / 1048576.0;
             progress(
                 done + received.min(file.bytes),
                 &if received >= file.bytes {
                     format!("Verifying checksum for {label}")
                 } else {
-                    format!("Downloading {label}: {:.1}/{:.1} GB", received as f64 / 1e9, file.bytes as f64 / 1e9)
+                    format!("Downloading {label}: {:.1}/{:.1} GB, {rate:.1} MB/s", received as f64 / 1e9, file.bytes as f64 / 1e9)
                 },
             );
         };

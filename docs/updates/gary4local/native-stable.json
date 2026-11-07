@@ -1,11 +1,11 @@
 {
-    "version":  "0.5.0",
-    "notes":  "sa3, jerry and foundation-1 can move to C++: use migrate runtime under the new stable audio header.\nFresh installs set these three up on C++ only, with no Python.\njerry grunge now loads its real finetune, so it sounds different. Compatible with gary4juce v5.0.1.",
-    "pub_date":  "2026-10-18T08:01:31.0384541+00:00",
+    "version":  "0.6.0",
+    "notes":  "Carey can leave Python: press migrate runtime on Carey. LoRA training and captioning run on C++ too.\nHeads up: sa3.cpp v0.1.8 changes every seed\u0027s result for sa3, jerry and foundation-1. After updating the runtime, prepare your SA3 LoRAs again.\nThe SA3 LoRA manager shows one card per LoRA. Local Carey needs gary4juce v5.0.2.",
+    "pub_date":  "2026-11-01T00:00:10.0000000+00:00",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFBmekhCM1AxN2ZibzVGRmpXazdPUTdFclM3NndRYnNxSXJTdW1talZ2K3UzQ1VES1NtWGRCbW5tZDNYLzJNNWNBcXlFU0dmN1N6djhoSHdkcTJxTWdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzEwMjI1CWZpbGU6Z2FyeTRsb2NhbF8wLjUuMF94NjQtc2V0dXAuZXhlCll1eXVLM2s0ZzJyM3RGa2tzRGlhbHNpbXhvSUYrSzZ0VDhDYmlPdG95aVhWeUFXcExlRW1YcENicU40WmY5LzRXakJLSzZKM1dCQzdQTThtMFFKNENRPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.5.0/gary4local_0.5.0_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEJlbW1wODFwRitpRHBUY3BRRC91L3d2TmlyUXNweTBtc0JWbEdITi9uc1ZmZGl4QWt6eVd5NmlDYmVkOVE1OGVKRXY4azY2UzlUWlpNWHViMjdqb1EwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDkwNTg4CWZpbGU6Z2FyeTRsb2NhbF8wLjYuMF94NjQtc2V0dXAuZXhlCjE0NGwzK0xLdjdWNlhXUytxQkF5aW1LSGhHbk5qOW4ybGJxSmtaWXlzcjQzc092SkNvWDh3bUJod29XYkljYWJqS2x4QTJjS2ZEYTdhenFaLzhHVUJ3PT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.6.0/gary4local_0.6.0_x64-setup.exe"
                                          }
                   }
 }

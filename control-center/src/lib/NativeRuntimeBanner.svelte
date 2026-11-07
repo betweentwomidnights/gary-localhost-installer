@@ -19,13 +19,12 @@
     selectedDeviceName: string | null;
     selectedMemoryBytes: number | null;
   }
-  let { serviceId, label, serviceStatus, nativeBackend, building, onShowModels }: {
+  let { serviceId, label, serviceStatus, nativeBackend, building }: {
     serviceId: string;
     label: string;
     serviceStatus: string;
     nativeBackend: string | null;
     building: boolean;
-    onShowModels: () => void;
   } = $props();
   let info = $state<RuntimeInfo | null>(null);
   let busy = $state(false);
@@ -85,7 +84,6 @@
       {:else if switching}Installed on {info?.backend}, set to {info?.preference}: reinstall to switch.
       {:else if info?.installed}Up to date.{/if}
       {#if live && action} Stops {label} first.{/if}
-      Model precisions are in <button class="link" onclick={onShowModels}>models</button>.
     </span>
   </div>
   {#if message}<div class="note" role="status">{message}</div>{/if}
@@ -103,5 +101,4 @@
   .note { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
   .warning { margin-top: 8px; padding: 6px 8px; font-size: 10px; line-height: 1.4; color: var(--orange); border: 1px solid var(--orange); border-radius: 3px; }
   .error { margin-top: 8px; font-size: 11px; color: var(--red); overflow-wrap: anywhere; }
-  .link { padding: 0; border: none; background: none; color: var(--accent); font-size: 10px; cursor: pointer; text-decoration: underline; }
 </style>

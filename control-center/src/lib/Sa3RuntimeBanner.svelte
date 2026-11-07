@@ -14,12 +14,11 @@
     selectedDeviceName: string | null;
     selectedMemoryBytes: number | null;
   }
-  let { serviceStatus, nativeBackend, envExists, building, onShowModels }: {
+  let { serviceStatus, nativeBackend, envExists, building }: {
     serviceStatus: string;
     nativeBackend: string | null;
     envExists: boolean;
     building: boolean;
-    onShowModels: () => void;
   } = $props();
   let info = $state<RuntimeInfo | null>(null);
   let message: string | null = $state(null);
@@ -46,7 +45,7 @@
     </div>
   </div>
   {#if info?.fallbackReason}<div class="warning">{info.fallbackReason}</div>{/if}
-  <div class="note">SA3 shares this runtime with jerry and foundation-1: pick its backend and install or update it under stable audio on the left. Generation tiers are in <button class="link" onclick={onShowModels}>models</button>.</div>
+  <div class="note">SA3 shares this runtime with jerry and foundation-1: pick its backend and install or update it under stable audio on the left.</div>
   {#if message}<div class="note" role="status">{message}</div>{/if}
 </div>
 
@@ -58,6 +57,4 @@
   .subtitle { margin-top: 3px; font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .note { margin-top: 8px; font-size: 10px; color: var(--text-muted); line-height: 1.4; }
   .warning { margin-top: 8px; padding: 6px 8px; font-size: 10px; line-height: 1.4; color: var(--orange); border: 1px solid var(--orange); border-radius: 3px; }
-  .link { padding: 0; border: none; background: none; color: var(--accent); font-size: 10px; cursor: pointer; text-decoration: underline; }
-  .link:disabled { color: var(--text-muted); cursor: default; }
 </style>

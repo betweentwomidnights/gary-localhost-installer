@@ -1,0 +1,275 @@
+[
+  {
+    "id": "gary-native::shared",
+    "label": "EnCodec and T5",
+    "description": "MusicGen's 32 kHz codec (F32) and the T5-base text encoder (F16) every finetune shares.",
+    "files": [
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "845fc9ab3eae2f51d821982472641f7b7dec84c9",
+        "filename": "encodec-32khz-v1.0-F32.gguf",
+        "sha256": "d4f153157d37a8d5b87ade02829ed8a29fe20d195efcaedcce358ab616ead275",
+        "bytes": 231642048
+      },
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "845fc9ab3eae2f51d821982472641f7b7dec84c9",
+        "filename": "t5-base-encoder-0.1B-v1.0-F16.gguf",
+        "sha256": "ba301ccda03edfc4971ed32a3e69d5793e52e18e42dfd0f436d344f17205a446",
+        "bytes": 219954752
+      }
+    ]
+  },
+  {
+    "id": "gary-native::vanya_ai_dnb_0.1::F16",
+    "label": "vanya_ai_dnb_0.1 F16",
+    "description": "thepatch's drum and bass finetune of MusicGen small, F16 (0.8 GB).",
+    "files": [
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "845fc9ab3eae2f51d821982472641f7b7dec84c9",
+        "filename": "musicgen-vanya-dnb-0.4B-v1.0-F16.gguf",
+        "sha256": "f13d9997061a6753d0072a5f67bee4132bcf96c73edfe03e1a4d8c9f1764a578",
+        "bytes": 841063296
+      }
+    ]
+  },
+  {
+    "id": "gary-native::vanya_ai_dnb_0.1::Q8_0",
+    "label": "vanya_ai_dnb_0.1 Q8_0",
+    "description": "thepatch's drum and bass finetune of MusicGen small, Q8_0 (0.4 GB).",
+    "files": [
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "845fc9ab3eae2f51d821982472641f7b7dec84c9",
+        "filename": "musicgen-vanya-dnb-0.4B-v1.0-Q8_0.gguf",
+        "sha256": "988d5217a819be6b404435d510da53155ec589a8d1ac979abad8cf44636fc0e5",
+        "bytes": 447106176
+      }
+    ]
+  },
+  {
+    "id": "gary-native::vanya_ai_dnb_0.1::Q4_K_M",
+    "label": "vanya_ai_dnb_0.1 Q4_K_M",
+    "description": "thepatch's drum and bass finetune of MusicGen small, Q4_K_M (0.3 GB).",
+    "files": [
+      {
+        "repo": "thepatch/vanya_ai_dnb_0.1-GGUF",
+        "revision": "845fc9ab3eae2f51d821982472641f7b7dec84c9",
+        "filename": "musicgen-vanya-dnb-0.4B-v1.0-Q4_K_M.gguf",
+        "sha256": "685675083f9907b830a6a756333df277dcb5891bfad1a7150d93fd26262a7853",
+        "bytes": 280250624
+      }
+    ]
+  },
+  {
+    "id": "gary-native::hoenn_lofi::F16",
+    "label": "hoenn_lofi F16",
+    "description": "thepatch's lofi finetune of MusicGen large, F16 (6.1 GB).",
+    "files": [
+      {
+        "repo": "thepatch/hoenn_lofi-GGUF",
+        "revision": "4b93d40dc7676a21d204fa9cae82a3699c0d2f6e",
+        "filename": "musicgen-hoenn-lofi-3.3B-v1.0-F16.gguf",
+        "sha256": "bbaa392b49dba23246064016d671d3e476949d8ca8a0074b124f6a8beee5d4fa",
+        "bytes": 6515142496
+      }
+    ]
+  },
+  {
+    "id": "gary-native::hoenn_lofi::Q8_0",
+    "label": "hoenn_lofi Q8_0",
+    "description": "thepatch's lofi finetune of MusicGen large, Q8_0 (3.2 GB).",
+    "files": [
+      {
+        "repo": "thepatch/hoenn_lofi-GGUF",
+        "revision": "4b93d40dc7676a21d204fa9cae82a3699c0d2f6e",
+        "filename": "musicgen-hoenn-lofi-3.3B-v1.0-Q8_0.gguf",
+        "sha256": "4970d811d5be01cb1d48b65badfa7f91620520de141f35f1c975b73f253d02c5",
+        "bytes": 3462304096
+      }
+    ]
+  },
+  {
+    "id": "gary-native::hoenn_lofi::Q4_K_M",
+    "label": "hoenn_lofi Q4_K_M",
+    "description": "thepatch's lofi finetune of MusicGen large, Q4_K_M (2.0 GB).",
+    "files": [
+      {
+        "repo": "thepatch/hoenn_lofi-GGUF",
+        "revision": "4b93d40dc7676a21d204fa9cae82a3699c0d2f6e",
+        "filename": "musicgen-hoenn-lofi-3.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "a78fb88169f6c7ce6343a1a5f3c07cbbe2d67138a438020c7e0fda42e5e3a24b",
+        "bytes": 2154203616
+      }
+    ]
+  },
+  {
+    "id": "gary-native::keygen-gary-v2-large-12::F16",
+    "label": "keygen-gary-v2-large-12 F16",
+    "description": "thepatch's keygen-music finetune of MusicGen large, epoch 12, F16 (6.1 GB).",
+    "files": [
+      {
+        "repo": "thepatch/keygen-gary-v2-large-12-GGUF",
+        "revision": "5172215cc47f9d954fa5e03f28cf9e790545b5a9",
+        "filename": "musicgen-keygen-gary-v2-large-12-3.3B-v1.0-F16.gguf",
+        "sha256": "14b502f465dcead4da9af81a5e47a2b7f569d3bba0a1ed35bab6d2a07366a50e",
+        "bytes": 6515142560
+      }
+    ]
+  },
+  {
+    "id": "gary-native::keygen-gary-v2-large-12::Q8_0",
+    "label": "keygen-gary-v2-large-12 Q8_0",
+    "description": "thepatch's keygen-music finetune of MusicGen large, epoch 12, Q8_0 (3.2 GB).",
+    "files": [
+      {
+        "repo": "thepatch/keygen-gary-v2-large-12-GGUF",
+        "revision": "5172215cc47f9d954fa5e03f28cf9e790545b5a9",
+        "filename": "musicgen-keygen-gary-v2-large-12-3.3B-v1.0-Q8_0.gguf",
+        "sha256": "7d68c6f7492545d2e9d48a3c937fb4366d6d97572895de1b074b2532d9f4d3f3",
+        "bytes": 3462304160
+      }
+    ]
+  },
+  {
+    "id": "gary-native::keygen-gary-v2-large-12::Q4_K_M",
+    "label": "keygen-gary-v2-large-12 Q4_K_M",
+    "description": "thepatch's keygen-music finetune of MusicGen large, epoch 12, Q4_K_M (2.0 GB).",
+    "files": [
+      {
+        "repo": "thepatch/keygen-gary-v2-large-12-GGUF",
+        "revision": "5172215cc47f9d954fa5e03f28cf9e790545b5a9",
+        "filename": "musicgen-keygen-gary-v2-large-12-3.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "b1ce72b1690ecb0a9d2e0c1d982861b9b430b35ceddf6758e41f877703ddc554",
+        "bytes": 2154203680
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-small::F16",
+    "label": "musicgen-small F16",
+    "description": "Meta's MusicGen small, F16 (0.8 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-small-GGUF",
+        "revision": "1d318f5e3cfe4a6eb9118c858b396d847de5ff1a",
+        "filename": "musicgen-small-0.4B-v1.0-F16.gguf",
+        "sha256": "89dde9087a61e3f0f302fc40a3bda3d2d261c64c33c8eba1dad7ef6486e7874a",
+        "bytes": 841063328
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-small::Q8_0",
+    "label": "musicgen-small Q8_0",
+    "description": "Meta's MusicGen small, Q8_0 (0.4 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-small-GGUF",
+        "revision": "1d318f5e3cfe4a6eb9118c858b396d847de5ff1a",
+        "filename": "musicgen-small-0.4B-v1.0-Q8_0.gguf",
+        "sha256": "0182c627f59bab9d8beb6558fdb171642827d03bdfab20464b3de24e1db3a0f0",
+        "bytes": 447106208
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-small::Q4_K_M",
+    "label": "musicgen-small Q4_K_M",
+    "description": "Meta's MusicGen small, Q4_K_M (0.3 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-small-GGUF",
+        "revision": "1d318f5e3cfe4a6eb9118c858b396d847de5ff1a",
+        "filename": "musicgen-small-0.4B-v1.0-Q4_K_M.gguf",
+        "sha256": "840695173d8c4da8d83f7569c3b4ed52f9555bb12c2405c65902981739022f82",
+        "bytes": 280250656
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-medium::F16",
+    "label": "musicgen-medium F16",
+    "description": "Meta's MusicGen medium, F16 (3.4 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-medium-GGUF",
+        "revision": "ea03429b54a051c62cd942429619c9bb6e609c74",
+        "filename": "musicgen-medium-1.8B-v1.0-F16.gguf",
+        "sha256": "776006452c4cb35c5ebeb2041af54122fc9ca386d9f501829e9a42ad37e19ce9",
+        "bytes": 3678406496
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-medium::Q8_0",
+    "label": "musicgen-medium Q8_0",
+    "description": "Meta's MusicGen medium, Q8_0 (1.8 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-medium-GGUF",
+        "revision": "ea03429b54a051c62cd942429619c9bb6e609c74",
+        "filename": "musicgen-medium-1.8B-v1.0-Q8_0.gguf",
+        "sha256": "4fa942cff7aff0fdb1571438e5b609184742cbd2852230bdf387e6f81fd22116",
+        "bytes": 1955008736
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-medium::Q4_K_M",
+    "label": "musicgen-medium Q4_K_M",
+    "description": "Meta's MusicGen medium, Q4_K_M (1.1 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-medium-GGUF",
+        "revision": "ea03429b54a051c62cd942429619c9bb6e609c74",
+        "filename": "musicgen-medium-1.8B-v1.0-Q4_K_M.gguf",
+        "sha256": "67b1364fdfc4c4f74deaf81ca0e729e11a2332d8cd05c5ebe31bef1eb6b8c45c",
+        "bytes": 1217530720
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-large::F16",
+    "label": "musicgen-large F16",
+    "description": "Meta's MusicGen large, F16 (6.1 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-large-GGUF",
+        "revision": "5a1be1832959cd6878541828394ae3d45038bc63",
+        "filename": "musicgen-large-3.3B-v1.0-F16.gguf",
+        "sha256": "4a8051a98a10472b9fc0eb0ad7b048d32e2b827c821fc2d34ea3aaded0c5a05c",
+        "bytes": 6515142496
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-large::Q8_0",
+    "label": "musicgen-large Q8_0",
+    "description": "Meta's MusicGen large, Q8_0 (3.2 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-large-GGUF",
+        "revision": "5a1be1832959cd6878541828394ae3d45038bc63",
+        "filename": "musicgen-large-3.3B-v1.0-Q8_0.gguf",
+        "sha256": "d9c6156f8a7668655dd74e5e79f830e691556780ef530f02ff9846b4d07ff60c",
+        "bytes": 3462304096
+      }
+    ]
+  },
+  {
+    "id": "gary-native::musicgen-large::Q4_K_M",
+    "label": "musicgen-large Q4_K_M",
+    "description": "Meta's MusicGen large, Q4_K_M (2.0 GB).",
+    "files": [
+      {
+        "repo": "thepatch/musicgen-large-GGUF",
+        "revision": "5a1be1832959cd6878541828394ae3d45038bc63",
+        "filename": "musicgen-large-3.3B-v1.0-Q4_K_M.gguf",
+        "sha256": "6e65c5ceac563cc33637aeb2a7e7d68dc7badcf34e131e0600658c23d9c35cd6",
+        "bytes": 2154203616
+      }
+    ]
+  }
+]

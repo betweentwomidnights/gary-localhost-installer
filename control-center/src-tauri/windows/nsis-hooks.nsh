@@ -19,6 +19,32 @@ Var InstallerMusicCheckbox
 
 !define MUI_DIRECTORYPAGE_TEXT_TOP "choose where to install the gary4local-rocm app.$\r$\n$\r$\nfresh runtime data defaults to:$\r$\n    $INSTDIR\gary4local-data$\r$\n$\r$\nexisting $APPDATA\Gary4JUCE-ROCm storage is preserved. move it later from gary4local-rocm > storage."
 
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "the checkbox also deletes models, outputs and LoRAs in:$\r$\n$INSTDIR\gary4local-data$\r$\ncustom storage and legacy $APPDATA\Gary4JUCE-ROCm are kept; remove those folders manually if no longer needed."
+
+; Tauri removes data under BUNDLEID, but our default runtime storage lives
+; beside the executable. Never follow storage.json to recursively remove a
+; user-selected folder. Updates and unchecked uninstalls preserve all data.
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+  ${AndIf} $INSTDIR != ""
+    GetFullPathName $0 "$INSTDIR\gary4local-data"
+    GetFullPathName $1 "$INSTDIR"
+    ; The only deletion target is the named child of the install directory.
+    ${If} $0 == "$1\gary4local-data"
+      ClearErrors
+      RmDir /r "$0"
+      ${If} ${Errors}
+        IfSilent +2
+        MessageBox MB_OK|MB_ICONEXCLAMATION "some runtime data could not be removed. close any running services, then delete this folder manually:$\r$\n$0"
+      ${EndIf}
+      ; Tauri tried removing the install folder while runtime data was still
+      ; there. Retry without recursion, preserving any unrelated files.
+      RmDir "$1"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !define MUI_FINISHPAGE_TEXT "setup has finished installing gary4local-rocm.$\r$\n$\r$\napp files:$\r$\n$INSTDIR$\r$\n$\r$\nfresh install runtime default:$\r$\n$INSTDIR\gary4local-data$\r$\n$\r$\nexisting ROCm runtime storage at $APPDATA\Gary4JUCE-ROCm is preserved. open gary4local-rocm's storage settings to move it, copy LoRAs, and clean old envs/models.$\r$\n$\r$\nto uninstall later, use windows installed apps, run uninstall.exe from the install folder, or run this setup again to enter maintenance mode."
 
 Function InstallerGuiInit

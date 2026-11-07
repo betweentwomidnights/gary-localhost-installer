@@ -21,6 +21,7 @@
     build_status: BuildStatus | null;
     runtime: "python" | "native";
     native_backend: string | null;
+    native_runtime_installed: boolean;
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
@@ -43,6 +44,7 @@
     hasSa3LoraTraining = false,
     onTrainSa3Lora = () => {},
     hasMigration = false,
+    trainingBlocker = null,
     onMigrateRuntime = () => {},
     grouped = false,
   }: {
@@ -60,6 +62,7 @@
     hasSa3LoraTraining?: boolean;
     onTrainSa3Lora?: () => void;
     hasMigration?: boolean;
+    trainingBlocker?: string | null;
     onMigrateRuntime?: () => void;
     /** Shares its native runtime with other services, which install it together. */
     grouped?: boolean;
@@ -80,6 +83,7 @@
   let isBuilding = $derived(service.build_status?.building ?? false);
   // A native service downloads a prebuilt runtime instead of building a venv.
   let isNative = $derived(service.runtime === "native");
+  let fresh = $derived(service.python_retired && !isNative);
   let buildLabel = $derived(
     isNative
       ? !service.env_exists
@@ -139,9 +143,13 @@
       <span class="build-label">{service.build_status?.step_label}</span>
     </div>
   {:else if service.build_status?.error}
-    <div class="error">build failed: {service.build_status.error}</div>
+    <div class="error">{isNative || fresh ? "runtime install failed" : "build failed"}: {service.build_status.error}</div>
   {:else if service.build_status && !service.build_status.building && service.build_status.current_step > 0}
-    <div class="build-done">{isNative ? "runtime installed" : "build complete"}</div>
+    <div class="build-done">{isNative || fresh ? "runtime installed" : "build complete"}</div>
+  {/if}
+
+  {#if fresh && service.native_runtime_installed && !isBuilding}
+    <div class="blocker">runtime ready · choose models to finish setup</div>
   {/if}
 
   {#if service.env_exists && service.start_blocker && (service.status === "stopped" || service.status === "failed")}
@@ -150,7 +158,7 @@
 
   <div class="controls">
     {#if service.status === "stopped" || service.status === "failed"}
-      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={!service.env_exists || isBuilding || !!service.start_blocker}>start</button>
+      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={fresh || !service.env_exists || isBuilding || !!service.start_blocker}>start</button>
     {:else}
       <button onclick={(e) => { e.stopPropagation(); stopService(); }}>stop</button>
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
@@ -166,7 +174,7 @@
     {/if}
     {#if hasModels}
       <!-- Native models download without the runtime; Python ones need the env. -->
-      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={!service.env_exists && !isNative}>
+      <button class="models-btn" onclick={(e) => { e.stopPropagation(); onShowModels(); }} disabled={isBuilding || (!service.env_exists && !isNative && !(fresh && service.native_runtime_installed))}>
         models
       </button>
     {/if}
@@ -176,7 +184,7 @@
       </button>
     {/if}
     {#if hasCareyAceTraining}
-      <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onTrainCareyAce(); }}>
+      <button class="lora-btn" disabled={!!trainingBlocker} title={trainingBlocker ?? undefined} onclick={(e) => { e.stopPropagation(); onTrainCareyAce(); }}>
         train lora
       </button>
     {/if}
@@ -187,11 +195,11 @@
     {/if}
     {#if hasSa3LoraTraining || hasMigration}<div class="runtime-actions">
     {#if hasSa3LoraTraining}
-      <button class="lora-btn" onclick={(e) => { e.stopPropagation(); onTrainSa3Lora(); }}>
+      <button class="lora-btn" disabled={!!trainingBlocker} title={trainingBlocker ?? undefined} onclick={(e) => { e.stopPropagation(); onTrainSa3Lora(); }}>
         train lora
       </button>
     {/if}
-    {#if hasMigration}
+    {#if hasMigration && !(fresh && service.native_runtime_installed)}
       <button class="migration-btn" onclick={(e) => { e.stopPropagation(); onMigrateRuntime(); }} disabled={isBuilding}>
         {service.python_retired && !isNative ? "set up runtime" : "migrate runtime"}
       </button>

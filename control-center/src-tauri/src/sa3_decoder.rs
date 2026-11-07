@@ -123,12 +123,19 @@ pub struct State {
 
 pub fn state(root: &Path) -> State {
     let source = source_path(root);
-    let error = blocker(root);
+    let blocker = blocker(root);
+    // No installed optional adapter is a normal state. Keep launch blocking
+    // separate from an actual configuration, conversion or record error.
+    let error = if configuration_blocker().is_none() && matches!(read(root), Ok(None)) {
+        None
+    } else {
+        blocker.clone()
+    };
     State {
         enabled: crate::sa3_use_decoder_lora_enabled(),
         source_path: source.to_string_lossy().into(),
         source_present: source.is_file(),
-        prepared: error.is_none(),
+        prepared: blocker.is_none(),
         error,
     }
 }
@@ -221,6 +228,23 @@ pub async fn append_request(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn optional_decoder_absence_is_normal_but_a_broken_record_is_an_error() {
+        let root = std::env::temp_dir().join(format!("sa3-optional-decoder-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let initial = state(&root);
+        assert!(!initial.prepared);
+        assert!(initial.error.is_none(), "an uninstalled optional feature is not an error");
+        assert!(blocker(&root).is_some(), "enabling an unprepared correction must still be blocked");
+        let record = record_path(&root);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::fs::write(&record, b"{}").unwrap();
+        let broken = state(&root);
+        assert!(!broken.prepared);
+        assert!(broken.error.is_some(), "record errors must remain visible");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn disabled_correction_needs_no_files() {
