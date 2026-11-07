@@ -4,6 +4,36 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.0 - unreleased
+
+gary and terry move to audiocraft.cpp, completing the native migration for all
+seven services. they share one runtime, with CUDA or Vulkan on Windows. gary
+keeps every downloaded model available to gary4juce, with F16, Q8_0 and Q4_K_M
+choices for vanya, hoenn_lofi, keygen and the MusicGen base models. existing
+Python installations stay usable until their migration checks pass.
+
+fresh installs set up runtimes separately from models. choose CUDA or Vulkan
+once on NVIDIA; AMD uses Vulkan. each service has a recommended-download
+shortcut that opens models for progress and disappears when its files are
+ready. model selection reports the native checks it is running, rather than
+claiming to create a Python environment. training controls stay visible and
+wait for their runtime and training models; public C++ models need no Hugging
+Face token. Python-only precision, flash-attention and Carey XL switches are
+hidden on C++ installs. an optional decoder fix that isn't installed is no
+longer shown as an error.
+
+the uninstaller's data checkbox now removes default runtime storage beside
+the app, including models, outputs and LoRAs. custom and legacy storage are
+kept, with their cleanup instructions shown before uninstalling. downloads
+buffer disk writes and show transfer speed while retaining resume and checksum
+verification.
+
+pinned runtimes: sa3.cpp v0.2.1, audiocraft.cpp v0.1.3, acestep.cpp v0.1.4 and
+yuey.cpp v0.3.1. the NVIDIA install paths have been tested locally; the ROCm
+preview still needs Kostas's AMD validation.
+
+planned companion: gary4juce v5.0.3.
+
 ## v0.6.0 - 2026-10-31
 
 ### carey moves to acestep.cpp

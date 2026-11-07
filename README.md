@@ -12,29 +12,26 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 10/31 - v0.6.0
+## v0.7.0 - preparing
 
-[download gary4local v0.6.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.6.0).
+gary and terry move to [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp).
+that was the last Python migration: all seven services now set up on C++ on a
+fresh install. existing Python installs keep working until you choose to migrate.
+gary's models include vanya, hoenn_lofi, keygen and Meta's MusicGen models at
+F16, Q8_0 and Q4_K_M. terry uses the F16 MelodyFlow model.
 
-carey is off Python. press `migrate runtime` on carey and gary4local installs
-[acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), downloads
-the models you pick, checks a generation, a continuation and a lego stem on
-them, then offers to delete the Python env and its 16 GB of checkpoints. your
-LoRAs, captions and datasets stay. LoRA training, dataset captioning and SA3's
-auto-label all run on the C++ server now, and LoRAs you trained in Python carey
-publish to it too.
+`set up all runtimes` installs the engines without downloading every model.
+on NVIDIA you can choose CUDA or Vulkan once; AMD uses Vulkan. download the
+models you want in each service's models tab, or use `download recommended
+models` to fetch its shared components and recommended tier. the shortcut
+opens the models tab for progress and disappears when those models are ready.
 
-local C++ carey needs [gary4juce v5.0.2](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.2),
-which speaks the new server's API. the remote backend serves both, so an older
-gary4juce keeps working there.
+this also tidies up fresh-install training controls, optional decoder setup,
+Python-only settings and uninstall cleanup. native runtime pins are
+sa3.cpp v0.2.1, audiocraft.cpp v0.1.3, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
 
-the stable audio runtime moves to sa3.cpp v0.1.8, which matches the remote SA3
-much more closely. heads up: every seed sounds different than it did on
-v0.1.7, for sa3, jerry and foundation-1. once you've updated the runtime, open
-the SA3 LoRA manager and prepare your LoRAs again; it marks the ones that need
-it. that manager is one list now, one card per LoRA.
-
-thanks again to Kostas for running all of it on his Radeon first.
+this release is being prepared alongside gary4juce v5.0.3. the ROCm preview
+will go to Kostas first; AMD validation is still pending.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
@@ -51,7 +48,7 @@ build while we tried very hard to break it locally.
 
 - [x] replace jerry, foundation-1 and SA3 with [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), which already supports LoRA training in native C++
 - [x] replace carey with [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), including the LoRA workflow
-- [ ] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
+- [x] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
 - [ ] dig into a LoRA training UI for YuE2
 - [ ] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac) once the native migration is ready
 - [ ] produce a Linux build
