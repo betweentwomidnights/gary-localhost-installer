@@ -1,11 +1,11 @@
 {
-    "version":  "0.6.0-rocm.2",
-    "notes":  "A super minor update: the SA3 LoRA manager shows each LoRA once, and marks LoRAs an older sa3.cpp converted so you can prepare them again.\nYou haven\u0027t trained any SA3 LoRAs yet, so you won\u0027t notice a thing. Use gary4juce v5.0.2.",
-    "pub_date":  "2026-11-01T00:34:15.0000000+00:00",
+    "version":  "0.7.0-rocm.1",
+    "notes":  "Gary and Terry move to audiocraft.cpp. Existing Python installs can migrate after the native checks pass.\nFresh installs set up runtimes without downloading every model. AMD uses Vulkan; choose models per service or download the recommended set.\nTraining controls, optional decoder setup and native model checks are clearer. Uninstall can remove default runtime storage.\nPreview for AMD testing. Compatible with gary4juce v5.0.3 pre-release.",
+    "pub_date":  "2026-11-07T10:46:59.0000000+00:00",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtHNVZEQVRDM0xDV2JZem01S29NWEJVdit1N084L0wrQ0k5SmVBUEs2bGgrTEJOWFJOK3FqNkJMK0hvU0pJR3BhUzdWdVkvaEhMYzNreTRXcDhpMkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDkxNDU1CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNi4wLXJvY20uMl94NjQtc2V0dXAuZXhlCjhmeVliY1pqMSsreHpDOHViRzNKTWRCM1hSRVZRSWJjcGZrRHU2NlNhRTZXNVVTWHV0TUpOV2RKQkFPTmRIM2IxdVhaWFl0OXpsb3FlZXdaQ2lmWEJnPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.6.0-rocm.2/gary4local-rocm_0.6.0-rocm.2_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEpUTnBjbzIvUFQ1VGJXZU5waGpDZk5lMjBPL3A1RzFhWVlwQktoMEtBSEpQcEZza29odGJMK0krS1NWdHgzVGJSR1lyWHBVbU8wVTBWOWRKcHpuVFFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDQ4MDk3CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy4wLXJvY20uMV94NjQtc2V0dXAuZXhlClFVaElKZnY1TWF5bVZzM0RFSkFlVHVYVjBQNEhiZzZnTlA4cFY5eHB6SkovUlovWXk0TjFseGdJbEYvWWhhbTVIc2Z0a1lkZ0tpUUhHbzkva3NXSUFBPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0-rocm.1/gary4local-rocm_0.7.0-rocm.1_x64-setup.exe"
                                          }
                   }
 }
