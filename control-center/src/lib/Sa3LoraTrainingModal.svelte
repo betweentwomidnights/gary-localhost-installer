@@ -105,6 +105,8 @@
   let trainer = $derived(serviceRuntime);
   let nativeEncoding = $state("F16");
   let nativeEncodingTouched = $state(false);
+  let downloadedTraining = $state<string[]>([]);
+  let nativeSharedReady = $state(false);
   let smallCudaGpu = $state(false);
   let resumeCheckpoint = $state("");
   let loadingResume = $state(false);
@@ -347,6 +349,7 @@
   let canStart = $derived(
     open &&
       serviceEnvExists &&
+      (trainer !== "native" || (nativeSharedReady && downloadedTraining.includes(nativeEncoding))) &&
       serviceStatus !== "running" &&
       !starting &&
       !cancelling &&
@@ -368,7 +371,10 @@
   );
 
   $effect(() => {
-    if (!nativeEncodingTouched && !resumeCheckpoint) nativeEncoding = smallCudaGpu && fullTrack ? "Q4_K_M" : "F16";
+    if (!nativeEncodingTouched && !resumeCheckpoint) {
+      const preferred = smallCudaGpu && fullTrack ? "Q4_K_M" : "F16";
+      nativeEncoding = downloadedTraining.includes(preferred) ? preferred : downloadedTraining[0] ?? preferred;
+    }
   });
 
   $effect(() => {
@@ -377,6 +383,11 @@
     // async function before its first await must not subscribe this effect.
     untrack(() => void loadTrainingState());
     if (trainer === "native") {
+      void invoke<{ id: string; status: string }[]>("get_models").then((models) => {
+        const ready = (id: string) => models.some((entry) => entry.id === id && entry.status === "downloaded");
+        downloadedTraining = ["F16", "Q4_K_M"].filter((tier) => ready(`sa3-native::medium-base-${tier}`));
+        nativeSharedReady = ready("sa3-native::text") && ready("sa3-native::medium-decoder");
+      }).catch((cause) => error = describeError(cause));
       void invoke<{ entries: typeof nativeHistory }>("get_sa3_native_lora_state").then((state) => nativeHistory = state.entries).catch((cause) => error = describeError(cause));
       void invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId: "sa3" })
         .then((info) => smallCudaGpu = recommendQuantizedSa3Training(info))
@@ -467,6 +478,7 @@
         <div class="body">Download a training base from SA3 → Models. Training saves checkpoints in your storage folder and leaves the source audio and text sidecars unchanged.</div>
         {#if smallCudaGpu && fullTrack}<div class="body">Q4_K_M is recommended for full-track training on this GPU. F16 may exceed available GPU memory and run much slower. Generation model precision is selected separately.</div>{/if}
         {#if !serviceEnvExists}<div class="warning">Reinstall the SA3 runtime from the service row before training.</div>{/if}
+        {#if serviceEnvExists && (!nativeSharedReady || !downloadedTraining.includes(nativeEncoding))}<div class="warning">Download the shared components and the selected medium training base from SA3 → Models before training.</div>{/if}
         {#if resumeChoices.length && !isTraining}
           <label class="field"><span>Resume native training</span>
             <select bind:value={resumeCheckpoint} disabled={starting || loadingResume} onchange={() => void chooseResume()}>

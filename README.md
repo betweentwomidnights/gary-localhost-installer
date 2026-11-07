@@ -106,6 +106,8 @@ optimizations in this project, see the
 - development runs directly from the repo.
 - production syncs the bundled service source into the selected runtime storage folder under `services`.
 - new installs default runtime storage to `gary4local-data` inside the install folder, so choosing an external install drive also moves service envs, caches, logs, and local models there.
+- `set up all runtimes` installs each shared engine once and offers one CUDA/Vulkan choice on NVIDIA machines before downloading (other machines use Vulkan where available). It does not download models. Open `models` for the services you want to use; download a model and its shared components, then press `use` to select it and finish its checks. Vulkan is a smaller download; CUDA shares its NVIDIA redistributables across engines but still needs an engine-specific backend.
+- when uninstalling, `delete settings and default runtime data` also removes `gary4local-data` beside the app, including models, outputs and LoRAs. Custom storage and legacy `%APPDATA%\Gary4JUCE` are kept; check the app's storage settings for their locations before uninstalling and remove those folders manually if no longer needed.
 - existing installs keep using `%APPDATA%\Gary4JUCE` when data is already present. the storage button in the app can choose a new folder for the next restart.
 
 ## auto-updater

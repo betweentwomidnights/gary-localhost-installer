@@ -14,6 +14,7 @@
     has_migration: boolean;
     migration_complete: boolean;
     python_retired: boolean;
+    native_runtime_installed: boolean;
   }
   interface RuntimeInfo {
     installed: boolean;
@@ -127,10 +128,10 @@
       <div class="member">
         <button class="name" onclick={() => onSelectService(member.id)}>{member.display_name}</button>
         <span class="state" class:on={live(member)}>{member.status}</span>
-        <span class="engine">{member.runtime === "native" ? `c++${member.native_backend ? ` · ${member.native_backend}` : ""}` : "python"}</span>
+        <span class="engine">{member.runtime === "native" ? `c++${member.native_backend ? ` · ${member.native_backend}` : ""}` : member.python_retired ? member.native_runtime_installed ? "models needed" : "setup needed" : "python"}</span>
         <span class="step">
           {#if member.has_migration && !member.migration_complete}
-            <button disabled={!!building} onclick={() => onMigrate(member.id)}>{member.runtime === "native" ? "finish migration" : member.python_retired ? "set up" : "migrate"}</button>
+            <button disabled={!!building} onclick={() => onMigrate(member.id)}>{member.runtime === "native" ? "finish migration" : member.python_retired ? member.native_runtime_installed ? "set up models" : "set up" : "migrate"}</button>
           {/if}
         </span>
       </div>

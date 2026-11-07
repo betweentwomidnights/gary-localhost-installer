@@ -23,6 +23,8 @@ pub struct ServiceInfo {
     pub runtime: String,
     /// For a native service, the backend its installed runtime launches on.
     pub native_backend: Option<String>,
+    /// The native candidate can be installed before models are selected.
+    pub native_runtime_installed: bool,
     /// The installed native runtime is older than the one this build pins.
     pub native_update_available: bool,
     /// Why an automatic backend choice had to fall back, if it did.
@@ -575,6 +577,12 @@ impl ServiceManager {
             .is_some_and(|svc| svc.runtime == ServiceRuntime::Native)
     }
 
+    /// Fresh installs use native tools before a generation model is selected.
+    pub fn uses_native_tools(&self, service_id: &str) -> bool {
+        self.find_service(service_id)
+            .is_some_and(|svc| svc.runtime == ServiceRuntime::Native || self.python_retired(svc))
+    }
+
     /// Called after migration has verified the installed native server. Persist
     /// the profile choice before cleanup, then update this session's launch path.
     pub fn activate_native(
@@ -805,7 +813,7 @@ impl ServiceManager {
                 let pid = running.and_then(|r| r.process.id().into());
                 let healthy = running.map(|r| r.healthy).unwrap_or(false);
                 let error = self.errors.get(&svc.id).cloned();
-                let native_install = (svc.runtime == ServiceRuntime::Native)
+                let native_install = (svc.runtime == ServiceRuntime::Native || self.python_retired(svc))
                     .then(|| self.native_install(svc))
                     .flatten();
                 let env_exists = match svc.runtime {
@@ -858,6 +866,7 @@ impl ServiceManager {
                     native_backend: native_install
                         .as_ref()
                         .map(|install| install.backend.clone()),
+                    native_runtime_installed: native_install.is_some(),
                     native_update_available,
                     native_fallback_reason: native_install
                         .and_then(|install| install.fallback_reason),
@@ -1344,7 +1353,7 @@ impl ServiceManager {
                 building: true,
                 current_step: 0,
                 total_steps,
-                step_label: "Creating virtual environment...".to_string(),
+                step_label: "Preparing...".to_string(),
                 log: String::new(),
                 error: None,
             },
@@ -1393,7 +1402,7 @@ impl ServiceManager {
         let mut outdated = Vec::new();
         for svc in &self.services {
             let Some(native) = svc.native.as_ref() else { continue };
-            if svc.runtime != ServiceRuntime::Native { continue; }
+            if svc.runtime != ServiceRuntime::Native && !self.python_retired(svc) { continue; }
             let dir = self.native_dir(svc);
             if seen.contains(&dir) { continue; }
             seen.push(dir);
@@ -1929,6 +1938,7 @@ mod tests {
         let flags = retired(&fresh);
         for id in ["sa3", "stable-audio", "foundation", "carey", "gary", "melodyflow"] {
             assert!(flags[id], "{id} should set up on C++ on a fresh install");
+            assert!(fresh.uses_native_tools(id), "{id} should use native training and tools before model activation");
         }
         // An existing Python environment stays usable until it migrates.
         let python = root.join("services/stable-audio/env/Scripts/python.exe");
@@ -1937,6 +1947,8 @@ mod tests {
         let existing = ServiceManager::new(manifest.services, root.clone());
         let flags = retired(&existing);
         assert!(!flags["stable-audio"] && flags["foundation"]);
+        assert!(!existing.uses_native_tools("stable-audio"));
+        assert!(!existing.outdated_native_runtimes().contains(&"stable-audio".to_string()), "bulk setup must preserve existing Python services");
         assert_eq!(existing.get_build_info("stable-audio").ok().map(|info| info.runtime), Some(ServiceRuntime::Python));
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2109,11 +2121,12 @@ mod tests {
             serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
         manifest.resolve_native_bundles().unwrap();
         let mut manager = ServiceManager::new(manifest.services, root.clone());
-        // gary and terry share one runtime; the rest are still on Python.
+        // gary and terry share one runtime; fresh, unselected services also
+        // install their candidate, without downloading models or activating.
         for service in manager.services.iter_mut().filter(|service| ["gary", "melodyflow"].contains(&service.id.as_str())) {
             service.runtime = ServiceRuntime::Native;
         }
-        assert_eq!(manager.outdated_native_runtimes(), ["gary", "yuey"]);
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "stable-audio", "carey", "yuey"]);
 
         let svc = manager.find_service("gary").unwrap();
         let native = svc.native.clone().unwrap();
@@ -2129,9 +2142,24 @@ mod tests {
             runtimes: vec![],
         };
         std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
-        assert_eq!(manager.outdated_native_runtimes(), ["yuey"]);
+        assert_eq!(manager.outdated_native_runtimes(), ["stable-audio", "carey", "yuey"]);
         std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp("v0.0.1")).unwrap()).unwrap();
-        assert_eq!(manager.outdated_native_runtimes(), ["gary", "yuey"]);
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "stable-audio", "carey", "yuey"]);
+        let svc = manager.find_service("stable-audio").unwrap();
+        let native = svc.native.as_ref().unwrap();
+        let dir = manager.native_dir(svc);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
+        for id in ["stable-audio", "sa3", "foundation"] {
+            let executable = &manager.find_service(id).unwrap().native.as_ref().unwrap().executable;
+            std::fs::write(dir.join(executable), b"fixture").unwrap();
+            let info = manager.get_service_info().into_iter().find(|info| info.id == id).unwrap();
+            assert!(info.native_runtime_installed, "{id} shares the installed runtime");
+            assert!(!info.migration_complete && manager.selection(id).is_none());
+            assert!(!manager.is_native(id), "model activation is still a separate choice");
+        }
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "carey", "yuey"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

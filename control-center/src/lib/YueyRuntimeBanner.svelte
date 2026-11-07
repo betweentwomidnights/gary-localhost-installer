@@ -30,14 +30,12 @@
     envExists,
     building,
     startBlocker,
-    onShowModels,
   }: {
     serviceStatus: "stopped" | "starting" | "running" | "unhealthy" | "failed";
     nativeBackend: string | null;
     envExists: boolean;
     building: boolean;
     startBlocker: string | null;
-    onShowModels: () => void;
   } = $props();
 
   let info = $state<NativeRuntimeInfo | null>(null);
@@ -109,21 +107,6 @@
     }
   }
 
-  async function downloadModels() {
-    saving = true;
-    message = null;
-    try {
-      const queued = await invoke<string[]>("download_yuey_default_models");
-      message = queued.length
-        ? `downloading ${queued.map((id) => id.replace("yuey::", "")).join(" and ")}. progress is in models.`
-        : "already downloading. progress is in models.";
-    } catch (e: any) {
-      message = "Failed: " + (typeof e === "string" ? e : e?.message || "unknown");
-    } finally {
-      saving = false;
-    }
-  }
-
   async function reinstall() {
     message = null;
     try {
@@ -175,15 +158,6 @@
     <div class="warning">{info.fallbackReason}</div>
   {/if}
 
-  {#if info?.installed && startBlocker}
-    <div class="note">
-      yuey {startBlocker}.
-      <button class="link" disabled={saving} onclick={downloadModels}>
-        download the recommended models
-      </button>
-    </div>
-  {/if}
-
   {#if wantsReinstall}
     <div class="note">
       installed on {info?.backend}, set to {info?.preference}.
@@ -199,10 +173,8 @@
     auto picks CUDA on NVIDIA and Vulkan on AMD and Intel. on NVIDIA, CUDA is
     the faster of the two, and Vulkan has stalled on long renders with a DAW
     open.
-    yuey still needs its models:
-    <button class="link" onclick={onShowModels}>open models</button>
     {#if info?.recommendedEncoding}
-      (this GPU suits {info.recommendedEncoding})
+      This GPU suits {info.recommendedEncoding}.
     {/if}
     {#if tiers && tiers.installed.length > 1}
       auto launches with the recommended tier when it is downloaded; pick

@@ -123,19 +123,46 @@ export async function cleanUp(serviceId: string, preview: Preview) {
   return invoke<{ selection: Selection; errors: string[] }>("cleanup_legacy_installation", { serviceId, reviewToken: preview.cleanupToken });
 }
 
-/** Set up a service with the defaults its setup modal would use, finishing
- *  without review when there is no Python installation to clean up. */
-export async function setUpWithDefaults(serviceId: string, report: (task: SetupTask, message: string) => void) {
-  const setup = await loadSetup(serviceId);
-  await runSetup(
-    serviceId,
-    setup.profile,
-    (recommended) => setup.preview.nativeSelection || !recommended.tier ? setup.choices : { ...setup.choices, encoding: recommended.tier },
-    report,
-  );
+/** The standard Models panel's Use action also finishes a fresh install.
+ * Existing Python installations keep their explicit migration flow. */
+export async function useNativeModel(serviceId: string, encoding: string) {
+  const services = await invoke<{ id: string; runtime: string; python_retired: boolean }[]>("get_services");
+  const service = services.find((entry) => entry.id === serviceId);
+  if (service?.runtime !== "python" || !service.python_retired) {
+    return invoke<Selection>("select_native_model", { serviceId, encoding });
+  }
+  const selection = await invoke<Selection>("activate_native_runtime", { serviceId, encoding });
   const preview = await invoke<Preview>("get_migration_preview", { serviceId });
-  if (!onlyBundledCode(preview)) return;
-  report("verify", "Checking again and removing unused bundled Python files...");
-  const result = await cleanUp(serviceId, preview);
-  if (result.errors.length) throw new Error(result.errors.join("\n"));
+  if (onlyBundledCode(preview)) {
+    const result = await cleanUp(serviceId, preview);
+    if (result.errors.length) throw new Error(result.errors.join("\n"));
+  }
+  return selection;
+}
+
+/** Generation essentials only; optional variants and training bases stay in Models. */
+export async function recommendedModelIds(serviceId: string): Promise<string[]> {
+  if (serviceId === "yuey") {
+    const [tiers, info] = await Promise.all([
+      invoke<{ installed: string[] }>("get_yuey_tiers"),
+      invoke<{ recommendedEncoding: string | null }>("get_native_runtime_info", { serviceId }),
+    ]);
+    const tier = ["BF16", "Q8_0", "Q4_K_M"].includes(info.recommendedEncoding ?? "") ? info.recommendedEncoding : "Q4_K_M";
+    // Matches Yuey's download plan: keep any tier already installed.
+    return ["yuey::shared", ...(!tiers.installed.length ? [`yuey::${tier}`] : [])];
+  }
+  const [profile, recommended] = await Promise.all([
+    invoke<Profile>("get_migration_profile", { serviceId }),
+    invoke<Recommendations>("get_native_model_recommendations", { serviceId }),
+  ]);
+  const tier = recommended.tier ?? profile.tiers[0];
+  const ids = profile.tierComponents[tier];
+  if (!ids?.length) throw new Error("No recommended model plan is available for this service.");
+  return ids;
+}
+
+export async function downloadRecommendedModels(serviceId: string) {
+  if (serviceId === "yuey") return invoke<string[]>("download_yuey_default_models");
+  const ids = await recommendedModelIds(serviceId);
+  return invoke<string[]>("prepare_native_models", { serviceId, componentIds: ids, waitForCompletion: false });
 }

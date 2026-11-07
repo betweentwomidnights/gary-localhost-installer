@@ -5540,8 +5540,8 @@ fn yuey_default_tier(recommended: Option<&str>) -> &'static str {
 }
 
 /// Fetch whatever yuey still needs to generate: the shared components, and
-/// the recommended tier unless some tier is already downloaded. Runs after a
-/// runtime install and from the yuey panel. Returns the entries it queued.
+/// the recommended tier unless some tier is already downloaded. Runs only
+/// when requested from the yuey panel. Returns the entries it queued.
 async fn queue_yuey_default_models(handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
     let manager = handle.state::<ManagerState>().inner().clone();
     let model_mgr = handle.state::<ModelState>().inner().clone();
@@ -6215,6 +6215,7 @@ pub fn run() {
             restart_service,
             rebuild_env,
             update_native_runtimes,
+            get_native_setup_gpus,
             get_service_log,
             get_native_runtime_info,
             get_yuey_tiers,
@@ -6385,6 +6386,11 @@ async fn rebuild_env(
     Ok(())
 }
 
+#[tauri::command]
+async fn get_native_setup_gpus() -> Result<Vec<native_runtime::GpuAdapter>, String> {
+    native_runtime::detect_gpus().await
+}
+
 /// Install every C++ runtime that is missing or behind the manifest, once per
 /// shared runtime, stopping the services on it first. Returns when all are
 /// done, with whatever failed.
@@ -6405,7 +6411,7 @@ async fn update_native_runtimes(
             for member in mgr.runtime_members(&service_id) {
                 mgr.stop_if_native(&member);
             }
-            match mgr.get_build_info(&service_id) {
+            match mgr.get_native_build_info(&service_id) {
                 Ok(info) => {
                     mgr.set_build_started(&service_id, info.total_steps());
                     info
@@ -6606,27 +6612,8 @@ async fn run_build(
     // stale Python plan recreate an environment after native activation.
     manager.lock().await.validate_build_runtime(&build_info)?;
     if build_info.runtime == manifest::ServiceRuntime::Native {
-        let service_id = build_info.service_id.clone();
         install_native_runtime(build_info, manager.clone(), handle.clone()).await?;
-        // A runtime with no models can only fail its first request, so fetch
-        // the ones the install check just recommended.
-        if service_id == "yuey" {
-            match queue_yuey_default_models(&handle).await {
-                Ok(queued) if !queued.is_empty() => {
-                    manager.lock().await.append_build_log(
-                        &service_id,
-                        &format!("downloading models: {}", queued.join(", ")),
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    manager.lock().await.append_build_log(
-                        &service_id,
-                        &format!("could not start the model downloads: {error}"),
-                    );
-                }
-            }
-        }
+        // Models are an explicit choice in the service models panel.
         return Ok(());
     }
 
@@ -7460,7 +7447,7 @@ async fn upsert_carey_lora(
             checkpoint_dir.display()
         ));
     }
-    if manager.lock().await.is_native("carey") && !carey_training::is_peft_adapter_dir(&checkpoint_dir) {
+    if manager.lock().await.uses_native_tools("carey") && !carey_training::is_peft_adapter_dir(&checkpoint_dir) {
         return Err(format!(
             "Carey's C++ runtime loads PEFT LoRA folders: {} needs adapter_model.safetensors and adapter_config.json.",
             checkpoint_dir.display()
@@ -7779,7 +7766,7 @@ async fn build_carey_lora_captions(
     let initial_state = build_carey_lora_state(repo_root.inner())?;
     // captions.json is Python Carey's /captions pool. The C++ server's clients
     // read each LoRA's captions from its adapter_info.json, written at launch.
-    if manager.lock().await.is_native("carey") {
+    if manager.lock().await.uses_native_tools("carey") {
         return Ok(CareyCaptionsBuildResult {
             state: initial_state,
             output: "Carey's C++ server needs no captions.json: each LoRA's captions are published with it when Carey starts.".into(),
@@ -7920,7 +7907,7 @@ async fn start_carey_ace_lora_training(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     app_handle: tauri::AppHandle,
 ) -> Result<CareyAceTrainingState, String> {
-    let native = manager.lock().await.is_native("carey");
+    let native = manager.lock().await.uses_native_tools("carey");
     // Captioning writes sidecars, not a LoRA: its name only labels the job.
     let normalized_name = match sanitize_lora_name(&name) {
         Some(name) => name,
@@ -9445,7 +9432,7 @@ async fn suggest_sa3_track_metadata(
     let workload = sa3_analysis::workload_id();
     let tool = {
         let mut services = manager.lock().await;
-        let native_selected = services.is_native("sa3");
+        let native_selected = services.uses_native_tools("sa3");
         let tool = services
             .native_service("sa3")
             .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
@@ -9648,7 +9635,7 @@ async fn get_sa3_autolabel_availability(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3AutolabelAvailability, String> {
     let caption_lm_model = validate_carey_caption_lm_model(&caption_lm_model)?;
-    if manager.lock().await.is_native("carey") {
+    if manager.lock().await.uses_native_tools("carey") {
         return Ok(native_sa3_autolabel_availability(repo_root.inner(), caption_lm_model));
     }
     Ok(build_sa3_autolabel_availability(
@@ -9683,7 +9670,7 @@ async fn start_sa3_autolabel(
     if matches!(current.status.as_str(), "starting" | "running") {
         return Err("An auto-label job is already running.".to_string());
     }
-    if manager.lock().await.is_native("carey") {
+    if manager.lock().await.uses_native_tools("carey") {
         return start_native_sa3_autolabel(root, style, caption_lm_model, repo_root.inner(), manager.inner(), app_handle).await;
     }
 
@@ -10184,7 +10171,7 @@ async fn start_sa3_lora_training(
     let _launch = sa3_training::LAUNCH
         .try_lock()
         .map_err(|_| "A SA3 training launch is already in progress")?;
-    let native = resolve_sa3_training_runtime(manager.lock().await.is_native("sa3"), runtime.as_deref())?;
+    let native = resolve_sa3_training_runtime(manager.lock().await.uses_native_tools("sa3"), runtime.as_deref())?;
     if native {
         if storage::storage_info(repo_root.inner()).pending_restart {
             return Err("Restart before training in your chosen storage folder.".into());
@@ -10637,6 +10624,13 @@ fn migrating(service_id: &str) -> Result<&'static dyn migration::Service, String
 
 /// A step of a service's migration, for its panel.
 fn migration_progress(app_handle: &tauri::AppHandle, service_id: &str, message: &str) {
+    // Native verification is also started from Models, without the migration
+    // modal. Keep the row and runtime activity panel on the actual check.
+    if let Ok(mut services) = app_handle.state::<ManagerState>().try_lock() {
+        services.set_build_step(service_id, 0, message);
+        services.append_build_log(service_id, message);
+        let _ = app_handle.emit("services-updated", services.get_service_info());
+    }
     let _ = app_handle.emit(
         "native-migration-progress",
         serde_json::json!({"serviceId": service_id, "message": message}),
@@ -10769,9 +10763,10 @@ async fn activate_native_runtime(
         services.begin_native_workload(
             &service_id,
             "native-migration",
-            &format!("{label} migration validation"),
+            &format!("{label} model and runtime checks"),
         )?;
         services.set_build_started(&service_id, 1);
+        services.set_build_step(&service_id, 0, "Checking the native runtime and model files...");
         plan
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
@@ -10853,6 +10848,7 @@ async fn cleanup_legacy_installation(
         let (native, installed, launch) = services.migration_launch(&service_id, &selection.encoding)?;
         services.begin_native_workload(&service_id, "legacy-cleanup", &format!("{label} legacy cleanup"))?;
         services.set_build_started(&service_id, 1);
+        services.set_build_step(&service_id, 0, "Checking and cleaning unused Python files...");
         (native, installed, launch, hub)
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());

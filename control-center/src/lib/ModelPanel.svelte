@@ -358,7 +358,7 @@
     {/if}
     {#if isJerry}
       {#if hasTierModels}
-        <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native" || pythonRetired} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
       {/if}
       <!-- Jerry's Python models go once it runs native. -->
       {#if pythonModels}
@@ -482,7 +482,7 @@
       {/if}
 
     {:else if isSa3}
-      <Sa3NativeModels models={serviceModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+      <Sa3NativeModels models={serviceModels} {progress} nativeSelected={serviceRuntime === "native" || pythonRetired} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
       {#if pythonModels}
       <div class="size-group">
         <div class="size-label">Python models and optional components</div>
@@ -538,7 +538,7 @@
       {/if}
     {:else if isCarey}
       {#if hasTierModels}
-        <NativeVariantModels {serviceId} layout={variantLayouts.carey} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        <NativeVariantModels {serviceId} layout={variantLayouts.carey} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native" || pythonRetired} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
       {/if}
       <!-- Carey's Python models go once it runs native. -->
       {#if pythonModels}
@@ -823,10 +823,10 @@
 
     {:else}
       {#if hasTierModels && variantLayouts[serviceId]}
-        <NativeVariantModels {serviceId} layout={variantLayouts[serviceId]} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        <NativeVariantModels {serviceId} layout={variantLayouts[serviceId]} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native" || pythonRetired} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
         {#if serviceModels.length}<div class="size-label">Python models</div>{/if}
       {:else if hasTierModels}
-        <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native"} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
+        <NativeTierModels {serviceId} models={nativeModels} {progress} nativeSelected={serviceRuntime === "native" || pythonRetired} onDownload={startDownload} onRemove={(id) => { const model = models.find((entry) => entry.id === id); if (model) void removeManagedModel(model); }} removingId={removingModelId} />
         {#if serviceModels.length}<div class="size-label">Python models</div>{/if}
       {/if}
       <!-- Gary / other services: grouped by size -->
