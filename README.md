@@ -12,7 +12,7 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.7.0-rocm.1 - Windows preview
+## v0.7.0-rocm.2 - Windows preview
 
 gary and terry move to [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp).
 that was the last Python migration: all seven services now set up on C++ on a

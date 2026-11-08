@@ -4,6 +4,14 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.0-rocm.2 - unreleased preview
+
+picks up audiocraft.cpp v0.1.4 and sa3.cpp v0.2.2. continuations append to the
+input again, and SA3 negative prompts under CFG match stable_audio_3, so SA3
+renders that use one with a cfg scale above 1 sound different. v0.7.0 itself
+is going to main ahead of AMD validation, so this preview is that same code
+with the ROCm changes on top. `update all runtimes` fetches both new runtimes.
+
 ## v0.7.0-rocm.1 - 2026-11-07 preview
 
 brings the audiocraft.cpp migration and fresh-install UX from v0.7.0 into the
@@ -12,8 +20,7 @@ keep their legacy build settings until migration; gary and terry's cleanup also
 accounts for their ROCm compatibility helpers. the ROCm app identity, storage
 roots and preview updater endpoints are preserved.
 
-this preview is for Kostas's AMD testing. the main migration PR stays open
-until that testing is complete.
+this preview is for Kostas's AMD testing.
 
 compatible with gary4juce v5.0.3 pre-release.
 
