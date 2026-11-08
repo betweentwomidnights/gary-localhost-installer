@@ -15,7 +15,7 @@ LangString alreadyInstalledLong ${LANG_ENGLISH} "${PRODUCTNAME} ${VERSION} is al
 LangString chooseMaintenanceOption ${LANG_ENGLISH} "choose the maintenance option to perform."
 LangString choowHowToInstall ${LANG_ENGLISH} "choose how you want to install ${PRODUCTNAME}."
 LangString createDesktop ${LANG_ENGLISH} "create desktop shortcut"
-LangString deleteAppData ${LANG_ENGLISH} "delete the application data"
+LangString deleteAppData ${LANG_ENGLISH} "delete settings and default runtime data"
 LangString dontUninstall ${LANG_ENGLISH} "do not uninstall"
 LangString dontUninstallDowngrade ${LANG_ENGLISH} "do not uninstall (downgrading without uninstall is disabled for this installer)"
 LangString newerVersionInstalled ${LANG_ENGLISH} "a newer version of ${PRODUCTNAME} is already installed! it is not recommended that you install an older version. if you really want to install this older version, it's better to uninstall the current version first.$\nselect the operation you want to perform and click next to continue."

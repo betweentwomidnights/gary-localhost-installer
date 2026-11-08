@@ -1,22 +1,45 @@
 {
   "nativeBundles": {
     "sa3": {
-      "version": "v0.1.8",
+      "version": "v0.2.2",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-core.zip",
-            "sha256": "483daf202863ec465bb47efb9e12aeb5614ad4e9eafaae92c91cad0318940620"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.2/sa3-v0.2.2-windows-x64-core.zip",
+            "sha256": "d095e1e88c93a1141825b705603f689cf2db50bffda8d42b6fabf061cdab9e49"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-cuda.zip",
-              "sha256": "09650332715df6656a40ede615cd71a1614dee4ebcd979e3bffb9c434cae7daf",
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.2/sa3-v0.2.2-windows-x64-cuda.zip",
+              "sha256": "eaf292ece84f999f70c53c254b845e2dfc87473e6fbf7f7563f0be88a8d5f70a",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.1.8/sa3-v0.1.8-windows-x64-vulkan.zip",
-              "sha256": "e8ce2180d1c4f0a0512191947e4b2b327abf98d99b82514418ad9e1678e58c78"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.2/sa3-v0.2.2-windows-x64-vulkan.zip",
+              "sha256": "ccc2cc10e279bf1d86da9b5ba80a67877e831536c36855b22b0166aa0c024ad9"
+            }
+          },
+          "prefer": ["cuda", "vulkan"]
+        }
+      }
+    },
+    "audiocraft": {
+      "version": "v0.1.4",
+      "platforms": {
+        "windows-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.4/audiocraft-v0.1.4-windows-x64-core.zip",
+            "sha256": "ba5d549d398bd96e126caa8bc40bdca50d407ffac1e0946171ea88d0ecec1616"
+          },
+          "backends": {
+            "cuda": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.4/audiocraft-v0.1.4-windows-x64-cuda.zip",
+              "sha256": "86217f414203cf5ac633dba4d2dd169f02217f6cc379a0cea0234a570c5a1b14",
+              "requires": ["cudart-12.8"]
+            },
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.4/audiocraft-v0.1.4-windows-x64-vulkan.zip",
+              "sha256": "22c114249c7da0c818598916c705ceae554c11a6a7fab1f304f51c8e9f8d52a2"
             }
           },
           "prefer": ["cuda", "vulkan"]
@@ -62,6 +85,52 @@
         "PYTHONIOENCODING": "utf-8",
         "PYTHONLEGACYWINDOWSSTDIO": "1"
       },
+      "native": {
+        "bundle": "audiocraft",
+        "executable": "musicgen-server.exe",
+        "modelsDir": "gary",
+        "env": {
+          "AC_MUSICGEN_PORT": "8000",
+          "AC_DEVICE": "${NATIVE_BACKEND}",
+          "AC_MODELS_DIR": "${MODELS_DIR}/gary"
+        }
+      },
+      "migration": {
+        "dataDir": "gary",
+        "label": "gary",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [
+            {"repo": "thepatch/vanya_ai_dnb_0.1", "label": "PyTorch vanya_ai_dnb_0.1 finetune"},
+            {"repo": "thepatch/gary_orchestra_2", "label": "PyTorch gary_orchestra_2 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-small-8", "label": "PyTorch keygen-gary-v2-small-8 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-small-12", "label": "PyTorch keygen-gary-v2-small-12 finetune"},
+            {"repo": "thepatch/bleeps-medium", "label": "PyTorch bleeps-medium finetune"},
+            {"repo": "thepatch/keygen-gary-medium-12", "label": "PyTorch keygen-gary-medium-12 finetune"},
+            {"repo": "thepatch/hoenn_lofi", "label": "PyTorch hoenn_lofi finetune"},
+            {"repo": "thepatch/bleeps-large-6", "label": "PyTorch bleeps-large-6 finetune"},
+            {"repo": "thepatch/bleeps-large-8", "label": "PyTorch bleeps-large-8 finetune"},
+            {"repo": "thepatch/bleeps-large-10", "label": "PyTorch bleeps-large-10 finetune"},
+            {"repo": "thepatch/bleeps-large-14", "label": "PyTorch bleeps-large-14 finetune"},
+            {"repo": "thepatch/bleeps-large-20", "label": "PyTorch bleeps-large-20 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-large-12", "label": "PyTorch keygen-gary-v2-large-12 finetune"},
+            {"repo": "thepatch/keygen-gary-v2-large-16", "label": "PyTorch keygen-gary-v2-large-16 finetune"},
+            {"repo": "facebook/encodec_32khz", "label": "PyTorch EnCodec"}
+          ],
+          "code": {
+            "files": [
+              "g4l_localhost.py",
+              "g4laudio.py",
+              "musicgen_fast.py",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "setup.cfg",
+              "setup.py"
+            ],
+            "packages": ["audiocraft"]
+          }
+        }
+      },
       "dependsOn": []
     },
     {
@@ -94,6 +163,37 @@
       "env": {
         "PYTHONIOENCODING": "utf-8",
         "PYTHONLEGACYWINDOWSSTDIO": "1"
+      },
+      "native": {
+        "bundle": "audiocraft",
+        "executable": "melodyflow-server.exe",
+        "modelsDir": "melodyflow",
+        "env": {
+          "AC_MELODYFLOW_PORT": "8002",
+          "AC_DEVICE": "${NATIVE_BACKEND}",
+          "AC_MODELS_DIR": "${MODELS_DIR}/melodyflow"
+        }
+      },
+      "migration": {
+        "dataDir": "melodyflow",
+        "label": "terry",
+        "legacy": {
+          "envDirs": ["env", ".venv"],
+          "hfRepos": [
+            {"repo": "facebook/melodyflow-t24-30secs", "label": "PyTorch MelodyFlow model"}
+          ],
+          "code": {
+            "files": [
+              "localhost_melodyflow.py",
+              "melodyflow_fast.py",
+              "requirements.lock.txt",
+              "requirements.txt",
+              "seed_test.py",
+              "variations.py"
+            ],
+            "packages": ["audiocraft"]
+          }
+        }
       },
       "dependsOn": []
     },
@@ -340,7 +440,7 @@
       "native": {
         "executable": "ace-server.exe",
         "modelsDir": "carey",
-        "version": "v0.1.3",
+        "version": "v0.1.4",
         "env": {
           "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
           "ACE_PORT": "8003",
@@ -351,18 +451,18 @@
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-core.zip",
-              "sha256": "ac756270ac9b81cf3ccc8d0da1f91611399dd8ff01e63538673df11d2b0e99c2"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.4/acestep-v0.1.4-windows-x64-core.zip",
+              "sha256": "97fc4a1b81067a5bae98227a3278f19f82afee3efcdebd25f5aee18f543d97e7"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-cuda.zip",
-                "sha256": "0c270c2d1d99bfe20b20a40574bf50d806bad0abf6ef14050de243e230401c37",
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.4/acestep-v0.1.4-windows-x64-cuda.zip",
+                "sha256": "2d395dacd696c4f1ec189811cd57a1527118c96b4408da46ae077ca14f45a684",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.3/acestep-v0.1.3-windows-x64-vulkan.zip",
-                "sha256": "37c8f08adcbf44ba35168621f39df11b8ad4721c1f7b13426ddb91cd12467194"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.4/acestep-v0.1.4-windows-x64-vulkan.zip",
+                "sha256": "51b402a89a9a847470e1fb3a7f53112b58cf54a2b4416010228747798f8ee113"
               }
             },
             "prefer": ["cuda", "vulkan"]
@@ -494,22 +594,22 @@
       "native": {
         "executable": "yue2-server.exe",
         "modelsDir": "yuey",
-        "version": "v0.3.0",
+        "version": "v0.3.1",
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-core.zip",
-              "sha256": "92b980a005f55fdfae6844ee6968fec1d89532af3ebb87561ccad0968f439781"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.1/yuey-v0.3.1-windows-x64-core.zip",
+              "sha256": "796126eaaa64f31d641bf73e0715afd8da3e75eb9348ff80d8a6f2f314a78567"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-cuda.zip",
-                "sha256": "1910552ed1293832f3d2cb694688a142d6bbfb258fc858afb4b059fc974de595",
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.1/yuey-v0.3.1-windows-x64-cuda.zip",
+                "sha256": "02b4f3e0a6368062ce3429abd5d919341c1470a871b920c3294d7e0213d7f8e0",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.0/yuey-v0.3.0-windows-x64-vulkan.zip",
-                "sha256": "0c0f4159e3bf38eb96df68545584b4c2279938a4e096ab28ed30c76528fcf3d2"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.1/yuey-v0.3.1-windows-x64-vulkan.zip",
+                "sha256": "3d728dc5fa227fb0c4996859a54d808b8ab60ca267d567da909a23e0715f965d"
               }
             },
             "prefer": ["cuda", "vulkan"]

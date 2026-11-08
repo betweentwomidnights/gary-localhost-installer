@@ -550,10 +550,13 @@ pub async fn download_verified(
         } else {
             options.truncate(true);
         }
-        let mut file = options
+        let file = options
             .open(&partial)
             .await
             .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
+        // Network chunks can be tiny. Batch them to avoid a blocking file-I/O
+        // task (and Windows file-system overhead) for every received chunk.
+        let mut file = tokio::io::BufWriter::with_capacity(1 << 20, file);
 
         let mut received = resume_from;
         on_progress(received, total);
@@ -1149,7 +1152,7 @@ async fn ensure_runtime(
         &source,
         downloads,
         step,
-        &format!("Downloading {name}"),
+        &format!("Downloading shared runtime {name} (reused by all compatible services)"),
         fetched,
     )
     .await?;
@@ -1330,7 +1333,7 @@ async fn install_inner(
             &source,
             &downloads,
             2,
-            &format!("Downloading the {} backend", choice.backend),
+            &format!("Downloading {}'s {} backend (engine-specific plugin)", info.service_id, choice.backend),
             fetched,
         )
         .await?;
@@ -1460,6 +1463,63 @@ mod loader_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_download_flushes_resumes_reuses_and_rejects_corruption() {
+        use std::io::{Read, Write};
+        let root = std::env::temp_dir().join(format!("gary-download-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
+        let payload: Vec<u8> = (0..1_500_123).map(|index| (index % 251) as u8).collect();
+        let expected = format!("{:x}", Sha256::digest(&payload));
+        for (resume, corrupt) in [(false, false), (true, false), (false, true)] {
+            let dest = root.join(format!("model-{resume}-{corrupt}.gguf"));
+            let offset = if resume { 12345 } else { 0 };
+            if resume { std::fs::write(partial_path(&dest), &payload[..offset]).unwrap(); }
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/model", listener.local_addr().unwrap());
+            listener.set_nonblocking(true).unwrap();
+            let body = payload.clone();
+            let server = std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                        Err(error) => panic!("fixture did not receive request: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+                stream.set_write_timeout(Some(Duration::from_secs(10))).unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                if resume { assert!(String::from_utf8(request).unwrap().to_lowercase().contains("range: bytes=12345-")); }
+                let status = if resume { "206 Partial Content" } else { "200 OK" };
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len() - offset).unwrap();
+                for chunk in body[offset..].chunks(4096) { stream.write_all(chunk).unwrap(); }
+            });
+            let hash = if corrupt { "0".repeat(64) } else { expected.clone() };
+            let result = runtime.block_on(download_verified(&client, &url, Default::default(), &hash, &dest, &mut |_, _| {}));
+            server.join().unwrap();
+            assert_eq!(result.is_ok(), !corrupt);
+            assert!(!partial_path(&dest).exists());
+            if corrupt {
+                assert!(!dest.exists());
+            } else {
+                assert_eq!(std::fs::read(&dest).unwrap(), payload);
+                // Verified existing files must be reused without any network.
+                runtime.block_on(download_verified(&client, "http://127.0.0.1:1/unavailable", Default::default(), &hash, &dest, &mut |_, _| {})).unwrap();
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn recommendations_use_the_selected_gpu_not_shared_integrated_memory() {

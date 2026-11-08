@@ -1,0 +1,30 @@
+[
+  {
+    "id": "melodyflow-native::F16",
+    "label": "MelodyFlow F16",
+    "description": "MelodyFlow T24's DiT (F16), its 48 kHz VAE (F32) and the T5-base text encoder (F16).",
+    "files": [
+      {
+        "repo": "thepatch/melodyflow-t24-30secs-GGUF",
+        "revision": "4998553bbb58c4ee9fecac2fb3a9935ff479ee06",
+        "filename": "melodyflow-dit-t24-1.0B-v1.0-F16.gguf",
+        "sha256": "add763bd15861a522220f90ec909d731f3b3db020c64c9f07a03698e6a3de2b4",
+        "bytes": 1925323584
+      },
+      {
+        "repo": "thepatch/melodyflow-t24-30secs-GGUF",
+        "revision": "4998553bbb58c4ee9fecac2fb3a9935ff479ee06",
+        "filename": "melodyflow-vae-48khz-v1.0-F32.gguf",
+        "sha256": "73ede86e939f4e9ed2d95b7994eb8bad20aaf1b75b77971d8d53f379fe7c8966",
+        "bytes": 238651232
+      },
+      {
+        "repo": "thepatch/melodyflow-t24-30secs-GGUF",
+        "revision": "4998553bbb58c4ee9fecac2fb3a9935ff479ee06",
+        "filename": "t5-base-encoder-0.1B-v1.0-F16.gguf",
+        "sha256": "ba301ccda03edfc4971ed32a3e69d5793e52e18e42dfd0f436d344f17205a446",
+        "bytes": 219954752
+      }
+    ]
+  }
+]

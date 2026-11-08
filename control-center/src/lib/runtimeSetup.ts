@@ -1,0 +1,168 @@
+import { invoke } from "@tauri-apps/api/core";
+import { recommendQuantizedSa3Training, type Sa3TrainingHardware } from "./sa3NativeTraining";
+
+export interface Item { label: string; path: string; bytes: number; kind: string | null; }
+export interface Selection { encoding: string; verifiedRelease: string; cleanupComplete: boolean; cleanupErrors: string[]; }
+export interface Preview {
+  activeRoot: string;
+  hfHubCache: string;
+  cleanupCandidates: Item[];
+  legacyRuntimePresent: boolean;
+  trainingBasePresent: boolean;
+  estimatedCleanupBytes: number;
+  preservedPaths: Item[];
+  warnings: string[];
+  nativeSelection: Selection | null;
+  cleanupToken: string;
+  pythonStillNeeded: string | null;
+}
+export interface Profile {
+  serviceId: string;
+  label: string;
+  dataLabel: string | null;
+  tiers: string[];
+  tierComponents: Record<string, string[]>;
+  features: string[];
+  tierOptions: Record<string, string[]>;
+  optionsLabel: string | null;
+}
+export interface Component { id: string; label: string; files: { bytes: number }[]; }
+export interface Recommendations { tier: string | null; components: string[]; }
+export type SetupTask = "runtime" | "models" | "adapters" | "verify";
+
+/** What a setup prepares: a precision, the extra models picked for it, and SA3's extras. */
+export interface SetupChoices { encoding: string; options: string[]; training: string | null; decoder: boolean; }
+
+export const hasFeature = (profile: Profile | null, feature: string) => profile?.features.includes(feature) ?? false;
+
+export function componentIds(profile: Profile, choices: SetupChoices): string[] {
+  return [
+    ...(profile.tierComponents[choices.encoding] ?? []),
+    ...choices.options,
+    ...(choices.training ? [`sa3-native::medium-base-${choices.training}`] : []),
+    ...(choices.decoder ? ["sa3-native::decoder-correction"] : []),
+  ];
+}
+
+export const checksLabel = (choices: SetupChoices) =>
+  choices.training ? "generation, training and checkpoint saving" : "generation";
+
+/** Nothing of the user's is left to review: no Python environment or weights,
+ *  only unchanged bundled Python source, which setup removes by itself. */
+export function onlyBundledCode(preview: Preview) {
+  return !preview.legacyRuntimePresent
+    && !preview.warnings.length
+    && !preview.pythonStillNeeded
+    && preview.cleanupCandidates.every((item) => item.kind === "code");
+}
+
+/** The service's setup details and the choices the setup modal starts from. */
+export async function loadSetup(serviceId: string) {
+  const [profile, preview, catalog, recommended] = await Promise.all([
+    invoke<Profile>("get_migration_profile", { serviceId }),
+    invoke<Preview>("get_migration_preview", { serviceId }),
+    invoke<Component[]>("get_native_model_catalog", { serviceId }),
+    invoke<Recommendations>("get_native_model_recommendations", { serviceId }),
+  ]);
+  let training: string | null = null;
+  if (hasFeature(profile, "training-base") && preview.trainingBasePresent) {
+    const hardware = await invoke<Sa3TrainingHardware>("get_native_runtime_info", { serviceId });
+    training = recommendQuantizedSa3Training(hardware) ? "Q4_K_M" : "F16";
+  }
+  const decoder = hasFeature(profile, "decoder-correction")
+    && (await invoke<{ enabled: boolean }>("get_sa3_native_decoder_state")).enabled;
+  const choices: SetupChoices = {
+    encoding: preview.nativeSelection?.encoding ?? recommended.tier ?? profile.tiers[0],
+    options: [],
+    training,
+    decoder,
+  };
+  return { profile, preview, catalog, recommended, choices };
+}
+
+export async function stopService(serviceId: string) {
+  const current = await invoke<{ id: string; status: string }[]>("get_services");
+  if (current.some((entry) => entry.id === serviceId && ["running", "starting", "unhealthy"].includes(entry.status))) {
+    await invoke("stop_service", { serviceId });
+  }
+}
+
+/** Install the runtime, prepare the models, then prove the runtime and switch
+ *  to it. `settle` gets the recommendations measured by the runtime install
+ *  and returns the final choices. */
+export async function runSetup(
+  serviceId: string,
+  profile: Profile,
+  settle: (recommended: Recommendations) => SetupChoices,
+  report: (task: SetupTask, message: string) => void,
+) {
+  report("runtime", `Stopping ${profile.label}...`);
+  await stopService(serviceId);
+  report("runtime", "Installing and checking the runtime for your hardware...");
+  await invoke("prepare_native_runtime", { serviceId });
+  const choices = settle(await invoke<Recommendations>("get_native_model_recommendations", { serviceId }));
+  report("models", "Downloading and verifying model files. Existing components are reused.");
+  await invoke("prepare_native_models", { serviceId, componentIds: componentIds(profile, choices), waitForCompletion: true });
+  if (choices.decoder) {
+    report("models", "Preparing your decoder squeak fix...");
+    await invoke("prepare_sa3_native_decoder");
+  }
+  if (hasFeature(profile, "adapters")) {
+    report("adapters", "Preparing native copies of your registered LoRAs...");
+    const loras = await invoke<{ entries: { name: string; nativePath: string | null; error: string | null }[] }>("prepare_sa3_native_loras");
+    const failed = loras.entries.filter((entry) => !entry.nativePath || entry.error);
+    if (failed.length) throw new Error(failed.map((entry) => `${entry.name}: ${entry.error ?? "Native copy is missing"}`).join("\n"));
+  }
+  report("verify", `Verifying the server, model files and native ${checksLabel(choices)}...`);
+  await invoke<Selection>("activate_native_runtime", { serviceId, encoding: choices.encoding });
+}
+
+/** Remove the reviewed files `preview` lists. Returns what could not be removed. */
+export async function cleanUp(serviceId: string, preview: Preview) {
+  // The review token binds this to exactly the paths the preview listed.
+  return invoke<{ selection: Selection; errors: string[] }>("cleanup_legacy_installation", { serviceId, reviewToken: preview.cleanupToken });
+}
+
+/** The standard Models panel's Use action also finishes a fresh install.
+ * Existing Python installations keep their explicit migration flow. */
+export async function useNativeModel(serviceId: string, encoding: string) {
+  const services = await invoke<{ id: string; runtime: string; python_retired: boolean }[]>("get_services");
+  const service = services.find((entry) => entry.id === serviceId);
+  if (service?.runtime !== "python" || !service.python_retired) {
+    return invoke<Selection>("select_native_model", { serviceId, encoding });
+  }
+  const selection = await invoke<Selection>("activate_native_runtime", { serviceId, encoding });
+  const preview = await invoke<Preview>("get_migration_preview", { serviceId });
+  if (onlyBundledCode(preview)) {
+    const result = await cleanUp(serviceId, preview);
+    if (result.errors.length) throw new Error(result.errors.join("\n"));
+  }
+  return selection;
+}
+
+/** Generation essentials only; optional variants and training bases stay in Models. */
+export async function recommendedModelIds(serviceId: string): Promise<string[]> {
+  if (serviceId === "yuey") {
+    const [tiers, info] = await Promise.all([
+      invoke<{ installed: string[] }>("get_yuey_tiers"),
+      invoke<{ recommendedEncoding: string | null }>("get_native_runtime_info", { serviceId }),
+    ]);
+    const tier = ["BF16", "Q8_0", "Q4_K_M"].includes(info.recommendedEncoding ?? "") ? info.recommendedEncoding : "Q4_K_M";
+    // Matches Yuey's download plan: keep any tier already installed.
+    return ["yuey::shared", ...(!tiers.installed.length ? [`yuey::${tier}`] : [])];
+  }
+  const [profile, recommended] = await Promise.all([
+    invoke<Profile>("get_migration_profile", { serviceId }),
+    invoke<Recommendations>("get_native_model_recommendations", { serviceId }),
+  ]);
+  const tier = recommended.tier ?? profile.tiers[0];
+  const ids = profile.tierComponents[tier];
+  if (!ids?.length) throw new Error("No recommended model plan is available for this service.");
+  return ids;
+}
+
+export async function downloadRecommendedModels(serviceId: string) {
+  if (serviceId === "yuey") return invoke<string[]>("download_yuey_default_models");
+  const ids = await recommendedModelIds(serviceId);
+  return invoke<string[]>("prepare_native_models", { serviceId, componentIds: ids, waitForCompletion: false });
+}
