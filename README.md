@@ -28,10 +28,12 @@ opens the models tab for progress and disappears when those models are ready.
 
 this also tidies up fresh-install training controls, optional decoder setup,
 Python-only settings and uninstall cleanup. native runtime pins are
-sa3.cpp v0.2.1, audiocraft.cpp v0.1.3, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
+sa3.cpp v0.2.2, audiocraft.cpp v0.1.4, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
+sa3.cpp v0.2.2 fixes negative prompts under CFG, so SA3 renders that use one
+with a cfg scale above 1 sound different from before.
 
 this release is being prepared alongside gary4juce v5.0.3. the ROCm preview
-will go to Kostas first; AMD validation is still pending.
+builds on the same code; Kostas's AMD validation is still pending.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

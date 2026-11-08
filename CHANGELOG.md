@@ -28,9 +28,12 @@ kept, with their cleanup instructions shown before uninstalling. downloads
 buffer disk writes and show transfer speed while retaining resume and checksum
 verification.
 
-pinned runtimes: sa3.cpp v0.2.1, audiocraft.cpp v0.1.3, acestep.cpp v0.1.4 and
-yuey.cpp v0.3.1. the NVIDIA install paths have been tested locally; the ROCm
-preview still needs Kostas's AMD validation.
+pinned runtimes: sa3.cpp v0.2.2, audiocraft.cpp v0.1.4, acestep.cpp v0.1.4 and
+yuey.cpp v0.3.1. sa3.cpp v0.2.2 fixes negative prompts under CFG, so SA3 renders
+that use one with a cfg scale above 1 sound different. audiocraft.cpp v0.1.4
+makes continuations append to the input again. fresh installs and migrations
+have been tested on NVIDIA; the ROCm preview builds on the same code and still
+needs Kostas's AMD validation.
 
 planned companion: gary4juce v5.0.3.
 
