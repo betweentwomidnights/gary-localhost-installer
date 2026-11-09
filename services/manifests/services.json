@@ -1,22 +1,22 @@
 {
   "nativeBundles": {
     "sa3": {
-      "version": "v0.2.2",
+      "version": "v0.2.3",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.2/sa3-v0.2.2-windows-x64-core.zip",
-            "sha256": "d095e1e88c93a1141825b705603f689cf2db50bffda8d42b6fabf061cdab9e49"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.3/sa3-v0.2.3-windows-x64-core.zip",
+            "sha256": "9177e2d7c8f2b150aec17acde8d021dfa28d44f8992feb9c3b5a16cdc8ac7abe"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.2/sa3-v0.2.2-windows-x64-cuda.zip",
-              "sha256": "eaf292ece84f999f70c53c254b845e2dfc87473e6fbf7f7563f0be88a8d5f70a",
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.3/sa3-v0.2.3-windows-x64-cuda.zip",
+              "sha256": "c8e4cf52e6b58c0242955e50a04ea9c04488435b91e2b46544e6c275bf0aa3e8",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.2/sa3-v0.2.2-windows-x64-vulkan.zip",
-              "sha256": "ccc2cc10e279bf1d86da9b5ba80a67877e831536c36855b22b0166aa0c024ad9"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.3/sa3-v0.2.3-windows-x64-vulkan.zip",
+              "sha256": "3620c9bbfcf60b7bcc60a40db5a5034558126ed546efe1074e0e4c8135a471ca"
             }
           },
           "prefer": ["cuda", "vulkan"]
