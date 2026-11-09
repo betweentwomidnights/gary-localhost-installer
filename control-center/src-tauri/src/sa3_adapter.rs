@@ -153,6 +153,122 @@ fn tail_pad(data: &Map<String, Value>) -> Result<f64, String> {
 
 /// Translate only known client fields. Native filesystem paths, canvas/frame
 /// counts and private controls are chosen by the host, never forwarded blindly.
+/// A list of `{name, strength}` LoRAs by catalog name. Published adapters only
+/// support full-range application, so intervals and layer filters are refused
+/// rather than silently dropped.
+fn catalog_loras(value: &Value, field: &str) -> Result<Vec<Value>, String> {
+    let mut loras = Vec::new();
+    for entry in value.as_array().ok_or(format!("{field} must be a list"))? {
+        let entry = entry
+            .as_object()
+            .ok_or(format!("each {field} entry must be an object"))?;
+        let name = text(entry, "name", "")?.trim();
+        if name.is_empty() || name.contains(['/', '\\', ':']) || name == "." || name == ".." {
+            return Err("each LoRA needs a catalog name".into());
+        }
+        if number(entry, "interval_min", 0.0)? != 0.0
+            || number(entry, "interval_max", 1.0)? != 1.0
+            || !text(entry, "layer_filter", "")?.is_empty()
+        {
+            return Err(format!(
+                "native LoRA '{name}' does not yet support intervals or layer filters"
+            ));
+        }
+        loras.push(json!({"name":name, "strength":number(entry, "strength", 1.0)?}));
+    }
+    Ok(loras)
+}
+
+const MAX_LANES: usize = 8;
+const MAX_ENVELOPE_POINTS: usize = 256;
+
+/// `[[seconds, amount], ...]`, also accepting sa3.cpp's `{t, amount}` points.
+fn envelope(value: &Value, field: &str) -> Result<Value, String> {
+    let points = value.as_array().ok_or(format!("{field} must be a list of [seconds, amount]"))?;
+    if points.len() > MAX_ENVELOPE_POINTS {
+        return Err(format!("{field}: at most {MAX_ENVELOPE_POINTS} points"));
+    }
+    let mut out = Vec::with_capacity(points.len());
+    for point in points {
+        let (t, amount) = match point {
+            Value::Array(pair) if pair.len() == 2 => (pair[0].as_f64(), pair[1].as_f64()),
+            Value::Object(map) => (
+                map.get("t").and_then(Value::as_f64),
+                map.get("amount").and_then(Value::as_f64),
+            ),
+            _ => (None, None),
+        };
+        match (t, amount) {
+            (Some(t), Some(amount)) if t.is_finite() && amount.is_finite() => {
+                out.push(json!([t, amount]))
+            }
+            _ => return Err(format!("{field}: each point is [seconds, amount]")),
+        }
+    }
+    Ok(json!(out))
+}
+
+/// LoRA automation, documented in sa3.cpp's docs/SERVER.md. Envelope times are
+/// seconds on the output timeline; for a continuation, 0 is the start of the
+/// source, which the adapter sends whole. Lane LoRAs use catalog names like
+/// `loras`, and submit() maps them to paths.
+fn automation(data: &Map<String, Value>, native: &mut Value) -> Result<(), String> {
+    if let Some(value) = data.get("lora_lanes").filter(|value| !value.is_null()) {
+        let entries = value.as_array().ok_or("lora_lanes must be a list")?;
+        if entries.len() > MAX_LANES {
+            return Err(format!("lora_lanes: at most {MAX_LANES} lanes"));
+        }
+        let mut lanes = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let entry = entry.as_object().ok_or("each lora_lanes entry must be an object")?;
+            let loras = match entry.get("loras").filter(|value| !value.is_null()) {
+                Some(value) => catalog_loras(value, "lora_lanes loras")?,
+                None => Vec::new(),
+            };
+            let points = envelope(
+                entry.get("envelope").unwrap_or(&Value::Null),
+                "lora_lanes envelope",
+            )?;
+            if points.as_array().unwrap().is_empty() {
+                return Err("lora_lanes: each lane needs an envelope".into());
+            }
+            let mut lane = json!({"loras":loras, "envelope":points});
+            let prompt = text(entry, "prompt", "")?.trim();
+            if !prompt.is_empty() {
+                lane["prompt"] = json!(prompt);
+            }
+            lanes.push(lane);
+        }
+        if !lanes.is_empty() {
+            native["lora_lanes"] = json!(lanes);
+        }
+    }
+    if let Some(value) = data.get("lora_envelope").filter(|value| !value.is_null()) {
+        native["lora_envelope"] = envelope(value, "lora_envelope")?;
+    }
+    if data.get("lora_envelope_mode").is_some_and(|value| !value.is_null()) {
+        let mode = text(data, "lora_envelope_mode", "")?.to_ascii_lowercase();
+        if !["velocity", "layer"].contains(&mode.as_str()) {
+            return Err("lora_envelope_mode must be velocity or layer".into());
+        }
+        native["lora_envelope_mode"] = json!(mode);
+    }
+    for key in ["lane_isolation", "lane_isolation_until", "lane_average_until"] {
+        if data.get(key).is_some_and(|value| !value.is_null()) {
+            let value = number(data, key, 0.0)?;
+            if value < 0.0 {
+                return Err(format!("{key} must not be negative"));
+            }
+            native[key] = json!(value);
+        }
+    }
+    Ok(())
+}
+
+fn uses_automation(native: &Value) -> bool {
+    native.get("lora_lanes").is_some() || native.get("lora_envelope").is_some()
+}
+
 pub fn translate(mode: Mode, body: Value) -> Result<Translation, String> {
     let data = body.as_object().ok_or("JSON object required")?;
     let prompt = text(data, "prompt", "")?.trim();
@@ -219,28 +335,9 @@ pub fn translate(mode: Mode, body: Value) -> Result<Translation, String> {
             value
         };
     }
-    // Published adapters currently support full-range application. Reject
-    // unsupported intervals/filters instead of changing their meaning silently.
     let mut loras = Vec::new();
     if let Some(value) = data.get("loras").filter(|value| !value.is_null()) {
-        for entry in value.as_array().ok_or("loras must be a list")? {
-            let entry = entry
-                .as_object()
-                .ok_or("each loras entry must be an object")?;
-            let name = text(entry, "name", "")?.trim();
-            if name.is_empty() || name.contains(['/', '\\', ':']) || name == "." || name == ".." {
-                return Err("each LoRA needs a catalog name".into());
-            }
-            if number(entry, "interval_min", 0.0)? != 0.0
-                || number(entry, "interval_max", 1.0)? != 1.0
-                || !text(entry, "layer_filter", "")?.is_empty()
-            {
-                return Err(format!(
-                    "native LoRA '{name}' does not yet support intervals or layer filters"
-                ));
-            }
-            loras.push(json!({"name":name, "strength":number(entry, "strength", 1.0)?}));
-        }
+        loras = catalog_loras(value, "loras")?;
     } else if let Some(name) = data
         .get("lora")
         .and_then(Value::as_str)
@@ -252,6 +349,7 @@ pub fn translate(mode: Mode, body: Value) -> Result<Translation, String> {
         loras.push(json!({"name":name.trim().to_ascii_lowercase(), "strength":number(data, "lora_strength", 1.0)?}));
     }
     native["loras"] = json!(loras);
+    automation(data, &mut native)?;
     let input = if matches!(mode, Mode::Transform | Mode::Continue) {
         Some(audio(data)?)
     } else {
@@ -512,15 +610,31 @@ impl AdapterState {
         Ok(compatible_loras(entries, &upstream))
     }
 
+    /// Maps catalog names to native paths in `loras` and in every automation
+    /// lane's `loras`, loading the catalog once.
     async fn map_requested_loras(&self, request: &mut Value) -> Result<(), Reply> {
-        let loras = request["loras"]
-            .as_array_mut()
-            .expect("translated LoRA list");
-        if loras.is_empty() {
+        let named = |list: &Value| list.as_array().is_some_and(|list| !list.is_empty());
+        let lanes_named = request["lora_lanes"]
+            .as_array()
+            .is_some_and(|lanes| lanes.iter().any(|lane| named(&lane["loras"])));
+        if !named(&request["loras"]) && !lanes_named {
             return Ok(());
         }
         let catalog = self.available_loras().await?;
-        for item in loras {
+        self.map_lora_list(&catalog, &mut request["loras"])?;
+        if let Some(lanes) = request["lora_lanes"].as_array_mut() {
+            for lane in lanes {
+                self.map_lora_list(&catalog, &mut lane["loras"])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn map_lora_list(&self, catalog: &AvailableLoras, list: &mut Value) -> Result<(), Reply> {
+        let Some(loras) = list.as_array_mut() else {
+            return Ok(());
+        };
+        for item in loras.iter_mut() {
             let name = item["name"].as_str().unwrap().trim().to_ascii_lowercase();
             let selected = if name == "default" {
                 self.default_lora
@@ -555,10 +669,7 @@ impl AdapterState {
             item.as_object_mut().unwrap().remove("name");
         }
         // Legacy 'default' means no adapter when the registry is empty.
-        request["loras"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|entry| entry.get("path").is_some());
+        loras.retain(|entry| entry.get("path").is_some());
         Ok(())
     }
 
@@ -633,6 +744,9 @@ impl AdapterState {
             Err(error) => return failure(StatusCode::BAD_GATEWAY, error),
         };
         let mut required = vec!["conditioning_duration"];
+        if uses_automation(&translated.native) {
+            required.push("lora_lanes");
+        }
         if mode == Mode::Continue {
             required.push("request_splice");
             if translated.native["fixed_prefix"] == true {
@@ -870,6 +984,9 @@ async fn health(State(state): State<AdapterState>) -> Reply {
     match state.request(reqwest::Method::GET, "/health", None).await {
         Ok((status, mut body)) => {
             body["decoder_lora_enabled"] = json!(state.decoder_correction);
+            // capabilities.lora_lanes is sa3.cpp's. gary4local 0.7.0 passed it
+            // through but dropped the lanes, so clients look for this too.
+            body["lora_lanes_forwarded"] = json!(true);
             body["model_loaded"] = body["loaded"].clone();
             body["model_loading"] = body.get("loading").cloned().unwrap_or(json!(false));
             body["model_error"] = body.get("error").cloned().unwrap_or(Value::Null);
@@ -1093,6 +1210,14 @@ mod tests {
             json!({"prompt":"tone","sampler_type":"euler"}),
             json!({"prompt":"tone","loras":[{"name":"lora","interval_max":0.5}]}),
             json!({"prompt":"tone","loras":[{"name":"../lora"}]}),
+            json!({"prompt":"tone","lora_lanes":{"loras":[]}}),
+            json!({"prompt":"tone","lora_lanes":[{"loras":[{"name":"kev"}]}]}),
+            json!({"prompt":"tone","lora_lanes":[{"loras":[{"name":"kev"}],"envelope":[[0]]}]}),
+            json!({"prompt":"tone","lora_lanes":[{"loras":[{"name":"C:/kev.safetensors"}],"envelope":[[0,1]]}]}),
+            json!({"prompt":"tone","lora_lanes":vec![json!({"envelope":[[0,1]]}); 9]}),
+            json!({"prompt":"tone","lora_envelope":(0..257).map(|t| json!([t,1])).collect::<Vec<_>>()}),
+            json!({"prompt":"tone","lora_envelope_mode":"sideways"}),
+            json!({"prompt":"tone","lane_isolation":-1}),
         ] {
             assert!(translate(Mode::Generate, body.clone()).is_err(), "{body}");
         }
@@ -1122,6 +1247,89 @@ mod tests {
         assert_eq!(result.native["latent_target_std"], 0.7);
         assert!(result.native["peak_normalize_db"].is_null());
         assert!(result.native["limiter_ceiling_db"].is_null());
+    }
+
+    #[test]
+    fn automation_lanes_and_blend_reach_the_native_request() {
+        let result = translate(
+            Mode::Generate,
+            json!({"prompt":"tone","loras":[{"name":"kev","strength":0.5}],
+                "lora_lanes":[
+                    {"loras":[{"name":"Keygen","strength":1.2}],"envelope":[[0,0],{"t":20,"amount":1}],
+                     "prompt":"  demoscene chiptune  "},
+                    {"envelope":[[0,1],[20,0]]}],
+                "lane_isolation":1,"lane_isolation_until":0,"lane_average_until":0.9}),
+        )
+        .unwrap();
+        let lanes = result.native["lora_lanes"].as_array().unwrap();
+        assert_eq!(lanes.len(), 2);
+        assert_eq!(lanes[0]["loras"], json!([{"name":"Keygen","strength":1.2}]));
+        assert_eq!(lanes[0]["envelope"], json!([[0.0, 0.0], [20.0, 1.0]]));
+        assert_eq!(lanes[0]["prompt"], "demoscene chiptune");
+        assert_eq!(lanes[1]["loras"], json!([]));
+        assert!(lanes[1].get("prompt").is_none());
+        assert_eq!(result.native["lane_isolation"], 1.0);
+        assert_eq!(result.native["lane_isolation_until"], 0.0);
+        assert_eq!(result.native["lane_average_until"], 0.9);
+        assert!(uses_automation(&result.native));
+
+        let single = translate(
+            Mode::Generate,
+            json!({"prompt":"tone","loras":[{"name":"kev"}],"lora_envelope":[[0,0.2],[10,1.3]],
+                "lora_envelope_mode":"Layer"}),
+        )
+        .unwrap();
+        assert_eq!(single.native["lora_envelope"], json!([[0.0, 0.2], [10.0, 1.3]]));
+        assert_eq!(single.native["lora_envelope_mode"], "layer");
+        assert!(uses_automation(&single.native));
+
+        let plain = translate(Mode::Generate, json!({"prompt":"tone","lora_lanes":null})).unwrap();
+        for key in ["lora_lanes", "lora_envelope", "lora_envelope_mode", "lane_isolation"] {
+            assert!(plain.native.get(key).is_none(), "{key}");
+        }
+        assert!(!uses_automation(&plain.native));
+    }
+
+    #[test]
+    fn lane_lora_names_map_to_native_paths() {
+        let state = AdapterState::new(1, std::env::temp_dir()).unwrap();
+        let kev: crate::sa3_loras::NativeLora = serde_json::from_value(json!({
+            "name":"kev","sourcePath":"kev.safetensors","nativePath":"C:/loras/kev.gguf","strength":1.0}))
+        .unwrap();
+        let catalog = AvailableLoras {
+            entries: vec![kev],
+            unavailable: vec![json!({"name":"old","error":"Prepare this adapter for C++ first."})],
+            model_loaded: Value::Null,
+            model: Value::Null,
+        };
+        let mut list = json!([{"name":"kev","strength":0.7}]);
+        assert!(state.map_lora_list(&catalog, &mut list).is_ok());
+        assert_eq!(list, json!([{"path":"C:/loras/kev.gguf","strength":0.7}]));
+        let mut list = json!([{"name":"old"}]);
+        let Err((status, body)) = state.map_lora_list(&catalog, &mut list) else {
+            panic!("an unprepared lane LoRA was accepted");
+        };
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.0["error"].as_str().unwrap().contains("Prepare this adapter"));
+    }
+
+    #[test]
+    fn automation_is_refused_by_a_runtime_without_lanes() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let native = Router::new().route("/health", get(|| async { Json(json!({"loaded":false,
+                "capabilities":{"conditioning_duration":true}})) }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let task = tokio::spawn(async move { axum::serve(listener, native).await.unwrap(); });
+            let state = AdapterState::new(port, std::env::temp_dir()).unwrap();
+            let (status, body) = state
+                .submit(Mode::Generate, json!({"prompt":"tone","lora_lanes":[{"envelope":[[0,1]],"prompt":"bells"}]}))
+                .await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert!(body.0["error"].as_str().unwrap().contains("lora_lanes"));
+            assert!(state.jobs.lock().await.is_empty());
+            task.abort();
+        });
     }
 
     #[test]
