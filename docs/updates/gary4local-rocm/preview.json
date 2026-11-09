@@ -1,13 +1,12 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.7.0-rocm.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0-rocm.1/gary4local-rocm_0.7.0-rocm.1_x64-setup.exe",
-    "sha256":  "6a43df42d890bb3d6a114dfd2c0f6afa7194dc1d482718a973e6bb512eb83d8f",
-    "published_at":  "2026-11-07T10:46:59.0000000+00:00",
+    "latest_version":  "0.7.0-rocm.2",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0-rocm.2/gary4local-rocm_0.7.0-rocm.2_x64-setup.exe",
+    "sha256":  "b73db6adf5e21e5d3ca983dfcdd467bae773056b56b958c17d609d549ec61917",
+    "published_at":  "2026-11-09T00:39:11.0000000+00:00",
     "notes":  [
-                  "Gary and Terry move to audiocraft.cpp. Existing Python installs can migrate after the native checks pass.",
-                  "Fresh installs set up runtimes without downloading every model. AMD uses Vulkan; choose models per service or download the recommended set.",
-                  "Training controls, optional decoder setup and native model checks are clearer. Uninstall can remove default runtime storage.",
-                  "Preview for AMD testing. Compatible with gary4juce v5.0.3 pre-release."
+                  "Continuations append to your input again (audiocraft.cpp v0.1.4).",
+                  "Heads up: SA3 renders with a negative prompt and a cfg scale above 1 sound different (sa3.cpp v0.2.2). Press update all runtimes to fetch both.",
+                  "Same code as gary4local v0.7.0 with the ROCm changes on top. Use gary4juce v5.0.3."
               ]
 }
