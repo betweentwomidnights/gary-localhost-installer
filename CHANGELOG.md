@@ -4,7 +4,7 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
-## v0.7.0 - unreleased
+## v0.7.0 - 2026-11-08
 
 gary and terry move to audiocraft.cpp, completing the native migration for all
 seven services. they share one runtime, with CUDA or Vulkan on Windows. gary
@@ -35,7 +35,7 @@ makes continuations append to the input again. fresh installs and migrations
 have been tested on NVIDIA; the ROCm preview builds on the same code and still
 needs Kostas's AMD validation.
 
-planned companion: gary4juce v5.0.3.
+compatible with gary4juce v5.0.3.
 
 ## v0.6.0 - 2026-10-31
 

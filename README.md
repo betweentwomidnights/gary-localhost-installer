@@ -12,7 +12,9 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.7.0 - preparing
+## update 11/08 - v0.7.0
+
+[download gary4local v0.7.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.0).
 
 gary and terry move to [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp).
 that was the last Python migration: all seven services now set up on C++ on a
@@ -32,8 +34,9 @@ sa3.cpp v0.2.2, audiocraft.cpp v0.1.4, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
 sa3.cpp v0.2.2 fixes negative prompts under CFG, so SA3 renders that use one
 with a cfg scale above 1 sound different from before.
 
-this release is being prepared alongside gary4juce v5.0.3. the ROCm preview
-builds on the same code; Kostas's AMD validation is still pending.
+pair it with [gary4juce v5.0.3](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.3),
+released alongside this one. its gary model list keeps up with downloads and
+removals, including after the audiocraft.cpp migration.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
