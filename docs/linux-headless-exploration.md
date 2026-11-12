@@ -4,7 +4,7 @@ Tracks [issue #13](https://github.com/betweentwomidnights/gary-localhost-install
 Branch: `feature/linux-headless`. This is the first portability pass, not a
 Linux release or a working headless server.
 
-Follow-up: [sa3.cpp packaging PR #95](https://github.com/betweentwomidnights/sa3.cpp/pull/95)
+Merged: [sa3.cpp packaging PR #95](https://github.com/betweentwomidnights/sa3.cpp/pull/95)
 adds upstream Linux core/CUDA/Vulkan packages. On Spark, both ARM64 package sets
 passed 52 CTests, extracted-package controls and real GB10 GPU probes, then
 generated two-second audio through the native CLI using existing weights.
@@ -14,6 +14,50 @@ package checks. This application's Linux installation, compatibility adapters,
 and headless supervisor still need integration work, and no Linux runtime URLs
 have been pinned here. CPU generation is not a target; CPU libraries/tests
 support the CUDA/Vulkan runtime paths.
+
+### Sibling engine packages
+
+The same upstream contract is now proposed in three draft PRs. Each preserves
+the pinned ggml revision and packages its own tools, libraries, licenses and
+data; ACE-Step retains `GGML_MAX_NAME=128` throughout. Never substitute another
+engine's backend libraries.
+
+| Engine | Packaging PR | No-tag Linux release CI | Native Spark CTests |
+| --- | --- | --- | --- |
+| Yuey | [#47](https://github.com/betweentwomidnights/yuey.cpp/pull/47) | [43304164829](https://github.com/betweentwomidnights/yuey.cpp/actions/runs/43304164829) | 25/25 |
+| Audiocraft | [#15](https://github.com/betweentwomidnights/audiocraft.cpp/pull/15) | [43304681141](https://github.com/betweentwomidnights/audiocraft.cpp/actions/runs/43304681141) | 24/24 |
+| ACE-Step | [#20](https://github.com/betweentwomidnights/acestep.cpp/pull/20) | [43304164014](https://github.com/betweentwomidnights/acestep.cpp/actions/runs/43304164014) | 22/22 |
+
+All six native x64/ARM64 Vulkan CI packaging jobs passed. The ARM64 CI artifacts
+were downloaded, checked against GitHub's artifact SHA256 and the inner archive
+checksums, and exercised on GB10. Separately built CUDA packages target this
+Spark with `--cuda-arch native`; they are GPU smoke builds, not portable CUDA
+releases. Source commits are Yuey `b7dcf3a`, Audiocraft `cd85b85`, and ACE-Step
+`bd6a3067`; all retain ggml `e3db5210fe3ecdaa4d65b4c93d515f2cf15524b7`.
+
+Each backend produced finite, nonzero audio: a short Yuey render from a supplied
+ABC score, one-second MusicGen generation, a two-step MelodyFlow edit, and a
+two-step ACE-Step DiT-only synth. Logs confirm CUDA0/Vulkan0 computation. These
+checks do not cover Yuey's symbolic planner, ACE-Step LM generation, training,
+adapters, perceptual quality, full-duration workloads or numerical parity.
+Hosted x64 builds have packaging evidence, not hardware inference evidence.
+Four extracted CI servers also returned healthy loopback HTTP responses;
+all test processes were stopped and their private ports verified closed.
+
+The dedicated Spark workspace retains `ENGINE-VALIDATION.json`, per-case
+`validation/*/RESULT.json`, `BUILD-INFO.json`, logs and short WAVs. Nine temporary
+Audiocraft/ACE-Step model copies were SHA256-verified, then removed as requested:
+6,172,945,024 bytes freed, with sources/hashes retained in
+`test-models/MODEL-COPIES.json` and cleanup evidence in
+`validation/MODEL-CLEANUP.json`. Original Windows weights and existing Spark
+model stores were not cleanup targets. The workspace measured 3.73 GiB after
+cleanup, versus 9.48 GiB before. All work remains under the dedicated root;
+the older 6.2 GiB application exploration checkout is separate.
+
+The PR-triggered regression/release checks run separately from the successful
+Linux-only dispatches above. No sibling PR has been merged, no tag or release
+has been published, and Linux publishing remains disabled. This application's
+runtime manifest and headless supervisor still require integration.
 
 ## Spark baseline, November 12, 2026
 
