@@ -1,12 +1,12 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.6.0",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.6.0/gary4local_0.6.0_x64-setup.exe",
-    "sha256":  "c240fa9f1dcdb8d5930534b1363e31819fe5ff26664a705a94fc94334340f51a",
-    "published_at":  "2026-11-01T00:00:10.0000000+00:00",
+    "latest_version":  "0.7.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0/gary4local_0.7.0_x64-setup.exe",
+    "sha256":  "f2e8d8dc633d93c0f6d09d84d64c1faf04886dc1a33ab8cecf8c3a7ec4fa3e68",
+    "published_at":  "2026-11-09T00:38:51.0000000+00:00",
     "notes":  [
-                  "Carey can leave Python: press migrate runtime on Carey. LoRA training and captioning run on C++ too.",
-                  "Heads up: sa3.cpp v0.1.8 changes every seed\u0027s result for sa3, jerry and foundation-1. After updating the runtime, prepare your SA3 LoRAs again.",
-                  "The SA3 LoRA manager shows one card per LoRA. Local Carey needs gary4juce v5.0.2."
+                  "Gary and Terry move to audiocraft.cpp, so all seven services set up on C++. Existing Python installs migrate when you press migrate runtime.",
+                  "Fresh installs set up runtimes without downloading every model. Pick models per service or download the recommended set.",
+                  "Heads up: SA3 renders with a negative prompt and a cfg scale above 1 sound different (sa3.cpp v0.2.2). Pair with gary4juce v5.0.3."
               ]
 }

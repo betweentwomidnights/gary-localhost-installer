@@ -38,6 +38,22 @@ const GARY_REQUIRED: &str = GARY_VARIANTS[0].0;
 const GARY_MODEL: &str = GARY_VARIANTS[0].1;
 const GARY_SHARED: &str = "gary-native::shared";
 
+const GARY_PROOF_INPUT_SECONDS: u32 = 6;
+const GARY_PROOF_PROMPT_SECONDS: u32 = 4;
+const GARY_PROOF_OUTPUT_SECONDS: u32 = 8;
+
+/// Continuations preserve the recording before the prompt, then append the
+/// generated window resampled to the recording's 44.1 kHz stereo format.
+fn check_gary_continuation(wav: &[u8]) -> Result<(), String> {
+    crate::migration_verify::check_wav_spec(
+        wav,
+        44_100,
+        2,
+        (GARY_PROOF_INPUT_SECONDS - GARY_PROOF_PROMPT_SECONDS + GARY_PROOF_OUTPUT_SECONDS) * 44_100,
+        "gary continue_music",
+    )
+}
+
 /// What generating needs beside a model's weights: a 30-second KV cache for
 /// each guidance stream, the graph, and what the driver keeps. A guided 30 s
 /// hoenn_lofi continuation peaked 2.4 GB above its Q8_0 weights.
@@ -384,8 +400,8 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
     use crate::migration_verify::{check_wav_spec, run_session_job};
     use serde_json::json;
     const POLL: &str = "/api/juce/poll_status";
-    // Eight seconds of 32 kHz mono, whichever end the prompt comes from.
-    const SAMPLES: u32 = 8 * 32_000;
+    // process_audio and its retry return only the generated 32 kHz mono window.
+    const SAMPLES: u32 = GARY_PROOF_OUTPUT_SECONDS * 32_000;
     let (fingerprint, server) = start(&Gary, &run, "gary").await?;
 
     (run.progress)("Listing gary's models...");
@@ -398,13 +414,13 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
         return Err("gary's C++ server does not list vanya_ai_dnb_0.1 the way gary4juce reads it. Update the runtime.".into());
     }
 
-    let recording = base64::engine::general_purpose::STANDARD.encode(test_recording(6));
+    let recording = base64::engine::general_purpose::STANDARD.encode(test_recording(GARY_PROOF_INPUT_SECONDS));
     (run.progress)("Testing a generation from the start of the recording...");
     let (session, generated) = run_session_job(
         &server,
         "/api/juce/process_audio",
         POLL,
-        &json!({"audio_data": recording, "model_name": GARY_MODEL, "prompt_duration": 4, "duration": 8, "seed": 42}),
+        &json!({"audio_data": recording, "model_name": GARY_MODEL, "prompt_duration": GARY_PROOF_PROMPT_SECONDS, "duration": GARY_PROOF_OUTPUT_SECONDS, "seed": 42}),
         "gary process_audio",
     )
     .await?;
@@ -416,11 +432,11 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
         &server,
         "/api/juce/continue_music",
         POLL,
-        &json!({"audio_data": recording, "model_name": GARY_MODEL, "prompt_duration": 4, "duration": 8, "seed": 42, "description": "drum and bass"}),
+        &json!({"audio_data": recording, "model_name": GARY_MODEL, "prompt_duration": GARY_PROOF_PROMPT_SECONDS, "duration": GARY_PROOF_OUTPUT_SECONDS, "seed": 42, "description": "drum and bass"}),
         "gary continue_music",
     )
     .await?;
-    check_wav_spec(&continued, 32_000, 1, SAMPLES, "gary continue_music")?;
+    check_gary_continuation(&continued)?;
 
     (run.progress)("Testing a retry...");
     let (_, retried) = run_session_job(
@@ -430,8 +446,8 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
         // gary4juce's retry fields; it sends no duration, so a retry is 30 s
         // there as on Python. Eight keeps the proof quick.
         &json!({
-            "session_id": session, "prompt_duration": 4, "model_name": GARY_MODEL, "top_k": 250,
-            "temperature": 1.0, "cfg_coef": 3.0, "description": "", "seed": 7, "duration": 8,
+            "session_id": session, "prompt_duration": GARY_PROOF_PROMPT_SECONDS, "model_name": GARY_MODEL, "top_k": 250,
+            "temperature": 1.0, "cfg_coef": 3.0, "description": "", "seed": 7, "duration": GARY_PROOF_OUTPUT_SECONDS,
         }),
         "gary retry_music",
     )
@@ -823,6 +839,26 @@ mod tests {
         }
         assert!(!lists(&listed, "thepatch/keygen-gary-v2-large-16"));
         assert!(!lists(&serde_json::json!({"models": {"small": ["thepatch/hoenn_lofi"]}}), "thepatch/hoenn_lofi"));
+    }
+
+    #[test]
+    fn gary_continuation_proof_expects_the_recording_with_the_generated_window() {
+        // Six seconds in, a four-second prompt, and eight generated seconds:
+        // two retained seconds + eight generated = ten at the host's format.
+        check_gary_continuation(&test_recording(10)).unwrap();
+        // Neither a truncated response nor just the generated window is enough.
+        for seconds in [1, 8] {
+            assert!(check_gary_continuation(&test_recording(seconds)).is_err());
+        }
+        // The old 32 kHz mono response must also fail even at the right length.
+        let mut wav = std::io::Cursor::new(Vec::new());
+        let spec = hound::WavSpec { channels: 1, sample_rate: 32_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut writer = hound::WavWriter::new(&mut wav, spec).unwrap();
+        for _ in 0..10 * 32_000 {
+            writer.write_sample(0_i16).unwrap();
+        }
+        writer.finalize().unwrap();
+        assert!(check_gary_continuation(wav.get_ref()).is_err());
     }
 
     #[test]

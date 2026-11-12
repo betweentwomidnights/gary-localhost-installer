@@ -1,11 +1,12 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.6.0-rocm.2",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.6.0-rocm.2/gary4local-rocm_0.6.0-rocm.2_x64-setup.exe",
-    "sha256":  "28d296564da66c7487c2911f4fa0e60a00abf5fb8c595dddc8fe70b2dc12ee24",
-    "published_at":  "2026-11-01T00:34:15.0000000+00:00",
+    "latest_version":  "0.7.0-rocm.2",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0-rocm.2/gary4local-rocm_0.7.0-rocm.2_x64-setup.exe",
+    "sha256":  "b73db6adf5e21e5d3ca983dfcdd467bae773056b56b958c17d609d549ec61917",
+    "published_at":  "2026-11-09T00:39:11.0000000+00:00",
     "notes":  [
-                  "A super minor update: the SA3 LoRA manager shows each LoRA once, and marks LoRAs an older sa3.cpp converted so you can prepare them again.",
-                  "You haven\u0027t trained any SA3 LoRAs yet, so you won\u0027t notice a thing. Use gary4juce v5.0.2."
+                  "Continuations append to your input again (audiocraft.cpp v0.1.4).",
+                  "Heads up: SA3 renders with a negative prompt and a cfg scale above 1 sound different (sa3.cpp v0.2.2). Press update all runtimes to fetch both.",
+                  "Same code as gary4local v0.7.0 with the ROCm changes on top. Use gary4juce v5.0.3."
               ]
 }
