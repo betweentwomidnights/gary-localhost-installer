@@ -1,12 +1,12 @@
 {
-    "channel":  "stable",
-    "latest_version":  "0.7.0",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0/gary4local_0.7.0_x64-setup.exe",
-    "sha256":  "f2e8d8dc633d93c0f6d09d84d64c1faf04886dc1a33ab8cecf8c3a7ec4fa3e68",
-    "published_at":  "2026-11-09T00:38:51.0000000+00:00",
-    "notes":  [
-                  "Gary and Terry move to audiocraft.cpp, so all seven services set up on C++. Existing Python installs migrate when you press migrate runtime.",
-                  "Fresh installs set up runtimes without downloading every model. Pick models per service or download the recommended set.",
-                  "Heads up: SA3 renders with a negative prompt and a cfg scale above 1 sound different (sa3.cpp v0.2.2). Pair with gary4juce v5.0.3."
-              ]
+  "channel": "stable",
+  "latest_version": "0.7.1",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1/gary4local_0.7.1_x64-setup.exe",
+  "sha256": "72663f79dda2908baa2c0072cf8aad51c1b1ee309648f225bf4de0f7649bc14a",
+  "published_at": "2026-11-12T06:54:25.0000000+00:00",
+  "notes": [
+    "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.",
+    "SA3 LoRA automation lanes reach the native server.",
+    "Update all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4."
+  ]
 }

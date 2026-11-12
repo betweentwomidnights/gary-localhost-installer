@@ -1,11 +1,11 @@
 {
-    "version":  "0.7.0-rocm.2",
-    "notes":  "Continuations append to your input again (audiocraft.cpp v0.1.4).\nHeads up: SA3 renders with a negative prompt and a cfg scale above 1 sound different (sa3.cpp v0.2.2). Press update all runtimes to fetch both.\nSame code as gary4local v0.7.0 with the ROCm changes on top. Use gary4juce v5.0.3.",
-    "pub_date":  "2026-11-09T00:39:11.0000000+00:00",
-    "platforms":  {
-                      "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEdUZmpzTjBJQzl2YnYyT0l2ZzdOU1pRdWNUcitWbjF4WlZBeFk3cjlMaXMzeDBkR21HWFZ1VFpWZUN0cXl5Ym5zZ2NHVnZuSE9TbWRiMG55ZXdkdUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTgyMTEzCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy4wLXJvY20uMl94NjQtc2V0dXAuZXhlCjhyOUc1MTR4YUE3WHhQSFBUc1VXbWhtSkNxRmIyMmg1U2JzRmJ4WmFuVWNyQXRzb2VRVnhVWGthWTBGTkNlRGVQajk0NFd2M1NnWTdidGdvZXRuRUFRPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0-rocm.2/gary4local-rocm_0.7.0-rocm.2_x64-setup.exe"
-                                         }
-                  }
+  "version": "0.7.1-rocm.1",
+  "notes": "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.\nSA3 LoRA automation lanes reach the native server.\nUpdate all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4.\nAMD preview; hardware validation is still pending.",
+  "pub_date": "2026-11-12T06:54:26.0000000+00:00",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME0zR1VFSk9yY2ovcHFFUDNGOWJzZy91ZnpFZEZpNXZ6Mzd2dWhJMEFYQ1hSMXpmeWIzbm1ocmNaUGhpWXVhVlV1T3VzUUdLcjJIejZ3SDQxUjZmelFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDY2MTkxCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy4xLXJvY20uMV94NjQtc2V0dXAuZXhlCk9YaWd3T2R1a21iMnk0VXRrbVp5TUpEYVJ3VmtGcEhoM0lPTU13TU5ub3Nna3dHSFNhWXVvd0FXekdSZG1pNFRiM3k4em9vMmt1N051L1pOWmVnOUJRPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1-rocm.1/gary4local-rocm_0.7.1-rocm.1_x64-setup.exe"
+    }
+  }
 }
