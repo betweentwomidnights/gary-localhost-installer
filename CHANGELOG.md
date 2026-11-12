@@ -19,7 +19,7 @@ native path and refuses a runtime that doesn't support lanes rather than
 silently dropping the automation. sa3.cpp is pinned to v0.2.3; press
 `update all runtimes` to fetch it. the other runtime pins stay the same.
 
-compatible with gary4juce v5.0.3.
+compatible with gary4juce v5.0.4.
 
 ## v0.7.0 - 2026-11-08
 

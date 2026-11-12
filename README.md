@@ -24,7 +24,7 @@ SA3 LoRA automation lanes now reach the native server, with their prompts,
 envelopes and blend settings. sa3.cpp moves to v0.2.3; press
 `update all runtimes` to fetch it.
 
-pair it with [gary4juce v5.0.3](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.3).
+pair it with [gary4juce v5.0.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.4).
 all seven services run on C++ on fresh installs; existing Python installs
 can still migrate when you're ready.
 
