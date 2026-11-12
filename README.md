@@ -12,31 +12,21 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/08 - v0.7.0
+## update 11/11 - v0.7.1
 
-[download gary4local v0.7.0 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.0).
+[download gary4local v0.7.1 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.1).
 
-gary and terry move to [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp).
-that was the last Python migration: all seven services now set up on C++ on a
-fresh install. existing Python installs keep working until you choose to migrate.
-gary's models include vanya, hoenn_lofi, keygen and Meta's MusicGen models at
-F16, Q8_0 and Q4_K_M. terry uses the F16 MelodyFlow model.
+gary's runtime setup check now accepts the full continuation returned by
+audiocraft.cpp. if v0.7.0 stopped with a sample-rate or channel mismatch,
+retry runtime setup or migration after updating.
 
-`set up all runtimes` installs the engines without downloading every model.
-on NVIDIA you can choose CUDA or Vulkan once; AMD uses Vulkan. download the
-models you want in each service's models tab, or use `download recommended
-models` to fetch its shared components and recommended tier. the shortcut
-opens the models tab for progress and disappears when those models are ready.
+SA3 LoRA automation lanes now reach the native server, with their prompts,
+envelopes and blend settings. sa3.cpp moves to v0.2.3; press
+`update all runtimes` to fetch it.
 
-this also tidies up fresh-install training controls, optional decoder setup,
-Python-only settings and uninstall cleanup. native runtime pins are
-sa3.cpp v0.2.2, audiocraft.cpp v0.1.4, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
-sa3.cpp v0.2.2 fixes negative prompts under CFG, so SA3 renders that use one
-with a cfg scale above 1 sound different from before.
-
-pair it with [gary4juce v5.0.3](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.3),
-released alongside this one. its gary model list keeps up with downloads and
-removals, including after the audiocraft.cpp migration.
+pair it with [gary4juce v5.0.3](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.3).
+all seven services run on C++ on fresh installs; existing Python installs
+can still migrate when you're ready.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

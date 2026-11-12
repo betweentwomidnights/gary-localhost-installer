@@ -4,6 +4,23 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.1 - 2026-11-11
+
+gary's runtime setup no longer rejects a valid continuation. audiocraft.cpp
+returns the recording before the prompt followed by the generated window,
+at the recording's sample rate and channel count. the installer was still
+checking for just the generated 32 kHz mono window. its check now expects
+the full 44.1 kHz stereo result and still rejects truncated audio. retry
+runtime setup or migration if this stopped you on v0.7.0.
+
+SA3 LoRA automation lanes now reach the native server, including the lane
+prompts, envelopes and blend settings. the adapter maps each LoRA to its
+native path and refuses a runtime that doesn't support lanes rather than
+silently dropping the automation. sa3.cpp is pinned to v0.2.3; press
+`update all runtimes` to fetch it. the other runtime pins stay the same.
+
+compatible with gary4juce v5.0.3.
+
 ## v0.7.0 - 2026-11-08
 
 gary and terry move to audiocraft.cpp, completing the native migration for all
