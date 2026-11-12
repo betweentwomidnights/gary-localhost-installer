@@ -4,6 +4,17 @@ Tracks [issue #13](https://github.com/betweentwomidnights/gary-localhost-install
 Branch: `feature/linux-headless`. This is the first portability pass, not a
 Linux release or a working headless server.
 
+Follow-up: [sa3.cpp packaging PR #95](https://github.com/betweentwomidnights/sa3.cpp/pull/95)
+adds upstream Linux core/CUDA/Vulkan packages. On Spark, both ARM64 package sets
+passed 52 CTests, extracted-package controls and real GB10 GPU probes, then
+generated two-second audio through the native CLI using existing weights.
+The work is contained in `/home/kev/gary4local-packaging`, with a storage ledger
+and cleanup inventory; its initial footprint is about 1.3 GiB. These are engine
+package checks. This application's Linux installation, compatibility adapters,
+and headless supervisor still need integration work, and no Linux runtime URLs
+have been pinned here. CPU generation is not a target; CPU libraries/tests
+support the CUDA/Vulkan runtime paths.
+
 ## Spark baseline, November 12, 2026
 
 SSH works with the existing NVIDIA Sync/OpenSSH configuration:
