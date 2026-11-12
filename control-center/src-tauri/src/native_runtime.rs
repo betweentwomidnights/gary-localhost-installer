@@ -44,8 +44,12 @@ pub fn current_platform() -> &'static str {
         "windows-x64"
     } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         "macos-arm64"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "macos-x64"
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         "linux-x64"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "linux-arm64"
     } else {
         "unsupported"
     }
@@ -343,7 +347,42 @@ pub async fn detect_gpus() -> Result<Vec<GpuAdapter>, String> {
     }])
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// PCI sysfs works without a display server, Vulkan tools, or nvidia-smi.
+/// Only display-class devices count: NVIDIA PCI bridges on Spark are not GPUs.
+#[cfg(any(target_os = "linux", test))]
+fn linux_gpus(pci_devices: &Path) -> Result<Vec<GpuAdapter>, String> {
+    let entries = std::fs::read_dir(pci_devices)
+        .map_err(|error| format!("cannot enumerate {}: {error}", pci_devices.display()))?;
+    let mut adapters = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot read a PCI device: {error}"))?;
+        let dir = entry.path();
+        let class = std::fs::read_to_string(dir.join("class")).unwrap_or_default();
+        if !class.trim().starts_with("0x03") {
+            continue;
+        }
+        let vendor_id = std::fs::read_to_string(dir.join("vendor")).unwrap_or_default();
+        let (vendor, label) = match vendor_id.trim() {
+            "0x10de" => (GpuVendor::Nvidia, "NVIDIA"),
+            "0x1002" => (GpuVendor::Amd, "AMD"),
+            "0x8086" => (GpuVendor::Intel, "Intel"),
+            _ => (GpuVendor::Other, "Unknown"),
+        };
+        adapters.push(GpuAdapter {
+            name: format!("{label} GPU (PCI {})", entry.file_name().to_string_lossy()),
+            vendor,
+        });
+    }
+    adapters.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(adapters)
+}
+
+#[cfg(target_os = "linux")]
+pub async fn detect_gpus() -> Result<Vec<GpuAdapter>, String> {
+    linux_gpus(Path::new("/sys/bus/pci/devices"))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub async fn detect_gpus() -> Result<Vec<GpuAdapter>, String> {
     Ok(Vec::new())
 }
@@ -623,6 +662,13 @@ pub fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
             .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
         std::io::copy(&mut entry, &mut out)
             .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            // Keep executable bits, without granting setuid/setgid privileges.
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode & 0o777))
+                .map_err(|error| format!("cannot set permissions on {}: {error}", target.display()))?;
+        }
     }
     Ok(())
 }
@@ -1465,6 +1511,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn headless_linux_gpu_discovery_ignores_bridges_and_non_display_devices() {
+        let root = std::env::temp_dir().join(format!("gary-pci-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        for (address, class, vendor) in [
+            ("000f:00:00.0", "0x060400", "0x10de"),
+            ("000f:01:00.0", "0x030000", "0x10de"),
+            ("0000:02:00.0", "0x030200", "0x1002"),
+            ("0000:03:00.0", "0x030000", "0x8086"),
+            ("0000:04:00.0", "0x020000", "0x8086"),
+        ] {
+            // Windows cannot create ':' in fixture filenames.
+            let device = root.join(address.replace(':', "_"));
+            std::fs::create_dir_all(&device).unwrap();
+            std::fs::write(device.join("class"), format!("{class}\n")).unwrap();
+            std::fs::write(device.join("vendor"), format!("{vendor}\n")).unwrap();
+        }
+        // Hot-unplugged or incomplete entries must not invent adapters.
+        std::fs::create_dir_all(root.join("vanished")).unwrap();
+        let adapters = linux_gpus(&root).unwrap();
+        assert_eq!(adapters.len(), 3);
+        assert_eq!(adapters.iter().map(|gpu| gpu.vendor).collect::<Vec<_>>(),
+            [GpuVendor::Amd, GpuVendor::Intel, GpuVendor::Nvidia]);
+        assert!(adapters[2].name.contains("000f_01_00.0"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extracted_native_servers_keep_executable_permissions() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("gary-zip-mode-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("core.zip");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        writer.start_file("server", zip::write::SimpleFileOptions::default().unix_permissions(0o755)).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        writer.start_file("data", zip::write::SimpleFileOptions::default().unix_permissions(0o644)).unwrap();
+        writer.write_all(b"data").unwrap();
+        writer.finish().unwrap();
+        let into = root.join("unpacked");
+        extract_zip(&archive, &into).unwrap();
+        assert_eq!(std::fs::metadata(into.join("server")).unwrap().permissions().mode() & 0o7777, 0o755);
+        assert_eq!(std::fs::metadata(into.join("data")).unwrap().permissions().mode() & 0o7777, 0o644);
+        assert!(std::process::Command::new(into.join("server")).status().unwrap().success());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn buffered_download_flushes_resumes_reuses_and_rejects_corruption() {
         use std::io::{Read, Write};
         let root = std::env::temp_dir().join(format!("gary-download-{}-{}", std::process::id(),
@@ -1555,9 +1651,10 @@ mod tests {
 
     #[test]
     fn a_native_launch_layers_storage_then_template_then_shared_runtimes() {
-        let root = Path::new(r"C:\profile");
+        let profile = std::env::temp_dir().join("gary-launch-profile");
+        let root = profile.as_path();
         let install = NativeInstall {
-            dir: PathBuf::from(r"C:\profile\services\sa3\native"),
+            dir: root.join("services").join("sa3").join("native"),
             backend: "vulkan".into(),
             runtimes: vec!["cudart-12.8".into()],
             version: Some("v0.1.3".into()),

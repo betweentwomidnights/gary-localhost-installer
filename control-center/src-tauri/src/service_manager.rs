@@ -2,6 +2,7 @@ use crate::manifest::{HealthCheck, MigrationDef, NativeDef, NativePackage, Servi
 use crate::native_runtime::{self, NativeInstall, NativeLaunch};
 use serde::Serialize;
 use std::collections::HashMap;
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -1198,11 +1199,17 @@ impl ServiceManager {
             log::info!("Stopping {}", service_id);
             // Use taskkill /T to kill the entire process tree on Windows.
             // This ensures subprocesses (e.g. carey_wrapper -> api_server.py) are also killed.
-            let pid = running.process.id();
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .output();
+            #[cfg(target_os = "windows")]
+            {
+                let pid = running.process.id();
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .output();
+            }
+            // Also covers a failed taskkill. Unix process-group ownership and
+            // descendant cleanup remain part of the headless supervisor work.
+            let _ = running.process.kill();
             let _ = running.process.wait();
             self.errors.remove(service_id);
             Ok(())
@@ -1565,6 +1572,24 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 mod tests {
     use super::*;
 
+    fn exited_process() -> Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/c", "exit /b 0"]).creation_flags(0x08000000);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let mut child = command.spawn().unwrap();
+        child.wait().unwrap();
+        child
+    }
+
     #[test]
     fn recreated_python_files_reopen_migration_without_resetting_native_selection() {
         let root = std::env::temp_dir().join(format!("gary-sa3-downgrade-{}-{}",
@@ -1816,8 +1841,15 @@ mod tests {
                 svc.native = Some(native.clone());
                 svc.runtime = ServiceRuntime::Native;
             }
+            // These tests exercise reservation semantics, without downloading
+            // or running binaries. Supply the fixture package metadata for the
+            // test host too; the published manifest is still Windows-only.
+            if let Some(native) = svc.native.as_mut() {
+                let packages = native.platforms["windows-x64"].clone();
+                native.platforms.insert(native_runtime::current_platform().into(), packages);
+            }
         }
-        let mut manager = ServiceManager::new(manifest.services, PathBuf::from("C:/test-runtime"));
+        let mut manager = ServiceManager::new(manifest.services, std::env::temp_dir().join("gary-test-runtime"));
         manager.set_native_runtimes(manifest.native_runtimes);
         manager
     }
@@ -1978,12 +2010,7 @@ mod tests {
     fn a_service_sharing_the_runtime_keeps_running_while_another_changes_its_models() {
         let mut manager = shared_native_manager();
         let running = |manager: &mut ServiceManager, id: &str| {
-            let mut process = Command::new("cmd.exe")
-                .args(["/c", "exit /b 0"])
-                .creation_flags(0x08000000)
-                .spawn()
-                .unwrap();
-            process.wait().unwrap();
+            let process = exited_process();
             manager.running.insert(
                 id.into(),
                 RunningService {
@@ -2007,12 +2034,7 @@ mod tests {
     #[test]
     fn shared_cuda_replacement_waits_for_running_native_consumers() {
         let mut manager = shared_native_manager();
-        let mut process = Command::new("cmd.exe")
-            .args(["/c", "exit /b 0"])
-            .creation_flags(0x08000000)
-            .spawn()
-            .unwrap();
-        process.wait().unwrap();
+        let process = exited_process();
         // Keep a process entry until the regular health poll reaps it.
         manager.running.insert(
             "yuey".into(),
@@ -2321,10 +2343,10 @@ mod tests {
             .runtime = ServiceRuntime::Python;
         let python = manager.env_dir_for("sa3").unwrap();
         let candidate = manager.get_native_build_info("sa3").unwrap();
-        assert_eq!(python, PathBuf::from("C:/test-runtime/services/sa3/env"));
+        assert_eq!(python, manager.repo_root.join("services/sa3/env"));
         assert_eq!(
             candidate.env_dir,
-            PathBuf::from("C:/test-runtime/services/sa3/native")
+            manager.repo_root.join("services/sa3/native")
         );
         assert_eq!(candidate.runtime, ServiceRuntime::Native);
         assert_eq!(manager.env_dir_for("sa3").unwrap(), python);
