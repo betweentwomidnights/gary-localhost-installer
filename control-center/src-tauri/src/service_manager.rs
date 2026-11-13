@@ -1153,6 +1153,9 @@ impl ServiceManager {
                 Ok(encoding) => encoding,
                 Err(blocker) => return Some(blocker),
             };
+            if automatic.is_some() {
+                if let Some(blocker) = self.native_mutation_blocker(&svc.id) { return Some(blocker); }
+            }
             if let Some(blocker) = service.and_then(|service| match automatic.as_deref() {
                 Some(encoding) => service.native_start_blocker_for_encoding(&self.repo_root, Some(encoding)),
                 None => service.native_start_blocker(&self.repo_root, self.selection(&svc.id)),
@@ -1733,6 +1736,9 @@ mod native_start_tests {
         fixture.manager.begin_native_model_mutation("sa3", "model download").unwrap();
         assert!(fixture.manager.start_activation("sa3").unwrap_err().contains("model download"));
         fixture.manager.end_native_model_mutation("sa3");
+        fixture.manager.begin_native_workload("stable-audio", "fixture-tool", "shared runtime tool").unwrap();
+        assert!(fixture.manager.start_activation("sa3").unwrap_err().contains("shared runtime tool"));
+        fixture.manager.end_native_workload("stable-audio", "fixture-tool");
         let file = &crate::sa3_models::component("sa3-native::medium-Q4_K_M").unwrap().files[0];
         std::fs::OpenOptions::new().write(true).open(crate::sa3_models::models_dir(&fixture.root).join(&file.filename)).unwrap().set_len(file.bytes - 1).unwrap();
         assert!(fixture.manager.start_activation("sa3").is_err(), "partial file is not ready");
