@@ -1643,10 +1643,10 @@ mod native_start_tests {
             let native = svc.native.as_ref().unwrap();
             let name = if cfg!(windows) { native.executable.as_str() } else { native.executable.strip_suffix(".exe").unwrap() };
             std::fs::write(dir.join(name), b"runtime fixture; never executed").unwrap();
-            std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&native_runtime::NativeStamp {
-                version: native.version.clone(), platform: native_runtime::current_platform().into(),
-                backend: "vulkan".into(), requested_backend: "vulkan".into(), fallback_reason: None, runtimes: vec![],
-            }).unwrap()).unwrap();
+            std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&serde_json::json!({
+                "version": native.version, "platform": native_runtime::current_platform(),
+                "backend": "vulkan", "requestedBackend": "vulkan", "fallbackReason": null, "runtimes": [],
+            })).unwrap()).unwrap();
         }
         fn component(&self, id: &str, component_id: &str) {
             let service = crate::migration::service(id).unwrap();
@@ -1658,6 +1658,7 @@ mod native_start_tests {
                 // Presence checks need lengths only, never fake model hashes.
                 // Keep these inventory-only fixtures sparse on Windows too.
                 #[cfg(windows)] {
+                    use std::os::windows::process::CommandExt;
                     let _ = Command::new("fsutil").creation_flags(0x0800_0000).args(["sparse", "setflag"]).arg(&path).output();
                 }
                 output.set_len(file.bytes).unwrap();
