@@ -26,7 +26,16 @@ with evidence.open('w') as log:
         assert process.poll() is None, evidence.read_text()
         # A live process and seeded manifest can still hide a blank WebKit view.
         tree = subprocess.check_output(['xwininfo', '-root', '-tree'], text=True)
-        windows = re.findall(r'^\s+(0x[0-9a-fA-F]+).*"gary4local', tree, re.M)
+        candidates = re.findall(r'^\s+(0x[0-9a-fA-F]+).*"gary4local', tree, re.M)
+        windows = []
+        for candidate in candidates:
+            geometry = subprocess.check_output(['xwininfo', '-id', candidate], text=True)
+            width = re.search(r'Width:\s+(\d+)', geometry)
+            height = re.search(r'Height:\s+(\d+)', geometry)
+            if (width and height and int(width[1]) >= 900 and int(height[1]) >= 550
+                    and 'Map State: IsViewable' in geometry):
+                windows.append(candidate)
+        assert len(windows) == 1, tree
         assert windows, tree
         screenshot = root / 'STARTUP.png'
         subprocess.run(['import', '-window', windows[0], str(screenshot)], check=True, timeout=15)
