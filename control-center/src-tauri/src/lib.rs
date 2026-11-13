@@ -29,6 +29,7 @@ mod sa3_models;
 mod sa3_prompts;
 mod sa3_runtime;
 mod sa3_training;
+mod native_start;
 mod service_manager;
 mod stable_audio_migration;
 mod stable_audio_models;
@@ -6093,12 +6094,15 @@ pub fn run() {
                                     let is_running = m.is_running(&service_id);
                                     if is_running {
                                         let _ = m.stop(&service_id);
+                                        drop(m);
                                     } else {
-                                        let _ = m.start(&service_id);
+                                        drop(m);
+                                        if let Err(error) = start_service_ready(service_id.clone(), handle.clone()).await {
+                                            log::error!("Cannot start {service_id}: {error}");
+                                        }
                                     }
                                     // Emit updated status
-                                    let info = m.get_service_info();
-                                    drop(m);
+                                    let info = mgr.lock().await.get_service_info();
                                     let _ = handle.emit("services-updated", &info);
                                     // Rebuild tray menu to reflect new state
                                     rebuild_tray_menu(&handle, &mgr).await;
@@ -6330,10 +6334,44 @@ async fn get_services(
 #[tauri::command]
 async fn start_service(
     service_id: String,
-    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut mgr = manager.lock().await;
-    mgr.start(&service_id).map_err(|e| e.to_string())
+    start_service_ready(service_id, app_handle).await
+}
+
+/// A fresh native install with one complete model choice needs no separate
+/// Use click. Reuse the explicit activation's verification and workload guards;
+/// failure returns before a public service is launched. Never remove user data.
+async fn start_service_ready(service_id: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+    let manager = app_handle.state::<ManagerState>();
+    let (encoding, native) = {
+        let services = manager.lock().await;
+        (services.start_activation(&service_id)?, services.is_native(&service_id))
+    };
+    let handle = &app_handle;
+    let id = &service_id;
+    native_start::complete(encoding, move |encoding| async move {
+        if native {
+            select_native_model(id.clone(), encoding, handle.state(), handle.state(), handle.clone()).await?;
+        } else {
+            activate_native_runtime(id.clone(), encoding, handle.state(), handle.state(), handle.clone()).await?;
+            // Match Models' existing fresh-install Use behavior. Only unchanged
+            // bundled source (or an empty cleanup) can finish automatically;
+            // environments, weights, warnings and Python-only features require
+            // the existing explicit review. The token is rechecked by cleanup.
+            let preview = get_migration_preview(id.clone(), handle.state(), handle.state()).await?;
+            if preview.only_bundled_code() {
+                let cleanup = cleanup_legacy_installation(id.clone(), preview.cleanup_token,
+                    handle.state(), handle.state(), handle.state(), handle.clone()).await?;
+                if !cleanup.errors.is_empty() { return Err(cleanup.errors.join("\n")); }
+            }
+        }
+        Ok(())
+    }, || async {
+        let result = manager.lock().await.start(&service_id).map_err(|error| error.to_string());
+        emit_status(manager.inner(), &app_handle).await;
+        result
+    }).await
 }
 
 #[tauri::command]
@@ -6349,13 +6387,13 @@ async fn stop_service(
 async fn restart_service(
     service_id: String,
     manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut mgr = manager.lock().await;
     mgr.stop(&service_id).ok();
     drop(mgr);
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let mut mgr = manager.lock().await;
-    mgr.start(&service_id).map_err(|e| e.to_string())
+    start_service_ready(service_id, app_handle).await
 }
 
 #[tauri::command]

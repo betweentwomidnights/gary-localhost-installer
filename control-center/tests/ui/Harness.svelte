@@ -3,7 +3,15 @@
   import YueyGenerationPanel from '../../src/lib/YueyGenerationPanel.svelte';
   import NativeRuntimeBanner from '../../src/lib/NativeRuntimeBanner.svelte';
   import StorageSettingsModal from '../../src/lib/StorageSettingsModal.svelte';
-  let { serviceId, controls } = $props();
+  import ServiceRow from '../../src/lib/ServiceRow.svelte';
+  import { onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
+  let { serviceId, controls, showRow, initialService } = $props();
+  let service = $state(initialService);
+  onMount(() => {
+    const listener = listen('services-updated', (event) => service = event.payload[0]);
+    return () => { void listener.then((stop) => stop()); };
+  });
   let storageOpen = $state(true);
   const noop = () => {};
   const root = '/home/kev/gary4local-packaging/desktop-gui/data';
@@ -17,7 +25,8 @@
   <StorageSettingsModal open={storageOpen} {info} error={null} onClose={() => storageOpen = false} onReveal={noop}
     serviceEnvs={['audiocraft shared runtime', 'stable audio shared runtime'].map((displayName, i) => ({ serviceId: String(i), displayName, kind: 'native', envPath: root, envBytes: 1234567890, present: true, blockedReason: null }))} />
 {:else}
-  <ModelPanel {serviceId} serviceRuntime="native" hasMigration={serviceId !== 'yuey'} pythonRetired={true} onBack={noop} />
+  {#if showRow}<ServiceRow {service} selected={false} onSelect={noop} hasModels={true} hasMigration={true} />{/if}
+  <ModelPanel {serviceId} serviceRuntime={service.runtime} hasMigration={serviceId !== 'yuey'} pythonRetired={service.python_retired} onBack={noop} />
 {/if}
 
 <style>

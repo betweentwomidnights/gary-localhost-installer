@@ -25,6 +25,7 @@
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
+    start_activation_encoding?: string | null;
     migration_complete: boolean;
     python_retired: boolean;
   }
@@ -81,6 +82,9 @@
   }
 
   let isBuilding = $derived(service.build_status?.building ?? false);
+  let starting = $state(false);
+  let actionError = $state<string | null>(null);
+  const activationOnStart = $derived(service.start_activation_encoding ?? null);
   // A native service downloads a prebuilt runtime instead of building a venv.
   let isNative = $derived(service.runtime === "native");
   let fresh = $derived(service.python_retired && !isNative);
@@ -102,7 +106,10 @@
   );
 
   async function startService() {
-    try { await invoke("start_service", { serviceId: service.id }); } catch (e) { console.error(e); }
+    starting = true; actionError = null;
+    try { await invoke("start_service", { serviceId: service.id }); }
+    catch (e) { actionError = String(e); }
+    finally { starting = false; }
   }
   async function stopService() {
     try { await invoke("stop_service", { serviceId: service.id }); } catch (e) { console.error(e); }
@@ -134,6 +141,7 @@
   {#if service.error}
     <div class="error">{service.error}</div>
   {/if}
+  {#if actionError}<div class="error" role="alert">{actionError}</div>{/if}
 
   {#if isBuilding}
     <div class="build-progress">
@@ -143,22 +151,22 @@
       <span class="build-label">{service.build_status?.step_label}</span>
     </div>
   {:else if service.build_status?.error}
-    <div class="error">{isNative || fresh ? "runtime install failed" : "build failed"}: {service.build_status.error}</div>
+    <div class="error">{isNative || fresh ? "runtime setup failed" : "build failed"}: {service.build_status.error}</div>
   {:else if service.build_status && !service.build_status.building && service.build_status.current_step > 0}
-    <div class="build-done">{isNative || fresh ? "runtime installed" : "build complete"}</div>
+    <div class="build-done">{isNative || fresh ? "runtime ready" : "build complete"}</div>
   {/if}
 
-  {#if fresh && service.native_runtime_installed && !isBuilding}
-    <div class="blocker">runtime ready · choose models to finish setup</div>
+  {#if activationOnStart && !isBuilding}
+    <div class="blocker">{activationOnStart} ready · Start completes model activation</div>
   {/if}
 
-  {#if service.env_exists && service.start_blocker && (service.status === "stopped" || service.status === "failed")}
+  {#if service.start_blocker && (service.status === "stopped" || service.status === "failed")}
     <div class="blocker">{service.start_blocker}</div>
   {/if}
 
   <div class="controls">
     {#if service.status === "stopped" || service.status === "failed"}
-      <button onclick={(e) => { e.stopPropagation(); startService(); }} disabled={fresh || !service.env_exists || isBuilding || !!service.start_blocker}>start</button>
+      <button onclick={(e) => { e.stopPropagation(); startService(); }} title={service.start_blocker ?? (activationOnStart ? `Verify and start with ${activationOnStart}` : undefined)} disabled={starting || ((fresh || !service.env_exists) && !activationOnStart) || isBuilding || !!service.start_blocker}>{starting ? "starting..." : "start"}</button>
     {:else}
       <button onclick={(e) => { e.stopPropagation(); stopService(); }}>stop</button>
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>

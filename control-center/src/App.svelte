@@ -54,6 +54,7 @@
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
+    start_activation_encoding?: string | null;
     migration_complete: boolean;
     has_migration: boolean;
     runtime_group: string | null;

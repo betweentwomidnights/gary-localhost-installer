@@ -1,0 +1,32 @@
+name: native-start
+on:
+  pull_request:
+    paths:
+      - 'control-center/src-tauri/**'
+      - 'services/manifests/services.json'
+      - '.github/workflows/native-start.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'control-center/src-tauri/**'
+      - 'services/manifests/services.json'
+      - '.github/workflows/native-start.yml'
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select tested Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Native start policy, activation ordering and service regressions
+        shell: pwsh
+        run: |
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

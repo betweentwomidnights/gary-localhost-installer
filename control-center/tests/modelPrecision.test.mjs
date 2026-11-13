@@ -16,3 +16,7 @@ test('recommendations do not replace an installed or explicitly browsed copy', (
   assert.equal(shownPrecision(options, null, null, 'F16'), 'Q4_K_M');
   assert.equal(shownPrecision(options, 'F16', 'Q4_K_M'), 'F16');
 });
+
+test('a missing saved copy does not hide the sole remaining downloaded precision', () => {
+  assert.equal(shownPrecision([{ value: 'F16', status: 'available' }, { value: 'Q4_K_M', status: 'downloaded' }], null, 'F16'), 'Q4_K_M');
+});
