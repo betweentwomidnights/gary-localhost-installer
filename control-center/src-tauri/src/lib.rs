@@ -11638,13 +11638,30 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
 
 fn merge_native_environment_rows(rows: Vec<ServiceEnvInfo>) -> Vec<ServiceEnvInfo> {
     let mut merged: Vec<ServiceEnvInfo> = Vec::new();
-    for row in rows {
+    for mut row in rows {
         if row.kind == "native" {
+            let service_id = row
+                .service_id
+                .strip_prefix("native:")
+                .unwrap_or(&row.service_id);
+            let bundle = crate::manifest::bundled()
+                .services
+                .iter()
+                .find(|service| service.id == service_id)
+                .and_then(|service| service.native.as_ref())
+                .and_then(|native| native.bundle.as_deref());
+            row.display_name = match bundle {
+                Some("audiocraft") => "audiocraft shared runtime".to_string(),
+                Some("sa3") => "stable audio shared runtime".to_string(),
+                _ => row.display_name,
+            };
             if let Some(existing) = merged
                 .iter_mut()
                 .find(|existing| existing.kind == "native" && existing.env_path == row.env_path)
             {
-                existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                if existing.display_name != row.display_name {
+                    existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                }
                 existing.blocked_reason = existing.blocked_reason.take().or(row.blocked_reason);
                 continue;
             }
@@ -11687,9 +11704,39 @@ mod shared_runtime_tests {
         let rows = merge_native_environment_rows(vec![row, other, python]);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].env_bytes, 1024);
-        assert_eq!(rows[0].display_name, "SA3 / Jerry");
+        assert_eq!(rows[0].display_name, "stable audio shared runtime");
         assert_eq!(rows[0].blocked_reason.as_deref(), Some("Jerry is running"));
         assert_eq!(rows[1].kind, "python");
+        assert_eq!(rows[1].display_name, "SA3");
+    }
+
+    #[test]
+    fn native_bundle_labels_cover_prepared_and_active_consumers() {
+        for (ids, expected) in [
+            (["native:gary", "melodyflow"], "audiocraft shared runtime"),
+            (
+                ["native:foundation", "stable-audio"],
+                "stable audio shared runtime",
+            ),
+        ] {
+            let rows = ids
+                .into_iter()
+                .map(|id| ServiceEnvInfo {
+                    service_id: id.to_string(),
+                    display_name: format!("{id} C++ runtime (prepared)"),
+                    kind: "native".to_string(),
+                    env_path: "services/shared/native".to_string(),
+                    env_bytes: 1024,
+                    present: true,
+                    blocked_reason: None,
+                })
+                .collect();
+            let merged = merge_native_environment_rows(rows);
+            assert_eq!(merged.len(), 1);
+            assert_eq!(merged[0].service_id, ids[0]);
+            assert_eq!(merged[0].display_name, expected);
+            assert_eq!(merged[0].env_bytes, 1024);
+        }
     }
 
     #[test]
