@@ -29,15 +29,19 @@ pub fn roaming_app_data_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         let base = linux_xdg_dir("XDG_CONFIG_HOME", ".config");
-        return if linux_preview() { base.join(linux_storage_id()) } else { base };
+        return if linux_preview() {
+            base.join(linux_storage_id())
+        } else {
+            base
+        };
     }
     #[cfg(not(target_os = "linux"))]
     {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Roaming", home)
-    });
-    PathBuf::from(appdata)
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
+            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+            format!("{}\\AppData\\Roaming", home)
+        });
+        PathBuf::from(appdata)
     }
 }
 
@@ -48,11 +52,11 @@ pub fn local_data_root() -> PathBuf {
     }
     #[cfg(not(target_os = "linux"))]
     {
-    let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        format!("{}\\AppData\\Local", home)
-    });
-    PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+        let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+            format!("{}\\AppData\\Local", home)
+        });
+        PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
     }
 }
 
@@ -63,8 +67,11 @@ fn linux_preview() -> bool {
 
 #[cfg(target_os = "linux")]
 fn linux_storage_id() -> &'static str {
-    if linux_preview() { "com.betweentwomidnights.gary4local.preview" }
-    else { "com.betweentwomidnights.gary4local" }
+    if linux_preview() {
+        "com.betweentwomidnights.gary4local.preview"
+    } else {
+        "com.betweentwomidnights.gary4local"
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -93,11 +100,11 @@ pub fn installed_default_runtime_root() -> PathBuf {
     }
     #[cfg(not(target_os = "linux"))]
     {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| local_data_root()))
-        .join("gary4local-data")
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| local_data_root()))
+            .join("gary4local-data")
     }
 }
 
@@ -425,9 +432,9 @@ mod tests {
         assert_eq!(lookup("MODELS_DIR"), root.join("models").to_string_lossy());
         assert_eq!(
             lookup("HF_HOME"),
-            root.join("models/huggingface").to_string_lossy()
+            root.join("models").join("huggingface").to_string_lossy()
         );
-        assert_eq!(lookup("UV_CACHE_DIR"), root.join("cache/uv").to_string_lossy());
+        assert_eq!(lookup("UV_CACHE_DIR"), root.join("cache").join("uv").to_string_lossy());
     }
 
     #[cfg(target_os = "linux")]
