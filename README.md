@@ -12,21 +12,18 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/11 - v0.7.1
+## update 11/13 - v0.7.2
 
-[download gary4local v0.7.1 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.1).
+[download gary4local v0.7.2 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.2).
 
-gary's runtime setup check now accepts the full continuation returned by
-audiocraft.cpp. if v0.7.0 stopped with a sample-rate or channel mismatch,
-retry runtime setup or migration after updating.
-
-SA3 LoRA automation lanes now reach the native server, with their prompts,
-envelopes and blend settings. sa3.cpp moves to v0.2.3; press
-`update all runtimes` to fetch it.
+gary's runtime setup now accepts retry results as well as continuations.
+v0.7.1 fixed the continuation check but missed retry_music. if setup or
+migration stopped there with a sample-rate or channel mismatch, update and
+retry it. you don't need to download the models again.
 
 pair it with [gary4juce v5.0.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.4).
-all seven services run on C++ on fresh installs; existing Python installs
-can still migrate when you're ready.
+SA3 LoRA automation lanes remain supported with sa3.cpp v0.2.3. runtime pins
+are unchanged by this hotfix.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

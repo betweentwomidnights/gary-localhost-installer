@@ -4,6 +4,22 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.2 - 2026-11-13
+
+gary's runtime setup now accepts retry_music results too. v0.7.1 fixed the
+continuation check but left retry expecting only a generated 32 kHz mono
+window. a retry also continues the session's original input, even when that
+session started with process_audio, so its check now expects the full result
+at the recording's sample rate and channel count. retry runtime setup or
+migration after updating if it stopped at this check.
+
+the checks still reject truncated or incorrectly formatted audio. generation,
+continuation and retry passed against the released audiocraft.cpp v0.1.4
+runtime on CUDA; Terry's transform and undo passed in the same verification.
+no runtime pins changed for this hotfix.
+
+compatible with gary4juce v5.0.4.
+
 ## v0.7.1 - 2026-11-11
 
 gary's runtime setup no longer rejects a valid continuation. audiocraft.cpp

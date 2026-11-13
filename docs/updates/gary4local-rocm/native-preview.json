@@ -1,11 +1,11 @@
 {
-  "version": "0.7.1-rocm.1",
-  "notes": "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.\nSA3 LoRA automation lanes reach the native server.\nUpdate all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4.\nAMD preview; hardware validation is still pending.",
-  "pub_date": "2026-11-12T06:54:26.0000000+00:00",
+  "version": "0.7.2-rocm.1",
+  "notes": "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.\nExisting models can be reused. Compatible with gary4juce v5.0.4.\nAMD preview; hardware validation of this package is still pending.",
+  "pub_date": "2026-11-13T15:29:51.0000000+00:00",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME0zR1VFSk9yY2ovcHFFUDNGOWJzZy91ZnpFZEZpNXZ6Mzd2dWhJMEFYQ1hSMXpmeWIzbm1ocmNaUGhpWXVhVlV1T3VzUUdLcjJIejZ3SDQxUjZmelFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDY2MTkxCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy4xLXJvY20uMV94NjQtc2V0dXAuZXhlCk9YaWd3T2R1a21iMnk0VXRrbVp5TUpEYVJ3VmtGcEhoM0lPTU13TU5ub3Nna3dHSFNhWXVvd0FXekdSZG1pNFRiM3k4em9vMmt1N051L1pOWmVnOUJRPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1-rocm.1/gary4local-rocm_0.7.1-rocm.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEY3RjBMdkdHMjYwOHN2VyszNEtmVGlJbU9sVjQrc1BpWU9RZlBHZVBJZWpOeUFZdW5zUm5LTDJlN3FBT2FuUjI1cjlTU2M4N3JSaUpha0o4L09qY2dNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTgzNzYzCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy4yLXJvY20uMV94NjQtc2V0dXAuZXhlCjdtUWFyNjgrMnZaSnVZclJGZkdhc0d2Q2huN0xxQ0tIMkRDenp1R1hrK09MRGlURE1WdW5ySHp6STJSTnZNWnQzMlVJUVJNOFBxemowYVBmTkc1RkJBPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2-rocm.1/gary4local-rocm_0.7.2-rocm.1_x64-setup.exe"
     }
   }
 }
