@@ -68,11 +68,14 @@ def main():
     assert (ROOT / 'control-center/dist/index.html').is_file()
     output = TAURI / 'target/desktop-preview'
     output.mkdir(exist_ok=True)
-    destination = output / package.name
+    version = run('dpkg-deb', '-f', str(package), 'Version')
+    # Tauri uses the display name (including spaces) for its internal filename.
+    # Keep the distributed asset name stable and convenient for shell commands.
+    destination = output / f'gary4local-preview_{version}_{args.arch}.deb'
     shutil.copy2(package, destination)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     (output / ('SHA256SUMS-' + args.platform)).write_text(f'{digest}  {destination.name}\n')
-    info = {'service': 'gary4local-desktop', 'version': run('dpkg-deb', '-f', str(package), 'Version'),
+    info = {'service': 'gary4local-desktop', 'version': version,
             'commit': os.environ.get('GITHUB_SHA', run('git', '-C', str(ROOT), 'rev-parse', 'HEAD')),
             'platform': args.platform, 'architecture': args.arch, 'experimental': True,
             'updater_enabled': False, 'package': destination.name, 'sha256': digest,
