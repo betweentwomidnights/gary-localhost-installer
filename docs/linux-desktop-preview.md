@@ -21,7 +21,7 @@ From the directory containing the correct package for your machine:
 
 ```sh
 sha256sum -c SHA256SUMS-linux-arm64 # linux-x64 on a PC
-sudo apt install ./gary4local-preview_*.deb
+sh INSTALL.sh ./gary4local-preview_*.deb
 gary4local-preview-launch
 ```
 
@@ -31,6 +31,21 @@ runtime data, configuration and caches stay in
 `/home/kev/gary4local-packaging/desktop-gui`. Override `GARY4LOCAL_PREVIEW_HOME`
 with an absolute path to keep another dedicated test directory. An explicit
 `GARY4LOCAL_RUNTIME_ROOT` is respected. Run as your normal desktop user.
+
+`INSTALL.sh` requests sudo for APT and temporarily stages the public DEB where
+APT's `_apt` user can read it. It cleans up that copy after installation and
+does not loosen your home-directory permissions. A direct `sudo apt install`
+from a private home can warn that it is running unsandboxed; that notice does
+not by itself mean installation failed.
+
+The Linux package uses Gary PNG icons generated from the repository's
+`icon.png`; `.icns` is a macOS format. Its desktop-entry filename matches the
+window's application class so GNOME can associate the correct dock icon.
+
+On NVIDIA/X11, startup applies the verified WebKit DMA-BUF renderer workaround
+before GTK initializes. This affects UI presentation, not CUDA/Vulkan generation.
+AMD/Intel and Wayland sessions retain their defaults. An explicit
+`WEBKIT_DISABLE_DMABUF_RENDERER` value is respected.
 
 If the DEB is only extracted for inspection, set `GARY4LOCAL_PREVIEW_BINARY` to
 the absolute extracted binary path before invoking the extracted launcher.
@@ -60,7 +75,8 @@ No systemd service is installed or enabled by the desktop preview.
 
 CI checks package architecture, executable modes, menu entry, pinned manifest,
 absence of model/engine payloads, launcher isolation, Linux storage behavior,
-and actual package installation/startup under Xvfb. Virtual-display startup
+and actual package installation/startup plus a rendered-window capture under
+Xvfb. A uniform blank capture fails the check. Virtual-display startup
 does not establish GPU inference, tray availability, or real desktop behavior.
 
 ## WSL validation

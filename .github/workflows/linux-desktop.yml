@@ -54,7 +54,7 @@ jobs:
       - name: Desktop build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf desktop-file-utils xvfb dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf desktop-file-utils xvfb dbus-x11 x11-utils imagemagick
           rustup toolchain install 1.95.0 --profile minimal
           rustup default 1.95.0
       - name: Build installable preview
@@ -76,10 +76,11 @@ jobs:
           DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib linux_desktop::tests::
           python3 smoke-tests/linux/check_desktop_package.py --platform "$PLATFORM" --arch "$DEB_ARCH"
       - name: Install package and check desktop startup
         run: |
-          sudo apt-get install -y ./control-center/src-tauri/target/desktop-preview/*.deb
+          sh control-center/src-tauri/target/desktop-preview/INSTALL.sh control-center/src-tauri/target/desktop-preview/*.deb
           xvfb-run -a dbus-run-session -- python3 smoke-tests/linux/desktop_startup.py
       - uses: actions/upload-artifact@v4
         with:
@@ -89,5 +90,7 @@ jobs:
             control-center/src-tauri/target/desktop-preview/SHA256SUMS-*
             control-center/src-tauri/target/desktop-preview/*.json
             control-center/src-tauri/target/desktop-preview/*.log
+            control-center/src-tauri/target/desktop-preview/*.png
+            control-center/src-tauri/target/desktop-preview/INSTALL.sh
             control-center/src-tauri/target/desktop-preview/README.md
           retention-days: 14

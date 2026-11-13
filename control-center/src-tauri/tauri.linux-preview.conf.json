@@ -1,5 +1,5 @@
 {
-  "productName": "gary4local Preview",
+  "productName": "gary4local-preview",
   "mainBinaryName": "gary4local-preview",
   "identifier": "com.betweentwomidnights.gary4local.preview",
   "app": {
@@ -14,6 +14,7 @@
     }]
   },
   "bundle": {
+    "icon": ["icons/linux/256x256.png", "icons/linux/128x128.png", "icons/linux/32x32.png"],
     "targets": ["deb"],
     "createUpdaterArtifacts": false,
     "category": "Music",

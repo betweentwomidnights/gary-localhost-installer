@@ -36,6 +36,8 @@ mod storage;
 mod storage_transfer;
 mod update;
 mod workload_job;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 
 use model_manager::{carey_component_required_files, ModelManager};
 use serde::{Deserialize, Serialize};
@@ -5928,6 +5930,9 @@ fn rebuild_tray_menu_with_info(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_desktop::configure_renderer();
+
     install_panic_diagnostics();
 
     let webview2_user_data_folder = configure_webview2_user_data_folder();

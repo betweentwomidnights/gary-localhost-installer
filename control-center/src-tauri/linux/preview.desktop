@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name={{name}}
+Name=gary4local Preview
 Comment={{comment}}
 Exec=gary4local-preview-launch
 Icon={{icon}}

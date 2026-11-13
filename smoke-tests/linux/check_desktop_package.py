@@ -44,8 +44,14 @@ def main():
         assert 'not found' not in dependencies, dependencies
         desktop = list((unpacked / 'usr/share/applications').glob('*.desktop'))
         assert len(desktop) == 1
+        assert desktop[0].name == 'gary4local-preview.desktop'
         subprocess.run(['desktop-file-validate', str(desktop[0])], check=True)
         assert 'Exec=gary4local-preview-launch' in desktop[0].read_text()
+        assert 'Icon=gary4local-preview' in desktop[0].read_text()
+        for size in [32, 128, 256]:
+            icon = unpacked / f'usr/share/icons/hicolor/{size}x{size}/apps/gary4local-preview.png'
+            source = TAURI / f'icons/linux/{size}x{size}.png'
+            assert icon.read_bytes() == source.read_bytes(), icon
         manifests = list(unpacked.rglob('services/manifests/services.json'))
         assert len(manifests) == 1, manifests
         assert manifests[0].read_bytes() == (ROOT / 'services/manifests/services.json').read_bytes()
@@ -87,6 +93,7 @@ def main():
             'rust': run('rustc', '--version'), 'node': run('node', '--version')}
     (output / 'BUILD-INFO.json').write_text(json.dumps(info, indent=2) + '\n')
     shutil.copy2(ROOT / 'docs/linux-desktop-preview.md', output / 'README.md')
+    shutil.copy2(TAURI / 'linux/install-preview.sh', output / 'INSTALL.sh')
     print(json.dumps(info, indent=2))
 
 

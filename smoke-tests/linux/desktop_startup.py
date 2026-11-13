@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import re
 import subprocess
 import time
 
@@ -23,9 +24,18 @@ with evidence.open('w') as log:
             time.sleep(.2)
         time.sleep(5)
         assert process.poll() is None, evidence.read_text()
+        # A live process and seeded manifest can still hide a blank WebKit view.
+        tree = subprocess.check_output(['xwininfo', '-root', '-tree'], text=True)
+        windows = re.findall(r'^\s+(0x[0-9a-fA-F]+).*"gary4local', tree, re.M)
+        assert windows, tree
+        screenshot = root / 'STARTUP.png'
+        subprocess.run(['import', '-window', windows[0], str(screenshot)], check=True, timeout=15)
+        colors = int(subprocess.check_output(['identify', '-format', '%k', str(screenshot)], text=True))
+        assert colors > 32, f'Blank or unrendered desktop: only {colors} colors'
         data = json.loads(manifest.read_text())
         assert len(data['services']) == 7
         result = {'installed_package_started': True, 'services_seeded': 7,
+                  'rendered_ui_screenshot': 'STARTUP.png', 'rendered_colors': colors,
                   'runtime_root': str(profile / 'data'), 'engine_started': False,
                   'display': 'Xvfb software rendering; hardware GUI validation remains manual'}
     finally:
