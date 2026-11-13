@@ -1,12 +1,13 @@
 {
-    "channel":  "preview",
-    "latest_version":  "0.7.0-rocm.2",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.0-rocm.2/gary4local-rocm_0.7.0-rocm.2_x64-setup.exe",
-    "sha256":  "b73db6adf5e21e5d3ca983dfcdd467bae773056b56b958c17d609d549ec61917",
-    "published_at":  "2026-11-09T00:39:11.0000000+00:00",
-    "notes":  [
-                  "Continuations append to your input again (audiocraft.cpp v0.1.4).",
-                  "Heads up: SA3 renders with a negative prompt and a cfg scale above 1 sound different (sa3.cpp v0.2.2). Press update all runtimes to fetch both.",
-                  "Same code as gary4local v0.7.0 with the ROCm changes on top. Use gary4juce v5.0.3."
-              ]
+  "channel": "preview",
+  "latest_version": "0.7.1-rocm.1",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1-rocm.1/gary4local-rocm_0.7.1-rocm.1_x64-setup.exe",
+  "sha256": "071684f89da29ffd82c778c404988c6c51c506340518adab1d49de513348810d",
+  "published_at": "2026-11-12T06:54:26.0000000+00:00",
+  "notes": [
+    "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.",
+    "SA3 LoRA automation lanes reach the native server.",
+    "Update all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4.",
+    "AMD preview; hardware validation is still pending."
+  ]
 }
