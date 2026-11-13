@@ -85,6 +85,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +1.95.0 check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   desktop-linux:
@@ -107,4 +109,5 @@ jobs:
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib manifest::tests::
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
           cargo +1.95.0 check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
