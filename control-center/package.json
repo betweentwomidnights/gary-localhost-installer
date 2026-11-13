@@ -8,9 +8,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:ui": "playwright test",
+    "test:precision": "node --test tests/modelPrecision.test.mjs",
     "tauri": "tauri"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tauri-apps/cli": "^2.10.1",
     "@tsconfig/svelte": "^5.0.8",

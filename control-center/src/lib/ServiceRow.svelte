@@ -164,7 +164,7 @@
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
     {/if}
     {#if !(grouped && isNative) && !(service.python_retired && !isNative)}
-    <button onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
+    <button class="accent" onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
       {#if isBuilding}
         {isNative ? "installing..." : "building..."}
       {:else}
