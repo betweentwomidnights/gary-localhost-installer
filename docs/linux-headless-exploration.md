@@ -109,7 +109,7 @@ sockets. The earlier failed-case logs remain available for diagnosis.
 Reproduction commands/configuration are in
 [the headless README](../control-center/runtime-core/README.md).
 `smoke-tests/linux/headless_sa3.py` runs the contained Spark tests. Evidence is
-under `/home/kev/gary4local-packaging/headless/sa3-{cuda,vulkan}-lease/evidence`.
+under `/home/kev/gary4local-packaging/headless/sa3-{cuda,vulkan}-reviewed/evidence`.
 This host currently has no headless LoRA registry, decoder correction, training,
 model downloading, desktop-profile migration, or manifest-based downloads.
 Windows/macOS headless GPU execution and Linux desktop GUI startup remain

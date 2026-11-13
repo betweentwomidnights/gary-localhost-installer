@@ -2168,7 +2168,7 @@ mod tests {
         std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
         for id in ["stable-audio", "sa3", "foundation"] {
             let executable = &manager.find_service(id).unwrap().native.as_ref().unwrap().executable;
-            std::fs::write(dir.join(executable), b"fixture").unwrap();
+            std::fs::write(dir.join(gary4local_core::runtime::executable_name(executable)), b"fixture").unwrap();
             let info = manager.get_service_info().into_iter().find(|info| info.id == id).unwrap();
             assert!(info.native_runtime_installed, "{id} shares the installed runtime");
             assert!(!info.migration_complete && manager.selection(id).is_none());
@@ -2194,7 +2194,7 @@ mod tests {
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
         std::fs::write(
-            native_dir.join(&svc.native.as_ref().unwrap().executable),
+            native_dir.join(gary4local_core::runtime::executable_name(&svc.native.as_ref().unwrap().executable)),
             b"fixture",
         )
         .unwrap();
