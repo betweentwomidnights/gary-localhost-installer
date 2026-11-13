@@ -29,7 +29,20 @@ let models = serviceId === 'yuey'
   : catalog.map((entry) => model(entry.id, entry.label));
 if (query.has('missing-shared')) models.filter((entry) => entry.id.endsWith('::text') || entry.id.endsWith('::shared') || entry.id.endsWith('::encoder')).forEach((entry) => entry.status = 'available');
 if (query.has('failed')) models.find((entry) => entry.id === primaryId('Q4_K_M')).status = 'failed';
-let selected = reference;
+const fresh = query.has('fresh');
+const legacy = query.has('legacy');
+let selected = fresh || legacy ? null : reference;
+let running = false;
+function serviceInfo() {
+  const ready = tiers.filter((tier) => models.find((entry) => entry.id === (serviceId === 'yuey' ? `yuey::${tier}` : primaryId(tier)))?.status === 'downloaded');
+  const sharedMissing = query.has('missing-shared');
+  return { id: serviceId, display_name: serviceId, port: 8006, status: running ? 'running' : 'stopped', pid: null, error: null,
+    runtime: selected || !fresh && !legacy ? 'native' : 'python', env_exists: !!selected || legacy,
+    native_backend: 'vulkan', native_runtime_installed: true, native_update_available: false, native_fallback_reason: null,
+    build_status: null, python_retired: !legacy, migration_complete: false,
+    start_activation_encoding: !legacy && !selected && ready.length === 1 && !sharedMissing ? ready[0] : null,
+    start_blocker: sharedMissing ? 'download the required shared components' : !legacy && !selected && ready.length > 1 ? 'choose a precision and click Use in Models: multiple generation precisions are downloaded' : null };
+}
 const downloads = [];
 window.testCalls = [];
 mockIPC(async (command, args) => {
@@ -38,7 +51,7 @@ mockIPC(async (command, args) => {
     case 'get_models': return models;
     case 'get_download_progress': return downloads;
     case 'get_native_model_catalog': return catalog;
-    case 'get_native_runtime_selection': return { encoding: selected };
+    case 'get_native_runtime_selection': return selected ? { encoding: selected } : null;
     case 'get_native_model_recommendations': return { tier: reference, components: [primaryId(reference)] };
     case 'get_native_runtime_info': return { installed: true, devOverride: false, backend: 'vulkan', preference: 'auto', offeredBackends: ['vulkan'], version: 'test', manifestVersion: 'test', devices: [], recommendedEncoding: reference };
     case 'get_sa3_native_decoder_state': return { enabled: false, prepared: false, sourcePresent: false, error: null };
@@ -46,8 +59,21 @@ mockIPC(async (command, args) => {
       tierComponents: Object.fromEntries(tiers.map((tier) => [tier, [primaryId(tier), ...(serviceId === 'foundation' ? ['foundation-native::encoder'] : [])]])),
       tierOptions: {}, optionsLabel: null };
     case 'get_yuey_tiers': return { installed: tiers.filter((tier) => models.find((entry) => entry.id === `yuey::${tier}`)?.status === 'downloaded'), chosen: selected, active: selected };
-    case 'get_services': return [{ id: serviceId, runtime: 'native', python_retired: true, status: query.has('running') ? 'running' : 'stopped' }];
-    case 'select_native_model': selected = args.encoding; return { encoding: selected };
+    case 'get_services': return [{ ...serviceInfo(), status: query.has('running') ? 'running' : serviceInfo().status }];
+    case 'activate_native_runtime':
+    case 'select_native_model':
+      selected = args.encoding;
+      await emit('services-updated', [serviceInfo()]);
+      return { encoding: selected };
+    case 'get_migration_preview': return { legacyRuntimePresent: false, warnings: [], pythonStillNeeded: null, cleanupCandidates: [], cleanupToken: 'fixture' };
+    case 'cleanup_legacy_installation': return { selection: { encoding: selected }, errors: [] };
+    case 'start_service':
+      if (query.has('hold')) await new Promise((resolve) => window.finishStart = resolve);
+      if (query.has('fail-start')) throw 'Native model verification failed';
+      selected ??= reference;
+      running = true;
+      await emit('services-updated', [serviceInfo()]);
+      return;
     case 'save_app_settings': selected = args.settings.yueyEncoding ?? selected; return {};
     case 'restart_service': return;
     case 'download_model': {
@@ -60,4 +86,4 @@ mockIPC(async (command, args) => {
     default: throw new Error(`Unexpected test IPC: ${command}`);
   }
 }, { shouldMockEvents: true });
-mount(Harness, { target: document.getElementById('app'), props: { serviceId, controls: query.has('controls') } });
+mount(Harness, { target: document.getElementById('app'), props: { serviceId, controls: query.has('controls'), showRow: query.has('row'), initialService: serviceInfo() } });

@@ -89,7 +89,7 @@
     <DownloadProgress value={download?.progress ?? 0} label={`${entry.label} download`} />
   {:else if model?.status === "downloaded"}
     <div class="actions">
-      {#if tier && nativeSelected && activeEncoding !== tier}<button class="download accent" disabled={busy || downloading || removingId !== null || status(`${layout.prefix}::shared`) !== "downloaded"} title={`Require ${layout.requiredLabel} at ${tier} next time ${layout.label} starts`} onclick={() => useTier(tier)}>use</button>{/if}
+      {#if tier && nativeSelected && onDisk(layout.required).length > 1 && activeEncoding !== tier}<button class="download accent" disabled={busy || downloading || removingId !== null || status(`${layout.prefix}::shared`) !== "downloaded"} title={`Require ${layout.requiredLabel} at ${tier} next time ${layout.label} starts`} onclick={() => useTier(tier)}>use</button>{/if}
       <button disabled={busy || downloading || removingId !== null || (tier !== null && nativeSelected && activeEncoding === tier)} title={tier !== null && nativeSelected && activeEncoding === tier ? `${layout.label} needs this model to start` : undefined} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
     </div>
   {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
@@ -116,7 +116,8 @@
   <section aria-label={group.label}>
     <div class="group-label">{group.label}</div>
     <p>{group.hint}
-      {#if group.variants.includes(layout.required) && activeEncoding}{layout.label} is set to {layout.requiredLabel} at {activeEncoding}. Stop {layout.label} before changing it.{/if}</p>
+      {#if group.variants.includes(layout.required) && activeEncoding}{layout.label} is set to {layout.requiredLabel} at {activeEncoding}. Stop {layout.label} before changing it.{/if}
+      {#if group.variants.includes(layout.required)}With one downloaded precision of {layout.requiredLabel}, Start selects it and completes activation. Use chooses between multiple downloaded precisions.{/if}</p>
     {#each group.variants as variant (variant)}
       {@const tier = shown(variant)}
       {@const entry = catalog.find((item) => item.id === id(variant, tier))}
@@ -131,7 +132,8 @@
                 active={variant === layout.required ? activeEncoding : null}
                 recommended={precisions(variant).find((value) => recommended.components.includes(id(variant, value)))}
                 disabled={busy || downloading || removingId !== null} onChange={(value) => picked[variant] = value} />
-              {#if variant === layout.required && activeEncoding === tier}<span class="badge active">active</span>{/if}
+              {#if variant === layout.required && activeEncoding === tier}<span class="badge active">active</span>
+              {:else if variant === layout.required && onDisk(variant).length === 1 && status(entry.id) === "downloaded"}<span class="badge">on Start</span>{/if}
               {#if recommended.components.includes(entry.id)}<span class="badge">recommended</span>{/if}
             </span>
             <span class="model-size">{size(bytesOf(entry))}{status(entry.id) === "downloaded" ? " on disk" : " download"}{others.length ? ` · also on disk: ${others.join(", ")}` : ""}</span>

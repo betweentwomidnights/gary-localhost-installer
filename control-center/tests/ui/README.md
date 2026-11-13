@@ -17,5 +17,11 @@ contrast, and storage layout at 800px. Chromium and WebKit run in headless mode.
 Screenshots from failures are saved under the repository's ignored
 `tmp/ui-test-results` directory.
 
+Start tests also cover a fresh native install with one precision (no Use click),
+multiple precisions requiring an explicit first choice, visible blockers,
+pending/failed activation, and unchanged legacy Python starts. Backend tests in
+`native_start` check verification-before-launch and generation readiness against
+the shipped catalogs without loading models or running a GPU job.
+
 These checks cover UI behavior; real GPU generation and desktop integration
 still need the packaged application on the target machine.

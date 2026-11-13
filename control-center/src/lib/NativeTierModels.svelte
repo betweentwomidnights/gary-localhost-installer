@@ -44,6 +44,7 @@
   const precisionOptions = $derived(tiers.map((entry) => ({ value: tierOf.get(entry.id)!, status: models.find((model) => model.id === entry.id)?.status })));
   const shown = $derived(shownPrecision(precisionOptions, picked, activeEncoding));
   const selected = $derived(tiers.find((entry) => tierOf.get(entry.id) === shown));
+  const downloadedTiers = $derived(precisionOptions.filter((option) => option.status === "downloaded"));
   const downloading = $derived(models.some((model) => model.status === "downloading"));
   const status = (id: string) => models.find((model) => model.id === id)?.status;
   const ready = (tier: string) => (profile?.tierComponents[tier] ?? []).every((id) => status(id) === "downloaded");
@@ -96,6 +97,7 @@
         {#if tier}<PrecisionPicker label={label} value={shown} options={precisionOptions} active={activeEncoding}
           disabled={busy || downloading || removingId !== null} onChange={(value) => picked = value} />{/if}
         {#if tier && activeEncoding === tier}<span class="badge active">active</span>
+        {:else if tier && downloadedTiers.length === 1 && model?.status === "downloaded"}<span class="badge">on Start</span>
         {:else if tier && tier === profile?.tiers[0]}<span class="badge">default</span>{/if}
       </span>
       <span class="model-size">{entry.description} · {size(entry.files.reduce((sum, file) => sum + file.bytes, 0))}{model?.status === "downloaded" ? " on disk" : " download"}</span>
@@ -106,7 +108,7 @@
       <DownloadProgress value={download?.progress ?? 0} label={`${entry.label} download`} />
     {:else if model?.status === "downloaded"}
       <div class="actions">
-        {#if tier && nativeSelected && activeEncoding !== tier}<button class="download accent" disabled={busy || downloading || removingId !== null || !ready(tier)} title={ready(tier) ? `Use this tier next time ${label} starts` : "Download the shared components first"} onclick={() => useTier(tier)}>use</button>{/if}
+        {#if tier && nativeSelected && downloadedTiers.length > 1 && activeEncoding !== tier}<button class="download accent" disabled={busy || downloading || removingId !== null || !ready(tier)} title={ready(tier) ? `Use this tier next time ${label} starts` : "Download the shared components first"} onclick={() => useTier(tier)}>use</button>{/if}
         <button disabled={busy || downloading || removingId !== null} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
       </div>
     {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
@@ -125,7 +127,7 @@
   <p>One tier is enough. {profile?.tiers[0] ?? "F16"} is the reference; smaller tiers use less memory and disk.
     {#if activeEncoding}{label} is set to {activeEncoding}. Stop {label} before changing its model.{/if}</p>
   {#if selected}{@render row(selected, shown ?? null)}{/if}
-  <p>Choose a precision to view or download it. Use selects it for the next start.</p>
+  <p>Choose a precision to view or download it. With one downloaded precision, Start selects it automatically and completes activation. Use chooses between multiple downloaded precisions.</p>
 </section>
 {#if options.length}
   <section aria-label={profile?.optionsLabel ?? "options"}>
