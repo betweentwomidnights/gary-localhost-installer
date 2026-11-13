@@ -67,7 +67,7 @@ impl NativeLaunch {
             env.push(("PATH".into(), path));
         }
         Self {
-            program: install.dir.join(executable_name(executable)),
+            program: install.executable(executable),
             args,
             dir: install.dir.clone(),
             env,
@@ -99,6 +99,14 @@ pub struct NativeInstall {
     /// None for a developer build named by `GARY4LOCAL_NATIVE_DIR_<ID>`.
     pub version: Option<String>,
     pub fallback_reason: Option<String>,
+}
+
+impl NativeInstall {
+    /// Resolve a manifest/tool name the same way as the service launcher.
+    /// Windows keeps `.exe`; Linux and macOS packages omit that suffix.
+    pub fn executable(&self, name: &str) -> PathBuf {
+        self.dir.join(executable_name(name))
+    }
 }
 
 /// The service's env with `${NATIVE_BACKEND}` filled in. Anything still
@@ -176,5 +184,56 @@ pub fn executable_name(name: &str) -> &str {
         name
     } else {
         name.strip_suffix(".exe").unwrap_or(name)
+    }
+}
+
+/// Some Vulkan software drivers are exposed as GPU devices by ggml. They
+/// cannot satisfy an installation that requires GPU generation.
+pub fn is_generation_gpu(device: &serde_json::Value) -> bool {
+    let kind = device["type"].as_str().unwrap_or("").to_ascii_lowercase();
+    if !matches!(kind.as_str(), "gpu" | "igpu" | "integrated_gpu" | "discrete_gpu") {
+        return false;
+    }
+    let description = format!("{} {}", device["name"].as_str().unwrap_or(""),
+        device["description"].as_str().unwrap_or("")).to_ascii_lowercase();
+    !["llvmpipe", "lavapipe", "swiftshader", "software rasterizer"]
+        .iter().any(|name| description.contains(name))
+}
+
+#[cfg(test)]
+mod executable_tests {
+    use super::*;
+
+    #[test]
+    fn native_tool_paths_match_the_service_launcher_on_this_platform() {
+        let install = NativeInstall {
+            dir: PathBuf::from("native runtime with spaces"),
+            backend: "vulkan".into(), runtimes: Vec::new(), version: None, fallback_reason: None,
+        };
+        for name in ["sa3-server", "sa3-train", "sa3-audio-analyze", "sa3-lora-convert", "ace-train", "ace-server", "sat-server", "musicgen-server", "melodyflow-server", "yue2-server"] {
+            let manifest_name = format!("{name}.exe");
+            let expected = install.dir.join(if cfg!(windows) { manifest_name.clone() } else { name.into() });
+            assert_eq!(install.executable(&manifest_name), expected);
+            let launch = NativeLaunch::new(Path::new("profile"), &manifest_name, &install, Vec::new(), Vec::new(), &[]);
+            assert_eq!(launch.program, expected);
+            assert_eq!(install.executable(name), install.dir.join(name));
+        }
+    }
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::is_generation_gpu;
+    use serde_json::json;
+
+    #[test]
+    fn software_vulkan_does_not_count_as_a_generation_gpu() {
+        for description in ["llvmpipe (LLVM 20.1.2, 256 bits)", "lavapipe", "SwiftShader Device"] {
+            assert!(!is_generation_gpu(&json!({"type":"gpu", "backend":"Vulkan", "description":description})));
+        }
+        assert!(!is_generation_gpu(&json!({"type":"cpu", "description":"AMD Ryzen"})));
+        for (kind, description) in [("gpu", "NVIDIA GeForce RTX 5070 Laptop GPU"), ("gpu", "NVIDIA GB10"), ("integrated_gpu", "AMD Radeon 8060S")] {
+            assert!(is_generation_gpu(&json!({"type":kind,"description":description})));
+        }
     }
 }

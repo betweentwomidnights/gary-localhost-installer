@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+# Keep preview data and caches contained, including when launched from the menu.
+preview_root=${GARY4LOCAL_PREVIEW_HOME:-"$HOME/gary4local-packaging/desktop-gui"}
+case "$preview_root" in
+  /*) ;;
+  *) printf '%s\n' 'GARY4LOCAL_PREVIEW_HOME must be an absolute path' >&2; exit 1 ;;
+esac
+export XDG_CONFIG_HOME="$preview_root/config"
+export XDG_DATA_HOME="$preview_root/share"
+export XDG_CACHE_HOME="$preview_root/cache"
+export GARY4LOCAL_PREVIEW_HOME="$preview_root"
+# Let the saved storage selection take precedence over the preview default.
+# An explicitly supplied GARY4LOCAL_RUNTIME_ROOT remains inherited unchanged.
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
+exec "${GARY4LOCAL_PREVIEW_BINARY:-/usr/bin/gary4local-preview}" "$@"

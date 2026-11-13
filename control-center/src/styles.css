@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg-primary: #0a0a0a;
   --bg-secondary: #1a1a1a;
   --bg-panel: #222222;
@@ -78,3 +79,13 @@ button.accent {
 button.accent:hover {
   background: var(--accent-hover);
 }
+
+/* Explicit native control colors are needed by GTK/WebKit as well as Windows. */
+select, option, optgroup {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+select { border: 1px solid var(--border); }
+select:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+button.accent:hover:not(:disabled) { border-color: var(--accent-hover); }

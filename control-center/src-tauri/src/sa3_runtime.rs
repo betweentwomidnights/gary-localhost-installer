@@ -76,7 +76,7 @@ pub async fn probe_server(
     crate::workload_job::configure_tokio_command(&mut command);
     let mut child = command
         .spawn()
-        .map_err(|error| format!("Cannot check native SA3 server: {error}"))?;
+        .map_err(|error| format!("Cannot check native SA3 server at {}: {error}", executable.display()))?;
     if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
         let _ = child.kill().await;
         return Err(error);

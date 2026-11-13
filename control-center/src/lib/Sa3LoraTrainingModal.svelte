@@ -512,7 +512,7 @@
         <label class="field wide">
           <span>audio folder</span>
           <div class="path-row">
-            <input type="text" bind:value={datasetPath} placeholder="C:\\path\\to\\audio dataset" />
+            <input type="text" bind:value={datasetPath} placeholder="Choose a folder with training audio" />
             <button type="button" onclick={pickDatasetFolder}>pick folder</button>
             <button type="button" onclick={() => sidecarModalOpen = true} disabled={!datasetPath.trim()}>
               edit prompts

@@ -1,0 +1,121 @@
+name: Linux desktop preview
+on:
+  pull_request:
+    paths:
+      - control-center/**
+      - services/**
+      - icon.png
+      - .github/workflows/linux-desktop.yml
+      - smoke-tests/linux/check_desktop_package.py
+      - smoke-tests/linux/desktop_startup.py
+      - docs/linux-desktop-preview.md
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  deb:
+    name: Desktop ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+            deb_arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            deb_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+      GARY4LOCAL_LINUX_PREVIEW: "1"
+      VITE_ENABLE_APP_UPDATER: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: control-center/package-lock.json
+      - uses: actions/cache/restore@v4
+        id: rust-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            control-center/src-tauri/target/release
+          key: desktop-v1-${{ runner.arch }}-${{ hashFiles('control-center/src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            desktop-v1-${{ runner.arch }}-${{ hashFiles('control-center/src-tauri/Cargo.lock') }}-
+      - name: Desktop build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf desktop-file-utils xvfb dbus-x11 x11-utils imagemagick
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+      - name: Build installable preview
+        working-directory: control-center
+        run: |
+          npm ci
+          npm run tauri -- build --ci --bundles deb --config src-tauri/tauri.linux-preview.conf.json
+      - uses: actions/cache/save@v4
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            control-center/src-tauri/target/release
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+      - name: Check Linux storage and preview package
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib linux_desktop::tests::
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
+          python3 smoke-tests/linux/check_desktop_package.py --platform "$PLATFORM" --arch "$DEB_ARCH"
+      - name: Install package and check desktop startup
+        run: |
+          sh control-center/src-tauri/target/desktop-preview/INSTALL.sh control-center/src-tauri/target/desktop-preview/*.deb
+          xvfb-run -a dbus-run-session -- python3 smoke-tests/linux/desktop_startup.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gary4local-desktop-${{ matrix.platform }}-preview
+          path: |
+            control-center/src-tauri/target/desktop-preview/*.deb
+            control-center/src-tauri/target/desktop-preview/SHA256SUMS-*
+            control-center/src-tauri/target/desktop-preview/*.json
+            control-center/src-tauri/target/desktop-preview/*.log
+            control-center/src-tauri/target/desktop-preview/*.png
+            control-center/src-tauri/target/desktop-preview/INSTALL.sh
+            control-center/src-tauri/target/desktop-preview/README.md
+          retention-days: 14
+      - name: Export desktop validation harness
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib --no-run --message-format=json > "$RUNNER_TEMP/desktop-tests.jsonl"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+          records = [json.loads(line) for line in pathlib.Path(os.environ['RUNNER_TEMP'], 'desktop-tests.jsonl').read_text().splitlines()]
+          executables = [record['executable'] for record in records if record.get('reason') == 'compiler-artifact' and record['target']['name'] == 'app_lib' and record.get('executable')]
+          assert len(executables) == 1
+          out = pathlib.Path('control-center/src-tauri/target/desktop-validation')
+          out.mkdir()
+          binary = out / 'gary4local-desktop-tests'
+          shutil.copy2(executables[0], binary)
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          (out / 'SHA256SUMS').write_text(digest + '  ' + binary.name + '\n')
+          (out / 'BUILD-INFO.json').write_text(json.dumps({'commit': os.environ['GITHUB_SHA'], 'platform': os.environ['PLATFORM'], 'binary': binary.name, 'sha256': digest, 'purpose': 'opt-in native desktop verification tests'}, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gary4local-desktop-validation-${{ matrix.platform }}
+          path: control-center/src-tauri/target/desktop-validation/
+          retention-days: 7
