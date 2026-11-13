@@ -2,8 +2,6 @@ use crate::manifest::{HealthCheck, MigrationDef, NativeDef, NativePackage, Servi
 use crate::native_runtime::{self, NativeInstall, NativeLaunch};
 use serde::Serialize;
 use std::collections::HashMap;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Weak};
@@ -65,6 +63,12 @@ struct RunningService {
     last_health_check_at: Option<Instant>,
     /// A migrated service's client adapter, stopped when this is dropped.
     _adapter: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl Drop for RunningService {
+    fn drop(&mut self) {
+        crate::workload_job::stop_std_child(&mut self.process, Duration::ZERO);
+    }
 }
 
 pub struct HealthTarget {
@@ -1197,20 +1201,7 @@ impl ServiceManager {
     pub fn stop(&mut self, service_id: &str) -> Result<(), String> {
         if let Some(mut running) = self.running.remove(service_id) {
             log::info!("Stopping {}", service_id);
-            // Use taskkill /T to kill the entire process tree on Windows.
-            // This ensures subprocesses (e.g. carey_wrapper -> api_server.py) are also killed.
-            #[cfg(target_os = "windows")]
-            {
-                let pid = running.process.id();
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/T", "/F", "/PID", &pid.to_string()])
-                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                    .output();
-            }
-            // Also covers a failed taskkill. Unix process-group ownership and
-            // descendant cleanup remain part of the headless supervisor work.
-            let _ = running.process.kill();
-            let _ = running.process.wait();
+            crate::workload_job::stop_std_child(&mut running.process, Duration::from_secs(3));
             self.errors.remove(service_id);
             Ok(())
         } else {
@@ -1571,6 +1562,8 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
 
     fn exited_process() -> Child {
         #[cfg(windows)]
@@ -2084,7 +2077,7 @@ mod tests {
         let native = svc.native.as_ref().unwrap();
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
-        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = native_runtime::NativeStamp {
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
@@ -2097,7 +2090,7 @@ mod tests {
         let install = manager.native_install(svc).unwrap();
 
         let launch = manager.native_launch(svc, &install, None).unwrap();
-        assert_eq!(launch.program, native_dir.join("yue2-server.exe"));
+        assert_eq!(launch.program, native_dir.join(gary4local_core::runtime::executable_name("yue2-server.exe")));
         assert_eq!(launch.dir, native_dir);
         assert_eq!(launch.args, native.args, "the manifest's arguments, untouched");
         let command = launch.std_command();
@@ -2154,7 +2147,7 @@ mod tests {
         let native = svc.native.clone().unwrap();
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
-        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = |version: &str| native_runtime::NativeStamp {
             version: version.into(),
             platform: native_runtime::current_platform().into(),
@@ -2171,7 +2164,7 @@ mod tests {
         let native = svc.native.as_ref().unwrap();
         let dir = manager.native_dir(svc);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
         for id in ["stable-audio", "sa3", "foundation"] {
             let executable = &manager.find_service(id).unwrap().native.as_ref().unwrap().executable;

@@ -39,21 +39,7 @@ pub async fn mutation_guard() -> tokio::sync::MutexGuard<'static, ()> {
 
 const NATIVE_APPLICATION_CONTROL_HELP: &str = "Windows got a little overprotective and blocked this service's runtime from starting.\n\nOpen Windows Security -> App & browser control -> Smart App Control settings, temporarily turn Smart App Control off, then install the runtime again. You can turn it back on afterward.";
 
-pub fn current_platform() -> &'static str {
-    if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "windows-x64"
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "macos-arm64"
-    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-        "macos-x64"
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "linux-x64"
-    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-        "linux-arm64"
-    } else {
-        "unsupported"
-    }
-}
+pub use gary4local_core::runtime::current_platform;
 
 // ---------------------------------------------------------------------------
 // What is installed
@@ -77,74 +63,7 @@ fn read_stamp(native_dir: &Path) -> Option<NativeStamp> {
     serde_json::from_str(&raw).ok()
 }
 
-/// How a native server process starts: program, arguments, folder and every
-/// environment variable it gets. The service and any private copy started to
-/// verify it are built from the same value, so what a migration proves is what
-/// the service then runs. Callers add only their own output handling, process
-/// group and, for a private copy, its port.
-#[derive(Debug, Clone)]
-pub struct NativeLaunch {
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    pub dir: PathBuf,
-    /// Applied in order, later entries winning.
-    pub env: Vec<(OsString, OsString)>,
-}
-
-impl NativeLaunch {
-    /// `storage_env` is the profile's runtime variables, then the service's
-    /// resolved template with `${NATIVE_BACKEND}` filled in, then PATH with
-    /// the install's shared runtimes ahead of the system's.
-    pub fn new(
-        runtime_root: &Path,
-        executable: &str,
-        install: &NativeInstall,
-        args: Vec<String>,
-        storage_env: Vec<(String, String)>,
-        template: &[(String, String)],
-    ) -> Self {
-        let mut env: Vec<(OsString, OsString)> = storage_env
-            .into_iter()
-            .chain(launch_env(template, &install.backend))
-            .map(|(key, value)| (key.into(), value.into()))
-            .collect();
-        if let Some(path) = path_with_runtimes(runtime_root, &install.runtimes) {
-            env.push(("PATH".into(), path));
-        }
-        Self {
-            program: install.dir.join(executable),
-            args,
-            dir: install.dir.clone(),
-            env,
-        }
-    }
-
-    pub fn std_command(&self) -> std::process::Command {
-        let mut command = std::process::Command::new(&self.program);
-        command.args(&self.args).current_dir(&self.dir);
-        command.envs(self.env.iter().map(|(key, value)| (key, value)));
-        command
-    }
-
-    pub fn tokio_command(&self) -> tokio::process::Command {
-        let mut command = tokio::process::Command::new(&self.program);
-        command.args(&self.args).current_dir(&self.dir);
-        command.envs(self.env.iter().map(|(key, value)| (key, value)));
-        command
-    }
-}
-
-/// A runnable native service: where it is and how to launch it.
-#[derive(Debug, Clone)]
-pub struct NativeInstall {
-    pub dir: PathBuf,
-    /// The value `${NATIVE_BACKEND}` resolves to in the service's env.
-    pub backend: String,
-    pub runtimes: Vec<String>,
-    /// None for a developer build named by `GARY4LOCAL_NATIVE_DIR_<ID>`.
-    pub version: Option<String>,
-    pub fallback_reason: Option<String>,
-}
+pub use gary4local_core::runtime::{NativeInstall, NativeLaunch};
 
 fn env_suffix(service_id: &str) -> String {
     service_id.to_ascii_uppercase().replace('-', "_")
@@ -156,7 +75,7 @@ fn env_suffix(service_id: &str) -> String {
 fn dev_override(service_id: &str, executable: &str) -> Option<NativeInstall> {
     let suffix = env_suffix(service_id);
     let dir = std::env::var_os(format!("GARY4LOCAL_NATIVE_DIR_{suffix}")).map(PathBuf::from)?;
-    if !dir.join(executable).is_file() {
+    if !dir.join(gary4local_core::runtime::executable_name(executable)).is_file() {
         return None;
     }
     let backend = std::env::var(format!("GARY4LOCAL_NATIVE_BACKEND_{suffix}"))
@@ -177,7 +96,7 @@ pub fn installed(service_id: &str, native_dir: &Path, executable: &str) -> Optio
         return Some(install);
     }
     let stamp = read_stamp(native_dir)?;
-    if !native_dir.join(executable).is_file() {
+    if !native_dir.join(gary4local_core::runtime::executable_name(executable)).is_file() {
         return None;
     }
     Some(NativeInstall {
@@ -632,46 +551,7 @@ pub async fn download_verified(
 
 /// Unpack every entry of `archive` under `into`, refusing any entry whose path
 /// would land outside it.
-pub fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(archive)
-        .map_err(|error| format!("cannot open {}: {error}", archive.display()))?;
-    let mut zip = zip::ZipArchive::new(file)
-        .map_err(|error| format!("{} is not a readable zip: {error}", archive.display()))?;
-    for index in 0..zip.len() {
-        let mut entry = zip
-            .by_index(index)
-            .map_err(|error| format!("cannot read {}: {error}", archive.display()))?;
-        let relative = entry.enclosed_name().ok_or_else(|| {
-            format!(
-                "{} contains an unsafe path: {}",
-                archive.display(),
-                entry.name()
-            )
-        })?;
-        let target = into.join(relative);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&target)
-                .map_err(|error| format!("cannot create {}: {error}", target.display()))?;
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-        }
-        let mut out = std::fs::File::create(&target)
-            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
-        std::io::copy(&mut entry, &mut out)
-            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
-        #[cfg(unix)]
-        if let Some(mode) = entry.unix_mode() {
-            use std::os::unix::fs::PermissionsExt;
-            // Keep executable bits, without granting setuid/setgid privileges.
-            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode & 0o777))
-                .map_err(|error| format!("cannot set permissions on {}: {error}", target.display()))?;
-        }
-    }
-    Ok(())
-}
+pub use gary4local_core::runtime::extract_zip;
 
 /// Move `staging` to `target`, keeping the old `target` until the new one is
 /// in place so a failed swap leaves a working install behind.
@@ -1415,7 +1295,7 @@ async fn install_inner(
             runtimes,
         };
         let staging = stage(&core, &backend_archive, &stamp, &info.env_dir).await?;
-        let exe = staging.join(&def.executable);
+        let exe = staging.join(gary4local_core::runtime::executable_name(&def.executable));
 
         reporter
             .step(4, &format!("Checking the {} backend...", stamp.backend))
@@ -1668,7 +1548,7 @@ mod tests {
             vec![("HF_HOME".into(), "storage".into()), ("SA3_DEVICE".into(), "storage".into())],
             &[("SA3_DEVICE".into(), "${NATIVE_BACKEND}".into())],
         );
-        assert_eq!(launch.program, install.dir.join("sa3-server.exe"));
+        assert_eq!(launch.program, install.dir.join(gary4local_core::runtime::executable_name("sa3-server.exe")));
         assert_eq!(launch.dir, install.dir);
         let command = launch.std_command();
         let env: HashMap<_, _> = command
@@ -2052,7 +1932,7 @@ mod tests {
         // A stamp without the executable is a broken install, not an install.
         assert!(installed("stamp-test", &native, "yue2-server.exe").is_none());
 
-        std::fs::write(native.join("yue2-server.exe"), b"").unwrap();
+        std::fs::write(native.join(gary4local_core::runtime::executable_name("yue2-server.exe")), b"").unwrap();
         let install = installed("stamp-test", &native, "yue2-server.exe").unwrap();
         assert_eq!(install.backend, "cuda");
         assert_eq!(install.version.as_deref(), Some("v0.2.0"));

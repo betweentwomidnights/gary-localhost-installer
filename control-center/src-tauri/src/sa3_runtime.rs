@@ -33,12 +33,7 @@ fn check(selection: &Selection) -> Result<(), String> {
 
 /// What the client adapter and migration rely on. The offline probe and the
 /// live /health check during migration both require all of them.
-pub const REQUIRED_CAPABILITIES: &[&str] = &[
-    "fixed_prefix",
-    "request_splice",
-    "conditioning_duration",
-    "model_lifecycle",
-];
+pub use gary4local_core::sa3_adapter::REQUIRED_CAPABILITIES;
 
 // Reject an older or mismatched binary before hashing large models or starting
 // the private validation server. Live /health checks still verify the launched

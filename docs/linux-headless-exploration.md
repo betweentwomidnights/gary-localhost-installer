@@ -1,8 +1,8 @@
 # Linux and headless exploration
 
 Tracks [issue #13](https://github.com/betweentwomidnights/gary-localhost-installer/issues/13).
-Branch: `feature/linux-headless`. This is the first portability pass, not a
-Linux release or a working headless server.
+Branch: `feature/linux-headless`. This contains the first portability pass and
+an experimental headless SA3 host; it is not a Linux desktop release.
 
 Merged: [sa3.cpp packaging PR #95](https://github.com/betweentwomidnights/sa3.cpp/pull/95)
 adds upstream Linux core/CUDA/Vulkan packages. On Spark, both ARM64 package sets
@@ -55,9 +55,66 @@ cleanup, versus 9.48 GiB before. All work remains under the dedicated root;
 the older 6.2 GiB application exploration checkout is separate.
 
 The PR-triggered regression/release checks run separately from the successful
-Linux-only dispatches above. No sibling PR has been merged, no tag or release
-has been published, and Linux publishing remains disabled. This application's
-runtime manifest and headless supervisor still require integration.
+Linux-only dispatches above. All three sibling packaging PRs are now merged
+(Yuey `4a5d8b0`, Audiocraft `c45f62b`, ACE-Step `5162473`). ACE-Step's cancelled
+macOS checks never acquired hosted runners; its release packages and CUDA
+compile passed. No tag or release has been published, and Linux publishing
+remains disabled. The desktop runtime manifest still requires Linux assets.
+
+### First headless SA3 pilot
+
+`control-center/runtime-core` now builds `gary4local-server` independently of
+Tauri. The desktop app uses its shared native launch types, ZIP extractor,
+process-lifetime controls and SA3 compatibility adapter. Desktop registry/prompt
+and decoder-correction behavior is supplied through an interface to the
+existing implementations. The complete desktop service manager has not yet
+been extracted; other services and desktop settings remain follow-up work.
+
+The CLI has `install`, `serve`, `status` and `stop` commands with an explicit
+JSON config. For now, installation uses existing local core/backend archives
+and their verified SHA256 values, separate from production desktop profiles.
+It checks clean/tested package metadata, platform and a real selected GPU,
+then loads the specified model before announcing readiness. CPU fallback is
+refused. Both listeners are loopback-only; the client port stays fixed while
+each session gets a fresh private native port. No systemd unit was enabled.
+
+Spark validation used the plain `rust:1.95-bookworm` image without desktop
+development packages. Its ARM64 binary links libc/libm/libgcc, with no GTK,
+WebKit or Tauri dependencies. Fourteen shared-core tests passed on Linux;
+fifteen passed on Windows, including its existing Job Object tests. Windows
+desktop checks also passed: 22 native-runtime tests and 28 service-manager
+tests (one model-dependent test ignored in each suite), plus all-target checks.
+The SA3 capability/profile tests passed with their model-dependent case ignored.
+
+Both the local CUDA-smoke package and the ARM64 CI Vulkan package passed the
+full headless exercise using existing medium F16 DiT/T5 and F32 autoencoder
+weights. Through the public compatibility adapter, each returned exactly
+88,200 nonzero stereo PCM16 frames at 44.1 kHz (two seconds). Native logs confirm
+CUDA0/Vulkan0 on GB10. This establishes execution, not quality or backend parity.
+
+The exercise also passed bad-checksum refusal, idempotent install, missing model
+component rejection before readiness, occupied-port refusal, concurrent server
+and install refusal, normal stop, restart, SIGTERM, native crash, supervisor
+SIGKILL, and recovery. All owned test processes stopped and ports closed; the
+existing weights' sizes/mtimes were unchanged. Linux process groups receive
+bounded TERM/KILL shutdown and a parent-death signal for the direct native
+child. The example systemd unit adds cgroup ownership for persistent operation.
+
+Early tests exposed an incorrect autoencoder selection and a mismatch between
+the private C++ listener's socket-reuse policy and a fixed-port reservation.
+Startup now verifies model initialization, and the private port is selected
+per session. Crash checks allow a bounded interval for the kernel to close
+sockets. The earlier failed-case logs remain available for diagnosis.
+
+Reproduction commands/configuration are in
+[the headless README](../control-center/runtime-core/README.md).
+`smoke-tests/linux/headless_sa3.py` runs the contained Spark tests. Evidence is
+under `/home/kev/gary4local-packaging/headless/sa3-{cuda,vulkan}-lease/evidence`.
+This host currently has no headless LoRA registry, decoder correction, training,
+model downloading, desktop-profile migration, or manifest-based downloads.
+Windows/macOS headless GPU execution and Linux desktop GUI startup remain
+separate validation work. The new CI workflow tests GUI-free x64/ARM64 Linux
+builds and desktop/shared-core regressions without publishing releases.
 
 ## Spark baseline, November 12, 2026
 
@@ -151,11 +208,11 @@ generation are separate checks.
 
 | Area | Current gap | Next step |
 | --- | --- | --- |
-| Runtime distribution | The manifest pins Windows x64 packages only. | Build/hash/pin Linux x64 and ARM64 packages in each engine repo; then macOS Metal packages. Keep the existing checksum and staging/probe checks. |
-| Executable names | Manifest entries and native trainer/helper paths use `.exe`. | Resolve executable/tool names per platform across installation, launch, training, migration, and probes. Do not simply rename Linux binaries to `.exe`. |
+| Runtime distribution | The desktop manifest pins Windows x64 packages only; upstream Linux builders and the local-archive headless path are validated. | Publish versioned experimental assets with checksums, then pin them by platform; audit macOS Metal packages. |
+| Executable names | Shared launch/installation resolves the native server name; other trainer/helper paths still use `.exe`. | Finish platform-specific tool names across training, migration, and probes. |
 | Shared libraries | Shared CUDA packs currently contain Windows DLLs and use `PATH`. | Define Linux `.so` dependencies, `$ORIGIN` RPATH, and CUDA toolkit/driver compatibility; audit macOS dylibs/install names separately. A Windows CUDA pack is not reusable on Spark. |
-| Storage | APPDATA/LOCALAPPDATA/USERPROFILE and storage beside the executable are Windows defaults. | Use writable XDG directories on Linux and Application Support on macOS; preserve explicit runtime-root overrides. Packaged `/usr/bin` or AppImage mounts must not become data stores. |
-| Process ownership | The non-Windows workload enrollment is a no-op; stop kills the direct child only. | Own Unix process groups, implement bounded graceful shutdown and forced descendant cleanup, and test both normal and abnormal exits. Use systemd cgroup ownership for the daemon. |
+| Storage | Headless uses an explicit or platform data root; desktop profiles still have Windows defaults. | Finish XDG/Application Support handling for desktop profiles and preserve explicit runtime-root overrides. |
+| Process ownership | Shared Unix process groups and headless normal/crash cleanup are tested; persistent service installation is still explicit. | Validate the example systemd cgroup unit and more complex Python/training descendants separately. |
 | Desktop shell | Compilation is now possible; tray/WebKit startup and packaging are untested. | Build the frontend and a Linux desktop bundle, then test on a Linux desktop. Validate macOS separately. |
 | Updates | Published update feeds/artifacts target Windows. | Disable the updater in exploratory desktop builds; publish platform-specific updater artifacts only after packaging is validated. |
 | Legacy paths | Python environment discovery and build commands assume Windows. | Keep legacy Windows migration intact; new Linux installs should stay on the native path. Audit fallback/training code rather than accidentally invoking Windows setup commands. |
