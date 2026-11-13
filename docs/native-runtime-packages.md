@@ -9,8 +9,9 @@ over. when a service needs something this doesn't cover, change this document
 first, then the repos.
 
 The canonical versions, platform URLs and checksums live in
-`services/manifests/services.json`. SA3 and Audiocraft share a stable-audio
-bundle; Yuey and ACE-Step have their own native packages. Desktop migration
+`services/manifests/services.json`. The SA3 bundle serves SA3, stable-audio and
+Foundation; the Audiocraft bundle serves Gary and MelodyFlow. Yuey and ACE-Step
+have their own native packages. Desktop migration
 validates and activates a native runtime per storage profile before cleanup.
 
 ## who owns what
