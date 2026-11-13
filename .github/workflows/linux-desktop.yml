@@ -77,6 +77,7 @@ jobs:
         run: |
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib linux_desktop::tests::
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
           python3 smoke-tests/linux/check_desktop_package.py --platform "$PLATFORM" --arch "$DEB_ARCH"
       - name: Install package and check desktop startup
         run: |
@@ -94,3 +95,26 @@ jobs:
             control-center/src-tauri/target/desktop-preview/INSTALL.sh
             control-center/src-tauri/target/desktop-preview/README.md
           retention-days: 14
+      - name: Export desktop validation harness
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib --no-run --message-format=json > "$RUNNER_TEMP/desktop-tests.jsonl"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+          records = [json.loads(line) for line in pathlib.Path(os.environ['RUNNER_TEMP'], 'desktop-tests.jsonl').read_text().splitlines()]
+          executables = [record['executable'] for record in records if record.get('reason') == 'compiler-artifact' and record['target']['name'] == 'app_lib' and record.get('executable')]
+          assert len(executables) == 1
+          out = pathlib.Path('control-center/src-tauri/target/desktop-validation')
+          out.mkdir()
+          binary = out / 'gary4local-desktop-tests'
+          shutil.copy2(executables[0], binary)
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          (out / 'SHA256SUMS').write_text(digest + '  ' + binary.name + '\n')
+          (out / 'BUILD-INFO.json').write_text(json.dumps({'commit': os.environ['GITHUB_SHA'], 'platform': os.environ['PLATFORM'], 'binary': binary.name, 'sha256': digest, 'purpose': 'opt-in native desktop verification tests'}, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gary4local-desktop-validation-${{ matrix.platform }}
+          path: control-center/src-tauri/target/desktop-validation/
+          retention-days: 7
