@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "gary4local-rocm"
-version = "0.7.1-rocm.1"
+version = "0.7.2-rocm.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
