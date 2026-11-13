@@ -36,6 +36,16 @@ pub struct Preview {
     pub python_still_needed: Option<String>,
 }
 
+impl Preview {
+    /// The existing fresh-install Use flow can finish without a cleanup review
+    /// only when there is no Python environment, legacy weight or warning.
+    pub fn only_bundled_code(&self) -> bool {
+        !self.legacy_runtime_present && self.warnings.is_empty()
+            && self.python_still_needed.is_none()
+            && self.cleanup_candidates.iter().all(|item| item.kind == Some("code"))
+    }
+}
+
 /// What only the service knows, gathered by the service before an inventory.
 pub struct Extras {
     /// Its selection, read with its own encoding check.

@@ -34,7 +34,7 @@
   let fixProgress = $derived(progress.get("sa3-native::decoder-correction"));
   const groups = [
     { label: "shared components", kind: "shared", hint: "Download these GGUF components once for generation and LoRA training. Text encoder: F16. Autoencoder: F32. The tokenizer and conditioner are included." },
-    { label: "generation tier", kind: "generation", hint: "Choose a precision to view or download it; use selects it for the next start. F16 is the default; smaller DiT tiers reduce memory use. Shared component precision stays the same." },
+    { label: "generation tier", kind: "generation", hint: "With one downloaded generation precision, Start selects it and completes activation. Use chooses between multiple downloaded precisions. F16 is the default; smaller DiT tiers reduce memory use. Shared component precision stays the same." },
     { label: "LoRA training base", kind: "training", hint: "Optional — download one base only if you train LoRAs. Training precision is independent of the generation tier." },
   ];
   function kind(id: string) {
@@ -48,6 +48,7 @@
   function precisionOptions(group: string) {
     return entries(group).map((entry) => ({ value: encoding(entry.id), status: models.find((model) => model.id === entry.id)?.status }));
   }
+  const downloadedGeneration = $derived(precisionOptions("generation").filter((option) => option.status === "downloaded"));
   function shown(group: string) {
     return shownPrecision(precisionOptions(group), picked[group], group === "generation" ? activeEncoding : null,
       group === "training" ? trainingRecommendation : "F16");
@@ -118,6 +119,7 @@
               active={group.kind === "generation" ? activeEncoding : null} recommended={group.kind === "training" ? trainingRecommendation : null}
               disabled={busy || downloading || removingId !== null} onChange={(value) => picked[group.kind] = value} />{/if}
             {#if group.kind === "generation" && activeEncoding === encoding(entry.id)}<span class="badge active">active</span>
+            {:else if group.kind === "generation" && downloadedGeneration.length === 1 && model?.status === "downloaded"}<span class="badge">on Start</span>
             {:else if group.kind === "generation" && encoding(entry.id) === "F16"}<span class="badge">default</span>{/if}
             {#if group.kind === "training" && encoding(entry.id) === trainingRecommendation}<span class="badge">recommended</span>{/if}
           </span>
@@ -129,7 +131,7 @@
           <DownloadProgress value={download?.progress ?? 0} label={`${label(entry)} download`} />
         {:else if model?.status === "downloaded"}
           <div class="actions">
-            {#if group.kind === "generation" && nativeSelected && activeEncoding !== encoding(entry.id)}<button class="download accent" disabled={busy || downloading || removingId !== null || !sharedReady} title={sharedReady ? "Use this tier next time SA3 starts" : "Download the shared components first"} onclick={() => useTier(encoding(entry.id))}>use</button>{/if}
+            {#if group.kind === "generation" && nativeSelected && downloadedGeneration.length > 1 && activeEncoding !== encoding(entry.id)}<button class="download accent" disabled={busy || downloading || removingId !== null || !sharedReady} title={sharedReady ? "Use this tier next time SA3 starts" : "Download the shared components first"} onclick={() => useTier(encoding(entry.id))}>use</button>{/if}
             <button disabled={busy || downloading || removingId !== null} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
           </div>
         {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}

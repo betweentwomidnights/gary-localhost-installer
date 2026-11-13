@@ -51,6 +51,12 @@ how every native service is packaged and installed is in
 
 ## preview
 
+on a fresh native setup, download the shared components and one generation
+precision, then press **start**. start verifies and activates that precision
+before launching; downloading alone does not run a GPU check. when more than
+one generation precision is downloaded, choose one with **use** in Models.
+existing Python installations keep their explicit migration flow.
+
 install and startup flow:
 
 ![gary4local install and startup preview](docs/gary4local-install-startup.gif)

@@ -14,8 +14,9 @@ export function shownPrecision(
   const has = (value: string | null | undefined) => options.some((option) => option.value === value);
   return options.find((option) => option.status === "downloading")?.value
     ?? (has(picked) ? picked! : undefined)
-    ?? (has(active) ? active! : undefined)
+    ?? options.find((option) => option.value === active && option.status === "downloaded")?.value
     ?? options.find((option) => option.status === "downloaded")?.value
+    ?? (has(active) ? active! : undefined)
     ?? (has(recommended) ? recommended! : undefined)
     ?? options[0]?.value;
 }

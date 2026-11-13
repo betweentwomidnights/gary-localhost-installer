@@ -752,7 +752,7 @@
       <div class="size-group">
         <div class="size-label">generation tier</div>
         <div class="carey-hint">
-          choose a precision to view or download it. Use selects it and restarts yuey if it is running.
+          choose a precision to view or download it. A single downloaded precision is used automatically. Use chooses between multiple downloaded precisions and restarts yuey if it is running.
           {#if yueyRuntime?.recommendedEncoding}
             the runtime check recommends {yueyRuntime.recommendedEncoding} for this GPU.
           {:else}
@@ -799,7 +799,7 @@
               </div>
             {:else if model.status === "downloaded"}
               <div class="tier-actions">
-                {#if yueyActiveEncoding !== encoding}
+                {#if yueyTiers.filter((item) => item.status === "downloaded").length > 1 && yueyActiveEncoding !== encoding}
                   <button
                     class="dl-btn accent"
                     disabled={yueyBusy || removingModelId !== null || yueyShared.some((item) => item.status !== "downloaded")} title="Select this precision; restarts yuey if it is running"
