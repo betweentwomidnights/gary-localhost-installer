@@ -1,0 +1,31 @@
+{
+  "productName": "gary4local Preview",
+  "mainBinaryName": "gary4local-preview",
+  "identifier": "com.betweentwomidnights.gary4local.preview",
+  "app": {
+    "windows": [{
+      "title": "gary4local — Linux preview",
+      "width": 1100,
+      "height": 700,
+      "minWidth": 900,
+      "minHeight": 550,
+      "resizable": true,
+      "fullscreen": false
+    }]
+  },
+  "bundle": {
+    "targets": ["deb"],
+    "createUpdaterArtifacts": false,
+    "category": "Music",
+    "shortDescription": "Experimental gary4local Linux desktop preview",
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/preview.desktop",
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0t64", "libayatana-appindicator3-1", "libvulkan1"],
+        "files": {
+          "/usr/bin/gary4local-preview-launch": "linux/gary4local-preview-launch"
+        }
+      }
+    }
+  }
+}

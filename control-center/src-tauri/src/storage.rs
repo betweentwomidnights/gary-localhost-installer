@@ -26,19 +26,56 @@ struct StorageConfig {
 }
 
 pub fn roaming_app_data_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        let base = linux_xdg_dir("XDG_CONFIG_HOME", ".config");
+        return if linux_preview() { base.join(linux_storage_id()) } else { base };
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Roaming", home)
     });
     PathBuf::from(appdata)
+    }
 }
 
 pub fn local_data_root() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        return linux_xdg_dir("XDG_DATA_HOME", ".local/share").join(linux_storage_id());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
         format!("{}\\AppData\\Local", home)
     });
     PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_preview() -> bool {
+    option_env!("GARY4LOCAL_LINUX_PREVIEW") == Some("1")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_storage_id() -> &'static str {
+    if linux_preview() { "com.betweentwomidnights.gary4local.preview" }
+    else { "com.betweentwomidnights.gary4local" }
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_base(value: Option<PathBuf>, home: &Path, fallback: &str) -> PathBuf {
+    value.filter(|path| path.is_absolute()).unwrap_or_else(|| home.join(fallback))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_xdg_dir(name: &str, fallback: &str) -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    xdg_base(env_path(name), &home, fallback)
 }
 
 pub fn legacy_runtime_root() -> PathBuf {
@@ -50,11 +87,18 @@ pub fn storage_config_path() -> PathBuf {
 }
 
 pub fn installed_default_runtime_root() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        return local_data_root().join("runtime");
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| local_data_root()))
         .join("gary4local-data")
+    }
 }
 
 pub fn models_dir(runtime_root: &Path) -> PathBuf {
@@ -369,8 +413,8 @@ mod tests {
 
     #[test]
     fn runtime_env_points_caches_inside_runtime_root() {
-        let root = Path::new("D:\\gary4local-data");
-        let env = runtime_env_vars(root);
+        let root = std::env::temp_dir().join("gary4local-data");
+        let env = runtime_env_vars(&root);
         let lookup = |key: &str| {
             env.iter()
                 .find(|(name, _)| name == key)
@@ -378,12 +422,29 @@ mod tests {
                 .unwrap()
         };
 
-        assert_eq!(lookup("MODELS_DIR"), "D:\\gary4local-data\\models");
+        assert_eq!(lookup("MODELS_DIR"), root.join("models").to_string_lossy());
         assert_eq!(
             lookup("HF_HOME"),
-            "D:\\gary4local-data\\models\\huggingface"
+            root.join("models/huggingface").to_string_lossy()
         );
-        assert_eq!(lookup("UV_CACHE_DIR"), "D:\\gary4local-data\\cache\\uv");
+        assert_eq!(lookup("UV_CACHE_DIR"), root.join("cache/uv").to_string_lossy());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_defaults_use_user_data_instead_of_the_installed_binary_directory() {
+        assert_eq!(super::installed_default_runtime_root(), super::local_data_root().join("runtime"));
+        assert!(super::local_data_root().is_absolute());
+        assert!(!super::local_data_root().to_string_lossy().contains("AppData"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn relative_xdg_paths_are_ignored() {
+        let home = Path::new("/home/test-user");
+        assert_eq!(super::xdg_base(Some("/data/config".into()), home, ".config"), Path::new("/data/config"));
+        assert_eq!(super::xdg_base(Some("relative".into()), home, ".config"), home.join(".config"));
+        assert_eq!(super::xdg_base(None, home, ".local/share"), home.join(".local/share"));
     }
 
     #[test]
