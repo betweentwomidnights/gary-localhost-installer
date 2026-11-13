@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PrecisionPicker from "./PrecisionPicker.svelte";
+  import { shownPrecision } from "./modelPrecision";
   import { invoke } from "@tauri-apps/api/core";
   import { useNativeModel } from "./runtimeSetup";
   import { listen } from "@tauri-apps/api/event";
@@ -27,6 +29,7 @@
   let profile = $state<Profile | null>(null);
   let catalog = $state<Component[]>([]);
   let activeEncoding = $state<string | null>(null);
+  let picked = $state<string | null>(null);
   let busy = $state(false);
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
@@ -38,6 +41,9 @@
   const optionIds = $derived(new Set(Object.values(profile?.tierOptions ?? {}).flat()));
   const shared = $derived(catalog.filter((entry) => !tierOf.has(entry.id) && !optionIds.has(entry.id)));
   const tiers = $derived(catalog.filter((entry) => tierOf.has(entry.id)));
+  const precisionOptions = $derived(tiers.map((entry) => ({ value: tierOf.get(entry.id)!, status: models.find((model) => model.id === entry.id)?.status })));
+  const shown = $derived(shownPrecision(precisionOptions, picked, activeEncoding));
+  const selected = $derived(tiers.find((entry) => tierOf.get(entry.id) === shown));
   const downloading = $derived(models.some((model) => model.status === "downloading"));
   const status = (id: string) => models.find((model) => model.id === id)?.status;
   const ready = (tier: string) => (profile?.tierComponents[tier] ?? []).every((id) => status(id) === "downloaded");
@@ -86,7 +92,9 @@
   {@const download = progress.get(entry.id)}
   <div class="model-row" class:downloaded={model?.status === "downloaded"}>
     <div class="model-info">
-      <span class="model-name">{entry.label}
+      <span class="model-name">{tier ? entry.label.replace(` ${tier}`, "") : entry.label}
+        {#if tier}<PrecisionPicker label={label} value={shown} options={precisionOptions} active={activeEncoding}
+          disabled={busy || downloading || removingId !== null} onChange={(value) => picked = value} />{/if}
         {#if tier && activeEncoding === tier}<span class="badge active">active</span>
         {:else if tier && tier === profile?.tiers[0]}<span class="badge">default</span>{/if}
       </span>
@@ -98,10 +106,10 @@
       <DownloadProgress value={download?.progress ?? 0} label={`${entry.label} download`} />
     {:else if model?.status === "downloaded"}
       <div class="actions">
-        {#if tier && nativeSelected && activeEncoding !== tier}<button class="download" disabled={busy || downloading || removingId !== null || !ready(tier)} title={ready(tier) ? `Use this tier next time ${label} starts` : "Download the shared components first"} onclick={() => useTier(tier)}>use</button>{/if}
+        {#if tier && nativeSelected && activeEncoding !== tier}<button class="download accent" disabled={busy || downloading || removingId !== null || !ready(tier)} title={ready(tier) ? `Use this tier next time ${label} starts` : "Download the shared components first"} onclick={() => useTier(tier)}>use</button>{/if}
         <button disabled={busy || downloading || removingId !== null} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
       </div>
-    {:else}<button class="download" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
+    {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
   </div>
 {/snippet}
 
@@ -116,7 +124,8 @@
   <div class="group-label">generation tier</div>
   <p>One tier is enough. {profile?.tiers[0] ?? "F16"} is the reference; smaller tiers use less memory and disk.
     {#if activeEncoding}{label} is set to {activeEncoding}. Stop {label} before changing its model.{/if}</p>
-  {#each tiers as entry (entry.id)}{@render row(entry, tierOf.get(entry.id) ?? null)}{/each}
+  {#if selected}{@render row(selected, shown ?? null)}{/if}
+  <p>Choose a precision to view or download it. Use selects it for the next start.</p>
 </section>
 {#if options.length}
   <section aria-label={profile?.optionsLabel ?? "options"}>
@@ -136,13 +145,11 @@
   p { margin: 4px 16px 10px; font-size: 11px; color: var(--text-secondary); line-height: 1.5; }
   .model-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; transition: background 0.1s; }
   .model-row:hover { background: var(--bg-hover); }
-  .model-row.downloaded { opacity: 0.7; }
   .model-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .model-name { font-size: 12px; color: var(--text-primary); }
+  .model-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-primary); }
   .model-size { font-size: 10px; color: var(--text-muted); overflow-wrap: anywhere; }
   .actions { display: flex; gap: 6px; }
   button { flex-shrink: 0; font-size: 11px; }
-  button.download { color: var(--accent); border-color: var(--accent); }
   .badge { display: inline-block; margin-left: 5px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 9px; color: var(--text-muted); }
   .badge.active { color: var(--green); border-color: var(--green); }
   .error { color: var(--red); font-size: 11px; overflow-wrap: anywhere; }

@@ -280,9 +280,9 @@
         ? `Remove the ${env.displayName} and free ${size}?\n\n` +
           "Nothing installed uses it now. It's downloaded again by the next runtime install that needs it."
         : env.kind === "native"
-          ? `Remove ${env.displayName}'s runtime and free ${size}?\n\n` +
-            `Downloaded models are kept. ${env.displayName} can't run again until you install ` +
-            "its runtime, which downloads it again."
+          ? `Remove ${env.displayName.endsWith("shared runtime") ? env.displayName : `${env.displayName}'s runtime`} and free ${size}?\n\n` +
+            "Downloaded models are kept. Services using this runtime can't run again " +
+            "until you reinstall it from a service."
           : `Remove ${env.displayName}'s environment and free ${size}?\n\n` +
             "Downloaded models are kept. This service can't run again until you rebuild " +
             "its environment, which re-downloads its packages.";
@@ -789,10 +789,13 @@
 
   .env-label {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 8px;
     min-width: 0;
   }
+
+  .env-row > button { flex-shrink: 0; white-space: nowrap; }
 
   .env-name {
     font-size: 12px;

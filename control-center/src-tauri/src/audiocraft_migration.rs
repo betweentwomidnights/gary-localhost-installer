@@ -42,15 +42,16 @@ const GARY_PROOF_INPUT_SECONDS: u32 = 6;
 const GARY_PROOF_PROMPT_SECONDS: u32 = 4;
 const GARY_PROOF_OUTPUT_SECONDS: u32 = 8;
 
-/// Continuations preserve the recording before the prompt, then append the
-/// generated window resampled to the recording's 44.1 kHz stereo format.
-fn check_gary_continuation(wav: &[u8]) -> Result<(), String> {
+/// Continuations and retries preserve the recording before the prompt, then
+/// append the generated window at the recording's 44.1 kHz stereo format.
+/// A retry uses this contract even when its session came from process_audio.
+fn check_gary_continuation(wav: &[u8], what: &str) -> Result<(), String> {
     crate::migration_verify::check_wav_spec(
         wav,
         44_100,
         2,
         (GARY_PROOF_INPUT_SECONDS - GARY_PROOF_PROMPT_SECONDS + GARY_PROOF_OUTPUT_SECONDS) * 44_100,
-        "gary continue_music",
+        what,
     )
 }
 
@@ -400,7 +401,7 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
     use crate::migration_verify::{check_wav_spec, run_session_job};
     use serde_json::json;
     const POLL: &str = "/api/juce/poll_status";
-    // process_audio and its retry return only the generated 32 kHz mono window.
+    // Only process_audio returns the generated 32 kHz mono window.
     const SAMPLES: u32 = GARY_PROOF_OUTPUT_SECONDS * 32_000;
     let (fingerprint, server) = start(&Gary, &run, "gary").await?;
 
@@ -436,7 +437,7 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
         "gary continue_music",
     )
     .await?;
-    check_gary_continuation(&continued)?;
+    check_gary_continuation(&continued, "gary continue_music")?;
 
     (run.progress)("Testing a retry...");
     let (_, retried) = run_session_job(
@@ -452,7 +453,9 @@ async fn verify_gary(run: Run<'_>) -> Result<Selection, String> {
         "gary retry_music",
     )
     .await?;
-    check_wav_spec(&retried, 32_000, 1, SAMPLES, "gary retry_music")?;
+    // retry_music always continues the session's original input, including
+    // when that session came from process_audio above, not continue_music.
+    check_gary_continuation(&retried, "gary retry_music")?;
 
     // Each other downloaded model, at the precision the server runs: its most
     // faithful downloaded one. One too big for this GPU is the user's choice
@@ -842,14 +845,9 @@ mod tests {
     }
 
     #[test]
-    fn gary_continuation_proof_expects_the_recording_with_the_generated_window() {
+    fn gary_continuation_and_retry_expect_the_recording_with_the_generated_window() {
         // Six seconds in, a four-second prompt, and eight generated seconds:
         // two retained seconds + eight generated = ten at the host's format.
-        check_gary_continuation(&test_recording(10)).unwrap();
-        // Neither a truncated response nor just the generated window is enough.
-        for seconds in [1, 8] {
-            assert!(check_gary_continuation(&test_recording(seconds)).is_err());
-        }
         // The old 32 kHz mono response must also fail even at the right length.
         let mut wav = std::io::Cursor::new(Vec::new());
         let spec = hound::WavSpec { channels: 1, sample_rate: 32_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
@@ -858,7 +856,16 @@ mod tests {
             writer.write_sample(0_i16).unwrap();
         }
         writer.finalize().unwrap();
-        assert!(check_gary_continuation(wav.get_ref()).is_err());
+        for what in ["gary continue_music", "gary retry_music"] {
+            check_gary_continuation(&test_recording(10), what).unwrap();
+            // Neither a truncated response nor just the generated window is enough.
+            for seconds in [1, 8] {
+                let error = check_gary_continuation(&test_recording(seconds), what).unwrap_err();
+                assert!(error.starts_with(what), "{error}");
+                assert!(error.contains("expected 44100 Hz, 2 channels, 441000"), "{error}");
+            }
+            assert!(check_gary_continuation(wav.get_ref(), what).is_err());
+        }
     }
 
     #[test]

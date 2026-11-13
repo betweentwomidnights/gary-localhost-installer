@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PrecisionPicker from "./PrecisionPicker.svelte";
+  import { shownPrecision } from "./modelPrecision";
   import { invoke } from "@tauri-apps/api/core";
   import { useNativeModel } from "./runtimeSetup";
   import { listen } from "@tauri-apps/api/event";
@@ -42,11 +44,9 @@
   // A row shows what was picked, else what is active or on disk, else the recommendation.
   function shown(variant: string) {
     const options = precisions(variant);
-    return picked[variant]
-      ?? (variant === layout.required && activeEncoding && options.includes(activeEncoding) ? activeEncoding : undefined)
-      ?? options.find((tier) => status(id(variant, tier)) === "downloaded")
-      ?? options.find((tier) => recommended.components.includes(id(variant, tier)))
-      ?? options[0];
+    return shownPrecision(options.map((value) => ({ value, status: status(id(variant, value)) })),
+      picked[variant], variant === layout.required ? activeEncoding : null,
+      options.find((tier) => recommended.components.includes(id(variant, tier)))) ?? "";
   }
   const onDisk = (variant: string) => precisions(variant).filter((tier) => status(id(variant, tier)) === "downloaded");
   function size(bytes: number) { return `${(bytes / 1024 ** 3).toFixed(2)} GB`; }
@@ -89,10 +89,10 @@
     <DownloadProgress value={download?.progress ?? 0} label={`${entry.label} download`} />
   {:else if model?.status === "downloaded"}
     <div class="actions">
-      {#if tier && nativeSelected && activeEncoding !== tier}<button class="download" disabled={busy || downloading || removingId !== null || status(`${layout.prefix}::shared`) !== "downloaded"} title={`Require ${layout.requiredLabel} at ${tier} next time ${layout.label} starts`} onclick={() => useTier(tier)}>use</button>{/if}
+      {#if tier && nativeSelected && activeEncoding !== tier}<button class="download accent" disabled={busy || downloading || removingId !== null || status(`${layout.prefix}::shared`) !== "downloaded"} title={`Require ${layout.requiredLabel} at ${tier} next time ${layout.label} starts`} onclick={() => useTier(tier)}>use</button>{/if}
       <button disabled={busy || downloading || removingId !== null || (tier !== null && nativeSelected && activeEncoding === tier)} title={tier !== null && nativeSelected && activeEncoding === tier ? `${layout.label} needs this model to start` : undefined} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
     </div>
-  {:else}<button class="download" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
+  {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
 {/snippet}
 
 {#if shared}
@@ -126,9 +126,11 @@
         <div class="model-row" class:downloaded={status(entry.id) === "downloaded"}>
           <div class="model-info">
             <span class="model-name">{entry.label.replace(` ${tier}`, "")}
-              <select aria-label={`${entry.label.replace(` ${tier}`, "")} precision`} value={tier} disabled={busy} onchange={(event) => picked[variant] = event.currentTarget.value}>
-                {#each precisions(variant) as option (option)}<option value={option}>{option}{recommended.components.includes(id(variant, option)) ? " (recommended)" : ""}</option>{/each}
-              </select>
+              <PrecisionPicker label={entry.label.replace(` ${tier}`, "")} value={tier}
+                options={precisions(variant).map((value) => ({ value, status: status(id(variant, value)) }))}
+                active={variant === layout.required ? activeEncoding : null}
+                recommended={precisions(variant).find((value) => recommended.components.includes(id(variant, value)))}
+                disabled={busy || downloading || removingId !== null} onChange={(value) => picked[variant] = value} />
               {#if variant === layout.required && activeEncoding === tier}<span class="badge active">active</span>{/if}
               {#if recommended.components.includes(entry.id)}<span class="badge">recommended</span>{/if}
             </span>
@@ -153,14 +155,11 @@
   p { margin: 4px 16px 10px; font-size: 11px; color: var(--text-secondary); line-height: 1.5; }
   .model-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; transition: background 0.1s; }
   .model-row:hover { background: var(--bg-hover); }
-  .model-row.downloaded { opacity: 0.7; }
   .model-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .model-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-primary); }
-  .model-name select { font-size: 11px; padding: 1px 4px; }
   .model-size { font-size: 10px; color: var(--text-muted); overflow-wrap: anywhere; }
   .actions { display: flex; gap: 6px; }
   button { flex-shrink: 0; font-size: 11px; }
-  button.download { color: var(--accent); border-color: var(--accent); }
   .badge { display: inline-block; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 9px; color: var(--text-muted); }
   .badge.active { color: var(--green); border-color: var(--green); }
   .error { color: var(--red); font-size: 11px; overflow-wrap: anywhere; }
