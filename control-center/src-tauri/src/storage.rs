@@ -416,6 +416,7 @@ fn path_key(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{legacy_runtime_root, runtime_env_vars};
+    #[cfg(target_os = "linux")]
     use std::path::Path;
 
     #[test]

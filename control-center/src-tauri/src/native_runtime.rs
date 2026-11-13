@@ -550,7 +550,7 @@ fn devices(props: &serde_json::Value) -> Vec<&serde_json::Value> {
 /// ggml names its registries CUDA, Vulkan, Metal, and CPU.
 fn props_has_backend(props: &serde_json::Value, backend: &str) -> bool {
     devices(props).iter().any(|device| {
-        device
+        gary4local_core::runtime::is_generation_gpu(device) && device
             .get("backend")
             .and_then(|value| value.as_str())
             .is_some_and(|name| name.to_ascii_lowercase().contains(backend))
@@ -1660,6 +1660,9 @@ mod tests {
         });
         assert!(props_has_backend(&props, "vulkan"));
         assert!(!props_has_backend(&props, "cuda"));
+        assert!(!props_has_backend(&serde_json::json!({"devices":[
+            {"backend":"Vulkan","type":"gpu","description":"llvmpipe (LLVM 20.1.2, 256 bits)"}
+        ]}), "vulkan"));
     }
 
     fn temp_dir(label: &str) -> PathBuf {

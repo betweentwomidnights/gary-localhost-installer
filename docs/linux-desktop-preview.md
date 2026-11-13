@@ -68,5 +68,7 @@ does not establish GPU inference, tray availability, or real desktop behavior.
 WSL2 can test Linux x64 packaging and NVIDIA CUDA execution using the Windows
 driver bridge. WSLg can exercise desktop startup and dialogs. Its Vulkan devices
 must be inspected: a software Vulkan device is not a GPU-generation result.
+Both desktop and headless runtime checks reject known software Vulkan drivers,
+even when ggml labels them as a GPU.
 WSL does not replace native Linux driver/desktop tests or AMD hardware tests.
 Do not install NVIDIA Linux display drivers into WSL.

@@ -178,3 +178,33 @@ pub fn executable_name(name: &str) -> &str {
         name.strip_suffix(".exe").unwrap_or(name)
     }
 }
+
+/// Some Vulkan software drivers are exposed as GPU devices by ggml. They
+/// cannot satisfy an installation that requires GPU generation.
+pub fn is_generation_gpu(device: &serde_json::Value) -> bool {
+    let kind = device["type"].as_str().unwrap_or("").to_ascii_lowercase();
+    if !matches!(kind.as_str(), "gpu" | "igpu" | "integrated_gpu" | "discrete_gpu") {
+        return false;
+    }
+    let description = format!("{} {}", device["name"].as_str().unwrap_or(""),
+        device["description"].as_str().unwrap_or("")).to_ascii_lowercase();
+    !["llvmpipe", "lavapipe", "swiftshader", "software rasterizer"]
+        .iter().any(|name| description.contains(name))
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::is_generation_gpu;
+    use serde_json::json;
+
+    #[test]
+    fn software_vulkan_does_not_count_as_a_generation_gpu() {
+        for description in ["llvmpipe (LLVM 20.1.2, 256 bits)", "lavapipe", "SwiftShader Device"] {
+            assert!(!is_generation_gpu(&json!({"type":"gpu", "backend":"Vulkan", "description":description})));
+        }
+        assert!(!is_generation_gpu(&json!({"type":"cpu", "description":"AMD Ryzen"})));
+        for (kind, description) in [("gpu", "NVIDIA GeForce RTX 5070 Laptop GPU"), ("gpu", "NVIDIA GB10"), ("integrated_gpu", "AMD Radeon 8060S")] {
+            assert!(is_generation_gpu(&json!({"type":kind,"description":description})));
+        }
+    }
+}

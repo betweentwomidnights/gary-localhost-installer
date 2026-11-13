@@ -594,7 +594,7 @@ async fn probe(config: &Config, dir: &Path) -> Result<Value, String> {
                     && d["backend"]
                         .as_str()
                         .is_some_and(|b| b.eq_ignore_ascii_case(config.backend_name()))
-                    && matches!(d["type"].as_str(), Some("gpu" | "igpu" | "integrated_gpu"))
+                    && runtime::is_generation_gpu(d)
             })
         })
     {
