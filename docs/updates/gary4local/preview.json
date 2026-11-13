@@ -1,12 +1,11 @@
 {
-    "channel":  "preview",
-    "latest_version":  "0.4.0-rc.4",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rc.4/gary4local_0.4.0-rc.4_x64-setup.exe",
-    "sha256":  "352d0c86ce3a839cb7e4e35806de84d5a1cbf37d12381ca0135cd595389a00e6",
-    "published_at":  "2026-10-07T05:35:41.0000000+00:00",
-    "notes":  [
-                  "Yuey v0.2.2 fixes short MIDI scores. After installing, press Update runtime on Yuey\u0027s row.",
-                  "Local SA3 and Carey accept up to 380 seconds. SA3 continuation includes source plus added audio.",
-                  "Compatible with gary4juce v5.0.0-rc.4 for ten-minute stem imports and model-limited selections."
-              ]
+  "channel": "preview",
+  "latest_version": "0.7.2",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2/gary4local_0.7.2_x64-setup.exe",
+  "sha256": "c99066a0cd01e437b461678f6cc394958ef085ecfa8e7f04d67aeb7e8315b5f0",
+  "published_at": "2026-11-13T15:29:46.0000000+00:00",
+  "notes": [
+    "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.",
+    "Existing models can be reused. Compatible with gary4juce v5.0.4."
+  ]
 }

@@ -1,13 +1,12 @@
 {
   "channel": "preview",
-  "latest_version": "0.7.1-rocm.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1-rocm.1/gary4local-rocm_0.7.1-rocm.1_x64-setup.exe",
-  "sha256": "071684f89da29ffd82c778c404988c6c51c506340518adab1d49de513348810d",
-  "published_at": "2026-11-12T06:54:26.0000000+00:00",
+  "latest_version": "0.7.2-rocm.1",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2-rocm.1/gary4local-rocm_0.7.2-rocm.1_x64-setup.exe",
+  "sha256": "609d1102c188147905a50979f4d9367d952d145987f142106a9dd45a0635a101",
+  "published_at": "2026-11-13T15:29:51.0000000+00:00",
   "notes": [
-    "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.",
-    "SA3 LoRA automation lanes reach the native server.",
-    "Update all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4.",
-    "AMD preview; hardware validation is still pending."
+    "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.",
+    "Existing models can be reused. Compatible with gary4juce v5.0.4.",
+    "AMD preview; hardware validation of this package is still pending."
   ]
 }
