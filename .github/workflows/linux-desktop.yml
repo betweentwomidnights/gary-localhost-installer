@@ -41,6 +41,16 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: control-center/package-lock.json
+      - uses: actions/cache/restore@v4
+        id: rust-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            control-center/src-tauri/target/release
+          key: desktop-v1-${{ runner.arch }}-${{ hashFiles('control-center/src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            desktop-v1-${{ runner.arch }}-${{ hashFiles('control-center/src-tauri/Cargo.lock') }}-
       - name: Desktop build dependencies
         run: |
           sudo apt-get update -qq
@@ -52,6 +62,14 @@ jobs:
         run: |
           npm ci
           npm run tauri -- build --ci --bundles deb --config src-tauri/tauri.linux-preview.conf.json
+      - uses: actions/cache/save@v4
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            control-center/src-tauri/target/release
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Check Linux storage and preview package
         env:
           PLATFORM: ${{ matrix.platform }}

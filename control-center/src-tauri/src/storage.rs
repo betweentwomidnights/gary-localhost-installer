@@ -85,6 +85,13 @@ fn linux_xdg_dir(name: &str, fallback: &str) -> PathBuf {
     xdg_base(env_path(name), &home, fallback)
 }
 
+#[cfg(target_os = "linux")]
+fn preview_runtime_dir(preview_home: Option<PathBuf>) -> PathBuf {
+    preview_home.filter(|path| path.is_absolute())
+        .map(|path| path.join("data"))
+        .unwrap_or_else(|| local_data_root().join("runtime"))
+}
+
 pub fn legacy_runtime_root() -> PathBuf {
     roaming_app_data_dir().join("Gary4JUCE")
 }
@@ -96,7 +103,11 @@ pub fn storage_config_path() -> PathBuf {
 pub fn installed_default_runtime_root() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
-        return local_data_root().join("runtime");
+        return if linux_preview() {
+            preview_runtime_dir(env_path("GARY4LOCAL_PREVIEW_HOME"))
+        } else {
+            local_data_root().join("runtime")
+        };
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -453,6 +464,8 @@ mod tests {
         assert_eq!(super::xdg_base(Some("/data/config".into()), home, ".config"), Path::new("/data/config"));
         assert_eq!(super::xdg_base(Some("relative".into()), home, ".config"), home.join(".config"));
         assert_eq!(super::xdg_base(None, home, ".local/share"), home.join(".local/share"));
+        assert_eq!(super::preview_runtime_dir(Some("/qa/preview".into())), Path::new("/qa/preview/data"));
+        assert_eq!(super::preview_runtime_dir(Some("relative".into())), super::local_data_root().join("runtime"));
     }
 
     #[test]

@@ -59,10 +59,13 @@ def main():
         output = subprocess.check_output([str(launcher)], env=env, text=True)
         values = dict(line.split('=', 1) for line in output.splitlines())
         preview = home / 'gary4local-packaging/desktop-gui'
-        assert values['GARY4LOCAL_RUNTIME_ROOT'] == str(preview / 'data')
+        assert values['GARY4LOCAL_PREVIEW_HOME'] == str(preview)
+        assert 'GARY4LOCAL_RUNTIME_ROOT' not in values
         assert values['XDG_CONFIG_HOME'] == str(preview / 'config')
         assert values['XDG_DATA_HOME'] == str(preview / 'share')
         assert values['XDG_CACHE_HOME'] == str(preview / 'cache')
+        explicit = subprocess.check_output([str(launcher)], env=dict(env, GARY4LOCAL_RUNTIME_ROOT='/explicit/test-data'), text=True)
+        assert 'GARY4LOCAL_RUNTIME_ROOT=/explicit/test-data' in explicit.splitlines()
         invalid = subprocess.run([str(launcher)], env=dict(env, GARY4LOCAL_PREVIEW_HOME='relative'), capture_output=True)
         assert invalid.returncode != 0
     assert (ROOT / 'control-center/dist/index.html').is_file()
