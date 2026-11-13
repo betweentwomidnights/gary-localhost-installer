@@ -11,6 +11,7 @@
 use crate::manifest::{NativeDef, NativePackage};
 use crate::service_manager::{BuildInfo, ServiceInfo, ServiceManager};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -18,7 +19,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 pub const NATIVE_DIR: &str = "native";
@@ -39,17 +39,30 @@ pub async fn mutation_guard() -> tokio::sync::MutexGuard<'static, ()> {
 
 const NATIVE_APPLICATION_CONTROL_HELP: &str = "Windows got a little overprotective and blocked this service's runtime from starting.\n\nOpen Windows Security -> App & browser control -> Smart App Control settings, temporarily turn Smart App Control off, then install the runtime again. You can turn it back on afterward.";
 
-pub fn current_platform() -> &'static str {
-    if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "windows-x64"
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "macos-arm64"
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "linux-x64"
-    } else {
-        "unsupported"
+/// Engine versions can stay the same across numbered Linux previews. New
+/// installs also pin their archive identities; legacy stamps retain their
+/// version-based compatibility until they are next installed.
+pub fn installed_packages_match(native_dir: &Path, def: &NativeDef) -> bool {
+    let Some(stamp) = read_stamp(native_dir) else {
+        return false;
+    };
+    if stamp.core_sha256.is_none() && stamp.backend_sha256.is_none() {
+        return true;
     }
+    let (Some(core), Some(backend)) = (&stamp.core_sha256, &stamp.backend_sha256) else {
+        return false;
+    };
+    let Some(platform) = def.platforms.get(current_platform()) else {
+        return false;
+    };
+    let Some(expected) = platform.backends.get(&stamp.backend) else {
+        return false;
+    };
+    core.eq_ignore_ascii_case(&platform.core.sha256)
+        && backend.eq_ignore_ascii_case(&expected.sha256)
 }
+
+pub use gary4local_core::runtime::current_platform;
 
 // ---------------------------------------------------------------------------
 // What is installed
@@ -66,6 +79,10 @@ pub struct NativeStamp {
     pub fallback_reason: Option<String>,
     #[serde(default)]
     pub runtimes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_sha256: Option<String>,
 }
 
 fn read_stamp(native_dir: &Path) -> Option<NativeStamp> {
@@ -73,74 +90,7 @@ fn read_stamp(native_dir: &Path) -> Option<NativeStamp> {
     serde_json::from_str(&raw).ok()
 }
 
-/// How a native server process starts: program, arguments, folder and every
-/// environment variable it gets. The service and any private copy started to
-/// verify it are built from the same value, so what a migration proves is what
-/// the service then runs. Callers add only their own output handling, process
-/// group and, for a private copy, its port.
-#[derive(Debug, Clone)]
-pub struct NativeLaunch {
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    pub dir: PathBuf,
-    /// Applied in order, later entries winning.
-    pub env: Vec<(OsString, OsString)>,
-}
-
-impl NativeLaunch {
-    /// `storage_env` is the profile's runtime variables, then the service's
-    /// resolved template with `${NATIVE_BACKEND}` filled in, then PATH with
-    /// the install's shared runtimes ahead of the system's.
-    pub fn new(
-        runtime_root: &Path,
-        executable: &str,
-        install: &NativeInstall,
-        args: Vec<String>,
-        storage_env: Vec<(String, String)>,
-        template: &[(String, String)],
-    ) -> Self {
-        let mut env: Vec<(OsString, OsString)> = storage_env
-            .into_iter()
-            .chain(launch_env(template, &install.backend))
-            .map(|(key, value)| (key.into(), value.into()))
-            .collect();
-        if let Some(path) = path_with_runtimes(runtime_root, &install.runtimes) {
-            env.push(("PATH".into(), path));
-        }
-        Self {
-            program: install.dir.join(executable),
-            args,
-            dir: install.dir.clone(),
-            env,
-        }
-    }
-
-    pub fn std_command(&self) -> std::process::Command {
-        let mut command = std::process::Command::new(&self.program);
-        command.args(&self.args).current_dir(&self.dir);
-        command.envs(self.env.iter().map(|(key, value)| (key, value)));
-        command
-    }
-
-    pub fn tokio_command(&self) -> tokio::process::Command {
-        let mut command = tokio::process::Command::new(&self.program);
-        command.args(&self.args).current_dir(&self.dir);
-        command.envs(self.env.iter().map(|(key, value)| (key, value)));
-        command
-    }
-}
-
-/// A runnable native service: where it is and how to launch it.
-#[derive(Debug, Clone)]
-pub struct NativeInstall {
-    pub dir: PathBuf,
-    /// The value `${NATIVE_BACKEND}` resolves to in the service's env.
-    pub backend: String,
-    pub runtimes: Vec<String>,
-    /// None for a developer build named by `GARY4LOCAL_NATIVE_DIR_<ID>`.
-    pub version: Option<String>,
-    pub fallback_reason: Option<String>,
-}
+pub use gary4local_core::runtime::{NativeInstall, NativeLaunch};
 
 fn env_suffix(service_id: &str) -> String {
     service_id.to_ascii_uppercase().replace('-', "_")
@@ -152,7 +102,7 @@ fn env_suffix(service_id: &str) -> String {
 fn dev_override(service_id: &str, executable: &str) -> Option<NativeInstall> {
     let suffix = env_suffix(service_id);
     let dir = std::env::var_os(format!("GARY4LOCAL_NATIVE_DIR_{suffix}")).map(PathBuf::from)?;
-    if !dir.join(executable).is_file() {
+    if !dir.join(gary4local_core::runtime::executable_name(executable)).is_file() {
         return None;
     }
     let backend = std::env::var(format!("GARY4LOCAL_NATIVE_BACKEND_{suffix}"))
@@ -173,7 +123,7 @@ pub fn installed(service_id: &str, native_dir: &Path, executable: &str) -> Optio
         return Some(install);
     }
     let stamp = read_stamp(native_dir)?;
-    if !native_dir.join(executable).is_file() {
+    if !native_dir.join(gary4local_core::runtime::executable_name(executable)).is_file() {
         return None;
     }
     Some(NativeInstall {
@@ -343,7 +293,42 @@ pub async fn detect_gpus() -> Result<Vec<GpuAdapter>, String> {
     }])
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// PCI sysfs works without a display server, Vulkan tools, or nvidia-smi.
+/// Only display-class devices count: NVIDIA PCI bridges on Spark are not GPUs.
+#[cfg(any(target_os = "linux", test))]
+fn linux_gpus(pci_devices: &Path) -> Result<Vec<GpuAdapter>, String> {
+    let entries = std::fs::read_dir(pci_devices)
+        .map_err(|error| format!("cannot enumerate {}: {error}", pci_devices.display()))?;
+    let mut adapters = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot read a PCI device: {error}"))?;
+        let dir = entry.path();
+        let class = std::fs::read_to_string(dir.join("class")).unwrap_or_default();
+        if !class.trim().starts_with("0x03") {
+            continue;
+        }
+        let vendor_id = std::fs::read_to_string(dir.join("vendor")).unwrap_or_default();
+        let (vendor, label) = match vendor_id.trim() {
+            "0x10de" => (GpuVendor::Nvidia, "NVIDIA"),
+            "0x1002" => (GpuVendor::Amd, "AMD"),
+            "0x8086" => (GpuVendor::Intel, "Intel"),
+            _ => (GpuVendor::Other, "Unknown"),
+        };
+        adapters.push(GpuAdapter {
+            name: format!("{label} GPU (PCI {})", entry.file_name().to_string_lossy()),
+            vendor,
+        });
+    }
+    adapters.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(adapters)
+}
+
+#[cfg(target_os = "linux")]
+pub async fn detect_gpus() -> Result<Vec<GpuAdapter>, String> {
+    linux_gpus(Path::new("/sys/bus/pci/devices"))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub async fn detect_gpus() -> Result<Vec<GpuAdapter>, String> {
     Ok(Vec::new())
 }
@@ -445,187 +430,12 @@ pub fn resolve_backends(
 // ---------------------------------------------------------------------------
 // Downloading and verifying
 
-pub fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-/// `sha256sum` output: `<hash>  <name>` per line, name optionally `*`-prefixed.
-pub fn parse_sha256sums(raw: &str) -> HashMap<String, String> {
-    raw.lines()
-        .filter_map(|line| {
-            let (hash, name) = line.trim().split_once(char::is_whitespace)?;
-            let name = name.trim().trim_start_matches('*');
-            (is_sha256(hash) && !name.is_empty())
-                .then(|| (name.to_string(), hash.to_ascii_lowercase()))
-        })
-        .collect()
-}
-
-pub async fn sha256_file(path: &Path) -> Result<String, String> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        use std::io::Read;
-        let mut file = std::fs::File::open(&path)
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0u8; 1 << 20];
-        loop {
-            let read = file
-                .read(&mut buffer)
-                .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-        }
-        Ok(format!("{:x}", hasher.finalize()))
-    })
-    .await
-    .map_err(|error| format!("checksum task failed: {error}"))?
-}
-
-pub(crate) fn partial_path(dest: &Path) -> PathBuf {
-    let name = dest
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_default();
-    dest.with_file_name(format!("{name}.partial"))
-}
-
-/// Download `url` to `dest`, resuming a `.partial` left by an interrupted
-/// attempt, and keep it only if its SHA-256 is the expected one. A file
-/// already at `dest` with the right hash is kept without a request.
-pub async fn download_verified(
-    client: &reqwest::Client,
-    url: &str,
-    headers: reqwest::header::HeaderMap,
-    expected_sha256: &str,
-    dest: &Path,
-    on_progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
-) -> Result<(), String> {
-    let expected = expected_sha256.to_ascii_lowercase();
-    let name = dest
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| url.to_string());
-
-    if dest.is_file() && sha256_file(dest).await? == expected {
-        return Ok(());
-    }
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-    }
-
-    let partial = partial_path(dest);
-    let mut resume_from = tokio::fs::metadata(&partial)
-        .await
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
-    let mut request = client.get(url).headers(headers);
-    if resume_from > 0 {
-        request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
-    }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|error| format!("downloading {name} failed: {error}"))?;
-    let status = response.status();
-
-    // 416 means the partial file already holds every byte; it is checked below.
-    if status != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-        if !status.is_success() {
-            return Err(format!("downloading {name} failed: HTTP {status}"));
-        }
-        let resumed = resume_from > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
-        if !resumed {
-            resume_from = 0;
-        }
-        let total = response.content_length().map(|length| length + resume_from);
-        let mut options = tokio::fs::OpenOptions::new();
-        options.create(true).write(true);
-        if resumed {
-            options.append(true);
-        } else {
-            options.truncate(true);
-        }
-        let file = options
-            .open(&partial)
-            .await
-            .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
-        // Network chunks can be tiny. Batch them to avoid a blocking file-I/O
-        // task (and Windows file-system overhead) for every received chunk.
-        let mut file = tokio::io::BufWriter::with_capacity(1 << 20, file);
-
-        let mut received = resume_from;
-        on_progress(received, total);
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| format!("downloading {name} failed: {error}"))?
-        {
-            file.write_all(&chunk)
-                .await
-                .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
-            received += chunk.len() as u64;
-            on_progress(received, total);
-        }
-        file.flush()
-            .await
-            .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
-    }
-
-    let actual = sha256_file(&partial).await?;
-    if actual != expected {
-        let _ = tokio::fs::remove_file(&partial).await;
-        return Err(format!(
-            "{name} did not match its published checksum (expected {expected}, got {actual}); the download was discarded"
-        ));
-    }
-    if dest.exists() {
-        let _ = tokio::fs::remove_file(dest).await;
-    }
-    tokio::fs::rename(&partial, dest)
-        .await
-        .map_err(|error| format!("cannot move {name} into place: {error}"))
-}
+pub(crate) use gary4local_core::download::partial_path;
+pub use gary4local_core::download::{download_verified, is_sha256, parse_sha256sums, sha256_file};
 
 /// Unpack every entry of `archive` under `into`, refusing any entry whose path
 /// would land outside it.
-pub fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(archive)
-        .map_err(|error| format!("cannot open {}: {error}", archive.display()))?;
-    let mut zip = zip::ZipArchive::new(file)
-        .map_err(|error| format!("{} is not a readable zip: {error}", archive.display()))?;
-    for index in 0..zip.len() {
-        let mut entry = zip
-            .by_index(index)
-            .map_err(|error| format!("cannot read {}: {error}", archive.display()))?;
-        let relative = entry.enclosed_name().ok_or_else(|| {
-            format!(
-                "{} contains an unsafe path: {}",
-                archive.display(),
-                entry.name()
-            )
-        })?;
-        let target = into.join(relative);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&target)
-                .map_err(|error| format!("cannot create {}: {error}", target.display()))?;
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-        }
-        let mut out = std::fs::File::create(&target)
-            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
-        std::io::copy(&mut entry, &mut out)
-            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
-    }
-    Ok(())
-}
+pub use gary4local_core::runtime::extract_zip;
 
 /// Move `staging` to `target`, keeping the old `target` until the new one is
 /// in place so a failed swap leaves a working install behind.
@@ -1360,6 +1170,8 @@ async fn install_inner(
 
         reporter.step(3, "Unpacking...").await;
         let stamp = NativeStamp {
+            core_sha256: Some(packages.core.sha256.clone()),
+            backend_sha256: Some(package.sha256.clone()),
             version: def.version.clone(),
             platform: platform.to_string(),
             backend: choice.backend.clone(),
@@ -1369,7 +1181,7 @@ async fn install_inner(
             runtimes,
         };
         let staging = stage(&core, &backend_archive, &stamp, &info.env_dir).await?;
-        let exe = staging.join(&def.executable);
+        let exe = staging.join(gary4local_core::runtime::executable_name(&def.executable));
 
         reporter
             .step(4, &format!("Checking the {} backend...", stamp.backend))
@@ -1465,6 +1277,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn headless_linux_gpu_discovery_ignores_bridges_and_non_display_devices() {
+        let root = std::env::temp_dir().join(format!("gary-pci-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        for (address, class, vendor) in [
+            ("000f:00:00.0", "0x060400", "0x10de"),
+            ("000f:01:00.0", "0x030000", "0x10de"),
+            ("0000:02:00.0", "0x030200", "0x1002"),
+            ("0000:03:00.0", "0x030000", "0x8086"),
+            ("0000:04:00.0", "0x020000", "0x8086"),
+        ] {
+            // Windows cannot create ':' in fixture filenames.
+            let device = root.join(address.replace(':', "_"));
+            std::fs::create_dir_all(&device).unwrap();
+            std::fs::write(device.join("class"), format!("{class}\n")).unwrap();
+            std::fs::write(device.join("vendor"), format!("{vendor}\n")).unwrap();
+        }
+        // Hot-unplugged or incomplete entries must not invent adapters.
+        std::fs::create_dir_all(root.join("vanished")).unwrap();
+        let adapters = linux_gpus(&root).unwrap();
+        assert_eq!(adapters.len(), 3);
+        assert_eq!(adapters.iter().map(|gpu| gpu.vendor).collect::<Vec<_>>(),
+            [GpuVendor::Amd, GpuVendor::Intel, GpuVendor::Nvidia]);
+        assert!(adapters[2].name.contains("000f_01_00.0"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extracted_native_servers_keep_executable_permissions() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("gary-zip-mode-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("core.zip");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        writer.start_file("server", zip::write::SimpleFileOptions::default().unix_permissions(0o755)).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        writer.start_file("data", zip::write::SimpleFileOptions::default().unix_permissions(0o644)).unwrap();
+        writer.write_all(b"data").unwrap();
+        writer.finish().unwrap();
+        let into = root.join("unpacked");
+        extract_zip(&archive, &into).unwrap();
+        assert_eq!(std::fs::metadata(into.join("server")).unwrap().permissions().mode() & 0o7777, 0o755);
+        assert_eq!(std::fs::metadata(into.join("data")).unwrap().permissions().mode() & 0o7777, 0o644);
+        assert!(std::process::Command::new(into.join("server")).status().unwrap().success());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn buffered_download_flushes_resumes_reuses_and_rejects_corruption() {
         use std::io::{Read, Write};
         let root = std::env::temp_dir().join(format!("gary-download-{}-{}", std::process::id(),
@@ -1555,9 +1417,10 @@ mod tests {
 
     #[test]
     fn a_native_launch_layers_storage_then_template_then_shared_runtimes() {
-        let root = Path::new(r"C:\profile");
+        let profile = std::env::temp_dir().join("gary-launch-profile");
+        let root = profile.as_path();
         let install = NativeInstall {
-            dir: PathBuf::from(r"C:\profile\services\sa3\native"),
+            dir: root.join("services").join("sa3").join("native"),
             backend: "vulkan".into(),
             runtimes: vec!["cudart-12.8".into()],
             version: Some("v0.1.3".into()),
@@ -1571,7 +1434,7 @@ mod tests {
             vec![("HF_HOME".into(), "storage".into()), ("SA3_DEVICE".into(), "storage".into())],
             &[("SA3_DEVICE".into(), "${NATIVE_BACKEND}".into())],
         );
-        assert_eq!(launch.program, install.dir.join("sa3-server.exe"));
+        assert_eq!(launch.program, install.dir.join(gary4local_core::runtime::executable_name("sa3-server.exe")));
         assert_eq!(launch.dir, install.dir);
         let command = launch.std_command();
         let env: HashMap<_, _> = command
@@ -1832,6 +1695,8 @@ mod tests {
                     writer.finish().unwrap();
                 }
                 let stamp = NativeStamp {
+                    core_sha256: None,
+                    backend_sha256: None,
                     version: "candidate".to_string(),
                     platform: current_platform().to_string(),
                     backend: "cuda".to_string(),
@@ -1940,6 +1805,8 @@ mod tests {
         assert!(installed("stamp-test", &native, "yue2-server.exe").is_none());
 
         let stamp = NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "v0.2.0".to_string(),
             platform: "windows-x64".to_string(),
             backend: "cuda".to_string(),
@@ -1955,7 +1822,7 @@ mod tests {
         // A stamp without the executable is a broken install, not an install.
         assert!(installed("stamp-test", &native, "yue2-server.exe").is_none());
 
-        std::fs::write(native.join("yue2-server.exe"), b"").unwrap();
+        std::fs::write(native.join(gary4local_core::runtime::executable_name("yue2-server.exe")), b"").unwrap();
         let install = installed("stamp-test", &native, "yue2-server.exe").unwrap();
         assert_eq!(install.backend, "cuda");
         assert_eq!(install.version.as_deref(), Some("v0.2.0"));

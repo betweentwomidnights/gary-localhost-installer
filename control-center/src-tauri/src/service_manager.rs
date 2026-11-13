@@ -2,7 +2,6 @@ use crate::manifest::{HealthCheck, MigrationDef, NativeDef, NativePackage, Servi
 use crate::native_runtime::{self, NativeInstall, NativeLaunch};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Weak};
@@ -64,6 +63,12 @@ struct RunningService {
     last_health_check_at: Option<Instant>,
     /// A migrated service's client adapter, stopped when this is dropped.
     _adapter: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl Drop for RunningService {
+    fn drop(&mut self) {
+        crate::workload_job::stop_std_child(&mut self.process, Duration::ZERO);
+    }
 }
 
 pub struct HealthTarget {
@@ -444,7 +449,8 @@ impl ServiceManager {
     pub fn native_runtime_current(&self, service_id: &str) -> bool {
         self.find_service(service_id).is_some_and(|svc| {
             match (self.native_install(svc), svc.native.as_ref()) {
-                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str()),
+                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str())
+                    && native_runtime::installed_packages_match(&self.native_dir(svc), native),
                 _ => false,
             }
         })
@@ -828,7 +834,8 @@ impl ServiceManager {
                     (Some(install), Some(native)) => install
                         .version
                         .as_ref()
-                        .is_some_and(|version| version != &native.version),
+                        .is_some_and(|version| version != &native.version
+                            || !native_runtime::installed_packages_match(&self.native_dir(svc), native)),
                     _ => false,
                 };
 
@@ -1196,14 +1203,7 @@ impl ServiceManager {
     pub fn stop(&mut self, service_id: &str) -> Result<(), String> {
         if let Some(mut running) = self.running.remove(service_id) {
             log::info!("Stopping {}", service_id);
-            // Use taskkill /T to kill the entire process tree on Windows.
-            // This ensures subprocesses (e.g. carey_wrapper -> api_server.py) are also killed.
-            let pid = running.process.id();
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .output();
-            let _ = running.process.wait();
+            crate::workload_job::stop_std_child(&mut running.process, Duration::from_secs(3));
             self.errors.remove(service_id);
             Ok(())
         } else {
@@ -1408,7 +1408,8 @@ impl ServiceManager {
             seen.push(dir);
             let behind = match self.native_install(svc) {
                 None => true,
-                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version),
+                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version
+                            || !native_runtime::installed_packages_match(&self.native_dir(svc), native)),
             };
             if behind { outdated.push(svc.id.clone()); }
         }
@@ -1564,6 +1565,26 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+
+    fn exited_process() -> Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/c", "exit /b 0"]).creation_flags(0x08000000);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let mut child = command.spawn().unwrap();
+        child.wait().unwrap();
+        child
+    }
 
     #[test]
     fn recreated_python_files_reopen_migration_without_resetting_native_selection() {
@@ -1816,8 +1837,15 @@ mod tests {
                 svc.native = Some(native.clone());
                 svc.runtime = ServiceRuntime::Native;
             }
+            // These tests exercise reservation semantics, without downloading
+            // or running binaries. Supply the fixture package metadata for the
+            // test host too, so the fixture is independent of host packages.
+            if let Some(native) = svc.native.as_mut() {
+                let packages = native.platforms["windows-x64"].clone();
+                native.platforms.insert(native_runtime::current_platform().into(), packages);
+            }
         }
-        let mut manager = ServiceManager::new(manifest.services, PathBuf::from("C:/test-runtime"));
+        let mut manager = ServiceManager::new(manifest.services, std::env::temp_dir().join("gary-test-runtime"));
         manager.set_native_runtimes(manifest.native_runtimes);
         manager
     }
@@ -1978,12 +2006,7 @@ mod tests {
     fn a_service_sharing_the_runtime_keeps_running_while_another_changes_its_models() {
         let mut manager = shared_native_manager();
         let running = |manager: &mut ServiceManager, id: &str| {
-            let mut process = Command::new("cmd.exe")
-                .args(["/c", "exit /b 0"])
-                .creation_flags(0x08000000)
-                .spawn()
-                .unwrap();
-            process.wait().unwrap();
+            let process = exited_process();
             manager.running.insert(
                 id.into(),
                 RunningService {
@@ -2007,12 +2030,7 @@ mod tests {
     #[test]
     fn shared_cuda_replacement_waits_for_running_native_consumers() {
         let mut manager = shared_native_manager();
-        let mut process = Command::new("cmd.exe")
-            .args(["/c", "exit /b 0"])
-            .creation_flags(0x08000000)
-            .spawn()
-            .unwrap();
-        process.wait().unwrap();
+        let process = exited_process();
         // Keep a process entry until the regular health poll reaps it.
         manager.running.insert(
             "yuey".into(),
@@ -2062,8 +2080,10 @@ mod tests {
         let native = svc.native.as_ref().unwrap();
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
-        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
             backend: "cuda".into(),
@@ -2075,7 +2095,7 @@ mod tests {
         let install = manager.native_install(svc).unwrap();
 
         let launch = manager.native_launch(svc, &install, None).unwrap();
-        assert_eq!(launch.program, native_dir.join("yue2-server.exe"));
+        assert_eq!(launch.program, native_dir.join(gary4local_core::runtime::executable_name("yue2-server.exe")));
         assert_eq!(launch.dir, native_dir);
         assert_eq!(launch.args, native.args, "the manifest's arguments, untouched");
         let command = launch.std_command();
@@ -2132,8 +2152,10 @@ mod tests {
         let native = svc.native.clone().unwrap();
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
-        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = |version: &str| native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: version.into(),
             platform: native_runtime::current_platform().into(),
             backend: "cuda".into(),
@@ -2149,11 +2171,11 @@ mod tests {
         let native = svc.native.as_ref().unwrap();
         let dir = manager.native_dir(svc);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
         for id in ["stable-audio", "sa3", "foundation"] {
             let executable = &manager.find_service(id).unwrap().native.as_ref().unwrap().executable;
-            std::fs::write(dir.join(executable), b"fixture").unwrap();
+            std::fs::write(dir.join(gary4local_core::runtime::executable_name(executable)), b"fixture").unwrap();
             let info = manager.get_service_info().into_iter().find(|info| info.id == id).unwrap();
             assert!(info.native_runtime_installed, "{id} shares the installed runtime");
             assert!(!info.migration_complete && manager.selection(id).is_none());
@@ -2179,11 +2201,13 @@ mod tests {
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
         std::fs::write(
-            native_dir.join(&svc.native.as_ref().unwrap().executable),
+            native_dir.join(gary4local_core::runtime::executable_name(&svc.native.as_ref().unwrap().executable)),
             b"fixture",
         )
         .unwrap();
         let stamp = native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
             backend: "vulkan".into(),
@@ -2205,6 +2229,89 @@ mod tests {
             .is_ok());
         assert!(manager.get_native_build_info("sa3").is_err());
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn same_engine_version_with_new_package_hash_is_an_update() {
+        let mut manager = shared_native_manager();
+        let root = std::env::temp_dir().join(format!(
+            "gary-preview-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        manager.repo_root = root.clone();
+        let svc = manager.find_service("yuey").unwrap();
+        let native = svc.native.as_ref().unwrap().clone();
+        let directory = manager.native_dir(svc);
+        let packages = &native.platforms[native_runtime::current_platform()];
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join(gary4local_core::runtime::executable_name(
+                &native.executable,
+            )),
+            b"fixture",
+        )
+        .unwrap();
+        let mut stamp = native_runtime::NativeStamp {
+            version: native.version.clone(),
+            platform: native_runtime::current_platform().into(),
+            backend: "vulkan".into(),
+            requested_backend: "vulkan".into(),
+            fallback_reason: None,
+            runtimes: vec![],
+            core_sha256: Some(packages.core.sha256.clone()),
+            backend_sha256: Some(packages.backends["vulkan"].sha256.clone()),
+        };
+        let write = |stamp: &native_runtime::NativeStamp| {
+            std::fs::write(
+                directory.join("gary-native.json"),
+                serde_json::to_vec(stamp).unwrap(),
+            )
+            .unwrap()
+        };
+        write(&stamp);
+        assert!(manager.native_runtime_current("yuey"));
+        manager
+            .services
+            .iter_mut()
+            .find(|s| s.id == "yuey")
+            .unwrap()
+            .native
+            .as_mut()
+            .unwrap()
+            .platforms
+            .get_mut(native_runtime::current_platform())
+            .unwrap()
+            .core
+            .sha256 = "0".repeat(64);
+        assert!(!manager.native_runtime_current("yuey"));
+        assert!(
+            manager
+                .get_service_info()
+                .iter()
+                .find(|s| s.id == "yuey")
+                .unwrap()
+                .native_update_available
+        );
+        assert!(manager
+            .outdated_native_runtimes()
+            .contains(&"yuey".to_string()));
+        stamp.backend_sha256 = None;
+        write(&stamp);
+        assert!(
+            !manager.native_runtime_current("yuey"),
+            "Partial provenance is not a legacy stamp"
+        );
+        stamp.core_sha256 = None;
+        write(&stamp);
+        assert!(
+            manager.native_runtime_current("yuey"),
+            "Preserve existing legacy installations"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2321,10 +2428,10 @@ mod tests {
             .runtime = ServiceRuntime::Python;
         let python = manager.env_dir_for("sa3").unwrap();
         let candidate = manager.get_native_build_info("sa3").unwrap();
-        assert_eq!(python, PathBuf::from("C:/test-runtime/services/sa3/env"));
+        assert_eq!(python, manager.repo_root.join("services/sa3/env"));
         assert_eq!(
             candidate.env_dir,
-            PathBuf::from("C:/test-runtime/services/sa3/native")
+            manager.repo_root.join("services/sa3/native")
         );
         assert_eq!(candidate.runtime, ServiceRuntime::Native);
         assert_eq!(manager.env_dir_for("sa3").unwrap(), python);
