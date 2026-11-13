@@ -449,7 +449,8 @@ impl ServiceManager {
     pub fn native_runtime_current(&self, service_id: &str) -> bool {
         self.find_service(service_id).is_some_and(|svc| {
             match (self.native_install(svc), svc.native.as_ref()) {
-                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str()),
+                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str())
+                    && native_runtime::installed_packages_match(&self.native_dir(svc), native),
                 _ => false,
             }
         })
@@ -833,7 +834,8 @@ impl ServiceManager {
                     (Some(install), Some(native)) => install
                         .version
                         .as_ref()
-                        .is_some_and(|version| version != &native.version),
+                        .is_some_and(|version| version != &native.version
+                            || !native_runtime::installed_packages_match(&self.native_dir(svc), native)),
                     _ => false,
                 };
 
@@ -1406,7 +1408,8 @@ impl ServiceManager {
             seen.push(dir);
             let behind = match self.native_install(svc) {
                 None => true,
-                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version),
+                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version
+                            || !native_runtime::installed_packages_match(&self.native_dir(svc), native)),
             };
             if behind { outdated.push(svc.id.clone()); }
         }
@@ -1836,7 +1839,7 @@ mod tests {
             }
             // These tests exercise reservation semantics, without downloading
             // or running binaries. Supply the fixture package metadata for the
-            // test host too; the published manifest is still Windows-only.
+            // test host too, so the fixture is independent of host packages.
             if let Some(native) = svc.native.as_mut() {
                 let packages = native.platforms["windows-x64"].clone();
                 native.platforms.insert(native_runtime::current_platform().into(), packages);
@@ -2079,6 +2082,8 @@ mod tests {
         std::fs::create_dir_all(&native_dir).unwrap();
         std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
             backend: "cuda".into(),
@@ -2149,6 +2154,8 @@ mod tests {
         std::fs::create_dir_all(&native_dir).unwrap();
         std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = |version: &str| native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: version.into(),
             platform: native_runtime::current_platform().into(),
             backend: "cuda".into(),
@@ -2199,6 +2206,8 @@ mod tests {
         )
         .unwrap();
         let stamp = native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
             backend: "vulkan".into(),
@@ -2220,6 +2229,89 @@ mod tests {
             .is_ok());
         assert!(manager.get_native_build_info("sa3").is_err());
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn same_engine_version_with_new_package_hash_is_an_update() {
+        let mut manager = shared_native_manager();
+        let root = std::env::temp_dir().join(format!(
+            "gary-preview-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        manager.repo_root = root.clone();
+        let svc = manager.find_service("yuey").unwrap();
+        let native = svc.native.as_ref().unwrap().clone();
+        let directory = manager.native_dir(svc);
+        let packages = &native.platforms[native_runtime::current_platform()];
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join(gary4local_core::runtime::executable_name(
+                &native.executable,
+            )),
+            b"fixture",
+        )
+        .unwrap();
+        let mut stamp = native_runtime::NativeStamp {
+            version: native.version.clone(),
+            platform: native_runtime::current_platform().into(),
+            backend: "vulkan".into(),
+            requested_backend: "vulkan".into(),
+            fallback_reason: None,
+            runtimes: vec![],
+            core_sha256: Some(packages.core.sha256.clone()),
+            backend_sha256: Some(packages.backends["vulkan"].sha256.clone()),
+        };
+        let write = |stamp: &native_runtime::NativeStamp| {
+            std::fs::write(
+                directory.join("gary-native.json"),
+                serde_json::to_vec(stamp).unwrap(),
+            )
+            .unwrap()
+        };
+        write(&stamp);
+        assert!(manager.native_runtime_current("yuey"));
+        manager
+            .services
+            .iter_mut()
+            .find(|s| s.id == "yuey")
+            .unwrap()
+            .native
+            .as_mut()
+            .unwrap()
+            .platforms
+            .get_mut(native_runtime::current_platform())
+            .unwrap()
+            .core
+            .sha256 = "0".repeat(64);
+        assert!(!manager.native_runtime_current("yuey"));
+        assert!(
+            manager
+                .get_service_info()
+                .iter()
+                .find(|s| s.id == "yuey")
+                .unwrap()
+                .native_update_available
+        );
+        assert!(manager
+            .outdated_native_runtimes()
+            .contains(&"yuey".to_string()));
+        stamp.backend_sha256 = None;
+        write(&stamp);
+        assert!(
+            !manager.native_runtime_current("yuey"),
+            "Partial provenance is not a legacy stamp"
+        );
+        stamp.core_sha256 = None;
+        write(&stamp);
+        assert!(
+            manager.native_runtime_current("yuey"),
+            "Preserve existing legacy installations"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

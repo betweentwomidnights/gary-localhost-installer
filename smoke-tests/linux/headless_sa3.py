@@ -1,6 +1,6 @@
 """Exercise the GUI-free SA3 host on Spark using existing, read-only models.
 
-Usage: python3 headless_sa3.py /absolute/path/to/gary4local-server cuda|vulkan
+Usage: python3 headless_sa3.py /absolute/path/to/gary4local-server cuda|vulkan [case] [--manifest]
 Artifacts and all owned processes stay under gary4local-packaging/headless.
 """
 import array
@@ -24,7 +24,11 @@ ROOT = Path('/home/kev/gary4local-packaging')
 binary = Path(sys.argv[1]).resolve(strict=True)
 backend = sys.argv[2]
 assert backend in {'cuda', 'vulkan'}
-suffix='-'+sys.argv[3] if len(sys.argv)>3 else ''
+use_manifest = '--manifest' in sys.argv[3:]
+cases = [arg for arg in sys.argv[3:] if arg != '--manifest']
+assert len(cases) <= 1
+assert not use_manifest or backend == 'vulkan'
+suffix='-'+cases[0] if cases else ''
 assert all(c.isalnum() or c=='-' for c in suffix)
 work = ROOT/'headless'/('sa3-'+backend+suffix)
 work.mkdir(exist_ok=False)
@@ -51,10 +55,12 @@ config = {'runtime_root': str(runtime_root), 'models_dir': str(models),
           'public_port': public,
           'model': 'medium', 'encoding': 'f16', 't5_encoding': 'f16', 'ae_encoding': 'f32', 'threads': 4,
           'defaults': {}}
+if use_manifest:
+    del config['core']; del config['backend']
 config_path = work/'config.json'
 config_path.write_text(json.dumps(config, indent=2)+'\n')
 def command(action, check=True, path=config_path):
-    p = subprocess.run([str(binary), action, '--config', str(path)], capture_output=True, text=True, timeout=60)
+    p = subprocess.run([str(binary), action, '--config', str(path)], capture_output=True, text=True, timeout=180)
     if check: assert p.returncode==0, (action, p.stderr)
     return p
 def http(route, body=None, timeout=15):
@@ -107,13 +113,44 @@ def stopped(expected=0):
 results={}
 try:
     # A bad checksum must fail before producing an installed runtime.
-    bad=dict(config); bad['core']=dict(config['core'],sha256='0'*64)
+    bad=dict(config, core=dict(package('core'),sha256='0'*64), backend=package(backend))
     bad_path=work/'bad-checksum.json'; bad_path.write_text(json.dumps(bad))
     rejected=command('install',check=False,path=bad_path)
     assert rejected.returncode!=0 and 'SHA256 mismatch' in rejected.stderr
     results['bad_checksum_rejected']=True
     results['install']=json.loads(command('install').stdout)
     results['idempotent_install']=json.loads(command('install').stdout)
+    if use_manifest:
+        for part in ('core', 'vulkan'):
+            expected=package(part)['sha256']
+            cached=runtime_root/'downloads'/(expected+'.zip')
+            assert hashlib.sha256(cached.read_bytes()).hexdigest()==expected
+        results['published_manifest_downloads_verified']=True
+        # A cached install succeeds with a valid HTTPS URL that cannot resolve.
+        manifest=json.loads((ROOT/'headless/distribution-source/services/manifests/services.json').read_text())
+        platforms=manifest['nativeBundles']['sa3']['platforms']['linux-arm64']
+        platforms['core']['url']='https://cached.invalid/core.zip'
+        platforms['backends']['vulkan']['url']='https://cached.invalid/vulkan.zip'
+        override=work/'cached-manifest.json'; override.write_text(json.dumps(manifest))
+        custom=dict(config,manifest=str(override))
+        custom_path=work/'override.json';custom_path.write_text(json.dumps(custom))
+        assert json.loads(command('install',path=custom_path).stdout)==results['install']
+        results['verified_cache_needs_no_network']=True
+        # A bad published checksum fails without replacing the installed runtime.
+        platforms['core']['url']=json.loads((ROOT/'headless/distribution-source/services/manifests/services.json').read_text())['nativeBundles']['sa3']['platforms']['linux-arm64']['core']['url']
+        platforms['core']['sha256']='0'*64
+        override.write_text(json.dumps(manifest))
+        rejected=command('install',check=False,path=custom_path)
+        assert rejected.returncode!=0 and 'download was discarded' in rejected.stderr,rejected.stderr
+        assert not (runtime_root/'downloads'/('0'*64+'.zip.partial')).exists()
+        platforms['core']['sha256']=package('core')['sha256']
+        manifest['nativeBundles']['sa3']['version']='v0.0.0-invalid'
+        override.write_text(json.dumps(manifest))
+        rejected=command('install',check=False,path=custom_path)
+        assert rejected.returncode!=0 and 'metadata' in rejected.stderr,rejected.stderr
+        assert json.loads(command('install').stdout)==results['install']
+        assert len(list((runtime_root/'runtimes').iterdir()))==1
+        results['bad_manifest_candidates_preserve_installed_runtime']=True
     bad_model=dict(config,ae_encoding='f16')
     bad_model_path=work/'missing-component.json'; bad_model_path.write_text(json.dumps(bad_model))
     rejected=command('serve',check=False,path=bad_model_path)

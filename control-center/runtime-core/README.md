@@ -8,9 +8,9 @@ the adapter's registry interface and retain their existing implementations.
 
 This first host manages one explicitly configured SA3 service. Its local JSON
 configuration is separate from desktop profiles and migration records. It
-installs existing core/backend ZIPs with SHA256 verification, checks a real GPU,
+installs pinned core/backend ZIPs with SHA256 verification, checks a real GPU,
 loads the selected model, and exposes the existing Gary client contract through
-the shared Rust adapter. It does not download models or publish release assets.
+the shared Rust adapter. It does not download models.
 
 ## Build and run
 
@@ -20,9 +20,22 @@ Use Rust 1.89 or newer (1.95 is tested), including a native C linker:
 cargo build --locked --release --manifest-path control-center/runtime-core/Cargo.toml
 ```
 
-Copy `headless.example.json` to a file of your own. Set absolute archive/model
-paths, the hashes from the packages' verified `SHA256SUMS`, and an unused client port.
-Use a matching core and backend from the same engine/build. Model component
+Build from the repository layout: the core embeds the canonical
+`services/manifests/services.json` at compile time.
+
+Copy `headless.example.json` to a file of your own. Set absolute runtime/model
+paths and an unused client port. Omitting `core` and `backend` selects the
+packages pinned in that manifest for the current architecture and requested GPU.
+Linux previews provide Vulkan on x64 and ARM64. `install` explicitly downloads
+the two HTTPS archives into the owned `downloads/` cache and verifies their
+SHA256 values before extraction. Repeated installs reuse verified cached bytes.
+`serve`, `status`, and `stop` do not download anything.
+
+For development, `headless.local.example.json` shows the local archive form.
+Set both paths and full verified SHA256 values; use a matching core and backend
+from the same engine/build. Alternatively, `manifest` can name an absolute local
+manifest file instead of the bundled pins; it cannot accompany local archives.
+Model component
 encodings must match weights already present: Spark's tested medium model uses
 F16 DiT/T5 and F32 autoencoder. The sample paths are placeholders, not downloads.
 
@@ -52,8 +65,10 @@ by this first CLI.
 metadata for the current architecture and a real CUDA/Vulkan device from
 `--props`; CPU fallback is refused. It stages and probes before placing an
 immutable package-hash directory in `runtimes/`. A failed candidate leaves older
-directories intact. Portable GPU runtime distribution and manifest-based
-downloads are separate follow-up work. CUDA smoke packages built for GB10 need
+directories intact. The installed identity includes both archive hashes, so a
+new preview of the same engine version has a separate directory. Headless
+packages currently require system GPU libraries rather than shared runtime
+packs. CUDA smoke packages built for GB10 need
 compatible system CUDA user libraries and are not portable CUDA releases.
 
 `serve` initializes the configured model before reporting that it is running.

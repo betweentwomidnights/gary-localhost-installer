@@ -8,12 +8,38 @@ sa3.cpp, audiocraft.cpp and acestep.cpp follow the same pattern as they come
 over. when a service needs something this doesn't cover, change this document
 first, then the repos.
 
-Yuey pins published v0.2.3. SA3 migration prepares the shared published v0.1.3
-bundle, validates native generation/training and activates it per storage
-profile before cleanup. Both projects use ggml 4ad3b30b and share the existing
-CUDA 12.8 runtime. Foundation-1, Jerry, Gary and Carey still use Python.
+The canonical versions, platform URLs and checksums live in
+`services/manifests/services.json`. SA3 and Audiocraft share a stable-audio
+bundle; Yuey and ACE-Step have their own native packages. Desktop migration
+validates and activates a native runtime per storage profile before cleanup.
 
 ## who owns what
+
+### Experimental Linux distribution
+
+Linux Vulkan previews use a separate immutable release tag,
+`linux-vX.Y.Z-preview.N`, while the engine reports its normal `vX.Y.Z` version.
+The preview tag points at the exact source commit of a successful upstream
+Linux CI run. Promote those verified core/Vulkan ZIP bytes for native x64 and
+ARM64; do not rebuild them during publication. Each preview is a prerelease,
+never the latest release, with per-platform SHA256SUMS and a provenance index.
+Existing Windows/macOS releases and their assets retain their identities.
+
+The publication workflow must verify repository/run/source identity, completed
+packaging jobs, GitHub artifact digests, inner ZIP checksums and BUILD-INFO
+before creating a release. Publish through the repository's GITHUB_TOKEN and
+refuse mismatched existing tags/releases instead of overwriting assets. A
+matching interrupted draft can resume. A prepare-only
+mode produces the concrete release plan before publication.
+
+`services/manifests/services.json` pins the versioned Linux URLs and SHA256
+values alongside other platforms. A Linux install's identity includes its core
+and backend hashes, so a later preview of the same engine version is an update.
+Legacy Windows stamps remain compatible. The shared headless installer reads
+the same manifest, verifies downloads and stages/probes before activation.
+Local-archive configs remain available for development. Linux CUDA smoke packs
+targeting GB10 are not published as portable CUDA packages. CPU generation is
+not a distribution or validation target; CPU libraries support GPU pipelines.
 
 - **each service repo** builds and publishes its own packages from a GitHub
   release: `ci/package-windows.ps1` does the building and

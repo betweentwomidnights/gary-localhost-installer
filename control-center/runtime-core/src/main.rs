@@ -15,7 +15,7 @@ async fn run() -> Result<(), String> {
         return Ok(());
     }
     if args.is_empty() || args[0] == "--help" {
-        println!("gary4local-server <install|serve|status|stop> --config FILE\n\nExperimental SA3 supervisor. Uses verified local core/backend ZIPs.\nAll listeners bind to 127.0.0.1. No models are downloaded.");
+        println!("gary4local-server <install|serve|status|stop> --config FILE\n\nExperimental SA3 supervisor. Installs pinned manifest packages or verified local ZIPs.\nAll listeners bind to 127.0.0.1. No models are downloaded.");
         return Ok(());
     }
     if args.len() != 3 || args[1] != "--config" {

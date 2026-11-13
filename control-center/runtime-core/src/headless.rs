@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Package {
     pub path: PathBuf,
     pub sha256: String,
+    #[serde(skip)]
+    url: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -25,8 +27,15 @@ pub struct Config {
     #[serde(default = "default_root")]
     pub runtime_root: PathBuf,
     pub models_dir: PathBuf,
+    #[serde(default)]
     pub core: Package,
+    #[serde(default)]
     pub backend: Package,
+    /// Omit for the manifest pinned in this build. Local archive pairs override it.
+    #[serde(default)]
+    pub manifest: Option<PathBuf>,
+    #[serde(skip)]
+    expected_version: Option<String>,
     /// Exact GPU name returned by --props, e.g. CUDA0 or Vulkan0.
     pub device: String,
     pub public_port: u16,
@@ -64,10 +73,73 @@ fn default_root() -> PathBuf {
 
 impl Config {
     pub fn read(path: &Path) -> Result<Self, String> {
-        let config: Self = serde_json::from_slice(&std::fs::read(path).map_err(err)?)
+        let mut config: Self = serde_json::from_slice(&std::fs::read(path).map_err(err)?)
             .map_err(|e| format!("Invalid headless config: {e}"))?;
+        config.resolve_packages()?;
         config.validate()?;
         Ok(config)
+    }
+    fn resolve_packages(&mut self) -> Result<(), String> {
+        let local =
+            !self.core.path.as_os_str().is_empty() || !self.backend.path.as_os_str().is_empty();
+        if local {
+            if self.manifest.is_some() {
+                return Err("Choose a manifest or a local archive pair".into());
+            }
+            return Ok(());
+        }
+        let manifest = if let Some(path) = &self.manifest {
+            if !path.is_absolute() {
+                return Err("Use an absolute manifest path".into());
+            }
+            crate::manifest::load_manifest(path)?
+        } else {
+            let mut manifest: crate::manifest::Manifest =
+                serde_json::from_str(crate::manifest::BUNDLED_JSON).map_err(err)?;
+            manifest.resolve_native_bundles()?;
+            manifest
+        };
+        let native = manifest
+            .services
+            .iter()
+            .find(|s| s.id == "sa3")
+            .and_then(|s| s.native.as_ref())
+            .ok_or("The manifest has no native SA3 service")?;
+        let platform = runtime::current_platform();
+        let packages = native
+            .platforms
+            .get(platform)
+            .ok_or_else(|| format!("No published SA3 package for {platform}"))?;
+        let backend = packages.backends.get(self.backend_name()).ok_or_else(|| {
+            format!(
+                "No published {} package for {platform}; Linux previews currently offer Vulkan",
+                self.backend_name()
+            )
+        })?;
+        let resolve = |package: &crate::manifest::NativePackage| -> Result<Package, String> {
+            if !crate::download::is_sha256(&package.sha256) {
+                return Err("Manifest packages need a full SHA256".into());
+            }
+            if !package.requires.is_empty() {
+                return Err("This headless installer requires system GPU libraries; shared runtime packs are not supported yet".into());
+            }
+            let url = reqwest::Url::parse(&package.url).map_err(err)?;
+            if url.scheme() != "https" {
+                return Err("Manifest runtime downloads require HTTPS".into());
+            }
+            Ok(Package {
+                path: self
+                    .runtime_root
+                    .join("downloads")
+                    .join(format!("{}.zip", package.sha256.to_ascii_lowercase())),
+                sha256: package.sha256.clone(),
+                url: Some(package.url.clone()),
+            })
+        };
+        self.core = resolve(&packages.core)?;
+        self.backend = resolve(backend)?;
+        self.expected_version = Some(native.version.clone());
+        Ok(())
     }
     fn validate(&self) -> Result<(), String> {
         for path in [
@@ -209,10 +281,12 @@ mod tests {
             core: Package {
                 path: absolute.join("core.zip"),
                 sha256: "a".repeat(64),
+                url: None,
             },
             backend: Package {
                 path: absolute.join("vulkan.zip"),
                 sha256: "b".repeat(64),
+                url: None,
             },
             device: "Vulkan0".into(),
             public_port: 28101,
@@ -222,6 +296,8 @@ mod tests {
             ae_encoding: f16(),
             threads: 4,
             defaults: Map::new(),
+            manifest: None,
+            expected_version: None,
         }
     }
     #[test]
@@ -258,13 +334,52 @@ mod tests {
         std::fs::write(&path, b"corrupt").unwrap();
         assert!(verify_archive(&Package {
             path,
-            sha256: "a".repeat(64)
+            sha256: "a".repeat(64),
+            url: None,
         })
         .is_err());
         let mut config = config(root.clone());
         config.validate().unwrap();
         config.device = "CPU".into();
         assert!(config.validate().is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_resolution_selects_only_pinned_gpu_packages() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("gary-manifest-{}", serial()));
+        std::fs::create_dir(&root).unwrap();
+        let manifest = root.join("services.json");
+        let mut body = json!({"services":[{"id":"sa3","displayName":"SA3","port":8005,"workingDir":"services/sa3",
+            "native":{"bundle":"sa3","executable":"sa3-server.exe"}}],
+            "nativeBundles":{"sa3":{"version":"v1.2.3","platforms":{runtime::current_platform():{
+                "core":{"url":"https://example.invalid/core.zip","sha256":"a".repeat(64)},
+                "backends":{"vulkan":{"url":"https://example.invalid/vulkan.zip","sha256":"b".repeat(64)}},"prefer":["vulkan"]}}}}});
+        std::fs::write(&manifest, body.to_string()).unwrap();
+        let mut cfg = config(root.join("data"));
+        cfg.core = Package::default();
+        cfg.backend = Package::default();
+        cfg.manifest = Some(manifest.clone());
+        let mut resolved = cfg.clone();
+        resolved.resolve_packages().unwrap();
+        resolved.validate().unwrap();
+        assert_eq!(resolved.expected_version.as_deref(), Some("v1.2.3"));
+        assert_eq!(resolved.core.sha256, "a".repeat(64));
+        assert_eq!(
+            resolved.backend.url.as_deref(),
+            Some("https://example.invalid/vulkan.zip")
+        );
+        assert!(resolved.core.path.starts_with(root.join("data/downloads")));
+        let mut cuda = cfg.clone();
+        cuda.device = "CUDA0".into();
+        assert!(cuda.resolve_packages().is_err());
+        body["nativeBundles"]["sa3"]["platforms"][runtime::current_platform()]["core"]["sha256"] =
+            json!("");
+        std::fs::write(&manifest, body.to_string()).unwrap();
+        assert!(cfg.resolve_packages().is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -338,6 +453,14 @@ struct Lease {
     _file: File,
     session: String,
 }
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // A concurrent fork can briefly inherit this open file description
+        // before close-on-exec. Explicit unlock releases ownership immediately
+        // rather than waiting for every inherited descriptor to close.
+        let _ = self._file.unlock();
+    }
+}
 fn lock(config: &Config) -> Result<Lease, String> {
     let mut lock = OpenOptions::new()
         .read(true)
@@ -382,7 +505,10 @@ fn active(config: &Config) -> Result<bool, String> {
         .open(path)
         .map_err(err)?;
     match lock.try_lock() {
-        Ok(()) => Ok(false),
+        Ok(()) => {
+            lock.unlock().map_err(err)?;
+            Ok(false)
+        }
         Err(std::fs::TryLockError::WouldBlock) => Ok(true),
         Err(error) => Err(err(error)),
     }
@@ -489,21 +615,41 @@ fn metadata(config: &Config, dir: &Path) -> Result<Value, String> {
         || info["tests_run"] != true
         || info["commit"].as_str().is_none_or(str::is_empty)
         || info["ggml_commit"].as_str().is_none_or(str::is_empty)
+        || config
+            .expected_version
+            .as_ref()
+            .is_some_and(|v| info["version"] != v.as_str())
     {
         return Err(
             "Package metadata does not identify a clean, tested SA3 build for this platform".into(),
         );
     }
-    let _ = config;
     Ok(info)
+}
+
+async fn acquire(package: &Package) -> Result<(), String> {
+    if let Some(url) = &package.url {
+        eprintln!("Downloading verified runtime package...");
+        let client = reqwest::Client::builder().build().map_err(err)?;
+        crate::download::download_verified(
+            &client,
+            url,
+            reqwest::header::HeaderMap::new(),
+            &package.sha256,
+            &package.path,
+            &mut |_, _| {},
+        )
+        .await?;
+    }
+    verify_archive(package)
 }
 
 pub async fn install(config: &Config) -> Result<(), String> {
     config.validate()?;
     owned_root(config)?;
     let _lock = lock(config)?;
-    verify_archive(&config.core)?;
-    verify_archive(&config.backend)?;
+    acquire(&config.core).await?;
+    acquire(&config.backend).await?;
     let target = config.installed_dir();
     if target.exists() {
         let stamp: Value = serde_json::from_slice(

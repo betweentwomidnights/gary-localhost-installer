@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir dist
           install -m 755 target/release/gary4local-server dist/gary4local-server
-          cp dependencies.txt README.md headless.example.json gary4local-server.service.example dist/
+          cp dependencies.txt README.md headless.example.json headless.local.example.json gary4local-server.service.example dist/
           rustc --version > dist/TOOLCHAIN.txt
           ldd target/release/gary4local-server > dist/ELF-DEPENDENCIES.txt
           printf '{"service":"gary4local-server","version":"0.1.0","commit":"%s","platform":"%s","experimental":true}\n' "$GITHUB_SHA" "$PLATFORM" > dist/BUILD-INFO.json
@@ -81,6 +81,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib manifest::tests::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +1.95.0 check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   desktop-linux:
@@ -101,4 +103,5 @@ jobs:
         run: |
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_runtime::tests::
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib manifest::tests::
           cargo +1.95.0 check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets

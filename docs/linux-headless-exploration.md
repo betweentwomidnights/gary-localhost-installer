@@ -10,14 +10,13 @@ passed 52 CTests, extracted-package controls and real GB10 GPU probes, then
 generated two-second audio through the native CLI using existing weights.
 The work is contained in `/home/kev/gary4local-packaging`, with a storage ledger
 and cleanup inventory; its initial footprint is about 1.3 GiB. These are engine
-package checks. This application's Linux installation, compatibility adapters,
-and headless supervisor still need integration work, and no Linux runtime URLs
-have been pinned here. CPU generation is not a target; CPU libraries/tests
+package checks. Manifest installation and the headless supervisor now have
+integration evidence below. CPU generation is not a target; CPU libraries/tests
 support the CUDA/Vulkan runtime paths.
 
 ### Sibling engine packages
 
-The same upstream contract is now proposed in three draft PRs. Each preserves
+The same upstream contract is merged in three sibling repositories. Each preserves
 the pinned ggml revision and packages its own tools, libraries, licenses and
 data; ACE-Step retains `GGML_MAX_NAME=128` throughout. Never substitute another
 engine's backend libraries.
@@ -58,8 +57,62 @@ The PR-triggered regression/release checks run separately from the successful
 Linux-only dispatches above. All three sibling packaging PRs are now merged
 (Yuey `4a5d8b0`, Audiocraft `c45f62b`, ACE-Step `5162473`). ACE-Step's cancelled
 macOS checks never acquired hosted runners; its release packages and CUDA
-compile passed. No tag or release has been published, and Linux publishing
-remains disabled. The desktop runtime manifest still requires Linux assets.
+compile passed. The subsequent preview promotion below publishes those exact
+validated Vulkan artifacts without rebuilding them.
+
+### Published previews and manifest installation
+
+The following immutable prereleases contain native Linux x64/ARM64 core and
+Vulkan ZIPs, per-platform checksums, and `LINUX-PREVIEW.json` provenance:
+
+| Engine | Preview release | Publication workflow PR |
+| --- | --- | --- |
+| SA3 | [linux-v0.2.3-preview.1](https://github.com/betweentwomidnights/sa3.cpp/releases/tag/linux-v0.2.3-preview.1) | [#96](https://github.com/betweentwomidnights/sa3.cpp/pull/96) |
+| Yuey | [linux-v0.3.1-preview.1](https://github.com/betweentwomidnights/yuey.cpp/releases/tag/linux-v0.3.1-preview.1) | [#48](https://github.com/betweentwomidnights/yuey.cpp/pull/48) |
+| Audiocraft | [linux-v0.1.4-preview.1](https://github.com/betweentwomidnights/audiocraft.cpp/releases/tag/linux-v0.1.4-preview.1) | [#16](https://github.com/betweentwomidnights/audiocraft.cpp/pull/16) |
+| ACE-Step | [linux-v0.1.4-preview.1](https://github.com/betweentwomidnights/acestep.cpp/releases/tag/linux-v0.1.4-preview.1) | [#21](https://github.com/betweentwomidnights/acestep.cpp/pull/21) |
+
+All four publication runs passed. Each release's seven assets match its approved
+plan by size and SHA256; tags identify the exact original CI source commits.
+Stable latest releases remain SA3 v0.2.0, Yuey v0.2.4, and Audiocraft v0.1.2;
+ACE-Step has no stable release. Publication uses GITHUB_TOKEN inside upstream
+Actions and does not trigger the legacy release-event builds. Failed initial
+publication attempts left drafts; the corrected lookup safely resumed them.
+
+The canonical service manifest now pins all four engines on both Linux
+architectures. Shared schema/resolution and the existing resumable verified
+downloader live in `runtime-core`; desktop callers retain their interfaces.
+New desktop install stamps include both archive hashes, so a new preview can
+be offered without changing the engine version. Legacy stamps remain readable.
+
+Headless SA3 defaults to the embedded manifest when local archives are omitted.
+An explicit `install` downloads into its owned cache, verifies each SHA256,
+checks platform/version/build provenance, and probes the requested GPU before
+activation. A local manifest override supports testing a future candidate.
+Runtime directories include both package hashes. No model downloads occur.
+
+Spark's plain Rust image passed 15 core tests and built a GUI-free ARM64 binary.
+Windows passed 16 core, 22 native-runtime, 29 service-manager and manifest
+regressions, plus all-target compilation; real-model desktop tests stay opt-in.
+A fork-related lock lifetime race found during concurrent Linux tests was fixed
+with explicit unlock on lease release and successful status probes.
+
+The Spark downloaded the public ARM64 SA3 preview using the bundled manifest,
+loaded existing medium F16 DiT/T5 with F32 AE, and generated 88,200 nonzero stereo
+PCM16 frames at 44.1 kHz through the public adapter on Vulkan0 (NVIDIA GB10).
+The two-second request completed in about 6.1 seconds. Verified cached packages
+installed with unreachable HTTPS URLs, proving reuse without a network request.
+Bad checksum/version candidates preserved the working runtime. Missing weights,
+occupied ports, concurrent operations, stop/restart, SIGTERM, native crash,
+supervisor SIGKILL and recovery all passed again. Model sizes/mtimes were
+unchanged; all test listeners and owned processes were stopped.
+
+Evidence is under `headless/sa3-vulkan-manifest-preview/evidence` and
+`headless/distribution-evidence` inside the dedicated Spark workspace. This
+phase copied no models and reused the existing Rust image and build cache.
+The whole workspace measured about 4.41 GiB after validation. Hosted x64 has
+build/test evidence; portable CUDA distribution, other engines' headless
+adapters, Linux desktop bundles and macOS validation remain separate work.
 
 ### First headless SA3 pilot
 
@@ -71,8 +124,8 @@ existing implementations. The complete desktop service manager has not yet
 been extracted; other services and desktop settings remain follow-up work.
 
 The CLI has `install`, `serve`, `status` and `stop` commands with an explicit
-JSON config. For now, installation uses existing local core/backend archives
-and their verified SHA256 values, separate from production desktop profiles.
+JSON config. Installation uses pinned manifest downloads or explicit local
+core/backend archives, separate from production desktop profiles.
 It checks clean/tested package metadata, platform and a real selected GPU,
 then loads the specified model before announcing readiness. CPU fallback is
 refused. Both listeners are loopback-only; the client port stays fixed while
@@ -208,7 +261,7 @@ generation are separate checks.
 
 | Area | Current gap | Next step |
 | --- | --- | --- |
-| Runtime distribution | The desktop manifest pins Windows x64 packages only; upstream Linux builders and the local-archive headless path are validated. | Publish versioned experimental assets with checksums, then pin them by platform; audit macOS Metal packages. |
+| Runtime distribution | Versioned Linux x64/ARM64 Vulkan previews are pinned; SA3 manifest installation is exercised on Spark. | Define portable CUDA packages, validate other engines through application adapters, and audit macOS Metal packages. |
 | Executable names | Shared launch/installation resolves the native server name; other trainer/helper paths still use `.exe`. | Finish platform-specific tool names across training, migration, and probes. |
 | Shared libraries | Shared CUDA packs currently contain Windows DLLs and use `PATH`. | Define Linux `.so` dependencies, `$ORIGIN` RPATH, and CUDA toolkit/driver compatibility; audit macOS dylibs/install names separately. A Windows CUDA pack is not reusable on Spark. |
 | Storage | Headless uses an explicit or platform data root; desktop profiles still have Windows defaults. | Finish XDG/Application Support handling for desktop profiles and preserve explicit runtime-root overrides. |
