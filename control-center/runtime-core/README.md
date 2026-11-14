@@ -1,4 +1,46 @@
-# Experimental headless SA3 host (CLI 0.2)
+# Experimental headless SA3 host (CLI 0.3)
+
+## Human terminal console
+
+The new `gary` command opens a small interactive service console in a terminal.
+It shows the configured SA3 service, its state and address. Use `/setup` once to
+choose existing weights, GPU, precision and port, then `/doctor`, `/install` and
+`/start`. Commands also work without the slash. `/stop` stops SA3 or cancels
+startup; `/status` refreshes the table; `/logs` shows the native log path.
+`/quit`, Ctrl+C, SIGTERM and end of input stop services started by this console.
+A service already running in another session is left running on exit; an
+explicit `/stop` can stop that configured session. No daemon is registered.
+
+Linux preview archives include both binaries and `install-gary.sh`:
+
+```sh
+sh /absolute/path/to/extracted-preview/install-gary.sh
+gary
+```
+
+The installer creates a small launcher in `~/.local/bin` without replacing a
+different existing command or changing shell profiles. Keep the extracted
+preview in place. If needed, add that bin directory to your shell's PATH as
+printed by the installer. `--config /absolute/path/sa3.json` on the installer
+pins a contained experiment config for every launch. `--bin-dir DIR` selects a
+different command directory. On Windows, build `gary.exe` with Cargo and place
+it in a directory already on PATH; no Windows command installer is supplied yet.
+
+Outside the console, `gary start sa3`, `gary status`, `gary stop` and
+`gary doctor` reuse the saved config. `start` is a foreground host; Ctrl+C stops
+it. `--config FILE` overrides the default. `GARY4LOCAL_HEADLESS_CONFIG` selects
+another absolute default file. Otherwise config uses XDG config storage on Linux,
+Application Support on macOS or LOCALAPPDATA on Windows, below
+`gary4local/headless/sa3.json`. Setup writes only after the user confirms Save,
+never overwrites an existing config and never downloads weights or runtimes.
+Opening Gary does not create storage. A nonterminal invocation never prompts.
+
+This is a line-oriented console, not a full-screen terminal UI. It currently
+manages SA3 only; other services and guided training are future additions.
+Scripts can use `gary COMMAND --json` or the original `gary4local-server`.
+`gary start --json` aliases `serve`, including its protocol command name.
+
+## Shared core
 
 `gary4local-server` builds without Tauri, GTK, WebKit, tray libraries, Node or a
 display. The desktop application now uses this crate's native launch types,
