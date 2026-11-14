@@ -1,6 +1,6 @@
 [package]
 name = "gary4local-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
@@ -9,6 +9,10 @@ description = "Shared native runtime and HTTP adapter core for gary4local"
 [[bin]]
 name = "gary4local-server"
 path = "src/main.rs"
+
+[[bin]]
+name = "gary"
+path = "src/bin/gary.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

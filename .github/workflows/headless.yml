@@ -34,11 +34,12 @@ jobs:
         working-directory: control-center/runtime-core
         run: |
           cargo test --locked --release
-          cargo build --locked --release --bin gary4local-server
+          cargo build --locked --release --bins
           cargo tree --locked > dependencies.txt
           if grep -Ei 'tauri|webkit|gtk-sys|tray-icon' dependencies.txt; then exit 1; fi
           ldd target/release/gary4local-server
           target/release/gary4local-server --help
+          target/release/gary --help
       - name: Preserve executable modes and provenance
         working-directory: control-center/runtime-core
         env:
@@ -46,6 +47,8 @@ jobs:
         run: |
           mkdir dist
           install -m 755 target/release/gary4local-server dist/gary4local-server
+          install -m 755 target/release/gary dist/gary
+          cp install-gary.sh dist/
           cp dependencies.txt README.md headless.example.json headless.local.example.json gary4local-server.service.example dist/
           cp ../../docs/headless-agent-workflow.md dist/AGENT-WORKFLOW.md
           rustc --version > dist/TOOLCHAIN.txt
@@ -75,9 +78,11 @@ jobs:
         run: |
           cargo +1.95.0 test --locked --manifest-path control-center/runtime-core/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo +1.95.0 build --locked --manifest-path control-center/runtime-core/Cargo.toml --bin gary4local-server
+          cargo +1.95.0 build --locked --manifest-path control-center/runtime-core/Cargo.toml --bins
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           control-center/runtime-core/target/debug/gary4local-server.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          control-center/runtime-core/target/debug/gary.exe --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_runtime::tests::
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,10 +1,18 @@
 # Headless CLI for agents
 
-CLI 0.2 is an experimental single-SA3 supervisor using the desktop's shared
+CLI 0.3 is an experimental single-SA3 supervisor using the desktop's shared
 native runtime and HTTP adapter. Linux packages cover x64 and ARM64 Vulkan.
 CUDA can use verified local archives with compatible system libraries; portable
 published Linux CUDA packages are still separate work. CPU generation is refused.
 There is no GUI dependency, interactive prompt or automatic model download.
+
+That statement describes the explicit agent commands. The `gary` entry point
+also offers a terminal-only human console with `/setup`, `/start`, `/stop` and
+status display. It never opens prompts for redirected input/output or `--json`.
+Use `gary COMMAND --json` for automation; its optional default config comes from
+`GARY4LOCAL_HEADLESS_CONFIG` or the platform config directory. The original
+`gary4local-server COMMAND --config FILE --json` remains unchanged. Interactive
+training is still unsupported. See the runtime-core README for console setup.
 
 ## Discover before acting
 
