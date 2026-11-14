@@ -411,14 +411,14 @@
           <span>LoRA file</span>
           <div class="path-row">
             <input type="text" bind:value={sourcePath} disabled={blocked}
-              placeholder={nativeRuntime ? "GGUF, safetensors or CKPT" : "C:\\path\\to\\your.ckpt"} />
+              placeholder={nativeRuntime ? "GGUF, safetensors or CKPT" : "Choose a LoRA checkpoint file"} />
             <button type="button" onclick={pickSource} disabled={blocked}>pick file</button>
           </div>
         </label>
         <label class="field">
           <span>dataset folder for prompts (optional)</span>
           <div class="path-row">
-            <input type="text" bind:value={promptsPath} disabled={blocked} placeholder="C:\\path\\to\\training dataset" />
+            <input type="text" bind:value={promptsPath} disabled={blocked} placeholder="Choose the training dataset folder" />
             <button type="button" onclick={pickPrompts} disabled={blocked}>pick folder</button>
           </div>
         </label>
