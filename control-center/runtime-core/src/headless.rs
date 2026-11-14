@@ -71,13 +71,51 @@ fn default_root() -> PathBuf {
         .unwrap_or_default()
 }
 
+#[derive(Debug)]
+pub struct ConfigError {
+    pub code: &'static str,
+    pub message: String,
+    pub hint: &'static str,
+}
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { out.write_str(&self.message) }
+}
+
 impl Config {
     pub fn read(path: &Path) -> Result<Self, String> {
-        let mut config: Self = serde_json::from_slice(&std::fs::read(path).map_err(err)?)
-            .map_err(|e| format!("Invalid headless config: {e}"))?;
-        config.resolve_packages()?;
-        config.validate()?;
+        Self::read_checked(path).map_err(|error| error.to_string())
+    }
+    pub fn read_checked(path: &Path) -> Result<Self, ConfigError> {
+        let raw = std::fs::read(path).map_err(|error| ConfigError {
+            code: "config_unreadable", message: format!("Cannot read config {}: {error}", path.display()),
+            hint: "Check the config path and permissions, or create a config with init.",
+        })?;
+        Self::from_bytes(&raw)
+    }
+    pub fn from_bytes(raw: &[u8]) -> Result<Self, ConfigError> {
+        let mut config: Self = serde_json::from_slice(raw).map_err(|error| ConfigError {
+            code: "config_invalid_json", message: format!("Invalid headless config: {error}"),
+            hint: "Use schema to inspect the config fields; unknown fields are rejected.",
+        })?;
+        config.resolve_packages().map_err(|message| ConfigError {
+            code: "config_package_resolution", message,
+            hint: "Inspect capabilities for published backends, or provide a verified local archive pair.",
+        })?;
+        config.validate().map_err(|message| ConfigError {
+            code: "config_invalid", message,
+            hint: "Use absolute paths, a dedicated runtime root, a nonzero port and an exact GPU device name.",
+        })?;
         Ok(config)
+    }
+    pub fn summary(&self) -> Value {
+        json!({"service":"sa3", "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
+            "models_dir":self.models_dir, "model":self.model, "encoding":self.encoding,
+            "t5_encoding":self.t5_encoding, "ae_encoding":self.ae_encoding,
+            "device":self.device, "public_port":self.public_port,"expected_version":self.expected_version,
+            "public_url":format!("http://127.0.0.1:{}",self.public_port),
+            "runtime_directory":self.installed_dir(),
+            "packages":{"core":{"path":self.core.path,"sha256":self.core.sha256,"url":self.core.url},
+                "backend":{"path":self.backend.path,"sha256":self.backend.sha256,"url":self.backend.url}}})
     }
     fn resolve_packages(&mut self) -> Result<(), String> {
         let local =
@@ -382,6 +420,50 @@ mod tests {
         assert!(cfg.resolve_packages().is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[tokio::test]
+    async fn expected_session_fences_stop_and_uses_no_pid_signals() {
+        let root = std::env::temp_dir().canonicalize().unwrap().join(format!("gary-stop-fence-{}",serial()));
+        let config = config(root.clone());
+        owned_root(&config).unwrap();
+        let lease = lock(&config).unwrap();
+        let session = lease.session.clone();
+        write_json(&root.join("state.json"), &State {
+            session:session.clone(), pid:std::process::id(),native_pid:std::process::id(),
+            status:"running".into(),public_port:config.public_port,native_port:28102,device:config.device.clone(),
+        }).unwrap();
+        assert!(matches!(stop(&config,Some("a stale session")).await,Err(StopError::SessionMismatch{..})));
+        assert!(active(&config).unwrap());
+        assert!(!root.join("stop.request").exists());
+        let request = root.join("stop.request");
+        let expected = session.clone();
+        let owner = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now()+Duration::from_secs(5);
+            while !request.exists() && std::time::Instant::now()<deadline { std::thread::sleep(Duration::from_millis(5)); }
+            assert_eq!(std::fs::read_to_string(request).unwrap(),expected);
+            drop(lease);
+        });
+        assert_eq!(stop(&config,Some(&session)).await.unwrap()["stopped"],true);
+        owner.join().unwrap();
+        assert!(!active(&config).unwrap());
+        assert_eq!(stop(&config,Some(&session)).await.unwrap()["stopped"],true);
+        assert_eq!(status(&config).await.unwrap()["running"],false,"stale state does not imply a live owner");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn readable_owner_record_is_required_and_legacy_unix_nonce_is_supported() {
+        let root = std::env::temp_dir().canonicalize().unwrap().join(format!("gary-owner-record-{}",serial()));
+        let config = config(root.clone());
+        owned_root(&config).unwrap();
+        let lease = lock(&config).unwrap();
+        assert_eq!(owner_session(&config).as_deref(),Some(lease.session.as_str()));
+        std::fs::write(root.join("owner.json"),b"invalid").unwrap();
+        assert_eq!(owner_session(&config),None,"malformed owner must not fall back to an old nonce");
+        std::fs::remove_file(root.join("owner.json")).unwrap();
+        #[cfg(unix)]
+        assert_eq!(owner_session(&config).as_deref(),Some(lease.session.as_str()));
+        drop(lease);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -449,6 +531,114 @@ fn reject_symlinks(root: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Inspect the same ownership boundary as install/serve without creating or
+/// adopting anything. Status/stop must not follow an unrelated root's links.
+fn inspect_root(config: &Config) -> Result<&'static str, String> {
+    let root = &config.runtime_root;
+    match std::fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("missing"),
+        Err(error) => return Err(err(error)),
+        Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => return Err("Runtime root must be a real directory, not a symlink".into()),
+        _ => {},
+    }
+    reject_symlinks(root)?;
+    if root.join(MARKER).is_file() { return Ok("owned"); }
+    if std::fs::read_dir(root).map_err(err)?.next().is_none() { return Ok("empty"); }
+    Err(format!("Refusing a nonempty, unowned runtime root: {}",root.display()))
+}
+
+/// Filesystem/ownership/port inspection only. No adoption, downloads, GPU probe,
+/// model load or persistent listener. Size checks are not a model hash proof.
+pub async fn doctor(config: &Config) -> Result<Value, String> {
+    let mut checks = Vec::new();
+    let root_state = inspect_root(config);
+    let root_safe = root_state.is_ok();
+    checks.push(match &root_state {
+        Ok(state) => json!({"code":"runtime_root","status":"ok","state":state,"path":config.runtime_root}),
+        Err(message) => json!({"code":"runtime_root","status":"error","message":message,"hint":"Choose an empty dedicated runtime root; do not remove unrelated data or forge an ownership marker."}),
+    });
+    let service = if root_safe { status(config).await? } else { json!({"running":false,"operation_active":false}) };
+    let running = service["running"] == true;
+    let busy = service["operation_active"] == true;
+    checks.push(json!({"code":"owner_lock","status":if busy {"error"} else {"ok"},
+        "message":if running {"This owned serving session is already running; use status or stop, not a second serve."}
+            else if busy {"Another operation owns this root; wait for it to finish."} else {"No active owner."}}));
+
+    let runtime = config.installed_dir();
+    let installed = if root_safe && runtime.is_dir() {
+        let result = metadata(config, &runtime).and_then(|info| {
+            let stamp: Value = serde_json::from_slice(&std::fs::read(runtime.join("package-checksums.json")).map_err(err)?).map_err(err)?;
+            if stamp != json!({"core":config.core.sha256.to_ascii_lowercase(),"backend":config.backend.sha256.to_ascii_lowercase()}) {
+                return Err("Runtime package provenance does not match this config".into());
+            }
+            if !runtime.join(runtime::executable_name("sa3-server.exe")).is_file() { return Err("Installed runtime is missing its native SA3 server".into()); }
+            Ok(info)
+        });
+        checks.push(match result {
+            Ok(info) => json!({"code":"installed_runtime","status":"ok","directory":runtime,"build":info}),
+            Err(message) => json!({"code":"installed_runtime","status":"error","message":message,"hint":"Inspect this owned runtime and run install to check the candidate. No files are changed by doctor."}),
+        });
+        checks.last().unwrap()["status"] == "ok"
+    } else {
+        checks.push(json!({"code":"installed_runtime","status":"error","directory":runtime,"message":"A matching runtime is not installed or could not be safely inspected.","hint":"After resolving ownership issues, explicitly run install --config FILE."}));
+        false
+    };
+
+    if !config.models_dir.is_dir() {
+        checks.push(json!({"code":"models_directory","status":"error","path":config.models_dir,"hint":"Point models_dir to the directory containing your existing weights. No models are downloaded by this CLI."}));
+    } else {
+        checks.push(json!({"code":"models_directory","status":"ok","path":config.models_dir}));
+        if config.model.eq_ignore_ascii_case("medium") && config.t5_encoding.eq_ignore_ascii_case("f16") && config.ae_encoding.eq_ignore_ascii_case("f32") {
+            static CATALOG: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
+            let catalog = CATALOG.get_or_init(|| serde_json::from_str(include_str!("../../src-tauri/sa3-models.json")).expect("bundled SA3 catalog"));
+            let ids = ["sa3-native::text".to_string(),"sa3-native::medium-decoder".to_string(),format!("sa3-native::medium-{}",config.encoding.to_ascii_uppercase())];
+            let mut files = Vec::new();
+            let mut known = true;
+            for id in ids {
+                let Some(component) = catalog.iter().find(|entry| entry["id"] == id) else { known = false; continue; };
+                for expected in component["files"].as_array().expect("catalog files") {
+                    let path = config.models_dir.join(expected["filename"].as_str().expect("catalog filename"));
+                    let metadata = std::fs::metadata(&path).ok().filter(|metadata| metadata.is_file());
+                    files.push(json!({"path":path,"present":metadata.as_ref().is_some_and(|metadata| metadata.len()>0),
+                        "actual_bytes":metadata.as_ref().map(|metadata| metadata.len()),"expected_bytes":expected["bytes"],
+                        "sha256":expected["sha256"],"repo":expected["repo"],"revision":expected["revision"]}));
+                }
+            }
+            let missing = files.iter().any(|file| file["present"] != true);
+            let size_mismatch = files.iter().any(|file| file["actual_bytes"] != file["expected_bytes"]);
+            checks.push(json!({"code":"model_files","status":if missing {"error"} else if !known || size_mismatch {"warning"} else {"ok"},
+                "files":files,"verification":"presence and size only; contents were not hashed or loaded",
+                "message":if missing {"Required model files are missing. Provide existing weights or complete model preparation separately."}
+                    else if !known || size_mismatch {"This model layout differs from the pinned catalog; compatibility is unverified."}
+                    else {"Expected medium model components are present."}}));
+        } else {
+            checks.push(json!({"code":"model_files","status":"warning","message":"This model/component encoding combination has no catalog preflight. Native startup remains the compatibility check; no weights have been loaded."}));
+        }
+    }
+    if root_safe && !busy {
+        checks.push(match runtime::bind_loopback(config.public_port) {
+            Ok(socket) => { drop(socket); json!({"code":"public_port","status":"ok","port":config.public_port}) },
+            Err(error) => json!({"code":"public_port","status":"error","port":config.public_port,"message":error.to_string(),"hint":"Choose an unused client port or stop its owner deliberately. doctor does not stop other processes."}),
+        });
+    }
+    checks.push(json!({"code":"gpu_probe","status":"not_checked","message":"doctor never probes the GPU or loads a model. install probes the selected GPU; serve verifies model startup."}));
+    let can_attempt_serve = checks.iter().all(|check| check["status"] != "error");
+    let mut next_actions = Vec::new();
+    if !root_safe { next_actions.push(json!({"action":"edit_config","field":"runtime_root","reason":"ownership boundary must be resolved first"})); }
+    else if busy { next_actions.push(json!({"action":if running {"status_or_stop"} else {"wait_for_owner"},"automatic":false})); }
+    else if !installed { next_actions.push(json!({"action":"install","requires_explicit_action":true})); }
+    if checks.iter().any(|check| matches!(check["code"].as_str(),Some("models_directory"|"model_files")) && check["status"] == "error") {
+        next_actions.push(json!({"action":"provide_required_model_files","model_download_command_available":false}));
+    }
+    if checks.iter().any(|check| check["code"]=="public_port" && check["status"]=="error") {
+        next_actions.push(json!({"action":"edit_config","field":"public_port","reason":"port is occupied"}));
+    }
+    if can_attempt_serve { next_actions.push(json!({"action":"serve","requires_explicit_action":true,"readiness_reported_only_after_model_load":true})); }
+    Ok(json!({"can_attempt_serve":can_attempt_serve,"checks":checks,"next_actions":next_actions,
+        "service":service,"resolved":config.summary(),"read_only":true,
+        "limitations":["Model contents and GPU execution were not verified.","Port availability is a snapshot, not a reservation."]}))
+}
 struct Lease {
     _file: File,
     session: String,
@@ -483,15 +673,25 @@ fn lock(config: &Config) -> Result<Lease, String> {
     )
     .map_err(err)?;
     lock.sync_data().map_err(err)?;
+    // Windows byte-range locks also deny reads through a second handle. Keep
+    // the readable nonce separate from the OS-held lock; the matching nonce
+    // still distinguishes a new owner from stale state after a crash.
+    write_json(&config.runtime_root.join("owner.json"), &json!({"session":session}))?;
     Ok(Lease {
         _file: lock,
         session,
     })
 }
 fn owner_session(config: &Config) -> Option<String> {
-    let body: Value =
-        serde_json::from_slice(&std::fs::read(config.runtime_root.join("manager.lock")).ok()?)
-            .ok()?;
+    let path = config.runtime_root.join("owner.json");
+    let raw = match std::fs::read(path) {
+        Ok(raw) => raw,
+        // Compatibility with older Unix hosts that stored the readable nonce
+        // only inside manager.lock. An invalid new record must not fall back.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::read(config.runtime_root.join("manager.lock")).ok()?,
+        Err(_) => return None,
+    };
+    let body: Value = serde_json::from_slice(&raw).ok()?;
     body["session"].as_str().map(str::to_owned)
 }
 fn active(config: &Config) -> Result<bool, String> {
@@ -644,7 +844,7 @@ async fn acquire(package: &Package) -> Result<(), String> {
     verify_archive(package)
 }
 
-pub async fn install(config: &Config) -> Result<(), String> {
+pub async fn install(config: &Config) -> Result<Value, String> {
     config.validate()?;
     owned_root(config)?;
     let _lock = lock(config)?;
@@ -685,11 +885,7 @@ pub async fn install(config: &Config) -> Result<(), String> {
         }
         result?;
     }
-    println!(
-        "{}",
-        json!({"installed":true,"runtime":target,"backend":config.device})
-    );
-    Ok(())
+    Ok(json!({"installed":true,"runtime":target,"backend":config.device}))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -729,7 +925,7 @@ async fn termination() {
     }
 }
 
-pub async fn serve(config: &Config) -> Result<(), String> {
+pub async fn serve(config: &Config, ready: impl Fn(Value) -> Result<(), String>) -> Result<Value, String> {
     config.validate()?;
     owned_root(config)?;
     let lease = lock(config)?;
@@ -737,6 +933,7 @@ pub async fn serve(config: &Config) -> Result<(), String> {
         return Err("The configured model directory is missing".into());
     }
     let dir = config.installed_dir();
+    eprintln!("Checking the installed SA3 runtime and GPU...");
     metadata(config, &dir)?;
     probe(config, &dir).await?;
     // Reserve the public adapter port before any child is created.
@@ -802,6 +999,7 @@ pub async fn serve(config: &Config) -> Result<(), String> {
     }
     // Serving a named model is explicit. Prove that its components resolve and
     // initialize before announcing readiness; this never downloads weights.
+    eprintln!("Loading the configured model; no weights are downloaded...");
     let loaded = client
         .post(format!("http://127.0.0.1:{native_port}/load"))
         .timeout(Duration::from_secs(180))
@@ -828,10 +1026,10 @@ pub async fn serve(config: &Config) -> Result<(), String> {
     write_json(&config.runtime_root.join("state.json"), &guard.state)?;
     let mut adapter_tasks = tokio::task::JoinSet::new();
     adapter_tasks.spawn(adapter.serve());
-    println!(
-        "{}",
-        json!({"status":"running","service":"sa3","pid":std::process::id(),"public_port":config.public_port,"native_port":native_port,"device":config.device})
-    );
+    ready(json!({"status":"running","service":"sa3","pid":std::process::id(),"public_port":config.public_port,
+        "native_port":native_port,"device":config.device,"session":lease.session,
+        "public_url":format!("http://127.0.0.1:{}",config.public_port),
+        "log_path":config.runtime_root.join("logs/sa3-native.log")}))?;
     let result=async {
         let mut tick=tokio::time::interval(Duration::from_millis(200));
         let termination=termination(); tokio::pin!(termination);
@@ -850,10 +1048,12 @@ pub async fn serve(config: &Config) -> Result<(), String> {
     adapter_tasks.shutdown().await;
     child.stop();
     drop(guard);
-    result
+    result?;
+    Ok(json!({"stopped":true,"service":"sa3","session":lease.session}))
 }
 
-pub async fn status(config: &Config) -> Result<(), String> {
+pub async fn status(config: &Config) -> Result<Value, String> {
+    inspect_root(config)?;
     let operation_active = active(config)?;
     let state = state(config).ok();
     let running = operation_active
@@ -881,21 +1081,40 @@ pub async fn status(config: &Config) -> Result<(), String> {
     } else {
         None
     };
-    println!(
-        "{}",
-        json!({"running":running,"operation_active":operation_active,"state":state,"health":health})
-    );
-    Ok(())
+    Ok(json!({"running":running,"operation_active":operation_active,"state":state,"health":health,
+        "public_url":format!("http://127.0.0.1:{}",config.public_port),
+        "log_path":config.runtime_root.join("logs/sa3-native.log")}))
 }
 
-pub async fn stop(config: &Config) -> Result<(), String> {
+#[derive(Debug)]
+pub enum StopError {
+    SessionMismatch { expected: String, actual: String },
+    Failed(String),
+}
+impl From<String> for StopError { fn from(message: String) -> Self { Self::Failed(message) } }
+impl From<&str> for StopError { fn from(message: &str) -> Self { Self::Failed(message.into()) } }
+impl std::fmt::Display for StopError {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SessionMismatch { expected, actual } => write!(out,"Refusing to stop session {actual}: expected {expected}"),
+            Self::Failed(message) => out.write_str(message),
+        }
+    }
+}
+
+pub async fn stop(config: &Config, expected_session: Option<&str>) -> Result<Value, StopError> {
+    inspect_root(config)?;
     if !active(config)? {
-        println!("{}", json!({"running":false,"stopped":true}));
-        return Ok(());
+        return Ok(json!({"running":false,"stopped":true}));
     }
     let current = state(config)?;
     if current.status != "running" || owner_session(config).as_deref() != Some(&current.session) {
         return Err("The active operation is not a serving session".into());
+    }
+    if let Some(expected) = expected_session {
+        if current.session != expected {
+            return Err(StopError::SessionMismatch { expected: expected.into(), actual: current.session });
+        }
     }
     let session = current.session;
     std::fs::write(config.runtime_root.join("stop.request"), session.as_bytes()).map_err(err)?;
@@ -909,6 +1128,5 @@ pub async fn stop(config: &Config) -> Result<(), String> {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    println!("{}", json!({"stopped":true}));
-    Ok(())
+    Ok(json!({"stopped":true,"session":session}))
 }

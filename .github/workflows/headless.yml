@@ -47,9 +47,11 @@ jobs:
           mkdir dist
           install -m 755 target/release/gary4local-server dist/gary4local-server
           cp dependencies.txt README.md headless.example.json headless.local.example.json gary4local-server.service.example dist/
+          cp ../../docs/headless-agent-workflow.md dist/AGENT-WORKFLOW.md
           rustc --version > dist/TOOLCHAIN.txt
           ldd target/release/gary4local-server > dist/ELF-DEPENDENCIES.txt
-          printf '{"service":"gary4local-server","version":"0.1.0","commit":"%s","platform":"%s","experimental":true}\n' "$GITHUB_SHA" "$PLATFORM" > dist/BUILD-INFO.json
+          version="$(target/release/gary4local-server --version)"
+          printf '{"service":"gary4local-server","version":"%s","commit":"%s","platform":"%s","experimental":true}\n' "$version" "$GITHUB_SHA" "$PLATFORM" > dist/BUILD-INFO.json
           tar -C dist -czf "gary4local-server-$PLATFORM-experimental.tar.gz" .
           sha256sum "gary4local-server-$PLATFORM-experimental.tar.gz" > "SHA256SUMS-$PLATFORM"
       - uses: actions/upload-artifact@v4
