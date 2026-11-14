@@ -56,6 +56,27 @@ pub struct ServiceDef {
     pub health_check: Option<HealthCheck>,
 }
 
+#[cfg(test)]
+mod accelerator_profile_tests {
+    use super::ServiceDef;
+    use serde_json::json;
+
+    #[test]
+    fn shared_schema_retains_explicit_amd_profiles_and_legacy_defaults() {
+        let mut value = json!({"id":"fixture","displayName":"Fixture","port":8000,
+            "workingDir":"services/fixture","pythonVersion":"3.12",
+            "acceleratorProfile":"amd-rocm-windows-7.2.1"});
+        let service: ServiceDef = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(service.python_version, "3.12");
+        assert_eq!(service.accelerator_profile, "amd-rocm-windows-7.2.1");
+        value.as_object_mut().unwrap().remove("pythonVersion");
+        value.as_object_mut().unwrap().remove("acceleratorProfile");
+        let service: ServiceDef = serde_json::from_value(value).unwrap();
+        assert_eq!(service.python_version, "3.11");
+        assert_eq!(service.accelerator_profile, "cuda-nvidia");
+    }
+}
+
 /// How a service moves from its Python environment to a native runtime.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
