@@ -1,5 +1,5 @@
 #[tokio::main]
-async fn main() {
+async fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let json = args.iter().any(|arg| arg == "--json");
     let code = match gary4local_core::console::entry(args).await {
@@ -29,7 +29,7 @@ async fn main() {
             2
         }
     };
-    if code != 0 {
-        std::process::exit(code);
-    }
+    // Let the Tokio runtime drop/abort owned tasks before process teardown,
+    // including errors while writing terminal output.
+    std::process::ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
