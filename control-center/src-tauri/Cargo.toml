@@ -5,7 +5,7 @@ description = "gary4local-rocm control center"
 authors = ["betweentwomidnights"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.89"
 
 [lib]
 name = "app_lib"
@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
+gary4local-core = { path = "../runtime-core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"

@@ -251,12 +251,12 @@ impl crate::migration::Service for Sa3 {
     }
 
     /// The selected tier's models, and the decoder correction when enabled.
-    fn native_start_blocker(
+    fn native_start_blocker_for_encoding(
         &self,
         root: &Path,
-        selection: Option<&crate::migration::Selection>,
+        encoding: Option<&str>,
     ) -> Option<String> {
-        let encoding = selection.map_or("F16", |selection| selection.encoding.as_str());
+        let encoding = encoding.unwrap_or("F16");
         if let Some(missing) = crate::sa3_runtime::missing_models(root, encoding) {
             return Some(missing);
         }
@@ -407,6 +407,20 @@ fn extras(root: &Path, hf_hub: &Path) -> Extras {
     }
 }
 
+async fn probe_tools(
+    native: &crate::manifest::NativeDef,
+    installed: &crate::native_runtime::NativeInstall,
+    runtime_path: Option<&std::ffi::OsStr>,
+    progress: &(impl Fn(&str) + Sync),
+) -> Result<(), String> {
+    progress("Checking native server capabilities...");
+    crate::sa3_runtime::probe_server(&installed.executable(&native.executable), runtime_path).await?;
+    progress("Checking native trainer capabilities...");
+    crate::sa3_training::probe(&installed.executable("sa3-train.exe"), runtime_path).await?;
+    progress("Checking native audio analysis capabilities...");
+    crate::sa3_analysis::probe(&installed.executable("sa3-audio-analyze.exe")).await
+}
+
 /// Verify the actual installed tools and selected weights while Python remains
 /// selected. The probe owns a private server; no client port or old file changes.
 pub async fn verify_native(
@@ -424,20 +438,7 @@ pub async fn verify_native(
     // fingerprint that no longer matches, never one that wrongly does.
     let fingerprint = runtime_fingerprint(root, native, installed, encoding, decoder_enabled)?;
     let runtime_path = crate::native_runtime::path_with_runtimes(root, &installed.runtimes);
-    progress("Checking native server capabilities...");
-    crate::sa3_runtime::probe_server(
-        &installed.dir.join(&native.executable),
-        runtime_path.as_deref(),
-    )
-    .await?;
-    progress("Checking native trainer capabilities...");
-    crate::sa3_training::probe(
-        &installed.dir.join("sa3-train.exe"),
-        runtime_path.as_deref(),
-    )
-    .await?;
-    progress("Checking native audio analysis capabilities...");
-    crate::sa3_analysis::probe(&installed.dir.join("sa3-audio-analyze.exe")).await?;
+    probe_tools(native, installed, runtime_path.as_deref(), &progress).await?;
     let models = crate::sa3_models::models_dir(root);
     for id in crate::sa3_models::preparation_ids(encoding, None)? {
         let component = crate::sa3_models::component(&id).unwrap();
@@ -659,7 +660,7 @@ pub fn runtime_fingerprint(
     }
     let mut files = Vec::new();
     for executable in [native.executable.as_str(), "sa3-train.exe", "sa3-audio-analyze.exe"] {
-        files.push(stamp(&installed.dir.join(executable)));
+        files.push(stamp(&installed.executable(executable)));
     }
     let models = crate::sa3_models::models_dir(root);
     let mut ids = crate::sa3_models::preparation_ids(encoding, None)?;
@@ -734,7 +735,7 @@ async fn verify_training(
     let models = crate::sa3_models::models_dir(root);
     let log_path = dir.join("training.log");
     let log = std::fs::File::create(&log_path).map_err(|error| error.to_string())?;
-    let mut command = tokio::process::Command::new(installed.dir.join("sa3-train.exe"));
+    let mut command = tokio::process::Command::new(installed.executable("sa3-train.exe"));
     command
         .args([
             "--model",
@@ -984,12 +985,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_fingerprint_changes_only_with_what_verification_proved() {
+    fn native_tool_paths_fingerprint_tracks_the_actual_sa3_tools() {
         use super::runtime_fingerprint;
         let fixture = Fixture::new();
         let native: crate::manifest::NativeDef =
             serde_json::from_value(serde_json::json!({"executable": "sa3-server.exe"})).unwrap();
         for executable in ["sa3-server.exe", "sa3-train.exe", "sa3-audio-analyze.exe"] {
+            let executable = if cfg!(windows) { executable } else { executable.strip_suffix(".exe").unwrap() };
             fixture.write(&format!("services/sa3/native/{executable}"));
         }
         let installed = crate::native_runtime::NativeInstall {
@@ -1009,6 +1011,13 @@ mod tests {
         let verified = fingerprint("F16", false);
 
         assert_eq!(verified, fingerprint("F16", false), "unchanged files must match");
+        for name in ["sa3-server", "sa3-train", "sa3-audio-analyze"] {
+            let path = installed.dir.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() });
+            let before = fingerprint("F16", false);
+            std::fs::write(path, b"a replaced, longer native executable").unwrap();
+            assert_ne!(before, fingerprint("F16", false), "changing {name} must invalidate verification");
+        }
+        let verified = fingerprint("F16", false);
         assert_ne!(verified, fingerprint("Q4_K_M", false), "another tier is another proof");
         assert_ne!(verified, fingerprint("F16", true), "the decoder setting is part of it");
         std::fs::write(&model, b"a replaced, longer model file").unwrap();
@@ -1025,6 +1034,50 @@ mod tests {
             runtime_fingerprint(&fixture.0, &native, &updated, "F16", false).unwrap(),
             "a new release must re-verify"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an installed native SA3 package; no models or services are started"]
+    async fn real_installed_native_tools_probe() {
+        let dir = PathBuf::from(std::env::var_os("GARY4LOCAL_NATIVE_TOOL_SMOKE_DIR").expect("installed native tool directory required"));
+        assert!(dir.is_dir());
+        let installed = crate::native_runtime::NativeInstall {
+            dir, backend: "vulkan".into(), runtimes: Vec::new(), version: None, fallback_reason: None,
+        };
+        let native = serde_json::from_value(serde_json::json!({"executable":"sa3-server.exe"})).unwrap();
+        super::probe_tools(&native, &installed, None, &|message| println!("{message}")).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_tool_paths_probe_the_unix_server_trainer_and_analyzer() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::new();
+        let installed = crate::native_runtime::NativeInstall {
+            dir: fixture.0.join("native runtime with spaces"),
+            backend: "vulkan".into(), runtimes: Vec::new(), version: None, fallback_reason: None,
+        };
+        std::fs::create_dir_all(&installed.dir).unwrap();
+        let native = serde_json::from_value(serde_json::json!({"executable":"sa3-server.exe"})).unwrap();
+        for (name, info) in [
+            ("sa3-server", serde_json::json!({"schema_version":1,"service":"sa3","version":"test","capabilities":{"fixed_prefix":true,"request_splice":true,"conditioning_duration":true,"model_lifecycle":true}})),
+            ("sa3-train", serde_json::json!({"schema_version":1,"cooperative_cancel_file":true,"atomic_progress_file":true})),
+            ("sa3-audio-analyze", serde_json::json!({"schema_version":1,"cpu_only":true,"wav_input":true})),
+        ] {
+            let tool = installed.dir.join(name);
+            std::fs::write(&tool, format!("#!/bin/sh\n[ \"$1\" = --control-info ] || exit 1\nprintf '%s\\n' '{info}'\n")).unwrap();
+            std::fs::set_permissions(tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        super::probe_tools(&native, &installed, None, &|_| {}).await.unwrap();
+        for name in ["sa3-server", "sa3-train", "sa3-audio-analyze"] {
+            let tool = installed.dir.join(name);
+            let wrong_name = installed.dir.join(format!("{name}.exe"));
+            std::fs::rename(&tool, &wrong_name).unwrap();
+            assert!(super::probe_tools(&native, &installed, None, &|_| {}).await.is_err(), "must require the platform tool: {name}");
+            std::fs::rename(wrong_name, tool).unwrap();
+        }
+        std::fs::write(installed.dir.join("sa3-train"), "#!/bin/sh\nprintf '{}\\n'\n").unwrap();
+        assert!(super::probe_tools(&native, &installed, None, &|_| {}).await.unwrap_err().contains("resumable cancellation"));
     }
 
     #[test]
@@ -1265,7 +1318,7 @@ mod tests {
             std::env::var_os("GARY4LOCAL_SA3_SMOKE_MODELS").expect("model folder required"),
         );
         let server = if packaged {
-            root.join("services/sa3/native/sa3-server.exe")
+            root.join("services/sa3/native").join(gary4local_core::runtime::executable_name("sa3-server.exe"))
         } else {
             PathBuf::from(
                 std::env::var_os("GARY4LOCAL_SA3_SMOKE_BINARY")
@@ -1320,7 +1373,7 @@ mod tests {
             assert!(
                 crate::sa3_decoder::prepare(
                     &root,
-                    &installed.dir.join("sa3-lora-convert.exe"),
+                    &installed.executable("sa3-lora-convert.exe"),
                     None
                 )
                 .await

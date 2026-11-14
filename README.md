@@ -59,7 +59,16 @@ build while we tried very hard to break it locally.
 how every native service is packaged and installed is in
 [native runtime packages](docs/native-runtime-packages.md).
 
+Linux/ARM64 findings and the proposed shared headless supervisor are tracked in
+[Linux and headless exploration](docs/linux-headless-exploration.md).
+
 ## preview
+
+on a fresh native setup, download the shared components and one generation
+precision, then press **start**. start verifies and activates that precision
+before launching; downloading alone does not run a GPU check. when more than
+one generation precision is downloaded, choose one with **use** in Models.
+existing Python installations keep their explicit migration flow.
 
 install and startup flow:
 

@@ -285,7 +285,7 @@ fn unchanged(service: &dyn Service, run: &Run<'_>, selection: &Selection) -> boo
 fn fingerprint(service: &dyn Service, run: &Run<'_>) -> Result<String, String> {
     let models = service.models();
     let dir = models.models_dir(run.root);
-    let mut paths = vec![run.installed.dir.join(&run.native.executable)];
+    let mut paths = vec![run.installed.executable(&run.native.executable)];
     for id in service.tier_components(run.encoding)? {
         let component = models.component(&id).ok_or("Unknown audiocraft model")?;
         paths.extend(component.files.iter().map(|file| dir.join(&file.filename)));

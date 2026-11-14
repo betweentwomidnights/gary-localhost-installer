@@ -29,6 +29,7 @@ mod sa3_models;
 mod sa3_prompts;
 mod sa3_runtime;
 mod sa3_training;
+mod native_start;
 mod service_manager;
 mod stable_audio_migration;
 mod stable_audio_models;
@@ -36,6 +37,8 @@ mod storage;
 mod storage_transfer;
 mod update;
 mod workload_job;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 
 use model_manager::{carey_component_required_files, ModelManager};
 use serde::{Deserialize, Serialize};
@@ -5932,6 +5935,9 @@ fn rebuild_tray_menu_with_info(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_desktop::configure_renderer();
+
     install_panic_diagnostics();
 
     let webview2_user_data_folder = configure_webview2_user_data_folder();
@@ -6092,12 +6098,15 @@ pub fn run() {
                                     let is_running = m.is_running(&service_id);
                                     if is_running {
                                         let _ = m.stop(&service_id);
+                                        drop(m);
                                     } else {
-                                        let _ = m.start(&service_id);
+                                        drop(m);
+                                        if let Err(error) = start_service_ready(service_id.clone(), handle.clone()).await {
+                                            log::error!("Cannot start {service_id}: {error}");
+                                        }
                                     }
                                     // Emit updated status
-                                    let info = m.get_service_info();
-                                    drop(m);
+                                    let info = mgr.lock().await.get_service_info();
                                     let _ = handle.emit("services-updated", &info);
                                     // Rebuild tray menu to reflect new state
                                     rebuild_tray_menu(&handle, &mgr).await;
@@ -6329,10 +6338,44 @@ async fn get_services(
 #[tauri::command]
 async fn start_service(
     service_id: String,
-    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut mgr = manager.lock().await;
-    mgr.start(&service_id).map_err(|e| e.to_string())
+    start_service_ready(service_id, app_handle).await
+}
+
+/// A fresh native install with one complete model choice needs no separate
+/// Use click. Reuse the explicit activation's verification and workload guards;
+/// failure returns before a public service is launched. Never remove user data.
+async fn start_service_ready(service_id: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+    let manager = app_handle.state::<ManagerState>();
+    let (encoding, native) = {
+        let services = manager.lock().await;
+        (services.start_activation(&service_id)?, services.is_native(&service_id))
+    };
+    let handle = &app_handle;
+    let id = &service_id;
+    native_start::complete(encoding, move |encoding| async move {
+        if native {
+            select_native_model(id.clone(), encoding, handle.state(), handle.state(), handle.clone()).await?;
+        } else {
+            activate_native_runtime(id.clone(), encoding, handle.state(), handle.state(), handle.clone()).await?;
+            // Match Models' existing fresh-install Use behavior. Only unchanged
+            // bundled source (or an empty cleanup) can finish automatically;
+            // environments, weights, warnings and Python-only features require
+            // the existing explicit review. The token is rechecked by cleanup.
+            let preview = get_migration_preview(id.clone(), handle.state(), handle.state()).await?;
+            if preview.only_bundled_code() {
+                let cleanup = cleanup_legacy_installation(id.clone(), preview.cleanup_token,
+                    handle.state(), handle.state(), handle.state(), handle.clone()).await?;
+                if !cleanup.errors.is_empty() { return Err(cleanup.errors.join("\n")); }
+            }
+        }
+        Ok(())
+    }, || async {
+        let result = manager.lock().await.start(&service_id).map_err(|error| error.to_string());
+        emit_status(manager.inner(), &app_handle).await;
+        result
+    }).await
 }
 
 #[tauri::command]
@@ -6348,13 +6391,13 @@ async fn stop_service(
 async fn restart_service(
     service_id: String,
     manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut mgr = manager.lock().await;
     mgr.stop(&service_id).ok();
     drop(mgr);
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let mut mgr = manager.lock().await;
-    mgr.start(&service_id).map_err(|e| e.to_string())
+    start_service_ready(service_id, app_handle).await
 }
 
 #[tauri::command]
@@ -8379,7 +8422,7 @@ async fn start_native_carey_training(
         let (def, dir) = services.native_service("carey").ok_or("Carey has no C++ runtime")?;
         let installed = native_runtime::installed("carey", &dir, &def.executable)
             .ok_or("Prepare Carey's C++ runtime first.")?;
-        let exe = installed.dir.join("ace-train.exe");
+        let exe = installed.executable("ace-train.exe");
         let path = native_runtime::path_with_runtimes(root, &installed.runtimes);
         services.begin_native_workload("carey", "native-training", "Carey C++ training")?;
         let _ = app_handle.emit("services-updated", services.get_service_info());
@@ -9481,7 +9524,7 @@ async fn suggest_sa3_track_metadata(
         let tool = services
             .native_service("sa3")
             .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
-            .map(|install| install.dir.join("sa3-audio-analyze.exe"))
+            .map(|install| install.executable("sa3-audio-analyze.exe"))
             .filter(|path| path.is_file());
         if tool.is_none() && native_selected {
             return Err("Prepare a compatible SA3 C++ runtime with native audio analysis before using BPM/key suggestions.".into());
@@ -10283,7 +10326,7 @@ async fn start_sa3_lora_training(
                 .ok_or("SA3 has no native runtime")?;
             let installed = native_runtime::installed("sa3", &dir, &def.executable)
                 .ok_or("Prepare SA3's C++ runtime first.")?;
-            let exe = installed.dir.join("sa3-train.exe");
+            let exe = installed.executable("sa3-train.exe");
             let path = native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes);
             services.begin_native_workload("sa3", "native-training", "SA3 native training")?;
             let _ = app_handle.emit("services-updated",services.get_service_info());
@@ -11257,7 +11300,7 @@ async fn get_sa3_native_lora_state(
         services
             .native_service("sa3")
             .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
-            .map(|installed| installed.dir.join("sa3-lora-convert.exe"))
+            .map(|installed| installed.executable("sa3-lora-convert.exe"))
             .filter(|path| path.is_file())
     };
     let root = repo_root.inner().clone();
@@ -11310,7 +11353,7 @@ async fn import_sa3_native_lora(
             let installed = native_runtime::installed("sa3", &dir, &def.executable)
                 .ok_or("Prepare the native runtime before converting this adapter")?;
             (
-                Some(installed.dir.join("sa3-lora-convert.exe")),
+                Some(installed.executable("sa3-lora-convert.exe")),
                 native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
             )
         };
@@ -11480,7 +11523,7 @@ async fn prepare_sa3_native_decoder(
             "SA3 decoder correction preparation",
         )?;
         (
-            installed.dir.join("sa3-lora-convert.exe"),
+            installed.executable("sa3-lora-convert.exe"),
             native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
         )
     };
@@ -11518,7 +11561,7 @@ async fn prepare_sa3_native_loras(
             .ok_or("SA3 has no native runtime")?;
         let installed = native_runtime::installed("sa3", &dir, &def.executable)
             .ok_or("Prepare SA3's C++ runtime before converting its adapters.")?;
-        let converter = installed.dir.join("sa3-lora-convert.exe");
+        let converter = installed.executable("sa3-lora-convert.exe");
         if !converter.is_file() {
             return Err("Installed SA3 runtime has no LoRA converter; reinstall it.".into());
         }
@@ -11732,13 +11775,30 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
 
 fn merge_native_environment_rows(rows: Vec<ServiceEnvInfo>) -> Vec<ServiceEnvInfo> {
     let mut merged: Vec<ServiceEnvInfo> = Vec::new();
-    for row in rows {
+    for mut row in rows {
         if row.kind == "native" {
+            let service_id = row
+                .service_id
+                .strip_prefix("native:")
+                .unwrap_or(&row.service_id);
+            let bundle = crate::manifest::bundled()
+                .services
+                .iter()
+                .find(|service| service.id == service_id)
+                .and_then(|service| service.native.as_ref())
+                .and_then(|native| native.bundle.as_deref());
+            row.display_name = match bundle {
+                Some("audiocraft") => "audiocraft shared runtime".to_string(),
+                Some("sa3") => "stable audio shared runtime".to_string(),
+                _ => row.display_name,
+            };
             if let Some(existing) = merged
                 .iter_mut()
                 .find(|existing| existing.kind == "native" && existing.env_path == row.env_path)
             {
-                existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                if existing.display_name != row.display_name {
+                    existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                }
                 existing.blocked_reason = existing.blocked_reason.take().or(row.blocked_reason);
                 continue;
             }
@@ -11781,9 +11841,39 @@ mod shared_runtime_tests {
         let rows = merge_native_environment_rows(vec![row, other, python]);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].env_bytes, 1024);
-        assert_eq!(rows[0].display_name, "SA3 / Jerry");
+        assert_eq!(rows[0].display_name, "stable audio shared runtime");
         assert_eq!(rows[0].blocked_reason.as_deref(), Some("Jerry is running"));
         assert_eq!(rows[1].kind, "python");
+        assert_eq!(rows[1].display_name, "SA3");
+    }
+
+    #[test]
+    fn native_bundle_labels_cover_prepared_and_active_consumers() {
+        for (ids, expected) in [
+            (["native:gary", "melodyflow"], "audiocraft shared runtime"),
+            (
+                ["native:foundation", "stable-audio"],
+                "stable audio shared runtime",
+            ),
+        ] {
+            let rows = ids
+                .into_iter()
+                .map(|id| ServiceEnvInfo {
+                    service_id: id.to_string(),
+                    display_name: format!("{id} C++ runtime (prepared)"),
+                    kind: "native".to_string(),
+                    env_path: "services/shared/native".to_string(),
+                    env_bytes: 1024,
+                    present: true,
+                    blocked_reason: None,
+                })
+                .collect();
+            let merged = merge_native_environment_rows(rows);
+            assert_eq!(merged.len(), 1);
+            assert_eq!(merged[0].service_id, ids[0]);
+            assert_eq!(merged[0].display_name, expected);
+            assert_eq!(merged[0].env_bytes, 1024);
+        }
     }
 
     #[test]
@@ -12411,9 +12501,16 @@ fn open_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
             .arg(&url)
             .spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=gary4local Preview
+Comment={{comment}}
+Exec=gary4local-preview-launch
+Icon={{icon}}
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupWMClass=gary4local-preview
