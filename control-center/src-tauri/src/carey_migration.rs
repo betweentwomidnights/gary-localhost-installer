@@ -143,7 +143,7 @@ fn fingerprint(
 ) -> Result<String, String> {
     let models = carey_models::models();
     let dir = models.models_dir(root);
-    let mut paths = vec![installed.dir.join(&native.executable)];
+    let mut paths = vec![installed.executable(&native.executable)];
     for id in carey_models::tier_components(encoding)? {
         let component = models.component(&id).ok_or("Unknown Carey model")?;
         paths.extend(component.files.iter().map(|file| dir.join(&file.filename)));

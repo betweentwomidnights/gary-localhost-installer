@@ -1,11 +1,11 @@
 {
-    "version":  "0.4.0-rc.4",
-    "notes":  "Yuey v0.2.2 fixes short MIDI scores. After installing, press Update runtime on Yuey\u0027s row.\nLocal SA3 and Carey accept up to 380 seconds. SA3 continuation includes source plus added audio.\nCompatible with gary4juce v5.0.0-rc.4 for ten-minute stem imports and model-limited selections.",
-    "pub_date":  "2026-10-07T05:35:41.0000000+00:00",
-    "platforms":  {
-                      "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEpQa04zd251U1g2TjJuWVlDbTcxOEVoNlU4ZTBzNi9BdGwyUHQ2blVCamZ2NFB5eThON2JqR0F1L1NEbUlmZXFaY1JIMVhjaW5wNkFoejRTbExHeHdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzUxMDU5CWZpbGU6Z2FyeTRsb2NhbF8wLjQuMC1yYy40X3g2NC1zZXR1cC5leGUKcmpQYnp5QlR6Y3ZWUjF1enI1Mk45NXlkak1aZzJZNTFrSVh4TmFYM3Q5OWY3VWNlZVIzMmNzaklBZnRHVDROcVRQNzBSS3FRMkdwUlVDY0cxbHJzRGc9PQo=",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.4.0-rc.4/gary4local_0.4.0-rc.4_x64-setup.exe"
-                                         }
-                  }
+  "version": "0.7.2",
+  "notes": "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.\nExisting models can be reused. Compatible with gary4juce v5.0.4.",
+  "pub_date": "2026-11-13T15:29:46.0000000+00:00",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1oTTQ0alpwMUUvT29GRW51eDRSNk5YdDhBSmd6V0NWUFM3Q2VRSThsV01INjhLa3ZkZ1R6blBSMGN2cnE3ZHJycS8vZ0tUdXQ1U280OEp3YWhvekFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTgzNzI4CWZpbGU6Z2FyeTRsb2NhbF8wLjcuMl94NjQtc2V0dXAuZXhlCkoyT1ZibUdET2pBZnFzWEZtL0E4REJtbEJTSmhkSjA3S21YVlp5RUJsOTZFUUZOY084TmlXbmFLM1VMT05XdnVPbjhRaklKQkJGcG5WeUVxODhHdENnPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2/gary4local_0.7.2_x64-setup.exe"
+    }
+  }
 }

@@ -33,12 +33,7 @@ fn check(selection: &Selection) -> Result<(), String> {
 
 /// What the client adapter and migration rely on. The offline probe and the
 /// live /health check during migration both require all of them.
-pub const REQUIRED_CAPABILITIES: &[&str] = &[
-    "fixed_prefix",
-    "request_splice",
-    "conditioning_duration",
-    "model_lifecycle",
-];
+pub use gary4local_core::sa3_adapter::REQUIRED_CAPABILITIES;
 
 // Reject an older or mismatched binary before hashing large models or starting
 // the private validation server. Live /health checks still verify the launched
@@ -81,7 +76,7 @@ pub async fn probe_server(
     crate::workload_job::configure_tokio_command(&mut command);
     let mut child = command
         .spawn()
-        .map_err(|error| format!("Cannot check native SA3 server: {error}"))?;
+        .map_err(|error| format!("Cannot check native SA3 server at {}: {error}", executable.display()))?;
     if let Err(error) = crate::workload_job::enroll_tokio_child(&child) {
         let _ = child.kill().await;
         return Err(error);

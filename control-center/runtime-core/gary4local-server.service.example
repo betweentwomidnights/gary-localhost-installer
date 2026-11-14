@@ -1,0 +1,16 @@
+[Unit]
+Description=gary4local headless SA3 (experimental)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gary4local-server serve --config %h/.config/gary4local/headless.json
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

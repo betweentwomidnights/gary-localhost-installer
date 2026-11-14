@@ -1,0 +1,113 @@
+name: Headless core
+on:
+  pull_request:
+    paths:
+      - control-center/runtime-core/**
+      - control-center/src-tauri/**
+      - .github/workflows/headless.yml
+      - services/manifests/**
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: headless-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    name: GUI-free ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    container: rust:1.95-bookworm
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build without desktop packages
+        working-directory: control-center/runtime-core
+        run: |
+          cargo test --locked --release
+          cargo build --locked --release --bin gary4local-server
+          cargo tree --locked > dependencies.txt
+          if grep -Ei 'tauri|webkit|gtk-sys|tray-icon' dependencies.txt; then exit 1; fi
+          ldd target/release/gary4local-server
+          target/release/gary4local-server --help
+      - name: Preserve executable modes and provenance
+        working-directory: control-center/runtime-core
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir dist
+          install -m 755 target/release/gary4local-server dist/gary4local-server
+          cp dependencies.txt README.md headless.example.json headless.local.example.json gary4local-server.service.example dist/
+          rustc --version > dist/TOOLCHAIN.txt
+          ldd target/release/gary4local-server > dist/ELF-DEPENDENCIES.txt
+          printf '{"service":"gary4local-server","version":"0.1.0","commit":"%s","platform":"%s","experimental":true}\n' "$GITHUB_SHA" "$PLATFORM" > dist/BUILD-INFO.json
+          tar -C dist -czf "gary4local-server-$PLATFORM-experimental.tar.gz" .
+          sha256sum "gary4local-server-$PLATFORM-experimental.tar.gz" > "SHA256SUMS-$PLATFORM"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gary4local-server-${{ matrix.platform }}-experimental
+          path: |
+            control-center/runtime-core/gary4local-server-*-experimental.tar.gz
+            control-center/runtime-core/SHA256SUMS-*
+          retention-days: 7
+  windows:
+    name: Windows desktop and shared core
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select tested Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Core and desktop regressions
+        run: |
+          cargo +1.95.0 test --locked --manifest-path control-center/runtime-core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 build --locked --manifest-path control-center/runtime-core/Cargo.toml --bin gary4local-server
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          control-center/runtime-core/target/debug/gary4local-server.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_runtime::tests::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib manifest::tests::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  desktop-linux:
+    name: Linux desktop regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Desktop development dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Shared launch and desktop regressions
+        run: |
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_runtime::tests::
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib manifest::tests::
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
+          cargo +1.95.0 check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets

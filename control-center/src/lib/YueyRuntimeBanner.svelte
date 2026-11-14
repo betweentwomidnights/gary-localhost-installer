@@ -164,7 +164,7 @@
       {#if running}
         stop yuey, then reinstall the runtime to switch.
       {:else}
-        <button class="link" disabled={building} onclick={reinstall}>reinstall now</button>
+        <button class="accent" disabled={building} onclick={reinstall}>reinstall now</button>
       {/if}
     </div>
   {/if}
@@ -248,21 +248,6 @@
     font-size: 10px;
     color: var(--text-muted);
     line-height: 1.4;
-  }
-
-  .link {
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--accent);
-    font-size: 10px;
-    cursor: pointer;
-    text-decoration: underline;
-  }
-
-  .link:disabled {
-    color: var(--text-muted);
-    cursor: default;
   }
 
   .msg {

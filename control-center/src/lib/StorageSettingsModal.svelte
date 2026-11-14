@@ -179,7 +179,10 @@
     !!info && info.pendingRestart && info.startupRoot !== info.activeRoot,
   );
   function normalizePath(path: string | null | undefined) {
-    return (path ?? "").replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+    const value = path ?? "";
+    return /^(?:[a-z]:[\\/]|\\\\)/i.test(value)
+      ? value.replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase()
+      : value.replace(/\/+$/, "");
   }
   let defaultPathVisibleElsewhere = $derived(
     !!info &&
@@ -194,11 +197,11 @@
   let defaultStorageNote = $derived(
     info?.defaultRootIsLegacy
       ? info?.configuredRoot || info?.pendingRestart
-        ? "Gary's default on this machine is legacy AppData because existing data was found there."
-        : "using default storage: legacy AppData because existing data was found there."
-      : info?.configuredRoot || info?.pendingRestart
-        ? "Gary's default on this machine is the gary4local-data folder beside the app."
-        : "using default storage beside the app.",
+        ? "Gary's default on this machine preserves the existing legacy storage folder."
+        : "using the existing legacy storage folder."
+      : info && normalizePath(info.activeRoot) !== normalizePath(info.defaultRoot)
+        ? "using custom storage. The default location is shown above."
+        : "using the default storage location.",
   );
   let resetButtonLabel = $derived(
     info?.configuredRoot
@@ -277,9 +280,9 @@
         ? `Remove the ${env.displayName} and free ${size}?\n\n` +
           "Nothing installed uses it now. It's downloaded again by the next runtime install that needs it."
         : env.kind === "native"
-          ? `Remove ${env.displayName}'s runtime and free ${size}?\n\n` +
-            `Downloaded models are kept. ${env.displayName} can't run again until you install ` +
-            "its runtime, which downloads it again."
+          ? `Remove ${env.displayName.endsWith("shared runtime") ? env.displayName : `${env.displayName}'s runtime`} and free ${size}?\n\n` +
+            "Downloaded models are kept. Services using this runtime can't run again " +
+            "until you reinstall it from a service."
           : `Remove ${env.displayName}'s environment and free ${size}?\n\n` +
             "Downloaded models are kept. This service can't run again until you rebuild " +
             "its environment, which re-downloads its packages.";
@@ -786,10 +789,13 @@
 
   .env-label {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 8px;
     min-width: 0;
   }
+
+  .env-row > button { flex-shrink: 0; white-space: nowrap; }
 
   .env-name {
     font-size: 12px;

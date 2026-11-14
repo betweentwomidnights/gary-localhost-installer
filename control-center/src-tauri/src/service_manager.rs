@@ -2,7 +2,6 @@ use crate::manifest::{HealthCheck, MigrationDef, NativeDef, NativePackage, Servi
 use crate::native_runtime::{self, NativeInstall, NativeLaunch};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Weak};
@@ -32,6 +31,8 @@ pub struct ServiceInfo {
     /// Why the service cannot start yet (e.g. its models are missing), shown
     /// in place of a start that would only fail its first request.
     pub start_blocker: Option<String>,
+    /// A sole ready precision that Start selects/verifies before launching.
+    pub start_activation_encoding: Option<String>,
     /// The service's move to native and its reviewed Python cleanup have both
     /// finished. Always false for a service with nothing to migrate.
     pub migration_complete: bool,
@@ -64,6 +65,12 @@ struct RunningService {
     last_health_check_at: Option<Instant>,
     /// A migrated service's client adapter, stopped when this is dropped.
     _adapter: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl Drop for RunningService {
+    fn drop(&mut self) {
+        crate::workload_job::stop_std_child(&mut self.process, Duration::ZERO);
+    }
 }
 
 pub struct HealthTarget {
@@ -444,7 +451,8 @@ impl ServiceManager {
     pub fn native_runtime_current(&self, service_id: &str) -> bool {
         self.find_service(service_id).is_some_and(|svc| {
             match (self.native_install(svc), svc.native.as_ref()) {
-                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str()),
+                (Some(install), Some(native)) => install.version.as_deref() == Some(native.version.as_str())
+                    && native_runtime::installed_packages_match(&self.native_dir(svc), native),
                 _ => false,
             }
         })
@@ -847,7 +855,8 @@ impl ServiceManager {
                     (Some(install), Some(native)) => install
                         .version
                         .as_ref()
-                        .is_some_and(|version| version != &native.version),
+                        .is_some_and(|version| version != &native.version
+                            || !native_runtime::installed_packages_match(&self.native_dir(svc), native)),
                     _ => false,
                 };
 
@@ -867,6 +876,9 @@ impl ServiceManager {
                 };
 
                 let build_status = self.build_statuses.get(&svc.id).cloned();
+                let start_blocker = self.start_blocker(svc);
+                let start_activation_encoding = start_blocker.is_none()
+                    .then(|| self.automatic_native_encoding(svc).ok().flatten()).flatten();
 
                 ServiceInfo {
                     id: svc.id.clone(),
@@ -889,7 +901,8 @@ impl ServiceManager {
                     native_update_available,
                     native_fallback_reason: native_install
                         .and_then(|install| install.fallback_reason),
-                    start_blocker: self.start_blocker(svc),
+                    start_blocker,
+                    start_activation_encoding,
                     migration_complete: svc.runtime == ServiceRuntime::Native
                         && self.selection(&svc.id).is_some_and(|selection| selection.retired())
                         && !self.legacy_runtime_present(svc),
@@ -917,6 +930,9 @@ impl ServiceManager {
         }
         if let Some(blocker) = self.start_blocker(&svc) {
             return Err(format!("{} {blocker}.",svc.display_name));
+        }
+        if self.automatic_native_encoding(&svc)?.is_some() {
+            return Err("Complete native model activation through Start before launching.".into());
         }
 
         if svc.runtime == ServiceRuntime::Native {
@@ -1097,6 +1113,35 @@ impl ServiceManager {
         })
     }
 
+    fn automatic_native_encoding(&self, svc: &ServiceDef) -> Result<Option<String>, String> {
+        if svc.runtime != ServiceRuntime::Native && !self.python_retired(svc) {
+            return Ok(None);
+        }
+        let Some(service) = crate::migration::service(&svc.id) else { return Ok(None); };
+        let ready = service.downloaded_tiers(&self.repo_root);
+        let selected = self.selection(&svc.id).map(|selection| selection.encoding.as_str());
+        if ready.len() == 1 {
+            return Ok((selected != Some(ready[0].as_str())).then(|| ready[0].clone()));
+        }
+        if selected.is_some_and(|encoding| ready.iter().any(|tier| tier == encoding)) {
+            return Ok(None);
+        }
+        Err(if ready.is_empty() {
+            "needs downloaded native models: download the required shared components and one generation precision in Models"
+        } else {
+            "choose a precision and click Use in Models: multiple generation precisions are downloaded"
+        }.into())
+    }
+
+    /// The command layer performs any required asynchronous verification before
+    /// calling `start`. This is also rechecked at click time, not just by the UI.
+    pub fn start_activation(&self, service_id: &str) -> Result<Option<String>, String> {
+        let svc = self.find_service(service_id).ok_or("Unknown service")?;
+        if self.is_running(service_id) { return Err(format!("{service_id} is already running")); }
+        if let Some(blocker) = self.start_blocker(svc) { return Err(blocker); }
+        self.automatic_native_encoding(svc)
+    }
+
     fn start_blocker(&self, svc: &ServiceDef) -> Option<String> {
         if let Some(reason) = self.storage_change_blocker() { return Some(reason); }
         if let Some(error) = self.migrations.get(&svc.id).and_then(|state| state.error.as_ref()) {
@@ -1111,8 +1156,9 @@ impl ServiceManager {
                 return Some(format!("is waiting for {label} to finish"));
             }
         }
-        if svc.runtime == ServiceRuntime::Native {
-            if let Some(blocker) = self.shared_runtime_blocker(svc) {
+        if svc.runtime == ServiceRuntime::Native || self.python_retired(svc) {
+            if let Some(blocker) = (svc.runtime == ServiceRuntime::Native || self.native_install(svc).is_some())
+                .then(|| self.shared_runtime_blocker(svc)).flatten() {
                 return Some(blocker);
             }
             if let Some(label) = self.native_model_mutations.get(&svc.id) {
@@ -1126,8 +1172,19 @@ impl ServiceManager {
                     ));
                 }
             }
-            if let Some(blocker) = service.and_then(|service| {
-                service.native_start_blocker(&self.repo_root, self.selection(&svc.id))
+            if svc.runtime != ServiceRuntime::Native && self.native_install(svc).is_none() {
+                return Some("install the runtime first".into());
+            }
+            let automatic = match self.automatic_native_encoding(svc) {
+                Ok(encoding) => encoding,
+                Err(blocker) => return Some(blocker),
+            };
+            if automatic.is_some() {
+                if let Some(blocker) = self.native_mutation_blocker(&svc.id) { return Some(blocker); }
+            }
+            if let Some(blocker) = service.and_then(|service| match automatic.as_deref() {
+                Some(encoding) => service.native_start_blocker_for_encoding(&self.repo_root, Some(encoding)),
+                None => service.native_start_blocker(&self.repo_root, self.selection(&svc.id)),
             }) {
                 return Some(blocker);
             }
@@ -1215,14 +1272,7 @@ impl ServiceManager {
     pub fn stop(&mut self, service_id: &str) -> Result<(), String> {
         if let Some(mut running) = self.running.remove(service_id) {
             log::info!("Stopping {}", service_id);
-            // Use taskkill /T to kill the entire process tree on Windows.
-            // This ensures subprocesses (e.g. carey_wrapper -> api_server.py) are also killed.
-            let pid = running.process.id();
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .output();
-            let _ = running.process.wait();
+            crate::workload_job::stop_std_child(&mut running.process, Duration::from_secs(3));
             self.errors.remove(service_id);
             Ok(())
         } else {
@@ -1429,7 +1479,8 @@ impl ServiceManager {
             seen.push(dir);
             let behind = match self.native_install(svc) {
                 None => true,
-                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version),
+                Some(install) => install.version.as_ref().is_some_and(|version| version != &native.version
+                            || !native_runtime::installed_packages_match(&self.native_dir(svc), native)),
             };
             if behind { outdated.push(svc.id.clone()); }
         }
@@ -1585,8 +1636,172 @@ def memory_efficient_attention(q, k, v, attn_bias=None, p=0.0, scale=None):
 }
 
 #[cfg(test)]
+mod native_start_tests {
+    use super::*;
+
+    struct Fixture { manager: ServiceManager, root: PathBuf }
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("gary-auto-start-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            let mut manifest: crate::manifest::Manifest = serde_json::from_str(include_str!("../../../services/manifests/services.json")).unwrap();
+            manifest.resolve_native_bundles().unwrap();
+            let fixture = Self { manager: ServiceManager::new(manifest.services, root.clone()), root };
+            // Supply an inventory-only decoder record so a developer's enabled
+            // decoder preference doesn't make generation readiness tests depend
+            // on their actual downloaded adapter. Verification is never called.
+            let source = fixture.root.join("models/sa3/squeakfix_v3.safetensors");
+            let adapter = crate::sa3_loras::adapters_dir(&fixture.root).join("decoder.gguf");
+            for path in [&source, &adapter] {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, b"inventory fixture").unwrap();
+            }
+            let record = fixture.root.join("sa3/native-decoder/adapter.json");
+            std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+            std::fs::write(record, serde_json::to_vec(&serde_json::json!({
+                "name":"squeakfix-v3", "sourcePath":source, "nativePath":adapter, "strength":1.0,
+            })).unwrap()).unwrap();
+            fixture
+        }
+        fn install(&self, id: &str) {
+            let svc = self.manager.find_service(id).unwrap();
+            let dir = self.manager.native_dir(svc);
+            std::fs::create_dir_all(&dir).unwrap();
+            let native = svc.native.as_ref().unwrap();
+            let name = if cfg!(windows) { native.executable.as_str() } else { native.executable.strip_suffix(".exe").unwrap() };
+            std::fs::write(dir.join(name), b"runtime fixture; never executed").unwrap();
+            std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&serde_json::json!({
+                "version": native.version, "platform": native_runtime::current_platform(),
+                "backend": "vulkan", "requestedBackend": "vulkan", "fallbackReason": null, "runtimes": [],
+            })).unwrap()).unwrap();
+        }
+        fn component(&self, id: &str, component_id: &str) {
+            let service = crate::migration::service(id).unwrap();
+            let dir = service.models().models_dir(&self.root);
+            for file in &service.models().component(component_id).unwrap().files {
+                let path = dir.join(&file.filename);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let output = std::fs::File::create(&path).unwrap();
+                // Presence checks need lengths only, never fake model hashes.
+                // Keep these inventory-only fixtures sparse on Windows too.
+                #[cfg(windows)] {
+                    use std::os::windows::process::CommandExt;
+                    let _ = Command::new("fsutil").creation_flags(0x0800_0000).args(["sparse", "setflag"]).arg(&path).output();
+                }
+                output.set_len(file.bytes).unwrap();
+            }
+        }
+        fn tier(&self, id: &str, tier: &str) {
+            for component in crate::migration::service(id).unwrap().tier_components(tier).unwrap() {
+                self.component(id, &component);
+            }
+        }
+        fn info(&self, id: &str) -> ServiceInfo {
+            self.manager.get_service_info().into_iter().find(|info| info.id == id).unwrap()
+        }
+        fn save_selection(&mut self, id: &str, encoding: &str) {
+            self.manager.activate_native(id, crate::migration::Selection {
+                schema_version: 1, encoding: encoding.into(), verified_release: "fixture".into(),
+                backend: "vulkan".into(), activated_at: 1, cleanup_complete: false, cleanup_errors: vec![], runtime_fingerprint: None,
+            }).unwrap();
+        }
+    }
+    impl Drop for Fixture { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.root); } }
+
+    #[test]
+    fn single_complete_precision_is_ready_without_persisting_or_launching() {
+        for id in ["sa3", "stable-audio", "foundation", "carey", "gary", "melodyflow"] {
+            let mut fixture = Fixture::new();
+            fixture.install(id);
+            assert!(fixture.info(id).start_blocker.is_some());
+            let service = crate::migration::service(id).unwrap();
+            let tier = service.tiers().last().unwrap();
+            fixture.tier(id, tier);
+            let info = fixture.info(id);
+            assert!(info.start_blocker.is_none(), "{id}: {:?}", info.start_blocker);
+            assert_eq!(info.start_activation_encoding.as_deref(), Some(*tier), "{id}");
+            assert_eq!(fixture.manager.start_activation(id).unwrap().as_deref(), Some(*tier));
+            assert!(fixture.manager.selection(id).is_none(), "inventory must not activate {id}");
+            assert!(fixture.manager.start(id).unwrap_err().contains("activation"), "cannot bypass verification");
+            assert!(!fixture.manager.is_running(id));
+        }
+    }
+
+    #[test]
+    fn multiple_precisions_need_a_choice_and_a_saved_choice_survives_more_downloads() {
+        let mut fixture = Fixture::new();
+        fixture.install("sa3");
+        fixture.tier("sa3", "F16");
+        fixture.tier("sa3", "Q8_0");
+        assert!(fixture.manager.start_activation("sa3").unwrap_err().contains("multiple"));
+        fixture.save_selection("sa3", "Q8_0");
+        assert_eq!(fixture.manager.start_activation("sa3").unwrap(), None);
+        assert_eq!(fixture.manager.selection("sa3").unwrap().encoding, "Q8_0");
+        fixture.tier("sa3", "Q4_K_M");
+        assert_eq!(fixture.manager.start_activation("sa3").unwrap(), None);
+        assert_eq!(fixture.manager.selection("sa3").unwrap().encoding, "Q8_0");
+    }
+
+    #[test]
+    fn remaining_single_precision_replaces_a_missing_saved_copy_only_on_start() {
+        let mut fixture = Fixture::new(); fixture.install("sa3");
+        fixture.save_selection("sa3", "F16"); fixture.tier("sa3", "Q4_K_M");
+        assert_eq!(fixture.manager.start_activation("sa3").unwrap().as_deref(), Some("Q4_K_M"));
+        assert_eq!(fixture.manager.selection("sa3").unwrap().encoding, "F16");
+    }
+
+    #[test]
+    fn shared_weights_training_bases_partial_files_and_busy_jobs_cannot_enable_start() {
+        let mut fixture = Fixture::new(); fixture.install("sa3");
+        fixture.component("sa3", "sa3-native::medium-Q4_K_M");
+        fixture.component("sa3", "sa3-native::medium-base-F16");
+        assert!(fixture.manager.start_activation("sa3").is_err(), "shared components required");
+        fixture.tier("sa3", "Q4_K_M");
+        assert_eq!(fixture.manager.start_activation("sa3").unwrap().as_deref(), Some("Q4_K_M"), "training bases are not generation choices");
+        fixture.manager.begin_native_model_mutation("sa3", "model download").unwrap();
+        assert!(fixture.manager.start_activation("sa3").unwrap_err().contains("model download"));
+        fixture.manager.end_native_model_mutation("sa3");
+        fixture.manager.begin_native_workload("stable-audio", "fixture-tool", "shared runtime tool").unwrap();
+        assert!(fixture.manager.start_activation("sa3").unwrap_err().contains("shared runtime tool"));
+        fixture.manager.end_native_workload("stable-audio", "fixture-tool");
+        let file = &crate::sa3_models::component("sa3-native::medium-Q4_K_M").unwrap().files[0];
+        std::fs::OpenOptions::new().write(true).open(crate::sa3_models::models_dir(&fixture.root).join(&file.filename)).unwrap().set_len(file.bytes - 1).unwrap();
+        assert!(fixture.manager.start_activation("sa3").is_err(), "partial file is not ready");
+    }
+
+    #[test]
+    fn legacy_python_installation_is_not_automatically_migrated() {
+        let fixture = Fixture::new(); fixture.install("sa3"); fixture.tier("sa3", "F16");
+        let python = fixture.root.join("services/sa3/env/Scripts/python.exe");
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::write(python, b"existing environment").unwrap();
+        assert!(!fixture.info("sa3").python_retired);
+        assert_eq!(fixture.manager.start_activation("sa3").unwrap(), None);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+
+    fn exited_process() -> Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/c", "exit /b 0"]).creation_flags(0x08000000);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let mut child = command.spawn().unwrap();
+        child.wait().unwrap();
+        child
+    }
 
     fn service_with_env(env: HashMap<String, String>) -> ServiceDef {
         ServiceDef {
@@ -1857,8 +2072,15 @@ mod tests {
                 svc.native = Some(native.clone());
                 svc.runtime = ServiceRuntime::Native;
             }
+            // These tests exercise reservation semantics, without downloading
+            // or running binaries. Supply the fixture package metadata for the
+            // test host too, so the fixture is independent of host packages.
+            if let Some(native) = svc.native.as_mut() {
+                let packages = native.platforms["windows-x64"].clone();
+                native.platforms.insert(native_runtime::current_platform().into(), packages);
+            }
         }
-        let mut manager = ServiceManager::new(manifest.services, PathBuf::from("C:/test-runtime"));
+        let mut manager = ServiceManager::new(manifest.services, std::env::temp_dir().join("gary-test-runtime"));
         manager.set_native_runtimes(manifest.native_runtimes);
         manager
     }
@@ -2019,12 +2241,7 @@ mod tests {
     fn a_service_sharing_the_runtime_keeps_running_while_another_changes_its_models() {
         let mut manager = shared_native_manager();
         let running = |manager: &mut ServiceManager, id: &str| {
-            let mut process = Command::new("cmd.exe")
-                .args(["/c", "exit /b 0"])
-                .creation_flags(0x08000000)
-                .spawn()
-                .unwrap();
-            process.wait().unwrap();
+            let process = exited_process();
             manager.running.insert(
                 id.into(),
                 RunningService {
@@ -2048,12 +2265,7 @@ mod tests {
     #[test]
     fn shared_cuda_replacement_waits_for_running_native_consumers() {
         let mut manager = shared_native_manager();
-        let mut process = Command::new("cmd.exe")
-            .args(["/c", "exit /b 0"])
-            .creation_flags(0x08000000)
-            .spawn()
-            .unwrap();
-        process.wait().unwrap();
+        let process = exited_process();
         // Keep a process entry until the regular health poll reaps it.
         manager.running.insert(
             "yuey".into(),
@@ -2103,8 +2315,10 @@ mod tests {
         let native = svc.native.as_ref().unwrap();
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
-        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
             backend: "cuda".into(),
@@ -2116,7 +2330,7 @@ mod tests {
         let install = manager.native_install(svc).unwrap();
 
         let launch = manager.native_launch(svc, &install, None).unwrap();
-        assert_eq!(launch.program, native_dir.join("yue2-server.exe"));
+        assert_eq!(launch.program, native_dir.join(gary4local_core::runtime::executable_name("yue2-server.exe")));
         assert_eq!(launch.dir, native_dir);
         assert_eq!(launch.args, native.args, "the manifest's arguments, untouched");
         let command = launch.std_command();
@@ -2173,8 +2387,10 @@ mod tests {
         let native = svc.native.clone().unwrap();
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
-        std::fs::write(native_dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(native_dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         let stamp = |version: &str| native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: version.into(),
             platform: native_runtime::current_platform().into(),
             backend: "cuda".into(),
@@ -2190,11 +2406,11 @@ mod tests {
         let native = svc.native.as_ref().unwrap();
         let dir = manager.native_dir(svc);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(&native.executable), b"fixture").unwrap();
+        std::fs::write(dir.join(gary4local_core::runtime::executable_name(&native.executable)), b"fixture").unwrap();
         std::fs::write(dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
         for id in ["stable-audio", "sa3", "foundation"] {
             let executable = &manager.find_service(id).unwrap().native.as_ref().unwrap().executable;
-            std::fs::write(dir.join(executable), b"fixture").unwrap();
+            std::fs::write(dir.join(gary4local_core::runtime::executable_name(executable)), b"fixture").unwrap();
             let info = manager.get_service_info().into_iter().find(|info| info.id == id).unwrap();
             assert!(info.native_runtime_installed, "{id} shares the installed runtime");
             assert!(!info.migration_complete && manager.selection(id).is_none());
@@ -2220,11 +2436,13 @@ mod tests {
         let native_dir = manager.native_dir(svc);
         std::fs::create_dir_all(&native_dir).unwrap();
         std::fs::write(
-            native_dir.join(&svc.native.as_ref().unwrap().executable),
+            native_dir.join(gary4local_core::runtime::executable_name(&svc.native.as_ref().unwrap().executable)),
             b"fixture",
         )
         .unwrap();
         let stamp = native_runtime::NativeStamp {
+            core_sha256: None,
+            backend_sha256: None,
             version: "fixture".into(),
             platform: native_runtime::current_platform().into(),
             backend: "vulkan".into(),
@@ -2246,6 +2464,89 @@ mod tests {
             .is_ok());
         assert!(manager.get_native_build_info("sa3").is_err());
         crate::remove_managed_path(&root, &std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn same_engine_version_with_new_package_hash_is_an_update() {
+        let mut manager = shared_native_manager();
+        let root = std::env::temp_dir().join(format!(
+            "gary-preview-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        manager.repo_root = root.clone();
+        let svc = manager.find_service("yuey").unwrap();
+        let native = svc.native.as_ref().unwrap().clone();
+        let directory = manager.native_dir(svc);
+        let packages = &native.platforms[native_runtime::current_platform()];
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join(gary4local_core::runtime::executable_name(
+                &native.executable,
+            )),
+            b"fixture",
+        )
+        .unwrap();
+        let mut stamp = native_runtime::NativeStamp {
+            version: native.version.clone(),
+            platform: native_runtime::current_platform().into(),
+            backend: "vulkan".into(),
+            requested_backend: "vulkan".into(),
+            fallback_reason: None,
+            runtimes: vec![],
+            core_sha256: Some(packages.core.sha256.clone()),
+            backend_sha256: Some(packages.backends["vulkan"].sha256.clone()),
+        };
+        let write = |stamp: &native_runtime::NativeStamp| {
+            std::fs::write(
+                directory.join("gary-native.json"),
+                serde_json::to_vec(stamp).unwrap(),
+            )
+            .unwrap()
+        };
+        write(&stamp);
+        assert!(manager.native_runtime_current("yuey"));
+        manager
+            .services
+            .iter_mut()
+            .find(|s| s.id == "yuey")
+            .unwrap()
+            .native
+            .as_mut()
+            .unwrap()
+            .platforms
+            .get_mut(native_runtime::current_platform())
+            .unwrap()
+            .core
+            .sha256 = "0".repeat(64);
+        assert!(!manager.native_runtime_current("yuey"));
+        assert!(
+            manager
+                .get_service_info()
+                .iter()
+                .find(|s| s.id == "yuey")
+                .unwrap()
+                .native_update_available
+        );
+        assert!(manager
+            .outdated_native_runtimes()
+            .contains(&"yuey".to_string()));
+        stamp.backend_sha256 = None;
+        write(&stamp);
+        assert!(
+            !manager.native_runtime_current("yuey"),
+            "Partial provenance is not a legacy stamp"
+        );
+        stamp.core_sha256 = None;
+        write(&stamp);
+        assert!(
+            manager.native_runtime_current("yuey"),
+            "Preserve existing legacy installations"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2333,6 +2634,11 @@ mod tests {
     #[test]
     fn preparing_native_models_leaves_the_python_start_available() {
         let mut manager = shared_native_manager();
+        let root = std::env::temp_dir().join(format!("gary-legacy-python-models-{}", std::process::id()));
+        manager.repo_root = root.clone();
+        let python = root.join("services/sa3/env/Scripts/python.exe");
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::write(&python, b"existing Python install").unwrap();
         manager
             .services
             .iter_mut()
@@ -2349,6 +2655,7 @@ mod tests {
             .unwrap()
             .start_blocker
             .is_none());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2362,10 +2669,10 @@ mod tests {
             .runtime = ServiceRuntime::Python;
         let python = manager.env_dir_for("sa3").unwrap();
         let candidate = manager.get_native_build_info("sa3").unwrap();
-        assert_eq!(python, PathBuf::from("C:/test-runtime/services/sa3/env"));
+        assert_eq!(python, manager.repo_root.join("services/sa3/env"));
         assert_eq!(
             candidate.env_dir,
-            PathBuf::from("C:/test-runtime/services/sa3/native")
+            manager.repo_root.join("services/sa3/native")
         );
         assert_eq!(candidate.runtime, ServiceRuntime::Native);
         assert_eq!(manager.env_dir_for("sa3").unwrap(), python);

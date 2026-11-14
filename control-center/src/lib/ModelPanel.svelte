@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PrecisionPicker from "./PrecisionPicker.svelte";
+  import { shownPrecision } from "./modelPrecision";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
@@ -67,6 +69,7 @@
 
   // yuey: which tier the runtime check recommends, and which one it launches with.
   let yueyRuntime: NativeRuntimeInfo | null = $state(null);
+  let yueyPicked = $state<string | null>(null);
   let yueyActiveEncoding: string | null = $state(null);
   let yueyBusy = $state(false);
 
@@ -271,6 +274,9 @@
   let yueyTiers = $derived(
     serviceModels.filter((m) => m.size_category === "tier")
   );
+  const yueyPrecisionOptions = $derived(yueyTiers.map((model) => ({ value: yueyEncodingOf(model), status: model.status })));
+  const yueyShown = $derived.by(() => shownPrecision(yueyPrecisionOptions, yueyPicked, yueyActiveEncoding, yueyRuntime?.recommendedEncoding));
+  const yueyVisible = $derived(yueyTiers.filter((model) => yueyEncodingOf(model) === yueyShown));
   let sa3Models = $derived(
     serviceModels.filter((m) =>
       m.size_category === "model" ||
@@ -351,10 +357,10 @@
 
   <div class="model-list">
     {#if modelActionMessage}
-      <div class="model-action-message">{modelActionMessage}</div>
+      <div class="model-action-message" role="status">{modelActionMessage}</div>
     {/if}
     {#if modelActionError}
-      <div class="model-action-error">{modelActionError}</div>
+      <div class="model-action-error" role="alert">{modelActionError}</div>
     {/if}
     {#if isJerry}
       {#if hasTierModels}
@@ -396,7 +402,7 @@
               </button>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:downloaded={model.status === "downloaded"}
                 class:failed={model.status === "failed"}
                 disabled={model.status === "downloading" || model.status === "downloaded"}
@@ -461,7 +467,7 @@
                 </button>
               {:else}
                 <button
-                  class="dl-btn"
+                  class="dl-btn accent"
                   class:downloaded={model.status === "downloaded"}
                   class:failed={model.status === "failed"}
                   disabled={model.status === "downloading" || model.status === "downloaded"}
@@ -522,7 +528,7 @@
               </button>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:downloaded={model.status === "downloaded"}
                 class:failed={model.status === "failed"}
                 disabled={model.status === "downloading" || model.status === "downloaded"}
@@ -580,7 +586,7 @@
               </button>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:failed={model.status === "failed"}
                 disabled={model.status === "downloading" || removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
@@ -627,7 +633,7 @@
               </button>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:failed={model.status === "failed"}
                 disabled={model.status === "downloading" || removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
@@ -677,7 +683,7 @@
               </button>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:failed={model.status === "failed"}
                 disabled={model.status === "downloading" || removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
@@ -731,7 +737,7 @@
               </button>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:failed={model.status === "failed"}
                 disabled={removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
@@ -746,7 +752,7 @@
       <div class="size-group">
         <div class="size-label">generation tier</div>
         <div class="carey-hint">
-          one tier is enough.
+          choose a precision to view or download it. A single downloaded precision is used automatically. Use chooses between multiple downloaded precisions and restarts yuey if it is running.
           {#if yueyRuntime?.recommendedEncoding}
             the runtime check recommends {yueyRuntime.recommendedEncoding} for this GPU.
           {:else}
@@ -756,13 +762,16 @@
             yuey launches with {yueyActiveEncoding}.
           {/if}
         </div>
-        {#each yueyTiers as model}
+        {#each yueyVisible as model (model.id)}
           {@const prog = getProgress(model.id)}
           {@const encoding = yueyEncodingOf(model)}
           <div class="model-row" class:downloaded={model.status === "downloaded"} class:downloading={model.status === "downloading"}>
             <div class="model-info">
               <span class="model-name">
-                {model.display_name}
+                YuE
+                <PrecisionPicker label="YuE" value={yueyShown} options={yueyPrecisionOptions} active={yueyActiveEncoding}
+                  recommended={yueyRuntime?.recommendedEncoding} disabled={yueyBusy || removingModelId !== null || yueyTiers.some((item) => item.status === "downloading")}
+                  onChange={(value) => yueyPicked = value} />
                 {#if yueyRuntime?.recommendedEncoding === encoding}
                   <span class="tier-badge">recommended</span>
                 {/if}
@@ -790,10 +799,10 @@
               </div>
             {:else if model.status === "downloaded"}
               <div class="tier-actions">
-                {#if yueyActiveEncoding !== encoding}
+                {#if yueyTiers.filter((item) => item.status === "downloaded").length > 1 && yueyActiveEncoding !== encoding}
                   <button
-                    class="dl-btn"
-                    disabled={yueyBusy || removingModelId !== null}
+                    class="dl-btn accent"
+                    disabled={yueyBusy || removingModelId !== null || yueyShared.some((item) => item.status !== "downloaded")} title="Select this precision; restarts yuey if it is running"
                     onclick={(e) => { e.stopPropagation(); useYueyTier(encoding); }}
                   >
                     use
@@ -809,7 +818,7 @@
               </div>
             {:else}
               <button
-                class="dl-btn"
+                class="dl-btn accent"
                 class:failed={model.status === "failed"}
                 disabled={removingModelId !== null}
                 onclick={(e) => { e.stopPropagation(); startDownload(model.id); }}
@@ -871,7 +880,7 @@
                     </button>
                   {:else}
                     <button
-                      class="dl-btn"
+                      class="dl-btn accent"
                       class:downloaded={model.status === "downloaded"}
                       class:failed={model.status === "failed"}
                       disabled={model.status === "downloading" || model.status === "downloaded"}
@@ -920,7 +929,7 @@
                   </button>
                 {:else}
                   <button
-                    class="dl-btn"
+                    class="dl-btn accent"
                     class:downloaded={model.status === "downloaded"}
                     class:failed={model.status === "failed"}
                     disabled={model.status === "downloading" || model.status === "downloaded"}
@@ -1094,9 +1103,6 @@
     background: var(--bg-hover);
   }
 
-  .model-row.downloaded {
-    opacity: 0.7;
-  }
 
   .model-info {
     display: flex;
@@ -1133,8 +1139,9 @@
     padding: 3px 10px;
     border: 1px solid var(--border);
     border-radius: 3px;
-    background: var(--bg-panel);
-    color: var(--text-primary);
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
     cursor: pointer;
   }
 
@@ -1145,6 +1152,7 @@
   }
 
   .dl-btn.downloaded {
+    background: var(--bg-panel);
     color: var(--green);
     border-color: var(--green);
     opacity: 0.6;
@@ -1152,7 +1160,7 @@
   }
 
   .dl-btn.failed {
-    color: var(--red);
+    color: white;
     border-color: var(--red);
   }
 

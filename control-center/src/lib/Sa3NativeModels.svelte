@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PrecisionPicker from "./PrecisionPicker.svelte";
+  import { shownPrecision } from "./modelPrecision";
   import { invoke } from "@tauri-apps/api/core";
   import { useNativeModel } from "./runtimeSetup";
   import { listen } from "@tauri-apps/api/event";
@@ -22,6 +24,7 @@
   let activeEncoding = $state<string | null>(null);
   let trainingRecommendation = $state("F16");
   let decoder = $state<Decoder | null>(null);
+  let picked = $state<Record<string, string>>({});
   let busy = $state(false);
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
@@ -31,7 +34,7 @@
   let fixProgress = $derived(progress.get("sa3-native::decoder-correction"));
   const groups = [
     { label: "shared components", kind: "shared", hint: "Download these GGUF components once for generation and LoRA training. Text encoder: F16. Autoencoder: F32. The tokenizer and conditioner are included." },
-    { label: "generation tier", kind: "generation", hint: "One tier is enough. F16 is the default; smaller DiT tiers reduce memory use. Shared component precision stays the same." },
+    { label: "generation tier", kind: "generation", hint: "With one downloaded generation precision, Start selects it and completes activation. Use chooses between multiple downloaded precisions. F16 is the default; smaller DiT tiers reduce memory use. Shared component precision stays the same." },
     { label: "LoRA training base", kind: "training", hint: "Optional — download one base only if you train LoRAs. Training precision is independent of the generation tier." },
   ];
   function kind(id: string) {
@@ -39,6 +42,20 @@
     return id.includes("medium-base-") ? "training" : "generation";
   }
   function encoding(id: string) { return id.replace(/^sa3-native::medium-(?:base-)?/, ""); }
+  function entries(group: string) {
+    return catalog.filter((entry) => entry.id !== "sa3-native::decoder-correction" && kind(entry.id) === group);
+  }
+  function precisionOptions(group: string) {
+    return entries(group).map((entry) => ({ value: encoding(entry.id), status: models.find((model) => model.id === entry.id)?.status }));
+  }
+  const downloadedGeneration = $derived(precisionOptions("generation").filter((option) => option.status === "downloaded"));
+  function shown(group: string) {
+    return shownPrecision(precisionOptions(group), picked[group], group === "generation" ? activeEncoding : null,
+      group === "training" ? trainingRecommendation : "F16");
+  }
+  function visibleEntries(group: string) {
+    return group === "shared" ? entries(group) : entries(group).filter((entry) => encoding(entry.id) === shown(group));
+  }
   function size(bytes: number) { return `${(bytes / 1024 ** 3).toFixed(2)} GB`; }
   function label(entry: Component) {
     if (entry.id === "sa3-native::text") return "Text encoder and tokenizer · F16";
@@ -92,13 +109,17 @@
       {#if group.kind === "generation" && activeEncoding}SA3 is set to {activeEncoding}. Stop SA3 before changing its model.{/if}
       {#if group.kind === "training"}{trainingRecommendation} is recommended for training on this hardware.{/if}
     </p>
-    {#each catalog.filter((entry) => entry.id !== "sa3-native::decoder-correction" && kind(entry.id) === group.kind) as entry (entry.id)}
+    {#each visibleEntries(group.kind) as entry (entry.id)}
       {@const model = models.find((item) => item.id === entry.id)}
       {@const download = progress.get(entry.id)}
       <div class="model-row" class:downloaded={model?.status === "downloaded"}>
         <div class="model-info">
-          <span class="model-name">{label(entry)}
+          <span class="model-name">{group.kind === "shared" ? label(entry) : group.kind === "training" ? "Medium training base" : "Medium"}
+            {#if group.kind !== "shared"}<PrecisionPicker label={group.label} value={shown(group.kind)} options={precisionOptions(group.kind)}
+              active={group.kind === "generation" ? activeEncoding : null} recommended={group.kind === "training" ? trainingRecommendation : null}
+              disabled={busy || downloading || removingId !== null} onChange={(value) => picked[group.kind] = value} />{/if}
             {#if group.kind === "generation" && activeEncoding === encoding(entry.id)}<span class="badge active">active</span>
+            {:else if group.kind === "generation" && downloadedGeneration.length === 1 && model?.status === "downloaded"}<span class="badge">on Start</span>
             {:else if group.kind === "generation" && encoding(entry.id) === "F16"}<span class="badge">default</span>{/if}
             {#if group.kind === "training" && encoding(entry.id) === trainingRecommendation}<span class="badge">recommended</span>{/if}
           </span>
@@ -110,10 +131,10 @@
           <DownloadProgress value={download?.progress ?? 0} label={`${label(entry)} download`} />
         {:else if model?.status === "downloaded"}
           <div class="actions">
-            {#if group.kind === "generation" && nativeSelected && activeEncoding !== encoding(entry.id)}<button class="download" disabled={busy || downloading || removingId !== null || !sharedReady} title={sharedReady ? "Use this tier next time SA3 starts" : "Download the shared components first"} onclick={() => useTier(encoding(entry.id))}>use</button>{/if}
+            {#if group.kind === "generation" && nativeSelected && downloadedGeneration.length > 1 && activeEncoding !== encoding(entry.id)}<button class="download accent" disabled={busy || downloading || removingId !== null || !sharedReady} title={sharedReady ? "Use this tier next time SA3 starts" : "Download the shared components first"} onclick={() => useTier(encoding(entry.id))}>use</button>{/if}
             <button disabled={busy || downloading || removingId !== null} onclick={() => onRemove(entry.id)}>{removingId === entry.id ? "removing..." : "remove"}</button>
           </div>
-        {:else}<button class="download" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
+        {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload(entry.id)}>{model?.status === "failed" ? "Retry" : "Download"}</button>{/if}
       </div>
     {/each}
   </section>
@@ -128,8 +149,8 @@
     </div>
     {#if fix?.status === "downloading"}<DownloadProgress value={fixProgress?.progress ?? 0} label="Decoder fix download" />
     {:else if !decoder?.prepared}
-      {#if fix?.status === "downloaded" || decoder?.sourcePresent}<button class="download" disabled={busy || downloading || removingId !== null} onclick={convertDecoder}>install decoder fix</button>
-      {:else}<button class="download" disabled={busy || downloading || removingId !== null} onclick={() => onDownload("sa3-native::decoder-correction")}>{fix?.status === "failed" ? "Retry" : "Download"}</button>{/if}
+      {#if fix?.status === "downloaded" || decoder?.sourcePresent}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={convertDecoder}>install decoder fix</button>
+      {:else}<button class="download accent" disabled={busy || downloading || removingId !== null} onclick={() => onDownload("sa3-native::decoder-correction")}>{fix?.status === "failed" ? "Retry" : "Download"}</button>{/if}
     {/if}
   </div>
 </section>
@@ -143,13 +164,11 @@
   p { margin: 4px 16px 10px; font-size: 11px; color: var(--text-secondary); line-height: 1.5; }
   .model-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; transition: background 0.1s; }
   .model-row:hover { background: var(--bg-hover); }
-  .model-row.downloaded { opacity: 0.7; }
   .model-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .model-name { font-size: 12px; color: var(--text-primary); }
+  .model-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-primary); }
   .model-size { font-size: 10px; color: var(--text-muted); overflow-wrap: anywhere; }
   .actions { display: flex; gap: 6px; }
   button { flex-shrink: 0; font-size: 11px; }
-  button.download { color: var(--accent); border-color: var(--accent); }
   .badge { display: inline-block; margin-left: 5px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 9px; color: var(--text-muted); }
   .badge.active { color: var(--green); border-color: var(--green); }
   .error { color: var(--red); font-size: 11px; overflow-wrap: anywhere; }
