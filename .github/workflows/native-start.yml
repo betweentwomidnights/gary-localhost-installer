@@ -30,3 +30,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib service_manager::tests::
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib caption_preflight_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib sa3_autolabel_availability_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
