@@ -79,6 +79,8 @@ jobs:
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib linux_desktop::tests::
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib caption_preflight_tests
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib sa3_autolabel_availability_tests
           python3 smoke-tests/linux/check_desktop_package.py --platform "$PLATFORM" --arch "$DEB_ARCH"
       - name: Install package and check desktop startup
         run: |
