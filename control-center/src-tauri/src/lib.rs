@@ -760,7 +760,11 @@ struct Sa3AutolabelAvailability {
     available: bool,
     carey_built: bool,
     captioner_downloaded: bool,
+    blocker: Option<String>,
 }
+
+#[cfg(test)]
+mod caption_preflight_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -9646,18 +9650,27 @@ fn build_sa3_autolabel_availability(
         available: carey_built && captioner_downloaded,
         carey_built,
         captioner_downloaded,
+        blocker: if !carey_built { Some("Build Carey before auto-labeling.".into()) }
+            else if !captioner_downloaded { Some(format!("Download the ACE-Step {} captioner from Carey → Models before auto-labeling.", carey_caption_lm_size(caption_lm_model))) }
+            else { None },
     }
 }
 
 /// On C++ Carey the captioner is the LM GGUF of that size, beside the DiT and
 /// VAE every Carey tier downloads.
 fn native_sa3_autolabel_availability(repo_root: &Path, caption_lm_model: &str) -> Sa3AutolabelAvailability {
-    let captioner_downloaded = carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model)).is_ok()
-        && carey_caption::caption_dit(repo_root).is_ok();
+    let captioner_downloaded = carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model)).is_ok();
+    let mut missing = Vec::new();
+    if !captioner_downloaded { missing.push(format!("the {} captioner", carey_caption_lm_size(caption_lm_model))); }
+    if carey_caption::caption_dit(repo_root).is_err() { missing.push("a Carey audio model (DiT)".into()); }
+    if carey_caption::caption_vae(repo_root).is_err() { missing.push("Carey's shared VAE".into()); }
+    let blocker = (!missing.is_empty()).then(|| format!(
+        "Auto-labeling needs {}. Download the missing models from Carey → Models. The audio model and VAE turn audio into codes for the captioner.", missing.join(" and ")));
     Sa3AutolabelAvailability {
-        available: captioner_downloaded,
+        available: blocker.is_none(),
         carey_built: true,
         captioner_downloaded,
+        blocker,
     }
 }
 
@@ -9673,8 +9686,15 @@ async fn get_sa3_autolabel_availability(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3AutolabelAvailability, String> {
     let caption_lm_model = validate_carey_caption_lm_model(&caption_lm_model)?;
-    if manager.lock().await.uses_native_tools("carey") {
-        return Ok(native_sa3_autolabel_availability(repo_root.inner(), caption_lm_model));
+    let services = manager.lock().await;
+    if services.uses_native_tools("carey") {
+        let mut availability = native_sa3_autolabel_availability(repo_root.inner(), caption_lm_model);
+        if services.migration_launch("carey", carey_models::TIERS[0]).is_err() {
+            availability.carey_built = false;
+            availability.available = false;
+            availability.blocker = Some("Install Carey's C++ runtime from Carey before auto-labeling.".into());
+        }
+        return Ok(availability);
     }
     Ok(build_sa3_autolabel_availability(
         repo_root.inner(),
@@ -9848,7 +9868,7 @@ async fn start_native_sa3_autolabel(
         dataset: dataset.clone(),
         lm: carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model))?,
         dit: carey_caption::caption_dit(repo_root)?,
-        vae: carey_caption::vae_file()?,
+        vae: carey_caption::caption_vae(repo_root)?,
         overwrite: true,
         bpm_analysis: true,
         key_analysis: true,

@@ -4,9 +4,10 @@
   import NativeRuntimeBanner from '../../src/lib/NativeRuntimeBanner.svelte';
   import StorageSettingsModal from '../../src/lib/StorageSettingsModal.svelte';
   import ServiceRow from '../../src/lib/ServiceRow.svelte';
+  import Sa3DatasetSidecarModal from '../../src/lib/Sa3DatasetSidecarModal.svelte';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  let { serviceId, controls, showRow, initialService } = $props();
+  let { serviceId, controls, showRow, initialService, captioning } = $props();
   let service = $state(initialService);
   onMount(() => {
     const listener = listen('services-updated', (event) => service = event.payload[0]);
@@ -19,7 +20,9 @@
     configuredRoot: null, configPath: `${root}/settings.json`, pendingRestart: false, usingLegacyDefault: false, defaultRootIsLegacy: false };
 </script>
 
-{#if controls}
+{#if captioning}
+  <Sa3DatasetSidecarModal open={true} datasetPath="/test/dataset" onClose={noop} />
+{:else if controls}
   <YueyGenerationPanel settings={{ instrumentalMethod: 'transfer', instrumentalAdapter: true, naturalMaxSeconds: 96 }} serviceStatus="stopped" onUpdated={noop} />
   <NativeRuntimeBanner {serviceId} label="SA3" serviceStatus="stopped" nativeBackend="vulkan" building={false} />
   <StorageSettingsModal open={storageOpen} {info} error={null} onClose={() => storageOpen = false} onReveal={noop}

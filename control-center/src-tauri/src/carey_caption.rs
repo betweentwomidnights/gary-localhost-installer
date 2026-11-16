@@ -306,6 +306,21 @@ pub fn vae_file() -> Result<String, String> {
         .ok_or_else(|| "Carey's catalog has no shared models".into())
 }
 
+/// Captioning needs the audio VAE, but not the shared text encoder. Inspect
+/// its pinned file independently so an LM-only download is reported accurately.
+pub fn caption_vae(root: &Path) -> Result<String, String> {
+    let models = crate::carey_models::models();
+    let shared = models.component(crate::carey_models::SHARED)
+        .ok_or("Carey's catalog has no shared models")?;
+    let filename = vae_file()?;
+    let file = shared.files.iter().find(|file| file.filename == filename)
+        .ok_or("Carey's catalog has no audio VAE")?;
+    let present = std::fs::symlink_metadata(models.models_dir(root).join(&filename))
+        .is_ok_and(|metadata| metadata.file_type().is_file() && metadata.len() == file.bytes);
+    if !present { return Err("Download Carey's shared VAE from Carey → Models before auto-labeling.".into()); }
+    Ok(filename)
+}
+
 /// A downloaded DiT whose audio tokenizer feeds the LM, for callers that do
 /// not choose one: the 2B models before XL, best precision first. Every
 /// Carey tier downloads 2B base, so one is there once Carey is migrated.
