@@ -45,6 +45,7 @@
     careyBuilt: boolean;
     captionerDownloaded: boolean;
     analysisModelsDownloaded: boolean;
+    blocker?: string | null;
   }
 
   type PromptStyle = "bare" | "labeled";
@@ -83,6 +84,7 @@
   let autolabelCareyBuilt = $state(false);
   let autolabelCaptionerDownloaded = $state(false);
   let autolabelAnalysisModelsDownloaded = $state(false);
+  let autolabelBlocker = $state<string | null>(null);
   let autolabelState = $state<Sa3AutolabelState | null>(null);
   let autolabelPollTimer: ReturnType<typeof setInterval> | null = null;
   let lastAutolabelDone = 0; // completed count at the previous poll, to pull focus once per finish
@@ -269,12 +271,14 @@
       autolabelCareyBuilt = availability.careyBuilt;
       autolabelCaptionerDownloaded = availability.captionerDownloaded;
       autolabelAnalysisModelsDownloaded = availability.analysisModelsDownloaded;
-    } catch {
+      autolabelBlocker = availability.blocker ?? null;
+    } catch (e) {
       if (requestedModel !== captionLmModel) return;
       autolabelAvailable = false;
       autolabelCareyBuilt = false;
       autolabelCaptionerDownloaded = false;
       autolabelAnalysisModelsDownloaded = false;
+      autolabelBlocker = `Cannot check auto-label setup: ${describeError(e)}`;
     }
   }
 
@@ -299,11 +303,11 @@
       return;
     }
     if (!autolabelAvailable) {
-      error = !autolabelCareyBuilt
+      error = autolabelBlocker ?? (!autolabelCareyBuilt
         ? "Build Carey before auto-labeling."
         : !autolabelCaptionerDownloaded
           ? `Download the ACE-Step ${captionerLabel(captionLmModel)} captioner from Carey → Models before auto-labeling.`
-          : "Download ACE-Step Base, VAE, and Qwen3 Embedding from Carey → Models before auto-labeling.";
+          : "Download ACE-Step Base, VAE, and Qwen3 Embedding from Carey → Models before auto-labeling.");
       return;
     }
     lastAutolabelDone = 0;
@@ -433,7 +437,7 @@
       : -1
   );
   let autolabelTitle = $derived(
-    !autolabelCareyBuilt
+    !autolabelAvailable && autolabelBlocker ? autolabelBlocker : !autolabelCareyBuilt
       ? "Requires Carey — build Carey first."
       : !autolabelCaptionerDownloaded
         ? `Download the ACE-Step ${captionerLabel(captionLmModel)} captioner from Carey → Models first.`
@@ -555,6 +559,10 @@
           </span>
         </div>
       </div>
+
+      {#if !autolabelRunning && !autolabelAvailable && autolabelBlocker}
+        <p class="style-info" role="status">{autolabelBlocker}</p>
+      {/if}
 
       {#if error}
         <div class="error-note">{error}</div>
