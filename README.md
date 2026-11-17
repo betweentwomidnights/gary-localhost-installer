@@ -12,22 +12,22 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/16 - v0.7.3
+## update 11/17 - v0.7.4
 
-[download gary4local v0.7.3 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.3).
+[download gary4local v0.7.4](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.4).
 
-LoRA training takes tracks longer than ten minutes. carey's trainer stopped
-on them with `training audio exceeds the DiT model's maximum latent
-duration`, and SA3's quietly trained on the first ten minutes only. both now
-encode the whole track and crop from anywhere in it, so there's nothing to
-split. update, then press `update all runtimes` to fetch acestep.cpp v0.1.5
-and sa3.cpp v0.2.4.
+gary4local runs on Linux: a `.deb` for amd64 PCs and one for arm64 (DGX
+Spark), built for Ubuntu 24.04, with Vulkan generation on NVIDIA, AMD and
+Intel. it's the same app as on Windows, with the in-app updater. it's a
+preview for now: the arm64 build was tested end to end on a DGX Spark, the
+amd64 one only in CI. see [docs/linux-desktop.md](docs/linux-desktop.md).
 
-SA3's `train on full tracks` is still a 285-second window: a longer track
-gives a random 285-second stretch each step. the training dialogs now say
-so.
+nothing changes on Windows in generation or runtime pins. the runtime
+install code moved into a shared crate the coming headless server will use.
 
-pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5).
+pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5),
+or [v5.0.5-linux-preview.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5-linux-preview.1)
+on Linux.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
