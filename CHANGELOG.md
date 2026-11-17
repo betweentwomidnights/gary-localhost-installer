@@ -4,6 +4,44 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.3 - 2026-11-16
+
+LoRA training takes tracks longer than ten minutes. carey's trainer refused
+any song over 600 seconds with `training audio exceeds the DiT model's
+maximum latent duration`. that check ran while the song was being encoded,
+before the training window was applied, so setting a shorter window didn't
+help. SA3's trainer had the same limit and was quieter about it: it trained
+on the first 600 seconds of a longer track and never mentioned the rest.
+both limits came over with the reference trainers and most songs are nowhere
+near them, which is how they lasted this long. both trainers now encode a
+track of any length whole and take each step's crop from anywhere in it. you
+don't need to split long files.
+
+the training dialogs say what a window means for a long track. SA3's `train
+on full tracks` is a 285-second window, the model's native length. a track
+that fits is used whole, from its first second. a longer one gives a random
+285-second stretch each step, so its opening isn't in every sample. that
+part hasn't changed; the dialog just says it now. carey's training window
+works the same way at the length you set, 45 to 60 seconds by default and
+never more than 600. windows over 240 seconds are untested and need far more
+VRAM.
+
+acestep.cpp is pinned to v0.1.5 and sa3.cpp to v0.2.4; press `update all
+runtimes` to fetch them. carey re-encodes a dataset once on the new runtime.
+SA3 re-encodes only the tracks that were being cut short. jerry and
+foundation-1 run on the same sa3.cpp package, so they move to v0.2.4 with
+it; nothing in generation changed. the other runtime pins stay the same. a
+613-second file trained on both published runtimes on CUDA; Vulkan wasn't
+run.
+
+this also carries what merged since v0.7.2. every native model panel uses
+the same precision dropdown. on a fresh install, start activates the only
+downloaded precision itself rather than waiting for `use` in models. LoRA
+folder fields describe what to choose in place of a `C:` path example, and
+the install and download buttons have more contrast.
+
+compatible with gary4juce v5.0.4.
+
 ## v0.7.2 - 2026-11-13
 
 gary's runtime setup now accepts retry_music results too. v0.7.1 fixed the
