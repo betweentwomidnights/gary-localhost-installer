@@ -367,7 +367,7 @@
         <label class="field wide">
           <span>checkpoint folder</span>
           <div class="path-row">
-            <input type="text" bind:value={checkpointPath} placeholder="C:\\path\\to\\adapter folder" />
+            <input type="text" bind:value={checkpointPath} placeholder="Choose an adapter folder" />
             <button type="button" onclick={pickCheckpointFolder}>pick folder</button>
           </div>
         </label>
@@ -375,7 +375,7 @@
         <label class="field wide">
           <span>captions/source folder (optional)</span>
           <div class="path-row">
-            <input type="text" bind:value={captionsPath} placeholder="C:\\path\\to\\sidecars folder" />
+            <input type="text" bind:value={captionsPath} placeholder="Choose a folder with captions or sidecars" />
             <button type="button" onclick={pickCaptionsFolder}>pick folder</button>
           </div>
         </label>

@@ -1,22 +1,22 @@
 {
   "nativeBundles": {
     "sa3": {
-      "version": "v0.2.3",
+      "version": "v0.2.4",
       "platforms": {
         "windows-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.3/sa3-v0.2.3-windows-x64-core.zip",
-            "sha256": "9177e2d7c8f2b150aec17acde8d021dfa28d44f8992feb9c3b5a16cdc8ac7abe"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-windows-x64-core.zip",
+            "sha256": "98b8cc192c62774c1357d2e4fd828356f7fad8165eb50171b28863d98cf8c052"
           },
           "backends": {
             "cuda": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.3/sa3-v0.2.3-windows-x64-cuda.zip",
-              "sha256": "c8e4cf52e6b58c0242955e50a04ea9c04488435b91e2b46544e6c275bf0aa3e8",
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-windows-x64-cuda.zip",
+              "sha256": "a35f605cb790ee2551cad1a8a59c41c740882d3fa2792e39f22f64a565e98c76",
               "requires": ["cudart-12.8"]
             },
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.3/sa3-v0.2.3-windows-x64-vulkan.zip",
-              "sha256": "3620c9bbfcf60b7bcc60a40db5a5034558126ed546efe1074e0e4c8135a471ca"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-windows-x64-vulkan.zip",
+              "sha256": "22abea918361184e4addc5ecb71a57e985a7324b02d7451e95116a25e15b0dc6"
             }
           },
           "prefer": ["cuda", "vulkan"]
@@ -500,7 +500,7 @@
       "native": {
         "executable": "ace-server.exe",
         "modelsDir": "carey",
-        "version": "v0.1.4",
+        "version": "v0.1.5",
         "env": {
           "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
           "ACE_PORT": "8003",
@@ -511,18 +511,18 @@
         "platforms": {
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.4/acestep-v0.1.4-windows-x64-core.zip",
-              "sha256": "97fc4a1b81067a5bae98227a3278f19f82afee3efcdebd25f5aee18f543d97e7"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-windows-x64-core.zip",
+              "sha256": "b488f378580930ac4b8dfd20207a4a33d79f4c991b4bf3d185edf2c79d7cff55"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.4/acestep-v0.1.4-windows-x64-cuda.zip",
-                "sha256": "2d395dacd696c4f1ec189811cd57a1527118c96b4408da46ae077ca14f45a684",
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-windows-x64-cuda.zip",
+                "sha256": "9dde14e5b52bd8b2bba0fc2c7270c7cbc0d80eadaf0ac17cdf8f7470101196cc",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.4/acestep-v0.1.4-windows-x64-vulkan.zip",
-                "sha256": "51b402a89a9a847470e1fb3a7f53112b58cf54a2b4416010228747798f8ee113"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-windows-x64-vulkan.zip",
+                "sha256": "6045da141ffc96e614ef73bd4a862e234b99217716dbcf6c2a854f35bb29cbaa"
               }
             },
             "prefer": ["cuda", "vulkan"]

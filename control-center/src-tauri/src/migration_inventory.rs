@@ -29,11 +29,23 @@ pub struct Preview {
     pub estimated_cleanup_bytes: u64,
     pub preserved_paths: Vec<Item>,
     pub warnings: Vec<String>,
+    /// What cleanup will do that is worth saying, without blocking it.
+    pub notes: Vec<String>,
     pub native_selection: Option<Selection>,
     pub cleanup_token: String,
     /// Why cleanup cannot remove Python whatever the review finds: features
     /// that still run only there.
     pub python_still_needed: Option<String>,
+}
+
+impl Preview {
+    /// The existing fresh-install Use flow can finish without a cleanup review
+    /// only when there is no Python environment, legacy weight or warning.
+    pub fn only_bundled_code(&self) -> bool {
+        !self.legacy_runtime_present && self.warnings.is_empty()
+            && self.python_still_needed.is_none()
+            && self.cleanup_candidates.iter().all(|item| item.kind == Some("code"))
+    }
 }
 
 /// What only the service knows, gathered by the service before an inventory.
@@ -44,7 +56,10 @@ pub struct Extras {
     pub protected: Vec<PathBuf>,
     /// Shown as kept, after the shared preserved paths.
     pub preserved: Vec<(String, PathBuf)>,
+    /// Each one blocks cleanup until it is resolved.
     pub warnings: Vec<String>,
+    /// Shown beside the cleanup review; cleanup goes ahead.
+    pub notes: Vec<String>,
     pub training_base_present: bool,
 }
 
@@ -209,6 +224,7 @@ fn inventory(
         estimated_cleanup_bytes: 0,
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
+        notes: extras.notes,
         native_selection: None,
         cleanup_token: String::new(),
         python_still_needed: None,

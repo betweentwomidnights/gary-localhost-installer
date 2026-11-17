@@ -29,6 +29,7 @@ mod sa3_models;
 mod sa3_prompts;
 mod sa3_runtime;
 mod sa3_training;
+mod native_start;
 mod service_manager;
 mod stable_audio_migration;
 mod stable_audio_models;
@@ -759,7 +760,11 @@ struct Sa3AutolabelAvailability {
     available: bool,
     carey_built: bool,
     captioner_downloaded: bool,
+    blocker: Option<String>,
 }
+
+#[cfg(test)]
+mod caption_preflight_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -6088,12 +6093,15 @@ pub fn run() {
                                     let is_running = m.is_running(&service_id);
                                     if is_running {
                                         let _ = m.stop(&service_id);
+                                        drop(m);
                                     } else {
-                                        let _ = m.start(&service_id);
+                                        drop(m);
+                                        if let Err(error) = start_service_ready(service_id.clone(), handle.clone()).await {
+                                            log::error!("Cannot start {service_id}: {error}");
+                                        }
                                     }
                                     // Emit updated status
-                                    let info = m.get_service_info();
-                                    drop(m);
+                                    let info = mgr.lock().await.get_service_info();
                                     let _ = handle.emit("services-updated", &info);
                                     // Rebuild tray menu to reflect new state
                                     rebuild_tray_menu(&handle, &mgr).await;
@@ -6325,10 +6333,44 @@ async fn get_services(
 #[tauri::command]
 async fn start_service(
     service_id: String,
-    manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut mgr = manager.lock().await;
-    mgr.start(&service_id).map_err(|e| e.to_string())
+    start_service_ready(service_id, app_handle).await
+}
+
+/// A fresh native install with one complete model choice needs no separate
+/// Use click. Reuse the explicit activation's verification and workload guards;
+/// failure returns before a public service is launched. Never remove user data.
+async fn start_service_ready(service_id: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+    let manager = app_handle.state::<ManagerState>();
+    let (encoding, native) = {
+        let services = manager.lock().await;
+        (services.start_activation(&service_id)?, services.is_native(&service_id))
+    };
+    let handle = &app_handle;
+    let id = &service_id;
+    native_start::complete(encoding, move |encoding| async move {
+        if native {
+            select_native_model(id.clone(), encoding, handle.state(), handle.state(), handle.clone()).await?;
+        } else {
+            activate_native_runtime(id.clone(), encoding, handle.state(), handle.state(), handle.clone()).await?;
+            // Match Models' existing fresh-install Use behavior. Only unchanged
+            // bundled source (or an empty cleanup) can finish automatically;
+            // environments, weights, warnings and Python-only features require
+            // the existing explicit review. The token is rechecked by cleanup.
+            let preview = get_migration_preview(id.clone(), handle.state(), handle.state()).await?;
+            if preview.only_bundled_code() {
+                let cleanup = cleanup_legacy_installation(id.clone(), preview.cleanup_token,
+                    handle.state(), handle.state(), handle.state(), handle.clone()).await?;
+                if !cleanup.errors.is_empty() { return Err(cleanup.errors.join("\n")); }
+            }
+        }
+        Ok(())
+    }, || async {
+        let result = manager.lock().await.start(&service_id).map_err(|error| error.to_string());
+        emit_status(manager.inner(), &app_handle).await;
+        result
+    }).await
 }
 
 #[tauri::command]
@@ -6344,13 +6386,13 @@ async fn stop_service(
 async fn restart_service(
     service_id: String,
     manager: tauri::State<'_, ManagerState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut mgr = manager.lock().await;
     mgr.stop(&service_id).ok();
     drop(mgr);
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let mut mgr = manager.lock().await;
-    mgr.start(&service_id).map_err(|e| e.to_string())
+    start_service_ready(service_id, app_handle).await
 }
 
 #[tauri::command]
@@ -9608,18 +9650,27 @@ fn build_sa3_autolabel_availability(
         available: carey_built && captioner_downloaded,
         carey_built,
         captioner_downloaded,
+        blocker: if !carey_built { Some("Build Carey before auto-labeling.".into()) }
+            else if !captioner_downloaded { Some(format!("Download the ACE-Step {} captioner from Carey → Models before auto-labeling.", carey_caption_lm_size(caption_lm_model))) }
+            else { None },
     }
 }
 
 /// On C++ Carey the captioner is the LM GGUF of that size, beside the DiT and
 /// VAE every Carey tier downloads.
 fn native_sa3_autolabel_availability(repo_root: &Path, caption_lm_model: &str) -> Sa3AutolabelAvailability {
-    let captioner_downloaded = carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model)).is_ok()
-        && carey_caption::caption_dit(repo_root).is_ok();
+    let captioner_downloaded = carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model)).is_ok();
+    let mut missing = Vec::new();
+    if !captioner_downloaded { missing.push(format!("the {} captioner", carey_caption_lm_size(caption_lm_model))); }
+    if carey_caption::caption_dit(repo_root).is_err() { missing.push("a Carey audio model (DiT)".into()); }
+    if carey_caption::caption_vae(repo_root).is_err() { missing.push("Carey's shared VAE".into()); }
+    let blocker = (!missing.is_empty()).then(|| format!(
+        "Auto-labeling needs {}. Download the missing models from Carey → Models. The audio model and VAE turn audio into codes for the captioner.", missing.join(" and ")));
     Sa3AutolabelAvailability {
-        available: captioner_downloaded,
+        available: blocker.is_none(),
         carey_built: true,
         captioner_downloaded,
+        blocker,
     }
 }
 
@@ -9635,8 +9686,15 @@ async fn get_sa3_autolabel_availability(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<Sa3AutolabelAvailability, String> {
     let caption_lm_model = validate_carey_caption_lm_model(&caption_lm_model)?;
-    if manager.lock().await.uses_native_tools("carey") {
-        return Ok(native_sa3_autolabel_availability(repo_root.inner(), caption_lm_model));
+    let services = manager.lock().await;
+    if services.uses_native_tools("carey") {
+        let mut availability = native_sa3_autolabel_availability(repo_root.inner(), caption_lm_model);
+        if services.migration_launch("carey", carey_models::TIERS[0]).is_err() {
+            availability.carey_built = false;
+            availability.available = false;
+            availability.blocker = Some("Install Carey's C++ runtime from Carey before auto-labeling.".into());
+        }
+        return Ok(availability);
     }
     Ok(build_sa3_autolabel_availability(
         repo_root.inner(),
@@ -9810,7 +9868,7 @@ async fn start_native_sa3_autolabel(
         dataset: dataset.clone(),
         lm: carey_caption::lm_file(repo_root, carey_caption_lm_size(caption_lm_model))?,
         dit: carey_caption::caption_dit(repo_root)?,
-        vae: carey_caption::vae_file()?,
+        vae: carey_caption::caption_vae(repo_root)?,
         overwrite: true,
         bpm_analysis: true,
         key_analysis: true,
@@ -11638,13 +11696,30 @@ async fn collect_service_envs(svc_mgr: &ManagerState) -> Vec<ServiceEnvInfo> {
 
 fn merge_native_environment_rows(rows: Vec<ServiceEnvInfo>) -> Vec<ServiceEnvInfo> {
     let mut merged: Vec<ServiceEnvInfo> = Vec::new();
-    for row in rows {
+    for mut row in rows {
         if row.kind == "native" {
+            let service_id = row
+                .service_id
+                .strip_prefix("native:")
+                .unwrap_or(&row.service_id);
+            let bundle = crate::manifest::bundled()
+                .services
+                .iter()
+                .find(|service| service.id == service_id)
+                .and_then(|service| service.native.as_ref())
+                .and_then(|native| native.bundle.as_deref());
+            row.display_name = match bundle {
+                Some("audiocraft") => "audiocraft shared runtime".to_string(),
+                Some("sa3") => "stable audio shared runtime".to_string(),
+                _ => row.display_name,
+            };
             if let Some(existing) = merged
                 .iter_mut()
                 .find(|existing| existing.kind == "native" && existing.env_path == row.env_path)
             {
-                existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                if existing.display_name != row.display_name {
+                    existing.display_name = format!("{} / {}", existing.display_name, row.display_name);
+                }
                 existing.blocked_reason = existing.blocked_reason.take().or(row.blocked_reason);
                 continue;
             }
@@ -11687,9 +11762,39 @@ mod shared_runtime_tests {
         let rows = merge_native_environment_rows(vec![row, other, python]);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].env_bytes, 1024);
-        assert_eq!(rows[0].display_name, "SA3 / Jerry");
+        assert_eq!(rows[0].display_name, "stable audio shared runtime");
         assert_eq!(rows[0].blocked_reason.as_deref(), Some("Jerry is running"));
         assert_eq!(rows[1].kind, "python");
+        assert_eq!(rows[1].display_name, "SA3");
+    }
+
+    #[test]
+    fn native_bundle_labels_cover_prepared_and_active_consumers() {
+        for (ids, expected) in [
+            (["native:gary", "melodyflow"], "audiocraft shared runtime"),
+            (
+                ["native:foundation", "stable-audio"],
+                "stable audio shared runtime",
+            ),
+        ] {
+            let rows = ids
+                .into_iter()
+                .map(|id| ServiceEnvInfo {
+                    service_id: id.to_string(),
+                    display_name: format!("{id} C++ runtime (prepared)"),
+                    kind: "native".to_string(),
+                    env_path: "services/shared/native".to_string(),
+                    env_bytes: 1024,
+                    present: true,
+                    blocked_reason: None,
+                })
+                .collect();
+            let merged = merge_native_environment_rows(rows);
+            assert_eq!(merged.len(), 1);
+            assert_eq!(merged[0].service_id, ids[0]);
+            assert_eq!(merged[0].display_name, expected);
+            assert_eq!(merged[0].env_bytes, 1024);
+        }
     }
 
     #[test]

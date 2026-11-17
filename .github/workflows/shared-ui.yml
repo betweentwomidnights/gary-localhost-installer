@@ -1,0 +1,38 @@
+name: shared-ui
+on:
+  pull_request:
+    paths:
+      - 'control-center/**'
+      - '.github/workflows/shared-ui.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'control-center/**'
+      - '.github/workflows/shared-ui.yml'
+permissions:
+  contents: read
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: control-center
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: control-center/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm run test:precision
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: shared-ui-failure-evidence
+          path: tmp/ui-test-results
+          retention-days: 7

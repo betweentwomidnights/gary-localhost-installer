@@ -12,6 +12,8 @@ export interface Preview {
   estimatedCleanupBytes: number;
   preservedPaths: Item[];
   warnings: string[];
+  /** What cleanup will do that is worth saying; unlike a warning, it doesn't block cleanup. */
+  notes?: string[];
   nativeSelection: Selection | null;
   cleanupToken: string;
   pythonStillNeeded: string | null;

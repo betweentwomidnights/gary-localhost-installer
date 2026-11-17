@@ -110,7 +110,7 @@
     </div>
     {#if info?.fallbackReason}<div class="warning">{info.fallbackReason}</div>{/if}
     <div class="actions">
-      {#if action}<button class="primary" disabled={busy || !!building || !owner} onclick={install}>{building ? "installing…" : action}</button>{/if}
+      {#if action}<button class="primary accent" disabled={busy || !!building || !owner} onclick={install}>{building ? "installing…" : action}</button>{/if}
       <span class="note">
         {#if info && !info.installed}{names(members)} share this runtime; installing it once covers all of them.
         {:else if info && info.version !== info.manifestVersion}{info.manifestVersion} is available.
@@ -161,7 +161,6 @@
   .subtitle { margin-top: 3px; font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .actions button { font-size: 11px; flex-shrink: 0; }
-  button.primary { color: var(--accent); border-color: var(--accent); }
   .note { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
   .warning { margin-top: 8px; padding: 6px 8px; font-size: 10px; line-height: 1.4; color: var(--orange); border: 1px solid var(--orange); border-radius: 3px; }
   .error { margin-top: 8px; font-size: 11px; color: var(--red); overflow-wrap: anywhere; }

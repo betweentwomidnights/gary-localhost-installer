@@ -278,6 +278,7 @@
             <p>This step stops {label} and permanently removes the reviewed files. Gary verifies C++ again before cleanup and stops if the storage review has changed.</p>
             <details><summary>Files to remove ({preview.cleanupCandidates.length})</summary><div class="file-list">{#each preview.cleanupCandidates as entry}<div class="file"><span>{entry.label}</span><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>{/each}</div></details>
             <details><summary>Preserved files and folders</summary>{#each preview.preservedPaths as entry}<div class="file"><span>{entry.label}</span><button class="path" type="button" onclick={() => onReveal(entry.path)}>{entry.path}</button></div>{/each}<p>The shared UV cache stays available to your other Python services. It can be cleared separately in Storage.</p></details>
+            {#each preview.notes ?? [] as note}<p>{note}</p>{/each}
             {#each preview.warnings as warning}<p class="error" role="alert">{warning}</p>{/each}
             {#if preview.warnings.length}<p>Resolve these storage warnings, then check again before cleanup.</p><button type="button" onclick={initialize} disabled={blocked}>check again</button>{/if}
             {#each preview.nativeSelection?.cleanupErrors ?? [] as issue}<p class="error">{issue}</p>{/each}
