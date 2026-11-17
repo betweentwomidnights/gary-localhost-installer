@@ -1127,6 +1127,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "gary4local-core"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "hound",
+ "libc",
+ "log",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2",
+ "tokio",
+ "windows-sys 0.59.0",
+ "zip",
+]
+
+[[package]]
 name = "gary4local-rocm"
 version = "0.7.3-rocm.1"
 dependencies = [
@@ -1147,25 +1166,6 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-process",
  "tauri-plugin-updater",
- "tokio",
- "windows-sys 0.59.0",
- "zip",
-]
-
-[[package]]
-name = "gary4local-core"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "hound",
- "libc",
- "log",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "socket2",
  "tokio",
  "windows-sys 0.59.0",
  "zip",
