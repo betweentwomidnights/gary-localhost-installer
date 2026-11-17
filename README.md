@@ -12,18 +12,22 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/13 - v0.7.2
+## update 11/16 - v0.7.3
 
-[download gary4local v0.7.2 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.2).
+[download gary4local v0.7.3 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.3).
 
-gary's runtime setup now accepts retry results as well as continuations.
-v0.7.1 fixed the continuation check but missed retry_music. if setup or
-migration stopped there with a sample-rate or channel mismatch, update and
-retry it. you don't need to download the models again.
+LoRA training takes tracks longer than ten minutes. carey's trainer stopped
+on them with `training audio exceeds the DiT model's maximum latent
+duration`, and SA3's quietly trained on the first ten minutes only. both now
+encode the whole track and crop from anywhere in it, so there's nothing to
+split. update, then press `update all runtimes` to fetch acestep.cpp v0.1.5
+and sa3.cpp v0.2.4.
 
-pair it with [gary4juce v5.0.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.4).
-SA3 LoRA automation lanes remain supported with sa3.cpp v0.2.3. runtime pins
-are unchanged by this hotfix.
+SA3's `train on full tracks` is still a 285-second window: a longer track
+gives a random 285-second stretch each step. the training dialogs now say
+so.
+
+pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 

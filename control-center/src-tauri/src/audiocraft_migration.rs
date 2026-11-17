@@ -126,7 +126,8 @@ impl Service for Gary {
     fn extras(&self, root: &Path, hub: &Path) -> Extras {
         // Python downloads any of gary4juce's finetunes on demand; C++ gary
         // lists only what has been converted, which is what has a -GGUF repo
-        // in the catalog. Say so before cleanup takes the Python copies away.
+        // in the catalog. The Python copies are of no use to C++, so cleanup
+        // removes them with the rest; this only says which ones beforehand.
         let converted: Vec<&str> = gary_models()
             .components()
             .iter()
@@ -143,15 +144,14 @@ impl Service for Gary {
             .filter(|repo| hub.join(repo.cache_dir_name()).exists())
             .map(|repo| repo.repo.trim_start_matches("thepatch/"))
             .collect();
-        let warnings = if others.is_empty() {
-            Vec::new()
-        } else {
-            vec![format!(
-                "C++ gary runs the finetunes converted so far. These ones you downloaded for Python aren't converted yet: {}.",
+        let mut extras = extras(self, root);
+        if !others.is_empty() {
+            extras.notes.push(format!(
+                "C++ gary runs the finetunes converted so far. Cleanup removes these Python downloads, which aren't converted yet: {}. They'll appear in gary4juce again once they are.",
                 others.join(", ")
-            )]
-        };
-        extras(self, root, warnings)
+            ));
+        }
+        extras
     }
 
     fn models(&self) -> &'static Catalog {
@@ -216,7 +216,7 @@ impl Service for Terry {
     }
 
     fn extras(&self, root: &Path, _hub: &Path) -> Extras {
-        extras(self, root, Vec::new())
+        extras(self, root)
     }
 
     fn models(&self) -> &'static Catalog {
@@ -257,14 +257,15 @@ impl Service for Terry {
     }
 }
 
-fn extras(service: &dyn Service, root: &Path, warnings: Vec<String>) -> Extras {
+fn extras(service: &dyn Service, root: &Path) -> Extras {
     Extras {
         selection: crate::migration::read(root, service.target().def, |selection| {
             service.check_selection(selection)
         }),
         protected: Vec::new(),
         preserved: Vec::new(),
-        warnings,
+        warnings: Vec::new(),
+        notes: Vec::new(),
         training_base_present: false,
     }
 }
@@ -693,17 +694,38 @@ mod tests {
     }
 
     #[test]
-    fn gary_warns_about_finetunes_it_cannot_run_yet() {
+    fn cleanup_removes_finetunes_cpp_cannot_run_yet_and_says_which() {
         let root = temp_root("finetunes");
         let hub = root.join("hf-cache");
-        std::fs::create_dir_all(hub.join("models--thepatch--vanya_ai_dnb_0.1")).unwrap();
-        assert!(Gary.extras(&root, &hub).warnings.is_empty());
-        std::fs::create_dir_all(hub.join("models--thepatch--bleeps-large-6")).unwrap();
-        std::fs::create_dir_all(hub.join("models--thepatch--hoenn_lofi")).unwrap();
-        let warnings = Gary.extras(&root, &hub).warnings;
-        assert_eq!(warnings.len(), 1);
-        // hoenn_lofi is converted now, so only bleeps-large-6 is named.
-        assert!(warnings[0].ends_with("converted yet: bleeps-large-6."), "{warnings:?}");
+        let finetune = |name: &str| {
+            let dir = hub.join(format!("models--thepatch--{name}"));
+            std::fs::create_dir_all(dir.join("snapshots/a")).unwrap();
+            std::fs::write(dir.join("snapshots/a/state_dict.bin"), b"fixture").unwrap();
+            dir
+        };
+        finetune("vanya_ai_dnb_0.1");
+        assert!(Gary.extras(&root, &hub).notes.is_empty());
+        let unconverted = [finetune("bleeps-large-6"), finetune("gary_orchestra_2")];
+        finetune("hoenn_lofi");
+
+        let extras = Gary.extras(&root, &hub);
+        assert!(extras.warnings.is_empty(), "{:?}", extras.warnings);
+        assert_eq!(extras.notes.len(), 1);
+        // hoenn_lofi is converted now, so only the other two are named, in
+        // the manifest's order.
+        assert!(extras.notes[0].contains("aren't converted yet: gary_orchestra_2, bleeps-large-6."), "{:?}", extras.notes);
+
+        // An unconverted download no longer blocks cleanup, and cleanup takes it.
+        let preview = crate::migration_cleanup::preview(&Gary, &root, &hub);
+        assert!(preview.warnings.is_empty(), "{:?}", preview.warnings);
+        assert_eq!(preview.notes, extras.notes);
+        for path in &unconverted {
+            assert!(
+                preview.cleanup_candidates.iter().any(|item| std::path::Path::new(&item.path) == path),
+                "{} is not a cleanup candidate",
+                path.display()
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

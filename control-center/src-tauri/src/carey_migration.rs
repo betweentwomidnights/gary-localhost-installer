@@ -50,6 +50,7 @@ impl Service for Carey {
             protected,
             preserved: Vec::new(),
             warnings,
+            notes: Vec::new(),
             training_base_present: false,
         }
     }

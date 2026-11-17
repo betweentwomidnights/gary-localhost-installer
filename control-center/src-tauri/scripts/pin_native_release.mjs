@@ -11,7 +11,10 @@
 //     --bundle sa3 --repo betweentwomidnights/sa3.cpp --tag v0.1.1
 //
 // A service pin touches only URLs under the service's currently pinned
-// release, so a shared runtime hosted elsewhere is left alone. A runtime pin
+// release, so a shared runtime hosted elsewhere is left alone. Linux packages
+// ride on the same release (SHA256SUMS-linux-x64/-arm64); a Linux package still
+// on a linux-vX.Y.Z-preview.N release moves onto the new tag when the release
+// carries it, and keeps its preview pin when it doesn't. A runtime pin
 // rewrites that one nativeRuntimes entry to the single zip its release carries.
 // The file is edited in place rather than re-serialised, so the diff is only
 // the lines that changed.
@@ -53,17 +56,29 @@ const args = parseArgs(process.argv.slice(2));
 const manifestPath = args.manifest ?? path.resolve(__dirname, '..', '..', '..', 'services', 'manifests', 'services.json');
 const text = fs.readFileSync(manifestPath, 'utf8');
 
+async function releaseFile(name, optional) {
+  const url = `https://github.com/${args.repo}/releases/download/${args.tag}/${name}`;
+  const response = await fetch(url);
+  if (optional && response.status === 404) return '';
+  if (!response.ok) fail(`could not fetch ${url}: HTTP ${response.status}`);
+  return response.text();
+}
+
 let sumsText;
+let linuxSumsText = '';
 if (args.sums) {
   sumsText = fs.readFileSync(args.sums, 'utf8');
+  if (args['linux-sums']) linuxSumsText = fs.readFileSync(args['linux-sums'], 'utf8');
 } else {
-  const url = `https://github.com/${args.repo}/releases/download/${args.tag}/SHA256SUMS`;
-  const response = await fetch(url);
-  if (!response.ok) fail(`could not fetch ${url}: HTTP ${response.status}`);
-  sumsText = await response.text();
+  sumsText = await releaseFile('SHA256SUMS', false);
+  // A runtime release carries no Linux packages.
+  if (!args.runtime) {
+    for (const platform of ['linux-x64', 'linux-arm64']) linuxSumsText += `${await releaseFile(`SHA256SUMS-${platform}`, true)}\n`;
+  }
 }
 const sums = parseSums(sumsText);
 if (sums.size === 0) fail('SHA256SUMS has no entries');
+const linuxSums = parseSums(linuxSumsText);
 
 if (args.runtime) {
   // A runtime release carries exactly one zip, named for the exact toolkit it
@@ -137,10 +152,23 @@ let updated = definition.replace(
   (whole, open, url, middle, _oldSha, close) => {
     if (!url.startsWith(releasePrefix)) return whole;
     const [urlTag, ...rest] = url.slice(releasePrefix.length).split('/');
-    if (urlTag !== oldTag) return whole;
     const oldFile = rest.join('/');
+    const preview = /^linux-(v\d+\.\d+\.\d+)-preview\.\d+$/.exec(urlTag);
+    if (preview) {
+      // Older releases have no Linux packages; their preview pin stays.
+      const file = oldFile.split(preview[1]).join(args.tag);
+      const sha = linuxSums.get(file);
+      if (!sha) {
+        console.log(`[pin-native] ${file} is not in ${args.tag}; keeping its ${urlTag} pin`);
+        return whole;
+      }
+      pinned += 1;
+      console.log(`[pin-native] ${file}  ${sha}`);
+      return `${open}${releasePrefix}${args.tag}/${file}${middle}${sha}${close}`;
+    }
+    if (urlTag !== oldTag) return whole;
     const file = oldFile.split(oldTag).join(args.tag);
-    const sha = sums.get(file);
+    const sha = sums.get(file) ?? linuxSums.get(file);
     if (!sha) {
       if (oldFile.includes(oldTag)) fail(`the ${args.tag} SHA256SUMS has no ${file}`);
       console.log(`[pin-native] ${file} is not in ${args.tag}; keeping its ${oldTag} pin`);

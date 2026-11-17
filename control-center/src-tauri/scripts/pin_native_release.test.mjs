@@ -42,6 +42,48 @@ test('bundle pin changes only its packages, preserving consumers and other pins'
   } finally { fs.rmSync(f.root, { recursive: true }); }
 });
 
+function withLinux(f, previewTag) {
+  const source = JSON.parse(fs.readFileSync(f.manifest, 'utf8'));
+  const linux = (platform) => ({
+    core: { url: `https://github.com/owner/sa3.cpp/releases/download/${previewTag}/sa3-v0.1.1-${platform}-core.zip`, sha256: 'f'.repeat(64) },
+    backends: { vulkan: { url: `https://github.com/owner/sa3.cpp/releases/download/${previewTag}/sa3-v0.1.1-${platform}-vulkan.zip`, sha256: '9'.repeat(64) } },
+  });
+  for (const platform of ['linux-x64', 'linux-arm64']) source.nativeBundles.sa3.platforms[platform] = linux(platform);
+  fs.writeFileSync(f.manifest, JSON.stringify(source, null, 2));
+  return source;
+}
+
+test('Linux packages move from a preview onto the same release when it carries them', () => {
+  const f = fixture();
+  try {
+    withLinux(f, 'linux-v0.1.1-preview.1');
+    const linuxSums = path.join(f.root, 'SHA256SUMS-linux');
+    fs.writeFileSync(linuxSums, ['linux-x64', 'linux-arm64'].flatMap((platform, i) => [
+      `${String(i + 1).repeat(64)}  sa3-v0.1.2-${platform}-core.zip`,
+      `${String(i + 3).repeat(64)}  sa3-v0.1.2-${platform}-vulkan.zip`]).join('\n'));
+    const result = f.run('--bundle', 'sa3', '--linux-sums', linuxSums);
+    assert.equal(result.status, 0, result.stderr);
+    const platforms = JSON.parse(fs.readFileSync(f.manifest, 'utf8')).nativeBundles.sa3.platforms;
+    assert.match(platforms['linux-x64'].core.url, /download\/v0\.1\.2\/sa3-v0\.1\.2-linux-x64-core\.zip$/);
+    assert.equal(platforms['linux-x64'].core.sha256, '1'.repeat(64));
+    assert.match(platforms['linux-arm64'].backends.vulkan.url, /download\/v0\.1\.2\/sa3-v0\.1\.2-linux-arm64-vulkan\.zip$/);
+    assert.equal(platforms['linux-arm64'].backends.vulkan.sha256, '4'.repeat(64));
+    assert.equal(platforms['windows-x64'].core.sha256, 'd'.repeat(64));
+  } finally { fs.rmSync(f.root, { recursive: true }); }
+});
+
+test('a release without Linux packages keeps the Linux preview pins', () => {
+  const f = fixture();
+  try {
+    const source = withLinux(f, 'linux-v0.1.1-preview.1');
+    const result = f.run('--bundle', 'sa3');
+    assert.equal(result.status, 0, result.stderr);
+    const platforms = JSON.parse(fs.readFileSync(f.manifest, 'utf8')).nativeBundles.sa3.platforms;
+    assert.deepEqual(platforms['linux-x64'], source.nativeBundles.sa3.platforms['linux-x64']);
+    assert.equal(platforms['windows-x64'].core.sha256, 'd'.repeat(64));
+  } finally { fs.rmSync(f.root, { recursive: true }); }
+});
+
 test('consumer service pin directs the caller to the bundle without writing', () => {
   const f = fixture();
   try {

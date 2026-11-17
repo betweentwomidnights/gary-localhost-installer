@@ -54,7 +54,7 @@ mod tests {
         let mut preview = Preview {
             active_root: String::new(), hf_hub_cache: String::new(), cleanup_candidates: vec![],
             legacy_runtime_present: false, training_base_present: false, estimated_cleanup_bytes: 0,
-            preserved_paths: vec![], warnings: vec![], native_selection: None,
+            preserved_paths: vec![], warnings: vec![], notes: vec![], native_selection: None,
             cleanup_token: "review token".into(), python_still_needed: None,
         };
         assert!(preview.only_bundled_code(), "empty cleanup can finish");

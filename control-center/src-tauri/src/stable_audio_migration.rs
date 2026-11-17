@@ -36,6 +36,7 @@ impl Service for StableAudio {
             protected: Vec::new(),
             preserved: Vec::new(),
             warnings: Vec::new(),
+            notes: Vec::new(),
             training_base_present: false,
         }
     }

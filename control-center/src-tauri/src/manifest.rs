@@ -17,7 +17,16 @@ mod tests {
                     assert!(crate::native_runtime::is_sha256(&package.sha256));
                     assert!(package.requires.is_empty());
                     assert!(package.url.starts_with("https://github.com/betweentwomidnights/"));
-                    assert!(package.url.contains(&format!("/releases/download/linux-{}-preview.1/", native.version)));
+                    // The release itself carries Linux packages from now on;
+                    // older versions are still pinned to their Linux preview.
+                    assert!(
+                        package.url.contains(&format!("/releases/download/{}/", native.version))
+                            || package.url.contains(&format!("/releases/download/linux-{}-preview.1/", native.version)),
+                        "{} is not pinned to its release or its Linux preview: {}",
+                        service.id,
+                        package.url
+                    );
+                    assert!(package.url.contains(&format!("-{}-{platform}-{part}.zip", native.version)));
                     assert!(package.url.ends_with(&format!("-{platform}-{part}.zip")));
                 }
             }
