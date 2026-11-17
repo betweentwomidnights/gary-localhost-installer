@@ -402,6 +402,7 @@ fn extras(root: &Path, hf_hub: &Path) -> Extras {
             hf_hub.join("models--thepatch--same-l-decoder-lora"),
         )],
         warnings,
+        notes: Vec::new(),
         training_base_present: native_training_base_present(root)
             || legacy_training_base_present(root, hf_hub),
     }
