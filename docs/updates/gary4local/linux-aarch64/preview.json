@@ -1,0 +1,11 @@
+{
+    "channel":  "preview",
+    "latest_version":  "0.7.4-linux.1",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/linux-v0.7.4-preview.1/gary4local_0.7.4-linux.1_arm64.deb",
+    "sha256":  "a5970548f2af92350ab59b5ecddaf78e921fc4fc2c7130a45f808026b9c6890f",
+    "published_at":  "2026-11-17T18:56:57.0000000+00:00",
+    "notes":  [
+                  "Linux updater test build: same code as 0.7.3, at a higher version.",
+                  "Installing asks for your password once, then gary4local restarts."
+              ]
+}
