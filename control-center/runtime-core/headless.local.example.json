@@ -1,0 +1,20 @@
+{
+  "runtime_root": "/home/kev/gary4local-packaging/headless/sa3-demo",
+  "models_dir": "/home/kev/sa3.cpp/models",
+  "core": {
+    "path": "/absolute/path/to/sa3-v0.2.3-linux-arm64-core.zip",
+    "sha256": "REPLACE_WITH_SHA256_FROM_VERIFIED_SHA256SUMS"
+  },
+  "backend": {
+    "path": "/absolute/path/to/sa3-v0.2.3-linux-arm64-vulkan.zip",
+    "sha256": "REPLACE_WITH_SHA256_FROM_VERIFIED_SHA256SUMS"
+  },
+  "device": "Vulkan0",
+  "public_port": 28300,
+  "model": "medium",
+  "encoding": "f16",
+  "t5_encoding": "f16",
+  "ae_encoding": "f32",
+  "threads": 4,
+  "defaults": {}
+}

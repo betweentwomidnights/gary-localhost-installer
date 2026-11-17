@@ -1,0 +1,12 @@
+{
+  "runtime_root": "/home/kev/gary4local-packaging/headless/sa3-demo",
+  "models_dir": "/home/kev/sa3.cpp/models",
+  "device": "Vulkan0",
+  "public_port": 28300,
+  "model": "medium",
+  "encoding": "f16",
+  "t5_encoding": "f16",
+  "ae_encoding": "f32",
+  "threads": 4,
+  "defaults": {}
+}

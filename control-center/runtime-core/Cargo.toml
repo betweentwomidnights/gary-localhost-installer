@@ -6,6 +6,10 @@ rust-version = "1.89"
 license = "MIT"
 description = "Shared native runtime and HTTP adapter core for gary4local"
 
+[[bin]]
+name = "gary4local-server"
+path = "src/main.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
