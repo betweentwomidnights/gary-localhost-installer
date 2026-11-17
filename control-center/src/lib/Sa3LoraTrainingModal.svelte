@@ -549,14 +549,14 @@
           <input type="checkbox" bind:checked={fullTrack} />
           <span>
             <strong>train on full tracks</strong>
-            <small>uses a 285.35-second training window. Shorter tracks are padded; longer tracks use a random crop. Uses more VRAM; turn off to use shorter crops on smaller cards.</small>
+            <small>trains on up to 285 seconds (4:45) of a track at a time, SA3's native length. A track that fits is used whole, from its first second, and padded. A longer track of any length gives a random 285-second stretch each step, from anywhere in it, so its opening isn't in every sample. Uses more VRAM; turn off to use shorter crops on smaller cards.</small>
           </span>
         </label>
         {#if !fullTrack}
           <label class="field">
             <span>crop seconds</span>
             <input type="number" min="1" step="1" bind:value={latentCropSeconds} />
-            <small>random crop length. Shorter crops use less VRAM.</small>
+            <small>each step trains on a random crop this long, from anywhere in a track of any length. Shorter crops use less VRAM.</small>
           </label>
         {/if}
         <label class="field">
