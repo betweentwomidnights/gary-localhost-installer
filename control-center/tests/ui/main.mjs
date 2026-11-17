@@ -48,6 +48,12 @@ window.testCalls = [];
 mockIPC(async (command, args) => {
   window.testCalls.push({ command, args });
   switch (command) {
+    case 'get_sa3_dataset_sidecars': return [{ audioPath: '/test/dataset/song.wav', relativePath: 'song.wav', sidecarPath: '/test/dataset/song.txt', content: '', exists: false, jsonSidecarExists: false }];
+    case 'get_sa3_autolabel_state': return { status: '', phase: '', message: '', total: 0, done: 0, currentPath: '', style: 'bare', error: null, pid: null };
+    case 'get_sa3_autolabel_availability':
+      if (query.has('availability-error')) throw 'Inventory unavailable';
+      return { available: query.has('caption-ready'), careyBuilt: true, captionerDownloaded: true,
+        blocker: query.has('caption-ready') ? null : 'Auto-labeling needs a Carey audio model (DiT) and Carey\'s shared VAE. Download the missing models from Carey → Models. The audio model and VAE turn audio into codes for the captioner.' };
     case 'get_models': return models;
     case 'get_download_progress': return downloads;
     case 'get_native_model_catalog': return catalog;
@@ -86,4 +92,4 @@ mockIPC(async (command, args) => {
     default: throw new Error(`Unexpected test IPC: ${command}`);
   }
 }, { shouldMockEvents: true });
-mount(Harness, { target: document.getElementById('app'), props: { serviceId, controls: query.has('controls'), showRow: query.has('row'), initialService: serviceInfo() } });
+mount(Harness, { target: document.getElementById('app'), props: { serviceId, controls: query.has('controls'), showRow: query.has('row'), initialService: serviceInfo(), captioning: query.has('captioning') } });
