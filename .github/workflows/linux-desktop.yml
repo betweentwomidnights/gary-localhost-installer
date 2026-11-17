@@ -60,6 +60,9 @@ jobs:
       - name: Build the installable package
         working-directory: control-center
         run: |
+          # The restored Rust cache includes target/release, and with it packages
+          # from earlier builds (gary4local-preview, older versions). Start clean.
+          rm -rf src-tauri/target/release/bundle
           npm ci
           npm run tauri -- build --ci --bundles deb --config src-tauri/tauri.linux.conf.json
       - uses: actions/cache/save@v4
