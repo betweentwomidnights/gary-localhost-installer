@@ -1,14 +1,12 @@
 {
   "channel": "preview",
-  "latest_version": "0.7.3-rocm.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.3-rocm.1/gary4local-rocm_0.7.3-rocm.1_x64-setup.exe",
-  "sha256": "c57b167422fffbc2ca8100be293272069f4ba99e6fc290be30c8ae4af60ccd04",
-  "published_at": "2026-11-17T13:00:13.0000000+00:00",
+  "latest_version": "0.7.4-rocm.1",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4-rocm.1/gary4local-rocm_0.7.4-rocm.1_x64-setup.exe",
+  "sha256": "5ebd573d6be12c993708fb221e1452eeca3f9e857434da0d14709c02846fa1c9",
+  "published_at": "2026-11-17T22:48:35.0000000+00:00",
   "notes": [
-    "LoRA training takes tracks longer than ten minutes. Press update all runtimes for the new trainers.",
-    "Carey re-encodes a training dataset once on the new runtime.",
-    "Gary migration no longer stops on unconverted Python finetunes; cleanup removes them.",
-    "SA3 auto-labeling names the missing Carey model. Compatible with gary4juce v5.0.5.",
-    "AMD preview; hardware validation of this package is still pending."
+    "v0.7.4 for the ROCm build: the runtime install code moved into a shared crate, and software Vulkan drivers no longer count as a GPU.",
+    "Generation and runtime pins are unchanged from v0.7.3-rocm.1.",
+    "AMD preview for sign-off. Compatible with gary4juce v5.0.5."
   ]
 }

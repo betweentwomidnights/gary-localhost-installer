@@ -1,11 +1,11 @@
 {
-  "version": "0.7.3",
-  "notes": "LoRA training takes tracks longer than ten minutes. Press update all runtimes for the new trainers.\nCarey re-encodes a training dataset once on the new runtime.\nGary migration no longer stops on unconverted Python finetunes; cleanup removes them.\nSA3 auto-labeling names the missing Carey model. Compatible with gary4juce v5.0.5.",
-  "pub_date": "2026-11-17T13:00:09.0000000+00:00",
+  "version": "0.7.4",
+  "notes": "gary4local now runs on Linux too; Windows generation and runtime pins are unchanged from v0.7.3.\nThe runtime install code moved into a shared crate, and software Vulkan drivers no longer count as a GPU.\nCompatible with gary4juce v5.0.5.",
+  "pub_date": "2026-11-17T22:48:22.0000000+00:00",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFAvUFJtcmhXU0tJZ2Q5Ui9rOWpjeXluZHNiQVEvN1FUKzRPMHZuSzJVVmI0N1B2ZUFsUkFwMjgyVjVWbU5BN0h0SzlBeDFLdE1mYUVqSkdHMENkY2dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTE5ODg0CWZpbGU6Z2FyeTRsb2NhbF8wLjcuM194NjQtc2V0dXAuZXhlCnpOTmdMSXd6ZWJyT0dZQk1XVU5WQ240SysvbXdDeFhZdDdobXA4SGlDZmlCREJJMmpTcWc2S2xlSUVEemVBNUFsd1FMUjJHd2JnOFlzWjRzaVJjUUNBPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.3/gary4local_0.7.3_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEhjRVlJSDJ5elY5TDJyT1lITmdDdlVDdTFkQk85QnVGUFpSSHNxZkFiZXZlNDFjZXpCZEVTN0p3VDBIa3ZxMDhyYnlZcXluZWpRRnJsVWN6dll1VlFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTU0NDMwCWZpbGU6Z2FyeTRsb2NhbF8wLjcuNF94NjQtc2V0dXAuZXhlClVjRFBEQm93R0htbUlqckQ1dk9JeWpJNXlnSEtVUFFsN1dzVTI4U2MxRDBiS3NXSG1KNFp2Nmxwc0hmNXY5enhGNFZRNk1HK2RIWG5ZWTBSbzJmcENRPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4/gary4local_0.7.4_x64-setup.exe"
     }
   }
 }

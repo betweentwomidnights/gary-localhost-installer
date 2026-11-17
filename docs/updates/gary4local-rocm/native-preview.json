@@ -1,11 +1,11 @@
 {
-  "version": "0.7.3-rocm.1",
-  "notes": "LoRA training takes tracks longer than ten minutes. Press update all runtimes for the new trainers.\nCarey re-encodes a training dataset once on the new runtime.\nGary migration no longer stops on unconverted Python finetunes; cleanup removes them.\nSA3 auto-labeling names the missing Carey model. Compatible with gary4juce v5.0.5.\nAMD preview; hardware validation of this package is still pending.",
-  "pub_date": "2026-11-17T13:00:13.0000000+00:00",
+  "version": "0.7.4-rocm.1",
+  "notes": "v0.7.4 for the ROCm build: the runtime install code moved into a shared crate, and software Vulkan drivers no longer count as a GPU.\nGeneration and runtime pins are unchanged from v0.7.3-rocm.1.\nAMD preview for sign-off. Compatible with gary4juce v5.0.5.",
+  "pub_date": "2026-11-17T22:48:35.0000000+00:00",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME43Y2lLc01KbVlRN2N0SlYvRk5kREw4VG1lTmg0M2lBS1RxWncyUEF5Rm9tRitlVmhkQS9oUnhUMWc2ZmFnNmpBU2h3Y3VtWjEyZ2NSRkhaMVJuREFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTIwMjExCWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy4zLXJvY20uMV94NjQtc2V0dXAuZXhlCis0RFVNL005Y3NmTDBIOVhWNHBjV2JQdGhhWmRrR0I1KzJVZmJ4OXhJS1U5MXE3WGtZWmFUR0U0b3FmRU9VRUhoemw5TElsU3FNdTlrY1RLWkFLbkFBPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.3-rocm.1/gary4local-rocm_0.7.3-rocm.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMERVeEhVU1F5QjNOaUpINllGNGE0dDhFNm00cFVjWGVKWllrM2hCOHhQUU9PVGFRVkFqUkFKZU1TV3JEUDJWNVozU0M0bi8vd09JUlhrWkhUSHVCancwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTU0NzI2CWZpbGU6Z2FyeTRsb2NhbC1yb2NtXzAuNy40LXJvY20uMV94NjQtc2V0dXAuZXhlCnhnK3NwSW03T0JTTzkwNHk4UXA1TzZhbXB5OTh2Y1NwR0d0cDl3b3QzT1FhUjJzOTlWUE54eWd4SUZOQ3VGV21CclNjN0R0cEZXZ1NQRlk3blNPU0RBPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4-rocm.1/gary4local-rocm_0.7.4-rocm.1_x64-setup.exe"
     }
   }
 }

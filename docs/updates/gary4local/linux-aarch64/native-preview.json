@@ -1,11 +1,11 @@
 {
-    "version":  "0.7.4-linux.1",
-    "notes":  "Linux updater test build: same code as 0.7.3, at a higher version.\nInstalling asks for your password once, then gary4local restarts.",
-    "pub_date":  "2026-11-17T18:56:57.0000000+00:00",
-    "platforms":  {
-                      "linux-aarch64-deb":  {
-                                                "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVURWVBbnkwaXVVRDZvTkpteWcyendFbVNQSUdZdzV2Wkx0V0JrTjVmb0MzclQwdjdxT2lMZlc1Z1h5QzlxOUxobEE2cEJvYVFMM1cyTDFLS21UeWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTQxNzk1CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNC1saW51eC4xX2FybTY0LmRlYgpFcXhMdmhWdldscEdUN09Kd0tZbXRFSExORzdia3VBaFVSOFdLZTF5N05ZcFdWQkVnTWE0NW04WTc4Y1NkdStqbHZ2ZUZ1clB2UGdrUFNaajkvU0xCQT09Cg==",
-                                                "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/linux-v0.7.4-preview.1/gary4local_0.7.4-linux.1_arm64.deb"
-                                            }
-                  }
+  "version": "0.7.4",
+  "notes": "The first Linux release of gary4local: the same app as on Windows, with Vulkan generation.\nUpdates ask for your password once to install the package, then gary4local restarts.\nCompatible with gary4juce v5.0.5-linux-preview.1.",
+  "pub_date": "2026-11-17T22:48:22.0000000+00:00",
+  "platforms": {
+    "linux-aarch64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1vcDVwaE1DclpmTmtkVVAybWd0TEd3VXZpMnZBdGRNcyt0QjB1dGRBdGhBQTNKK243MTJaYTZZWHo2TE1wUklGa2VEeko5WXFPNFEwT1VnUXV0S1FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTU1MDc3CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNF9hcm02NC5kZWIKdDRzbUR4RzhVd0NRRlQ0bXVNZHBDNWdtbk5OcDZCeVBsU1ZNMHNabDBGQzVaZTlYMFRVaTdkdmx1U0l2TExWWDFIY2dXY2lJRHVoZUk0N2hhTGYxQlE9PQo=",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4/gary4local_0.7.4_arm64.deb"
+    }
+  }
 }
