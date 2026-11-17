@@ -23,13 +23,13 @@
         },
         "linux-x64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/linux-v0.2.3-preview.1/sa3-v0.2.3-linux-x64-core.zip",
-            "sha256": "e8c0e3d84034040e8b4b8b7fa6665c746654f84b5a9da698944dd83dbc7aec14"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-x64-core.zip",
+            "sha256": "e4ecf57de6360e992c0a5a02d218f7fe5f332c0c2624090d749bec3de3d3b626"
           },
           "backends": {
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/linux-v0.2.3-preview.1/sa3-v0.2.3-linux-x64-vulkan.zip",
-              "sha256": "ecb4cfff4e5dd300dbf0439f4f57e3c1ce84c93d02d102910807b53cdd7b3cb3"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-x64-vulkan.zip",
+              "sha256": "c56e136e35949ee1c511a63f32fc9c7140e1b615aacab17787a56e86a8185d07"
             }
           },
           "prefer": [
@@ -38,13 +38,13 @@
         },
         "linux-arm64": {
           "core": {
-            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/linux-v0.2.3-preview.1/sa3-v0.2.3-linux-arm64-core.zip",
-            "sha256": "11eaae25669428f03d1f1ab72ee1d76ea8daab7e56013df3be0a884198d5cc3a"
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-arm64-core.zip",
+            "sha256": "cb445887c4db604f912038085da3b70dec815b1ef388af92cbc93655e2ce208c"
           },
           "backends": {
             "vulkan": {
-              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/linux-v0.2.3-preview.1/sa3-v0.2.3-linux-arm64-vulkan.zip",
-              "sha256": "50db2cef97396e4367e1bf5834692f7b63583da5a0250120d22d92672e4dcb43"
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-arm64-vulkan.zip",
+              "sha256": "a08a832a82e1d53ccdbc1012a36559479650434e939fd24a312fb5a4dfa0e7ae"
             }
           },
           "prefer": [
@@ -529,13 +529,13 @@
           },
           "linux-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/linux-v0.1.4-preview.1/acestep-v0.1.4-linux-x64-core.zip",
-              "sha256": "52aed7e0538b8b1aec001647050ef3ab597989c0341174bf0d84055caab72116"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-x64-core.zip",
+              "sha256": "5eb2be2ea8e7e7347a01ac88b00ce24fb93203560ea81221571e51a2a3df87ca"
             },
             "backends": {
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/linux-v0.1.4-preview.1/acestep-v0.1.4-linux-x64-vulkan.zip",
-                "sha256": "10c4d1a55f971684cbbb610aaf2d5db0405a8a5eda5882cf958e89b2b1e5b4a6"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-x64-vulkan.zip",
+                "sha256": "e44a9952e7edd720c829d06560617dbeb4cbf934e21fd13bd4818c7a2e996050"
               }
             },
             "prefer": [
@@ -544,13 +544,13 @@
           },
           "linux-arm64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/linux-v0.1.4-preview.1/acestep-v0.1.4-linux-arm64-core.zip",
-              "sha256": "dafead7b4083d202c008d7635e823c03ff400701f92ac3bd82212c0e5c32c02f"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-arm64-core.zip",
+              "sha256": "07c104df9314b3d0716fac6ee3b7b5091f82bd12fbcb0661b2bb224948305667"
             },
             "backends": {
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/linux-v0.1.4-preview.1/acestep-v0.1.4-linux-arm64-vulkan.zip",
-                "sha256": "854d47268d38df5a953df6bb543b406b15124aa86330fc8e0bdc5c14407ba57a"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-arm64-vulkan.zip",
+                "sha256": "96ce536d6a5cd4fc3dbb6e79979d6a2e69dd1b834923af85f96cd1a95709d472"
               }
             },
             "prefer": [
