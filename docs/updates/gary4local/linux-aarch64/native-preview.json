@@ -1,0 +1,11 @@
+{
+    "version":  "0.7.4-linux.1",
+    "notes":  "Linux updater test build: same code as 0.7.3, at a higher version.\nInstalling asks for your password once, then gary4local restarts.",
+    "pub_date":  "2026-11-17T18:56:57.0000000+00:00",
+    "platforms":  {
+                      "linux-aarch64-deb":  {
+                                                "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEVURWVBbnkwaXVVRDZvTkpteWcyendFbVNQSUdZdzV2Wkx0V0JrTjVmb0MzclQwdjdxT2lMZlc1Z1h5QzlxOUxobEE2cEJvYVFMM1cyTDFLS21UeWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTQxNzk1CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNC1saW51eC4xX2FybTY0LmRlYgpFcXhMdmhWdldscEdUN09Kd0tZbXRFSExORzdia3VBaFVSOFdLZTF5N05ZcFdWQkVnTWE0NW04WTc4Y1NkdStqbHZ2ZUZ1clB2UGdrUFNaajkvU0xCQT09Cg==",
+                                                "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/linux-v0.7.4-preview.1/gary4local_0.7.4-linux.1_arm64.deb"
+                                            }
+                  }
+}
