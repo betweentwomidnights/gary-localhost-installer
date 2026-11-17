@@ -25,22 +25,35 @@ impl Fixture {
             }
             let path = directory.join(&expected.filename);
             let file = std::fs::File::create(&path).unwrap();
+            // Model-sized placeholders must not allocate gigabytes on disk.
             #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                assert!(std::process::Command::new("fsutil")
-                    .creation_flags(0x0800_0000)
-                    .args(["sparse", "setflag"])
-                    .arg(&path)
-                    .output()
-                    .unwrap()
-                    .status
-                    .success());
-            }
+            mark_sparse(&file);
             file.set_len(expected.bytes).unwrap();
         }
     }
 }
+/// Marks the file sparse on its open handle (FSCTL_SET_SPARSE). An `fsutil sparse
+/// setflag` subprocess did the same, but intermittently failed on CI runners.
+#[cfg(windows)]
+fn mark_sparse(file: &std::fs::File) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::{Ioctl::FSCTL_SET_SPARSE, IO::DeviceIoControl};
+    let mut returned = 0u32;
+    let ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            FSCTL_SET_SPARSE,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(ok != 0, "FSCTL_SET_SPARSE failed: {}", std::io::Error::last_os_error());
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
