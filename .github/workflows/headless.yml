@@ -34,11 +34,12 @@ jobs:
         working-directory: control-center/runtime-core
         run: |
           cargo test --locked --release
-          cargo build --locked --release --bin gary4local-server
+          cargo build --locked --release --bins
           cargo tree --locked > dependencies.txt
           if grep -Ei 'tauri|webkit|gtk-sys|tray-icon' dependencies.txt; then exit 1; fi
           ldd target/release/gary4local-server
           target/release/gary4local-server --help
+          target/release/gary --help
       - name: Preserve executable modes and provenance
         working-directory: control-center/runtime-core
         env:
@@ -46,10 +47,14 @@ jobs:
         run: |
           mkdir dist
           install -m 755 target/release/gary4local-server dist/gary4local-server
+          install -m 755 target/release/gary dist/gary
+          cp install-gary.sh dist/
           cp dependencies.txt README.md headless.example.json headless.local.example.json gary4local-server.service.example dist/
+          cp ../../docs/headless-agent-workflow.md dist/AGENT-WORKFLOW.md
           rustc --version > dist/TOOLCHAIN.txt
           ldd target/release/gary4local-server > dist/ELF-DEPENDENCIES.txt
-          printf '{"service":"gary4local-server","version":"0.1.0","commit":"%s","platform":"%s","experimental":true}\n' "$GITHUB_SHA" "$PLATFORM" > dist/BUILD-INFO.json
+          version="$(target/release/gary4local-server --version)"
+          printf '{"service":"gary4local-server","version":"%s","commit":"%s","platform":"%s","experimental":true}\n' "$version" "$GITHUB_SHA" "$PLATFORM" > dist/BUILD-INFO.json
           tar -C dist -czf "gary4local-server-$PLATFORM-experimental.tar.gz" .
           sha256sum "gary4local-server-$PLATFORM-experimental.tar.gz" > "SHA256SUMS-$PLATFORM"
       - uses: actions/upload-artifact@v4
@@ -59,3 +64,22 @@ jobs:
             control-center/runtime-core/gary4local-server-*-experimental.tar.gz
             control-center/runtime-core/SHA256SUMS-*
           retention-days: 7
+  windows:
+    name: Windows headless binaries
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select tested Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      # The shared crate's tests, including the CLI tests, run in shared-core.yml.
+      - name: Build and start both binaries
+        run: |
+          cargo +1.95.0 build --locked --manifest-path control-center/runtime-core/Cargo.toml --bins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          control-center/runtime-core/target/debug/gary4local-server.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          control-center/runtime-core/target/debug/gary.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
