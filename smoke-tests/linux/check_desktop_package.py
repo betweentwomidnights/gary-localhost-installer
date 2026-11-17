@@ -22,7 +22,9 @@ def main():
     parser.add_argument('--arch', choices=['amd64', 'arm64'], required=True)
     args = parser.parse_args()
     assert {'linux-x64': 'amd64', 'linux-arm64': 'arm64'}[args.platform] == args.arch
-    assert os.environ['VITE_ENABLE_APP_UPDATER'] == '0'
+    # The in-app updater is on and follows this architecture's preview feed.
+    assert os.environ.get('VITE_ENABLE_APP_UPDATER', '1') != '0'
+    assert os.environ['GARY4LOCAL_UPDATE_CHANNEL'] == 'preview'
     packages = list((TAURI / 'target/release/bundle/deb').glob('*.deb'))
     assert len(packages) == 1, packages
     package = packages[0]
@@ -95,7 +97,7 @@ def main():
     info = {'service': 'gary4local-desktop', 'version': version,
             'commit': os.environ.get('GITHUB_SHA', run('git', '-C', str(ROOT), 'rev-parse', 'HEAD')),
             'platform': args.platform, 'architecture': args.arch, 'experimental': True,
-            'updater_enabled': False, 'package': destination.name, 'sha256': digest,
+            'updater_enabled': True, 'update_channel': 'preview', 'package': destination.name, 'sha256': digest,
             'package_checks': 'passed', 'elf_dependencies': dependencies,
             'build_os': Path('/etc/os-release').read_text(),
             'rust': run('rustc', '--version'), 'node': run('node', '--version')}

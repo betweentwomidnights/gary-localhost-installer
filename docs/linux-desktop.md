@@ -8,9 +8,14 @@ Linux release. GPU generation is required; CPU generation is not a target.
 It is the same `gary4local` app as on Windows: package, executable, application
 identity (`com.betweentwomidnights.gary4local`) and data folders. Preview versus
 stable is a matter of which updater feed a build follows, never a separate app.
-The package replaces an installed `gary4local-preview` from earlier builds. The
-app updater is disabled at build time in both Rust and the frontend for now.
-Native engines still download explicitly from the pinned manifest; models and
+The package replaces an installed `gary4local-preview` from earlier builds.
+
+CI builds follow the preview channel (`GARY4LOCAL_UPDATE_CHANNEL=preview`) for
+their architecture: `updates/gary4local/linux-x86_64/native-preview.json` or
+`linux-aarch64/native-preview.json`. Accepting an update downloads the signed
+`.deb` and installs it with `dpkg -i` through `pkexec`, which asks for your
+password once, then restarts gary4local. Feed publishing is described in
+`docs/updates/README.md` on main. Native engines still download explicitly from the pinned manifest; models and
 GPU drivers are not included. Linux currently offers Vulkan, including on NVIDIA.
 
 ## Install and launch

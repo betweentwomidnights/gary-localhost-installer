@@ -32,7 +32,8 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: 2
-      VITE_ENABLE_APP_UPDATER: "0"
+      # Linux builds follow the preview feeds in updates/gary4local/linux-<arch>/.
+      GARY4LOCAL_UPDATE_CHANNEL: preview
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,6 +76,7 @@ jobs:
           DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
+          cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib update::tests::
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib linux_desktop::tests::
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
           cargo test --locked --release --manifest-path control-center/src-tauri/Cargo.toml --lib native_start
