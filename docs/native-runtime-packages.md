@@ -36,9 +36,7 @@ mode produces the concrete release plan before publication.
 `services/manifests/services.json` pins the versioned Linux URLs and SHA256
 values alongside other platforms. A Linux install's identity includes its core
 and backend hashes, so a later preview of the same engine version is an update.
-Legacy Windows stamps remain compatible. The shared headless installer reads
-the same manifest, verifies downloads and stages/probes before activation.
-Local-archive configs remain available for development. Linux CUDA smoke packs
+Legacy Windows stamps remain compatible. Linux CUDA smoke packs
 targeting GB10 are not published as portable CUDA packages. CPU generation is
 not a distribution or validation target; CPU libraries support GPU pipelines.
 

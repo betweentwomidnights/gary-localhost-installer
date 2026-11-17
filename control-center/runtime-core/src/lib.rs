@@ -1,6 +1,5 @@
-//! Runtime building blocks shared by the desktop app and GUI-free supervisor.
+//! Runtime building blocks shared by the desktop app and future GUI-free hosts.
 pub mod download;
-pub mod headless;
 pub mod manifest;
 pub mod runtime;
 pub mod sa3_adapter;

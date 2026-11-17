@@ -53,9 +53,6 @@ build while we tried very hard to break it locally.
 how every native service is packaged and installed is in
 [native runtime packages](docs/native-runtime-packages.md).
 
-Linux/ARM64 findings and the proposed shared headless supervisor are tracked in
-[Linux and headless exploration](docs/linux-headless-exploration.md).
-
 ## preview
 
 on a fresh native setup, download the shared components and one generation
