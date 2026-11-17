@@ -195,11 +195,25 @@ pub trait Service: Sync {
     /// Why the native runtime cannot start with this selection yet: by
     /// default, models its tier needs that are not on disk.
     fn native_start_blocker(&self, root: &Path, selection: Option<&Selection>) -> Option<String> {
-        let tier = selection.map_or(self.tiers()[0], |selection| selection.encoding.as_str());
+        self.native_start_blocker_for_encoding(root, selection.map(|selection| selection.encoding.as_str()))
+    }
+
+    /// Readiness for a proposed start, before any selection is persisted.
+    fn native_start_blocker_for_encoding(&self, root: &Path, encoding: Option<&str>) -> Option<String> {
+        let tier = encoding.unwrap_or(self.tiers()[0]);
         match self.tier_components(tier) {
             Ok(ids) => self.models().missing(root, &ids),
             Err(error) => Some(error),
         }
+    }
+
+    /// Complete generation choices only; optional models/training bases do not
+    /// create another startup precision. Inventory never activates or hashes.
+    fn downloaded_tiers(&self, root: &Path) -> Vec<String> {
+        self.tiers().iter().filter_map(|tier| {
+            let ids = self.tier_components(tier).ok()?;
+            (self.models().missing(root, &ids).is_none()).then(|| tier.to_string())
+        }).collect()
     }
 
     /// The manifest's launch arguments adjusted for `encoding`: the selected

@@ -1,12 +1,11 @@
 {
   "channel": "stable",
-  "latest_version": "0.7.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1/gary4local_0.7.1_x64-setup.exe",
-  "sha256": "72663f79dda2908baa2c0072cf8aad51c1b1ee309648f225bf4de0f7649bc14a",
-  "published_at": "2026-11-12T06:54:25.0000000+00:00",
+  "latest_version": "0.7.2",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2/gary4local_0.7.2_x64-setup.exe",
+  "sha256": "c99066a0cd01e437b461678f6cc394958ef085ecfa8e7f04d67aeb7e8315b5f0",
+  "published_at": "2026-11-13T15:29:46.0000000+00:00",
   "notes": [
-    "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.",
-    "SA3 LoRA automation lanes reach the native server.",
-    "Update all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4."
+    "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.",
+    "Existing models can be reused. Compatible with gary4juce v5.0.4."
   ]
 }

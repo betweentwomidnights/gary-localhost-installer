@@ -78,7 +78,7 @@
   </div>
   {#if info?.fallbackReason}<div class="warning">{info.fallbackReason}</div>{/if}
   <div class="actions">
-    {#if action}<button class="primary" disabled={busy || building} onclick={install}>{building ? "installing…" : action}</button>{/if}
+    {#if action}<button class="primary accent" disabled={busy || building} onclick={install}>{building ? "installing…" : action}</button>{/if}
     <span class="note">
       {#if info && info.installed && !info.devOverride && info.version !== info.manifestVersion}{info.manifestVersion} is available.
       {:else if switching}Installed on {info?.backend}, set to {info?.preference}: reinstall to switch.
@@ -97,7 +97,7 @@
   .title { font-size: 12px; font-weight: 600; color: var(--text-primary); }
   .subtitle { margin-top: 3px; font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-  .actions button.primary { font-size: 11px; flex-shrink: 0; color: var(--accent); border-color: var(--accent); }
+  .actions button.primary { font-size: 11px; flex-shrink: 0; }
   .note { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
   .warning { margin-top: 8px; padding: 6px 8px; font-size: 10px; line-height: 1.4; color: var(--orange); border: 1px solid var(--orange); border-radius: 3px; }
   .error { margin-top: 8px; font-size: 11px; color: var(--red); overflow-wrap: anywhere; }

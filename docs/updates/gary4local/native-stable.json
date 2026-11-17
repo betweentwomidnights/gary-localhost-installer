@@ -1,11 +1,11 @@
 {
-  "version": "0.7.1",
-  "notes": "Gary runtime setup accepts full continuations again. Retry setup or migration if v0.7.0 stopped on a sample-rate or channel mismatch.\nSA3 LoRA automation lanes reach the native server.\nUpdate all runtimes for sa3.cpp v0.2.3. Pair with gary4juce v5.0.4.",
-  "pub_date": "2026-11-12T06:54:25.0000000+00:00",
+  "version": "0.7.2",
+  "notes": "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.\nExisting models can be reused. Compatible with gary4juce v5.0.4.",
+  "pub_date": "2026-11-13T15:29:46.0000000+00:00",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFBVNitIZXBodGRVTllZZnJZM3AxQVRXUmhGUW9rLy85eVdDeU9qM25VemlyRC9jdU1JT1ptVkJLME0zZzk4K1FwQitBeUVRczFPZEZaeFQ3aE5PRXdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDY2MTQ1CWZpbGU6Z2FyeTRsb2NhbF8wLjcuMV94NjQtc2V0dXAuZXhlClo1OGVabmlDZHBiZmlDR1JCWm1EbUpsdThSbFdZeFZJL1A1RXJST2ZnQ21pRnJpM1pEQnM4YitZVHpUbmRWQU52WUxFWldUck5kaWIzcWNGUkp3TURBPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.1/gary4local_0.7.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME1oTTQ0alpwMUUvT29GRW51eDRSNk5YdDhBSmd6V0NWUFM3Q2VRSThsV01INjhLa3ZkZ1R6blBSMGN2cnE3ZHJycS8vZ0tUdXQ1U280OEp3YWhvekFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTgzNzI4CWZpbGU6Z2FyeTRsb2NhbF8wLjcuMl94NjQtc2V0dXAuZXhlCkoyT1ZibUdET2pBZnFzWEZtL0E4REJtbEJTSmhkSjA3S21YVlp5RUJsOTZFUUZOY084TmlXbmFLM1VMT05XdnVPbjhRaklKQkJGcG5WeUVxODhHdENnPT0K",
+      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2/gary4local_0.7.2_x64-setup.exe"
     }
   }
 }

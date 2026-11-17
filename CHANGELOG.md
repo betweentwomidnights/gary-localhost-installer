@@ -4,7 +4,97 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
-## v0.7.0-rocm.2 - unreleased preview
+## v0.7.3-rocm.1 - 2026-11-17 preview
+
+brings v0.7.1 through v0.7.3 into the ROCm build: LoRA training on tracks of
+any length, gary's and SA3's corrected runtime checks, the shared precision
+dropdown, start activating the only downloaded precision, and a migration
+that no longer stops on gary finetunes C++ can't run yet. press `update all
+runtimes` for acestep.cpp v0.1.5 and sa3.cpp v0.2.4; AMD runs both on Vulkan.
+python carey's auto-labeling still checks its own base, VAE and text encoder.
+
+compatible with gary4juce v5.0.5.
+
+## v0.7.3 - 2026-11-16
+
+LoRA training takes tracks longer than ten minutes. carey's trainer refused
+any song over 600 seconds with `training audio exceeds the DiT model's
+maximum latent duration`. that check ran while the song was being encoded,
+before the training window was applied, so setting a shorter window didn't
+help. SA3's trainer had the same limit and was quieter about it: it trained
+on the first 600 seconds of a longer track and never mentioned the rest.
+both limits came over with the reference trainers and most songs are nowhere
+near them, which is how they lasted this long. both trainers now encode a
+track of any length whole and take each step's crop from anywhere in it. you
+don't need to split long files.
+
+the training dialogs say what a window means for a long track. SA3's `train
+on full tracks` is a 285-second window, the model's native length. a track
+that fits is used whole, from its first second. a longer one gives a random
+285-second stretch each step, so its opening isn't in every sample. that
+part hasn't changed; the dialog just says it now. carey's training window
+works the same way at the length you set, 45 to 60 seconds by default and
+never more than 600. windows over 240 seconds are untested and need far more
+VRAM.
+
+acestep.cpp is pinned to v0.1.5 and sa3.cpp to v0.2.4; press `update all
+runtimes` to fetch them. carey re-encodes a dataset once on the new runtime.
+SA3 re-encodes only the tracks that were being cut short. jerry and
+foundation-1 run on the same sa3.cpp package, so they move to v0.2.4 with
+it; nothing in generation changed. the other runtime pins stay the same. a
+613-second file trained on both published runtimes on CUDA; Vulkan wasn't
+run.
+
+this also carries what merged since v0.7.2. every native model panel uses
+the same precision dropdown. on a fresh install, start activates the only
+downloaded precision itself rather than waiting for `use` in models. LoRA
+folder fields describe what to choose in place of a `C:` path example, and
+the install and download buttons have more contrast.
+
+SA3's auto-labeling names the model it's actually missing. with the 1.7B
+captioning LM downloaded but no carey audio model, it said the captioner was
+missing, because one flag covered both. labeling needs carey's audio model
+and shared VAE to turn the audio into codes for the LM, so it now names
+whichever of those is absent and checks the VAE file before it starts. if
+you hit this, download one carey precision and its shared models; the LM
+you have is fine.
+
+compatible with gary4juce v5.0.5.
+
+## v0.7.2 - 2026-11-13
+
+gary's runtime setup now accepts retry_music results too. v0.7.1 fixed the
+continuation check but left retry expecting only a generated 32 kHz mono
+window. a retry also continues the session's original input, even when that
+session started with process_audio, so its check now expects the full result
+at the recording's sample rate and channel count. retry runtime setup or
+migration after updating if it stopped at this check.
+
+the checks still reject truncated or incorrectly formatted audio. generation,
+continuation and retry passed against the released audiocraft.cpp v0.1.4
+runtime on CUDA; Terry's transform and undo passed in the same verification.
+no runtime pins changed for this hotfix.
+
+compatible with gary4juce v5.0.4.
+
+## v0.7.1 - 2026-11-11
+
+gary's runtime setup no longer rejects a valid continuation. audiocraft.cpp
+returns the recording before the prompt followed by the generated window,
+at the recording's sample rate and channel count. the installer was still
+checking for just the generated 32 kHz mono window. its check now expects
+the full 44.1 kHz stereo result and still rejects truncated audio. retry
+runtime setup or migration if this stopped you on v0.7.0.
+
+SA3 LoRA automation lanes now reach the native server, including the lane
+prompts, envelopes and blend settings. the adapter maps each LoRA to its
+native path and refuses a runtime that doesn't support lanes rather than
+silently dropping the automation. sa3.cpp is pinned to v0.2.3; press
+`update all runtimes` to fetch it. the other runtime pins stay the same.
+
+compatible with gary4juce v5.0.4.
+
+## v0.7.0-rocm.2 - 2026-11-09 preview
 
 picks up audiocraft.cpp v0.1.4 and sa3.cpp v0.2.2. continuations append to the
 input again, and SA3 negative prompts under CFG match stable_audio_3, so SA3
@@ -24,7 +114,7 @@ this preview is for Kostas's AMD testing.
 
 compatible with gary4juce v5.0.3 pre-release.
 
-## v0.7.0 - unreleased
+## v0.7.0 - 2026-11-08
 
 gary and terry move to audiocraft.cpp, completing the native migration for all
 seven services. they share one runtime, with CUDA or Vulkan on Windows. gary
@@ -55,7 +145,7 @@ makes continuations append to the input again. fresh installs and migrations
 have been tested on NVIDIA; the ROCm preview builds on the same code and still
 needs Kostas's AMD validation.
 
-planned companion: gary4juce v5.0.3.
+compatible with gary4juce v5.0.3.
 
 ## v0.6.0 - 2026-10-31
 

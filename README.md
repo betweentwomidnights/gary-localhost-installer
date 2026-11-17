@@ -12,28 +12,24 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.7.0-rocm.2 - Windows preview
+## v0.7.3-rocm.1 - Windows preview
 
-gary and terry move to [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp).
-that was the last Python migration: all seven services now set up on C++ on a
-fresh install. existing Python installs keep working until you choose to migrate.
-gary's models include vanya, hoenn_lofi, keygen and Meta's MusicGen models at
-F16, Q8_0 and Q4_K_M. terry uses the F16 MelodyFlow model.
+LoRA training takes tracks longer than ten minutes. carey's trainer stopped
+on them with `training audio exceeds the DiT model's maximum latent
+duration`, and SA3's quietly trained on the first ten minutes only. both now
+encode the whole track and crop from anywhere in it, so there's nothing to
+split. update, then press `update all runtimes` to fetch acestep.cpp v0.1.5
+and sa3.cpp v0.2.4. AMD runs both on Vulkan.
 
-`set up all runtimes` installs the engines without downloading every model.
-on NVIDIA you can choose CUDA or Vulkan once; AMD uses Vulkan. download the
-models you want in each service's models tab, or use `download recommended
-models` to fetch its shared components and recommended tier. the shortcut
-opens the models tab for progress and disappears when those models are ready.
+SA3's `train on full tracks` is still a 285-second window: a longer track
+gives a random 285-second stretch each step. the training dialogs now say
+so.
 
-this also tidies up fresh-install training controls, optional decoder setup,
-Python-only settings and uninstall cleanup. native runtime pins are
-sa3.cpp v0.2.2, audiocraft.cpp v0.1.4, acestep.cpp v0.1.4 and yuey.cpp v0.3.1.
-sa3.cpp v0.2.2 fixes negative prompts under CFG, so SA3 renders that use one
-with a cfg scale above 1 sound different from before.
+this preview also carries v0.7.1 and v0.7.2's runtime-check fixes and the
+migration fix for gary finetunes that aren't converted yet. AMD validation
+is still pending.
 
-this ROCm preview accompanies gary4juce v5.0.3 for Kostas's AMD and JSON-export
-testing. AMD validation is still pending.
+pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
@@ -60,6 +56,12 @@ how every native service is packaged and installed is in
 [native runtime packages](docs/native-runtime-packages.md).
 
 ## preview
+
+on a fresh native setup, download the shared components and one generation
+precision, then press **start**. start verifies and activates that precision
+before launching; downloading alone does not run a GPU check. when more than
+one generation precision is downloaded, choose one with **use** in Models.
+existing Python installations keep their explicit migration flow.
 
 install and startup flow:
 

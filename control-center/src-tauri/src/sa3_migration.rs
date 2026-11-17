@@ -251,12 +251,12 @@ impl crate::migration::Service for Sa3 {
     }
 
     /// The selected tier's models, and the decoder correction when enabled.
-    fn native_start_blocker(
+    fn native_start_blocker_for_encoding(
         &self,
         root: &Path,
-        selection: Option<&crate::migration::Selection>,
+        encoding: Option<&str>,
     ) -> Option<String> {
-        let encoding = selection.map_or("F16", |selection| selection.encoding.as_str());
+        let encoding = encoding.unwrap_or("F16");
         if let Some(missing) = crate::sa3_runtime::missing_models(root, encoding) {
             return Some(missing);
         }

@@ -713,7 +713,7 @@
         <label class="field wide">
           <span>audio folder</span>
           <div class="path-row">
-            <input type="text" bind:value={datasetPath} placeholder="C:\\path\\to\\ace dataset" disabled={lockAll} />
+            <input type="text" bind:value={datasetPath} placeholder="Choose a folder with training audio" disabled={lockAll} />
             <button type="button" onclick={pickDatasetFolder} disabled={lockAll}>pick folder</button>
             <button type="button" onclick={() => sidecarModalOpen = true} disabled={!datasetPath.trim()}>
               edit prompts / sidecars
@@ -835,7 +835,7 @@
             <input type="number" min="1" step="1" bind:value={windowMin} aria-label="shortest training window" disabled={lockAll} />
             <input type="number" min="1" step="1" bind:value={windowMax} aria-label="longest training window" disabled={lockAll} />
           </div>
-          <small class:invalid={!windowValid}>each update trains on a {windowMin}–{windowMax} s crop while conditioning on the whole song. longer windows need more VRAM; 45–60 fits 8 GB with XL Q4_K_M.</small>
+          <small class:invalid={!windowValid}>each update trains on a {windowMin}–{windowMax} s crop from anywhere in the song, while conditioning on the whole song. songs of any length work; the window can't exceed 600 s. longer windows need more VRAM; 45–60 fits 8 GB with XL Q4_K_M.{#if windowValid && windowMax > 240} windows over 240 s are untested here and need far more VRAM.{/if}</small>
         </label>
         {:else}
         <label class="field">
