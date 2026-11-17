@@ -48,7 +48,7 @@ whichever of those is absent and checks the VAE file before it starts. if
 you hit this, download one carey precision and its shared models; the LM
 you have is fine.
 
-compatible with gary4juce v5.0.4.
+compatible with gary4juce v5.0.5.
 
 ## v0.7.2 - 2026-11-13
 

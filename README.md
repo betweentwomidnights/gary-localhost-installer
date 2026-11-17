@@ -27,7 +27,7 @@ SA3's `train on full tracks` is still a 285-second window: a longer track
 gives a random 285-second stretch each step. the training dialogs now say
 so.
 
-pair it with [gary4juce v5.0.4](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.4).
+pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5).
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
