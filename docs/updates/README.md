@@ -73,6 +73,43 @@ For preview releases, use `-Channel "preview"` instead. The same helper will wri
 - `docs/updates/gary4local/preview.json`
 - `docs/updates/gary4local/native-preview.json`
 
+## Linux
+
+Linux is the same `gary4local` app, with a feed folder per architecture beside
+the Windows files. A feed carries one version, and the phase-1 feed one download,
+so Linux builds can move on their own schedule without offering Windows a version
+it can't install:
+
+- `docs/updates/gary4local/linux-x86_64/{preview,native-preview}.json`
+- `docs/updates/gary4local/linux-aarch64/{preview,native-preview}.json`
+
+The generator picks the folder and the native platform key from the installer's
+name: `gary4local_<version>_amd64.deb` gives `linux-x86_64` and
+`linux-x86_64-deb`, `_arm64.deb` gives `linux-aarch64` and `linux-aarch64-deb`.
+That key is the first one `tauri-plugin-updater` looks up for a `.deb` install.
+Run it once per architecture, each with its own `.deb` and `.sig`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\generate_update_feeds.ps1 `
+  -Version "0.7.4" `
+  -ArtifactUrl "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/<tag>/gary4local_0.7.4_arm64.deb" `
+  -InstallerPath "path\to\gary4local_0.7.4_arm64.deb" `
+  -SignaturePath "path\to\gary4local_0.7.4_arm64.deb.sig" `
+  -Channel "preview" `
+  -NotesText "Release note one.||Release note two."
+```
+
+Linux packages are built by CI, so they are signed after download with the same
+updater key, which never leaves the release machine:
+
+```powershell
+cd control-center
+npx tauri signer sign -f C:\path\to\gary4local-updater.key -p "your-passphrase" path\to\gary4local_0.7.4_arm64.deb
+```
+
+A `.deb` installs system-wide, so applying an update runs `dpkg -i` as root:
+the updater asks for the password once per update through `pkexec`.
+
 ## Release Guide
 
 The maintainer-facing release checklist lives in [PHASE2_RELEASE.md](../releasing/PHASE2_RELEASE.md).
