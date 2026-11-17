@@ -3,10 +3,32 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_updater::UpdaterExt;
 
-pub const DEFAULT_UPDATE_MANIFEST_URL: &str =
-    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/stable.json";
-pub const DEFAULT_NATIVE_UPDATER_ENDPOINT: &str =
-    "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local/native-stable.json";
+const UPDATE_FEEDS_BASE: &str = "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local";
+
+/// The feed channel this build follows: `stable` unless the build sets
+/// GARY4LOCAL_UPDATE_CHANNEL=preview. Preview is a channel of the same app,
+/// never a separate one.
+const UPDATE_CHANNEL: &str = match option_env!("GARY4LOCAL_UPDATE_CHANNEL") {
+    Some(channel) => channel,
+    None => "stable",
+};
+
+/// The feed folder for this platform. Windows uses the product folder itself;
+/// each Linux architecture has its own beside it, since a feed carries one version
+/// and the phase-1 feed one download.
+const PLATFORM_FEED_DIR: &str = if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+    "/linux-aarch64"
+} else if cfg!(target_os = "linux") {
+    "/linux-x86_64"
+} else {
+    ""
+};
+
+fn default_feed_url(file_stem: &str) -> String {
+    let channel = if UPDATE_CHANNEL == "preview" { "preview" } else { "stable" };
+    format!("{UPDATE_FEEDS_BASE}{PLATFORM_FEED_DIR}/{file_stem}{channel}.json")
+}
+
 pub const DEFAULT_NATIVE_UPDATER_PUBKEY: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwQzIzMzA0NTlCQTQ1RkYKUldUL1JicFpCRFBDMEdLaDlQdkJYMmpLZ09FMHNwMjVVZlYrYVNCL0Z5Rmg5Y2JqOXp4am5xWlMK";
 
@@ -76,7 +98,7 @@ fn configured_runtime_value(runtime_env: &str, default_value: &str) -> Option<St
 fn native_updater_config() -> Option<NativeUpdaterConfig> {
     let endpoint = configured_runtime_value(
         "GARY4LOCAL_NATIVE_UPDATER_ENDPOINT",
-        DEFAULT_NATIVE_UPDATER_ENDPOINT,
+        &default_feed_url("native-"),
     )?;
     let pubkey = configured_runtime_value(
         "GARY4LOCAL_NATIVE_UPDATER_PUBKEY",
@@ -87,11 +109,8 @@ fn native_updater_config() -> Option<NativeUpdaterConfig> {
 }
 
 fn manifest_url() -> String {
-    configured_runtime_value(
-        "GARY4LOCAL_UPDATE_MANIFEST_URL",
-        DEFAULT_UPDATE_MANIFEST_URL,
-    )
-    .unwrap_or_else(|| DEFAULT_UPDATE_MANIFEST_URL.to_string())
+    let default_url = default_feed_url("");
+    configured_runtime_value("GARY4LOCAL_UPDATE_MANIFEST_URL", &default_url).unwrap_or(default_url)
 }
 
 fn parse_version(value: &str) -> Result<Version, String> {
@@ -248,4 +267,36 @@ pub async fn check_for_update(
         published_at: manifest.published_at,
         notes: manifest.notes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn default_feeds_follow_this_platform_and_channel() {
+        let base = "https://betweentwomidnights.github.io/gary-localhost-installer/updates/gary4local";
+        let channel = if super::UPDATE_CHANNEL == "preview" { "preview" } else { "stable" };
+        let folder = if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            "/linux-aarch64"
+        } else if cfg!(target_os = "linux") {
+            "/linux-x86_64"
+        } else {
+            ""
+        };
+        assert_eq!(super::default_feed_url(""), format!("{base}{folder}/{channel}.json"));
+        assert_eq!(super::default_feed_url("native-"), format!("{base}{folder}/native-{channel}.json"));
+        // The Linux CI build sets the preview channel; its feeds sit in its arch folder.
+        if option_env!("GARY4LOCAL_UPDATE_CHANNEL") == Some("preview") {
+            assert!(super::default_feed_url("native-").ends_with("/native-preview.json"));
+        }
+        if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            assert!(super::default_feed_url("").contains("/gary4local/linux-aarch64/"));
+        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            assert!(super::default_feed_url("").contains("/gary4local/linux-x86_64/"));
+        }
+        // A stable Windows build keeps the URLs every released version has used.
+        if cfg!(windows) && channel == "stable" {
+            assert_eq!(super::default_feed_url("native-"), format!("{base}/native-stable.json"));
+            assert_eq!(super::default_feed_url(""), format!("{base}/stable.json"));
+        }
+    }
 }
