@@ -1,4 +1,4 @@
-name: Linux desktop preview
+name: Linux desktop
 on:
   pull_request:
     paths:
@@ -8,7 +8,7 @@ on:
       - .github/workflows/linux-desktop.yml
       - smoke-tests/linux/check_desktop_package.py
       - smoke-tests/linux/desktop_startup.py
-      - docs/linux-desktop-preview.md
+      - docs/linux-desktop.md
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,7 +32,6 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: 2
-      GARY4LOCAL_LINUX_PREVIEW: "1"
       VITE_ENABLE_APP_UPDATER: "0"
     steps:
       - uses: actions/checkout@v4
@@ -57,11 +56,11 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf desktop-file-utils xvfb dbus-x11 x11-utils imagemagick
           rustup toolchain install 1.95.0 --profile minimal
           rustup default 1.95.0
-      - name: Build installable preview
+      - name: Build the installable package
         working-directory: control-center
         run: |
           npm ci
-          npm run tauri -- build --ci --bundles deb --config src-tauri/tauri.linux-preview.conf.json
+          npm run tauri -- build --ci --bundles deb --config src-tauri/tauri.linux.conf.json
       - uses: actions/cache/save@v4
         if: always() && steps.rust-cache.outputs.cache-hit != 'true'
         with:
@@ -70,7 +69,7 @@ jobs:
             ~/.cargo/git
             control-center/src-tauri/target/release
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
-      - name: Check Linux storage and preview package
+      - name: Check Linux storage and the package
         env:
           PLATFORM: ${{ matrix.platform }}
           DEB_ARCH: ${{ matrix.deb_arch }}
@@ -84,19 +83,19 @@ jobs:
           python3 smoke-tests/linux/check_desktop_package.py --platform "$PLATFORM" --arch "$DEB_ARCH"
       - name: Install package and check desktop startup
         run: |
-          sh control-center/src-tauri/target/desktop-preview/INSTALL.sh control-center/src-tauri/target/desktop-preview/*.deb
+          sh control-center/src-tauri/target/desktop-linux/INSTALL.sh control-center/src-tauri/target/desktop-linux/*.deb
           xvfb-run -a dbus-run-session -- python3 smoke-tests/linux/desktop_startup.py
       - uses: actions/upload-artifact@v4
         with:
-          name: gary4local-desktop-${{ matrix.platform }}-preview
+          name: gary4local-desktop-${{ matrix.platform }}
           path: |
-            control-center/src-tauri/target/desktop-preview/*.deb
-            control-center/src-tauri/target/desktop-preview/SHA256SUMS-*
-            control-center/src-tauri/target/desktop-preview/*.json
-            control-center/src-tauri/target/desktop-preview/*.log
-            control-center/src-tauri/target/desktop-preview/*.png
-            control-center/src-tauri/target/desktop-preview/INSTALL.sh
-            control-center/src-tauri/target/desktop-preview/README.md
+            control-center/src-tauri/target/desktop-linux/*.deb
+            control-center/src-tauri/target/desktop-linux/SHA256SUMS-*
+            control-center/src-tauri/target/desktop-linux/*.json
+            control-center/src-tauri/target/desktop-linux/*.log
+            control-center/src-tauri/target/desktop-linux/*.png
+            control-center/src-tauri/target/desktop-linux/INSTALL.sh
+            control-center/src-tauri/target/desktop-linux/README.md
           retention-days: 14
       - name: Export desktop validation harness
         env:

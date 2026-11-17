@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=gary4local Preview
+Name=gary4local
 Comment={{comment}}
-Exec=gary4local-preview-launch
+Exec=gary4local-launch
 Icon={{icon}}
 Terminal=false
 Categories=AudioVideo;Audio;
-StartupWMClass=gary4local-preview
+StartupWMClass=gary4local

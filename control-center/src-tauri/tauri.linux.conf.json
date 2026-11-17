@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "icon": ["icons/linux/256x256.png", "icons/linux/128x128.png", "icons/linux/32x32.png"],
+    "targets": ["deb"],
+    "createUpdaterArtifacts": false,
+    "category": "Music",
+    "shortDescription": "Run gary4juce's music models on your own GPU",
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/gary4local.desktop",
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0t64", "libayatana-appindicator3-1", "libvulkan1"],
+        "conflicts": ["gary4local-preview"],
+        "replaces": ["gary4local-preview"],
+        "files": {
+          "/usr/bin/gary4local-launch": "linux/gary4local-launch"
+        }
+      }
+    }
+  }
+}
