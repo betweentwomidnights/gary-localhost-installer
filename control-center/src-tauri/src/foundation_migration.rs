@@ -35,6 +35,7 @@ impl Service for Foundation {
             protected: Vec::new(),
             preserved: Vec::new(),
             warnings: Vec::new(),
+            notes: Vec::new(),
             training_base_present: false,
         }
     }

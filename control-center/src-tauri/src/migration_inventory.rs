@@ -29,6 +29,8 @@ pub struct Preview {
     pub estimated_cleanup_bytes: u64,
     pub preserved_paths: Vec<Item>,
     pub warnings: Vec<String>,
+    /// What cleanup will do that is worth saying, without blocking it.
+    pub notes: Vec<String>,
     pub native_selection: Option<Selection>,
     pub cleanup_token: String,
     /// Why cleanup cannot remove Python whatever the review finds: features
@@ -44,7 +46,10 @@ pub struct Extras {
     pub protected: Vec<PathBuf>,
     /// Shown as kept, after the shared preserved paths.
     pub preserved: Vec<(String, PathBuf)>,
+    /// Each one blocks cleanup until it is resolved.
     pub warnings: Vec<String>,
+    /// Shown beside the cleanup review; cleanup goes ahead.
+    pub notes: Vec<String>,
     pub training_base_present: bool,
 }
 
@@ -209,6 +214,7 @@ fn inventory(
         estimated_cleanup_bytes: 0,
         preserved_paths: Vec::new(),
         warnings: Vec::new(),
+        notes: extras.notes,
         native_selection: None,
         cleanup_token: String::new(),
         python_still_needed: None,
