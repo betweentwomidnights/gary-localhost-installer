@@ -1,12 +1,14 @@
 {
   "channel": "preview",
-  "latest_version": "0.7.2-rocm.1",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.2-rocm.1/gary4local-rocm_0.7.2-rocm.1_x64-setup.exe",
-  "sha256": "609d1102c188147905a50979f4d9367d952d145987f142106a9dd45a0635a101",
-  "published_at": "2026-11-13T15:29:51.0000000+00:00",
+  "latest_version": "0.7.3-rocm.1",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.3-rocm.1/gary4local-rocm_0.7.3-rocm.1_x64-setup.exe",
+  "sha256": "c57b167422fffbc2ca8100be293272069f4ba99e6fc290be30c8ae4af60ccd04",
+  "published_at": "2026-11-17T13:00:13.0000000+00:00",
   "notes": [
-    "Gary runtime setup now accepts retry results. Retry setup or migration if v0.7.1 stopped at the retry_music check.",
-    "Existing models can be reused. Compatible with gary4juce v5.0.4.",
+    "LoRA training takes tracks longer than ten minutes. Press update all runtimes for the new trainers.",
+    "Carey re-encodes a training dataset once on the new runtime.",
+    "Gary migration no longer stops on unconverted Python finetunes; cleanup removes them.",
+    "SA3 auto-labeling names the missing Carey model. Compatible with gary4juce v5.0.5.",
     "AMD preview; hardware validation of this package is still pending."
   ]
 }
