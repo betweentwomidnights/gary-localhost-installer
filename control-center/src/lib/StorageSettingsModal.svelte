@@ -179,7 +179,10 @@
     !!info && info.pendingRestart && info.startupRoot !== info.activeRoot,
   );
   function normalizePath(path: string | null | undefined) {
-    return (path ?? "").replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+    const value = path ?? "";
+    return /^(?:[a-z]:[\\/]|\\\\)/i.test(value)
+      ? value.replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase()
+      : value.replace(/\/+$/, "");
   }
   let defaultPathVisibleElsewhere = $derived(
     !!info &&
@@ -194,11 +197,11 @@
   let defaultStorageNote = $derived(
     info?.defaultRootIsLegacy
       ? info?.configuredRoot || info?.pendingRestart
-        ? "Gary's default on this machine is legacy AppData because existing data was found there."
-        : "using default storage: legacy AppData because existing data was found there."
-      : info?.configuredRoot || info?.pendingRestart
-        ? "Gary's default on this machine is the gary4local-data folder beside the app."
-        : "using default storage beside the app.",
+        ? "Gary's default on this machine preserves the existing legacy storage folder."
+        : "using the existing legacy storage folder."
+      : info && normalizePath(info.activeRoot) !== normalizePath(info.defaultRoot)
+        ? "using custom storage. The default location is shown above."
+        : "using the default storage location.",
   );
   let resetButtonLabel = $derived(
     info?.configuredRoot
