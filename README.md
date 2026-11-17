@@ -12,22 +12,15 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## v0.7.3-rocm.1 - Windows preview
+## v0.7.4-rocm.1 - Windows preview
 
-LoRA training takes tracks longer than ten minutes. carey's trainer stopped
-on them with `training audio exceeds the DiT model's maximum latent
-duration`, and SA3's quietly trained on the first ten minutes only. both now
-encode the whole track and crop from anywhere in it, so there's nothing to
-split. update, then press `update all runtimes` to fetch acestep.cpp v0.1.5
-and sa3.cpp v0.2.4. AMD runs both on Vulkan.
+brings v0.7.4's shared runtime code into the ROCm build. nothing changes in
+generation and the runtime pins are the same as v0.7.3-rocm.1, so there's
+nothing to fetch with `update all runtimes`.
 
-SA3's `train on full tracks` is still a 285-second window: a longer track
-gives a random 285-second stretch each step. the training dialogs now say
-so.
-
-this preview also carries v0.7.1 and v0.7.2's runtime-check fixes and the
-migration fix for gary finetunes that aren't converted yet. AMD validation
-is still pending.
+it also carries v0.7.3's LoRA training on tracks longer than ten minutes:
+carey's and SA3's trainers encode the whole track and crop from anywhere in
+it, on Vulkan for AMD. AMD validation is still pending.
 
 pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5).
 

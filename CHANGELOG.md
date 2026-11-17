@@ -4,6 +4,19 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.4-rocm.1 - 2026-11-17 preview
+
+brings v0.7.4 into the ROCm build. on Windows that's all under the hood: the
+code that installs, downloads and checks runtimes moved into a shared crate
+the coming headless server will use as well, and a software Vulkan driver
+(llvmpipe, lavapipe, SwiftShader) no longer counts as a GPU when a Vulkan
+runtime is installed. generation doesn't change, and the runtime pins are
+the same as v0.7.3-rocm.1, so there's nothing to fetch with `update all
+runtimes`. the ROCm build keeps its own name, data folder and update feed.
+v0.7.4's Linux packages aren't part of it; this build is Windows only.
+
+compatible with gary4juce v5.0.5.
+
 ## v0.7.3-rocm.1 - 2026-11-17 preview
 
 brings v0.7.1 through v0.7.3 into the ROCm build: LoRA training on tracks of
