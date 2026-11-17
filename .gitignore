@@ -84,6 +84,7 @@ outputs/carey-training-smoke/
 outputs/carey-caption-*/
 outputs/carey-train-job-*/
 /tmp/
+/control-center/runtime-core/target/
 
 # Reference folder (local-only context, not shipped)
 reference/

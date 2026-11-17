@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+# gary4local uses the standard XDG folders. Set GARY4LOCAL_HOME to an absolute path
+# to keep all of its configuration, data and caches in that one folder instead, for
+# debugging or a throwaway test; set it in ~/.config/environment.d to cover menu
+# launches too. An explicit GARY4LOCAL_RUNTIME_ROOT is inherited unchanged.
+if [ -n "${GARY4LOCAL_HOME:-}" ]; then
+  case "$GARY4LOCAL_HOME" in
+    /*) ;;
+    *) printf '%s\n' 'GARY4LOCAL_HOME must be an absolute path' >&2; exit 1 ;;
+  esac
+  export XDG_CONFIG_HOME="$GARY4LOCAL_HOME/config"
+  export XDG_DATA_HOME="$GARY4LOCAL_HOME/share"
+  export XDG_CACHE_HOME="$GARY4LOCAL_HOME/cache"
+  mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
+fi
+exec "${GARY4LOCAL_BINARY:-/usr/bin/gary4local}" "$@"

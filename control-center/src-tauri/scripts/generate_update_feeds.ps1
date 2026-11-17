@@ -54,7 +54,30 @@ if ([string]::IsNullOrWhiteSpace($product)) {
     throw "Could not read a product name from installer filename '$installerLeaf'."
 }
 
+# Which platform it installs on, also from the filename. Windows keeps the
+# product folder it always had. Each Linux architecture gets a folder of its own
+# beside it: a feed carries one version, and the phase-1 feed one download URL,
+# so Linux test builds can move without offering Windows a version it can't
+# install. The native key is the one tauri-plugin-updater looks up first for a
+# .deb install ({os}-{arch}-deb). Same app, separate channel files.
+if ($installerLeaf -like '*_x64-setup.exe') {
+    $platformKey = 'windows-x86_64'
+    $platformDir = ''
+}
+elseif ($installerLeaf -like '*_amd64.deb') {
+    $platformKey = 'linux-x86_64-deb'
+    $platformDir = 'linux-x86_64'
+}
+elseif ($installerLeaf -like '*_arm64.deb') {
+    $platformKey = 'linux-aarch64-deb'
+    $platformDir = 'linux-aarch64'
+}
+else {
+    throw "Unrecognized installer '$installerLeaf': expected a Windows *_x64-setup.exe or a Linux *_amd64.deb / *_arm64.deb."
+}
+
 $defaultOutputDir = Join-Path "docs\updates" $product
+if ($platformDir) { $defaultOutputDir = Join-Path $defaultOutputDir $platformDir }
 $effectiveOutputDir = $OutputDir
 
 $effectiveNotes = @(
@@ -77,13 +100,17 @@ if (
 if ([string]::IsNullOrWhiteSpace($effectiveOutputDir)) {
     $effectiveOutputDir = $defaultOutputDir
 }
-elseif ((Split-Path -Leaf $effectiveOutputDir) -ne $product) {
-    throw ("Output directory '$effectiveOutputDir' does not match installer product " +
-        "'$product'. Pass -OutputDir '$defaultOutputDir', or omit -OutputDir and let " +
+elseif (
+    ($platformDir -and ((Split-Path -Leaf $effectiveOutputDir) -ne $platformDir -or
+        (Split-Path -Leaf (Split-Path -Parent $effectiveOutputDir)) -ne $product)) -or
+    (-not $platformDir -and (Split-Path -Leaf $effectiveOutputDir) -ne $product)
+) {
+    throw ("Output directory '$effectiveOutputDir' does not match installer " +
+        "'$installerLeaf'. Pass -OutputDir '$defaultOutputDir', or omit -OutputDir and let " +
         "it follow the installer.")
 }
 
-Write-Host "Product: $product -> $effectiveOutputDir"
+Write-Host "Product: $product ($platformKey) -> $effectiveOutputDir"
 
 $resolvedSignaturePath = (Resolve-Path -LiteralPath $SignaturePath).Path
 $resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($effectiveOutputDir)) {
@@ -133,7 +160,7 @@ $phase1Payload = [ordered]@{
 }
 
 $platforms = [ordered]@{}
-$platforms["windows-x86_64"] = [ordered]@{
+$platforms[$platformKey] = [ordered]@{
     signature = $signature
     url = $ArtifactUrl
 }

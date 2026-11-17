@@ -56,13 +56,22 @@ $phaseDate = Read-PublishedDate $phaseJson 'published_at'
 $nativeDate = Read-PublishedDate $nativeJson 'pub_date'
 $phase = $phaseJson | ConvertFrom-Json
 $native = $nativeJson | ConvertFrom-Json
-$platform = $native.platforms.'windows-x86_64'
+# A feed folder serves one platform: Windows, or one Linux architecture.
+$platformKeys = @($native.platforms.PSObject.Properties.Name)
+$knownKeys = @('windows-x86_64', 'linux-x86_64-deb', 'linux-aarch64-deb')
+if ($platformKeys.Count -ne 1 -or $platformKeys[0] -cnotin $knownKeys) {
+    throw "Native feed must carry exactly one of $($knownKeys -join ', '); found: $($platformKeys -join ', ')."
+}
+$platformKey = $platformKeys[0]
+$platform = $native.platforms.$platformKey
 
 if ($phase.channel -cne $Channel -or $phase.latest_version -cne $ExpectedVersion -or
     $native.version -cne $ExpectedVersion) { throw 'Feed channel/version does not match the intended release.' }
 if ($phaseDate -ne $nativeDate) { throw 'The two feeds disagree on the publication time.' }
 if (-not $platform -or [string]::IsNullOrWhiteSpace($phase.download_url) -or
-    $phase.download_url -cne $platform.url) { throw 'The two feeds must reference the same Windows installer URL.' }
+    $phase.download_url -cne $platform.url) { throw "The two feeds must reference the same $platformKey installer URL." }
+$installerSuffix = @{ 'windows-x86_64' = '_x64-setup.exe'; 'linux-x86_64-deb' = '_amd64.deb'; 'linux-aarch64-deb' = '_arm64.deb' }[$platformKey]
+if (-not $phase.download_url.EndsWith($installerSuffix)) { throw "A $platformKey feed must download a *$installerSuffix installer." }
 $url = [Uri]$phase.download_url
 if (-not $url.IsAbsoluteUri -or $url.Scheme -ne 'https') { throw 'Installer URL must use HTTPS.' }
 if ($phase.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Installer SHA-256 must be 64 lowercase hexadecimal characters.' }
@@ -74,10 +83,11 @@ if (-not [string]::IsNullOrWhiteSpace($SignaturePath) -and [string]::IsNullOrWhi
 }
 if (-not [string]::IsNullOrWhiteSpace($InstallerPath)) {
     if ([string]::IsNullOrWhiteSpace($SignaturePath)) { $SignaturePath = "$InstallerPath.sig" }
+    if (-not $InstallerPath.EndsWith($installerSuffix)) { throw "Installer '$InstallerPath' is not a $platformKey installer." }
     $hash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($phase.sha256 -cne $hash) { throw 'Feed SHA-256 differs from the built installer.' }
     $signature = (Get-Content -LiteralPath $SignaturePath -Raw).Trim()
     if ($platform.signature -cne $signature) { throw 'Feed signature differs from the built .sig file.' }
 }
 
-Write-Output "PASS: $Channel $ExpectedVersion feed dates, versions, URLs and signature metadata agree."
+Write-Output "PASS: $Channel $ExpectedVersion $platformKey feed dates, versions, URLs and signature metadata agree."

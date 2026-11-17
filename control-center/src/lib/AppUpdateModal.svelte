@@ -110,11 +110,11 @@
 
         {#if result.inAppInstallAvailable}
           <div class="note">
-            in-app install is configured for this build. on Windows, gary4local-rocm will close to hand off to the installer.
+            in-app install is configured for this build. on Windows, gary4local-rocm will close to hand off to the installer. on Linux, your system asks for your password to install the package, then gary4local-rocm restarts.
           </div>
         {/if}
       {:else if result}
-        <div class="body">gary4local-rocm v{result.currentVersion} is already the newest listed release.</div>
+        <div class="body">gary4local-rocm v{result.currentVersion} is already the newest listed {result.channel} release.</div>
         <div class="note">manifest source: {result.manifestUrl}</div>
       {/if}
 

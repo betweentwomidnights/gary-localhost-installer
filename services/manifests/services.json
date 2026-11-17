@@ -20,6 +20,36 @@
             }
           },
           "prefer": ["cuda", "vulkan"]
+        },
+        "linux-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-x64-core.zip",
+            "sha256": "e4ecf57de6360e992c0a5a02d218f7fe5f332c0c2624090d749bec3de3d3b626"
+          },
+          "backends": {
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-x64-vulkan.zip",
+              "sha256": "c56e136e35949ee1c511a63f32fc9c7140e1b615aacab17787a56e86a8185d07"
+            }
+          },
+          "prefer": [
+            "vulkan"
+          ]
+        },
+        "linux-arm64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-arm64-core.zip",
+            "sha256": "cb445887c4db604f912038085da3b70dec815b1ef388af92cbc93655e2ce208c"
+          },
+          "backends": {
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-linux-arm64-vulkan.zip",
+              "sha256": "a08a832a82e1d53ccdbc1012a36559479650434e939fd24a312fb5a4dfa0e7ae"
+            }
+          },
+          "prefer": [
+            "vulkan"
+          ]
         }
       }
     },
@@ -43,6 +73,36 @@
             }
           },
           "prefer": ["cuda", "vulkan"]
+        },
+        "linux-x64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/linux-v0.1.4-preview.1/audiocraft-v0.1.4-linux-x64-core.zip",
+            "sha256": "d0ea24228e92caadd83bb2fa4f6674da37d2dacfcb5a92a5e3bba0dd457a0bd2"
+          },
+          "backends": {
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/linux-v0.1.4-preview.1/audiocraft-v0.1.4-linux-x64-vulkan.zip",
+              "sha256": "fddc7072f9dc1aca0439ee4d745bba2172ce013c673d16a1e187498079e8dd38"
+            }
+          },
+          "prefer": [
+            "vulkan"
+          ]
+        },
+        "linux-arm64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/linux-v0.1.4-preview.1/audiocraft-v0.1.4-linux-arm64-core.zip",
+            "sha256": "940929f1ff2542ae7a8de1b10f2cd7d2cb9ca1d4d9f18e05c77f1f687fe6c7fd"
+          },
+          "backends": {
+            "vulkan": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/linux-v0.1.4-preview.1/audiocraft-v0.1.4-linux-arm64-vulkan.zip",
+              "sha256": "5671ef7fb6f723cc78ee904a063e80330975d9ec5d21fd8dcd40540363be1b83"
+            }
+          },
+          "prefer": [
+            "vulkan"
+          ]
         }
       }
     }
@@ -523,6 +583,36 @@
               }
             },
             "prefer": ["cuda", "vulkan"]
+          },
+          "linux-x64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-x64-core.zip",
+              "sha256": "5eb2be2ea8e7e7347a01ac88b00ce24fb93203560ea81221571e51a2a3df87ca"
+            },
+            "backends": {
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-x64-vulkan.zip",
+                "sha256": "e44a9952e7edd720c829d06560617dbeb4cbf934e21fd13bd4818c7a2e996050"
+              }
+            },
+            "prefer": [
+              "vulkan"
+            ]
+          },
+          "linux-arm64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-arm64-core.zip",
+              "sha256": "07c104df9314b3d0716fac6ee3b7b5091f82bd12fbcb0661b2bb224948305667"
+            },
+            "backends": {
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-linux-arm64-vulkan.zip",
+                "sha256": "96ce536d6a5cd4fc3dbb6e79979d6a2e69dd1b834923af85f96cd1a95709d472"
+              }
+            },
+            "prefer": [
+              "vulkan"
+            ]
           }
         }
       },
@@ -685,6 +775,36 @@
               }
             },
             "prefer": ["cuda", "vulkan"]
+          },
+          "linux-x64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/linux-v0.3.1-preview.1/yuey-v0.3.1-linux-x64-core.zip",
+              "sha256": "8cd59a43b828367fa3cf6bd192d463717fcccb916bf2b8ddda2a3698b838cc51"
+            },
+            "backends": {
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/linux-v0.3.1-preview.1/yuey-v0.3.1-linux-x64-vulkan.zip",
+                "sha256": "97c7ef5d3732eaf8e23f40cfdec829070a9ebb86bec352eb9131fbcb65ebc4c7"
+              }
+            },
+            "prefer": [
+              "vulkan"
+            ]
+          },
+          "linux-arm64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/linux-v0.3.1-preview.1/yuey-v0.3.1-linux-arm64-core.zip",
+              "sha256": "19f264cc0b337ae88878d37ce4cc211dc49bb78a0dc61bd16337ada3e3954b9e"
+            },
+            "backends": {
+              "vulkan": {
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/linux-v0.3.1-preview.1/yuey-v0.3.1-linux-arm64-vulkan.zip",
+                "sha256": "6c104da9fe6458c9b2f051b43b3977b8e7244ea1f7d0843406e219f50fdb4fe2"
+              }
+            },
+            "prefer": [
+              "vulkan"
+            ]
           }
         }
       },

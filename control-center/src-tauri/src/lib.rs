@@ -37,6 +37,8 @@ mod storage;
 mod storage_transfer;
 mod update;
 mod workload_job;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 
 use model_manager::{carey_component_required_files, ModelManager};
 use serde::{Deserialize, Serialize};
@@ -5937,6 +5939,9 @@ fn rebuild_tray_menu_with_info(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_desktop::configure_renderer();
+
     install_panic_diagnostics();
 
     let webview2_user_data_folder = configure_webview2_user_data_folder();
@@ -8421,7 +8426,7 @@ async fn start_native_carey_training(
         let (def, dir) = services.native_service("carey").ok_or("Carey has no C++ runtime")?;
         let installed = native_runtime::installed("carey", &dir, &def.executable)
             .ok_or("Prepare Carey's C++ runtime first.")?;
-        let exe = installed.dir.join("ace-train.exe");
+        let exe = installed.executable("ace-train.exe");
         let path = native_runtime::path_with_runtimes(root, &installed.runtimes);
         services.begin_native_workload("carey", "native-training", "Carey C++ training")?;
         let _ = app_handle.emit("services-updated", services.get_service_info());
@@ -9523,7 +9528,7 @@ async fn suggest_sa3_track_metadata(
         let tool = services
             .native_service("sa3")
             .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
-            .map(|install| install.dir.join("sa3-audio-analyze.exe"))
+            .map(|install| install.executable("sa3-audio-analyze.exe"))
             .filter(|path| path.is_file());
         if tool.is_none() && native_selected {
             return Err("Prepare a compatible SA3 C++ runtime with native audio analysis before using BPM/key suggestions.".into());
@@ -10343,7 +10348,7 @@ async fn start_sa3_lora_training(
                 .ok_or("SA3 has no native runtime")?;
             let installed = native_runtime::installed("sa3", &dir, &def.executable)
                 .ok_or("Prepare SA3's C++ runtime first.")?;
-            let exe = installed.dir.join("sa3-train.exe");
+            let exe = installed.executable("sa3-train.exe");
             let path = native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes);
             services.begin_native_workload("sa3", "native-training", "SA3 native training")?;
             let _ = app_handle.emit("services-updated",services.get_service_info());
@@ -11317,7 +11322,7 @@ async fn get_sa3_native_lora_state(
         services
             .native_service("sa3")
             .and_then(|(def, dir)| native_runtime::installed("sa3", &dir, &def.executable))
-            .map(|installed| installed.dir.join("sa3-lora-convert.exe"))
+            .map(|installed| installed.executable("sa3-lora-convert.exe"))
             .filter(|path| path.is_file())
     };
     let root = repo_root.inner().clone();
@@ -11370,7 +11375,7 @@ async fn import_sa3_native_lora(
             let installed = native_runtime::installed("sa3", &dir, &def.executable)
                 .ok_or("Prepare the native runtime before converting this adapter")?;
             (
-                Some(installed.dir.join("sa3-lora-convert.exe")),
+                Some(installed.executable("sa3-lora-convert.exe")),
                 native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
             )
         };
@@ -11540,7 +11545,7 @@ async fn prepare_sa3_native_decoder(
             "SA3 decoder correction preparation",
         )?;
         (
-            installed.dir.join("sa3-lora-convert.exe"),
+            installed.executable("sa3-lora-convert.exe"),
             native_runtime::path_with_runtimes(repo_root.inner(), &installed.runtimes),
         )
     };
@@ -11578,7 +11583,7 @@ async fn prepare_sa3_native_loras(
             .ok_or("SA3 has no native runtime")?;
         let installed = native_runtime::installed("sa3", &dir, &def.executable)
             .ok_or("Prepare SA3's C++ runtime before converting its adapters.")?;
-        let converter = installed.dir.join("sa3-lora-convert.exe");
+        let converter = installed.executable("sa3-lora-convert.exe");
         if !converter.is_file() {
             return Err("Installed SA3 runtime has no LoRA converter; reinstall it.".into());
         }
@@ -12518,9 +12523,16 @@ fn open_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
             .arg(&url)
             .spawn()
             .map_err(|e| format!("Failed to open URL: {}", e))?;
