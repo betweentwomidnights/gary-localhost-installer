@@ -4,10 +4,15 @@ use std::path::PathBuf;
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
+        // Tests run in parallel in one process, and two threads can read the same
+        // clock value, which put two fixtures in one folder: the VAE test's models
+        // then showed up in the LM-only test. The counter keeps every fixture apart.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         Self(
             std::env::temp_dir().join(format!(
-                "gary-caption-preflight-{}-{}",
+                "gary-caption-preflight-{}-{}-{}",
                 std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -32,8 +37,8 @@ impl Fixture {
         }
     }
 }
-/// Marks the file sparse on its open handle (FSCTL_SET_SPARSE). An `fsutil sparse
-/// setflag` subprocess did the same, but intermittently failed on CI runners.
+/// Marks the file sparse on its open handle (FSCTL_SET_SPARSE), without starting
+/// an `fsutil` process per file.
 #[cfg(windows)]
 fn mark_sparse(file: &std::fs::File) {
     use std::os::windows::io::AsRawHandle;
