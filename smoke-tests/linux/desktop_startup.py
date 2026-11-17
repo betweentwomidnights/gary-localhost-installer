@@ -1,4 +1,4 @@
-"""Start the installed preview under a virtual display, without starting engines."""
+"""Start the installed app under a virtual display, without starting engines."""
 import json
 import os
 from pathlib import Path
@@ -7,13 +7,13 @@ import re
 import subprocess
 import time
 
-root = Path(__file__).resolve().parents[2] / 'control-center/src-tauri/target/desktop-preview'
+root = Path(__file__).resolve().parents[2] / 'control-center/src-tauri/target/desktop-linux'
 profile = root / 'startup-data'
 assert not profile.exists()
 evidence = root / 'STARTUP.log'
-env = dict(os.environ, GARY4LOCAL_PREVIEW_HOME=str(profile), LIBGL_ALWAYS_SOFTWARE='1')
+env = dict(os.environ, GARY4LOCAL_HOME=str(profile), LIBGL_ALWAYS_SOFTWARE='1')
 with evidence.open('w') as log:
-    process = subprocess.Popen(['/usr/bin/gary4local-preview-launch'], env=env, cwd='/',
+    process = subprocess.Popen(['/usr/bin/gary4local-launch'], env=env, cwd='/',
                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
         deadline = time.monotonic() + 20

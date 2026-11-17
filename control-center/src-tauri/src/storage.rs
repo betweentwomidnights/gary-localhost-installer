@@ -28,12 +28,7 @@ struct StorageConfig {
 pub fn roaming_app_data_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
-        let base = linux_xdg_dir("XDG_CONFIG_HOME", ".config");
-        return if linux_preview() {
-            base.join(linux_storage_id())
-        } else {
-            base
-        };
+        return linux_xdg_dir("XDG_CONFIG_HOME", ".config");
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -48,7 +43,8 @@ pub fn roaming_app_data_dir() -> PathBuf {
 pub fn local_data_root() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
-        return linux_xdg_dir("XDG_DATA_HOME", ".local/share").join(linux_storage_id());
+        // The same identity as every other build: there is no separate preview app.
+        return linux_xdg_dir("XDG_DATA_HOME", ".local/share").join("com.betweentwomidnights.gary4local");
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -57,20 +53,6 @@ pub fn local_data_root() -> PathBuf {
             format!("{}\\AppData\\Local", home)
         });
         PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_preview() -> bool {
-    option_env!("GARY4LOCAL_LINUX_PREVIEW") == Some("1")
-}
-
-#[cfg(target_os = "linux")]
-fn linux_storage_id() -> &'static str {
-    if linux_preview() {
-        "com.betweentwomidnights.gary4local.preview"
-    } else {
-        "com.betweentwomidnights.gary4local"
     }
 }
 
@@ -85,9 +67,11 @@ fn linux_xdg_dir(name: &str, fallback: &str) -> PathBuf {
     xdg_base(env_path(name), &home, fallback)
 }
 
+/// GARY4LOCAL_HOME, the opt-in sandbox the Linux launcher also points XDG at, keeps
+/// the runtime in `<home>/data`; without it the runtime lives in the user data folder.
 #[cfg(target_os = "linux")]
-fn preview_runtime_dir(preview_home: Option<PathBuf>) -> PathBuf {
-    preview_home.filter(|path| path.is_absolute())
+fn linux_runtime_dir(sandbox: Option<PathBuf>) -> PathBuf {
+    sandbox.filter(|path| path.is_absolute())
         .map(|path| path.join("data"))
         .unwrap_or_else(|| local_data_root().join("runtime"))
 }
@@ -103,11 +87,7 @@ pub fn storage_config_path() -> PathBuf {
 pub fn installed_default_runtime_root() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
-        return if linux_preview() {
-            preview_runtime_dir(env_path("GARY4LOCAL_PREVIEW_HOME"))
-        } else {
-            local_data_root().join("runtime")
-        };
+        return linux_runtime_dir(env_path("GARY4LOCAL_HOME"));
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -455,6 +435,8 @@ mod tests {
         assert_eq!(super::installed_default_runtime_root(), super::local_data_root().join("runtime"));
         assert!(super::local_data_root().is_absolute());
         assert!(!super::local_data_root().to_string_lossy().contains("AppData"));
+        // One identity on every platform: no separate preview profile on Linux.
+        assert!(super::local_data_root().ends_with("com.betweentwomidnights.gary4local"));
     }
 
     #[cfg(target_os = "linux")]
@@ -464,8 +446,9 @@ mod tests {
         assert_eq!(super::xdg_base(Some("/data/config".into()), home, ".config"), Path::new("/data/config"));
         assert_eq!(super::xdg_base(Some("relative".into()), home, ".config"), home.join(".config"));
         assert_eq!(super::xdg_base(None, home, ".local/share"), home.join(".local/share"));
-        assert_eq!(super::preview_runtime_dir(Some("/qa/preview".into())), Path::new("/qa/preview/data"));
-        assert_eq!(super::preview_runtime_dir(Some("relative".into())), super::local_data_root().join("runtime"));
+        assert_eq!(super::linux_runtime_dir(Some("/qa/sandbox".into())), Path::new("/qa/sandbox/data"));
+        assert_eq!(super::linux_runtime_dir(Some("relative".into())), super::local_data_root().join("runtime"));
+        assert_eq!(super::linux_runtime_dir(None), super::local_data_root().join("runtime"));
     }
 
     #[test]
