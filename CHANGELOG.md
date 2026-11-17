@@ -40,6 +40,14 @@ downloaded precision itself rather than waiting for `use` in models. LoRA
 folder fields describe what to choose in place of a `C:` path example, and
 the install and download buttons have more contrast.
 
+SA3's auto-labeling names the model it's actually missing. with the 1.7B
+captioning LM downloaded but no carey audio model, it said the captioner was
+missing, because one flag covered both. labeling needs carey's audio model
+and shared VAE to turn the audio into codes for the LM, so it now names
+whichever of those is absent and checks the VAE file before it starts. if
+you hit this, download one carey precision and its shared models; the LM
+you have is fine.
+
 compatible with gary4juce v5.0.4.
 
 ## v0.7.2 - 2026-11-13
