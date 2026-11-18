@@ -448,8 +448,11 @@ mod tests {
         let expected = session.clone();
         let owner = std::thread::spawn(move || {
             let deadline = std::time::Instant::now()+Duration::from_secs(5);
-            while !request.exists() && std::time::Instant::now()<deadline { std::thread::sleep(Duration::from_millis(5)); }
-            assert_eq!(std::fs::read_to_string(request).unwrap(),expected);
+            // Match the serving loop: creation can precede the nonce write.
+            while std::fs::read_to_string(&request).ok().as_ref() != Some(&expected) {
+                assert!(std::time::Instant::now() < deadline, "Timed out waiting for the matching stop request");
+                std::thread::sleep(Duration::from_millis(5));
+            }
             drop(lease);
         });
         assert_eq!(stop(&config,Some(&session)).await.unwrap()["stopped"],true);
