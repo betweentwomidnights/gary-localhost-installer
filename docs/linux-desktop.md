@@ -1,30 +1,48 @@
 # Linux desktop
 
-This is an installable Tauri desktop application, with the bundled Svelte UI.
-Native CI builds both `amd64` (Intel/AMD Linux PCs) and `arm64` (DGX Spark).
-These first Linux builds target Ubuntu 24.04; they are not yet a general
-Linux release. GPU generation is required; CPU generation is not a target.
+gary4local runs on Linux as a `.deb` for `amd64` (Intel/AMD PCs) and `arm64`
+(DGX Spark), built for Ubuntu 24.04. it's a preview for now: the arm64 build
+has been tested end to end on a DGX Spark with gary4juce; the amd64 build is
+built and checked by CI but hasn't been hand-tested on a desktop yet. GPU
+generation is required; CPU generation isn't a target.
 
-It is the same `gary4local` app as on Windows: package, executable, application
-identity (`com.betweentwomidnights.gary4local`) and data folders. Preview versus
-stable is a matter of which updater feed a build follows, never a separate app.
-The package replaces an installed `gary4local-preview` from earlier builds.
+it's the same `gary4local` app as on Windows: package, executable, application
+identity (`com.betweentwomidnights.gary4local`) and data folders. preview versus
+stable is a matter of which update feed a build follows, never a separate app.
+the package replaces an installed `gary4local-preview` from earlier builds.
 
-CI builds follow the preview channel (`GARY4LOCAL_UPDATE_CHANNEL=preview`) for
-their architecture: `updates/gary4local/linux-x86_64/native-preview.json` or
-`linux-aarch64/native-preview.json`. Accepting an update downloads the signed
+Linux builds follow the preview channel for their architecture:
+`updates/gary4local/linux-x86_64/native-preview.json` or
+`linux-aarch64/native-preview.json`. accepting an update downloads the signed
 `.deb` and installs it with `dpkg -i` through `pkexec`, which asks for your
-password once, then restarts gary4local. Feed publishing is described in
-`docs/updates/README.md` on main. Native engines still download explicitly from the pinned manifest; models and
-GPU drivers are not included. Linux currently offers Vulkan, including on NVIDIA.
+password once, then restarts gary4local. how those feeds get published is in
+[releasing gary4local](releasing.md).
 
-## Install and launch
+native engines download from the pinned manifest when you set up a runtime;
+models and GPU drivers aren't included. Linux uses Vulkan, on NVIDIA as well as
+AMD and Intel. there's no Linux CUDA build.
 
-Verify the downloaded artifact ZIP against GitHub's artifact digest, then verify
-the inner package using its supplied `SHA256SUMS-linux-*`. `BUILD-INFO.json`
-records the source, architecture, toolchain, package hash and ELF requirements.
+## install and launch
 
-From the directory containing the correct package for your machine:
+download the `.deb` for your machine and the matching `SHA256SUMS-linux-x64`
+or `SHA256SUMS-linux-arm64` from the
+[latest release](https://github.com/betweentwomidnights/gary-localhost-installer/releases/latest),
+then from that folder:
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS-linux-arm64   # linux-x64 on a PC
+sudo apt install ./gary4local_*_arm64.deb              # _amd64.deb on a PC
+gary4local-launch
+```
+
+a direct `sudo apt install` from a private home folder can warn that the
+download is performed unsandboxed as root. that notice doesn't mean the install
+failed.
+
+a CI build artifact (the `gary4local-desktop-linux-*` zip from the
+`Linux desktop` workflow) holds the same `.deb` plus `BUILD-INFO.json`, which
+records the source, architecture, toolchain, package hash and ELF requirements,
+and an `INSTALL.sh`. check the zip against GitHub's artifact digest, then from the unzipped folder:
 
 ```sh
 sha256sum -c SHA256SUMS-linux-arm64 # linux-x64 on a PC
@@ -46,11 +64,10 @@ and unset it to return to the normal install. Data from an earlier
 using it. An explicit `GARY4LOCAL_RUNTIME_ROOT` is respected. Run as your normal
 desktop user.
 
-`INSTALL.sh` requests sudo for APT and temporarily stages the public DEB where
-APT's `_apt` user can read it. It cleans up that copy after installation and
-does not loosen your home-directory permissions. A direct `sudo apt install`
-from a private home can warn that it is running unsandboxed; that notice does
-not by itself mean installation failed.
+`INSTALL.sh` requests sudo for APT and temporarily stages the `.deb` where
+APT's `_apt` user can read it, so you don't get the unsandboxed warning. it
+cleans up that copy after installation and doesn't loosen your home-directory
+permissions.
 
 The Linux package uses Gary PNG icons generated from the repository's
 `icon.png`; `.icns` is a macOS format. Its desktop-entry filename matches the
@@ -66,7 +83,7 @@ the absolute extracted binary path before invoking the extracted launcher.
 System UI dependencies still need to be present. Installing the actual package
 and launching from its menu entry is the intended manual acceptance test.
 
-## Manual acceptance
+## manual acceptance
 
 1. Launch in a real desktop session. Confirm the UI, services and settings render.
 2. Check storage paths point at the standard folders above, or inside

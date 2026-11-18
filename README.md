@@ -1,7 +1,7 @@
 # gary4local
 
-this is a windows control center for running 7 music models directly on your
-computer.
+this is a control center for running 7 music models directly on your
+computer, on Windows and Linux.
 
 use it with [gary4juce](https://github.com/betweentwomidnights/gary4juce)
 to run the models inside your DAW, or from the standalone app.
@@ -12,22 +12,22 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/16 - v0.7.3
+## update 11/17 - v0.7.4
 
-[download gary4local v0.7.3 for Windows](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.3).
+[download gary4local v0.7.4](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.4).
 
-LoRA training takes tracks longer than ten minutes. carey's trainer stopped
-on them with `training audio exceeds the DiT model's maximum latent
-duration`, and SA3's quietly trained on the first ten minutes only. both now
-encode the whole track and crop from anywhere in it, so there's nothing to
-split. update, then press `update all runtimes` to fetch acestep.cpp v0.1.5
-and sa3.cpp v0.2.4.
+gary4local runs on Linux: a `.deb` for amd64 PCs and one for arm64 (DGX
+Spark), built for Ubuntu 24.04, with Vulkan generation on NVIDIA, AMD and
+Intel. it's the same app as on Windows, with the in-app updater. it's a
+preview for now: the arm64 build was tested end to end on a DGX Spark, the
+amd64 one only in CI. see [docs/linux-desktop.md](docs/linux-desktop.md).
 
-SA3's `train on full tracks` is still a 285-second window: a longer track
-gives a random 285-second stretch each step. the training dialogs now say
-so.
+nothing changes on Windows in generation or runtime pins. the runtime
+install code moved into a shared crate the coming headless server will use.
 
-pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5).
+pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5),
+or [v5.0.5-linux-preview.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5-linux-preview.1)
+on Linux.
 
 older release notes now live in [CHANGELOG.md](CHANGELOG.md).
 
@@ -47,7 +47,7 @@ build while we tried very hard to break it locally.
 - [x] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
 - [ ] dig into a LoRA training UI for YuE2
 - [ ] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac) once the native migration is ready
-- [ ] produce a Linux build
+- [x] produce a Linux build (Vulkan, amd64 and arm64)
 - [ ] launch the web UIs for sa3.cpp, acestep.cpp and yuey.cpp directly from gary4local
 
 how every native service is packaged and installed is in
@@ -73,17 +73,22 @@ install and startup flow:
 - `control-center/`
   the Tauri + Svelte desktop app that manages the local services, model downloads, installer flow, tray menu, and production runtime sync into the selected runtime storage folder.
 - `services/`
-  the Python backends and model-specific code for gary, terry, jerry, carey,
-  foundation, and sa3, plus the manifest entry for yuey, whose native runtime
-  is downloaded rather than built.
+  the service manifest that pins every native runtime, plus the old Python
+  backends for gary, terry, jerry, carey, foundation and sa3. those aren't used
+  in production anymore; [python services](docs/python-services.md) says why
+  they're still here.
 - `keygen_music_for_installer.wav`
   source loop used to generate the tiny installer music asset. cuz why not?
 
 ## services
 
-- `gary` / MusicGen: `http://localhost:8000` via [audiocraft](https://github.com/facebookresearch/audiocraft)
-- `terry` / MelodyFlow: `http://localhost:8002` via [MelodyFlow](https://huggingface.co/spaces/facebook/MelodyFlow)
-- `carey` / ACE-Step: `http://localhost:8003` via [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) with localhost `lego`, `extract`, `complete`, and `cover` mode changes from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
+every service runs on a native GGML runtime built in its own repo.
+[native services](docs/native-services.md) has the details, including how each
+runtime differs from the project it's based on.
+
+- `gary` / MusicGen: `http://localhost:8000` via [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp), a port of Meta's [audiocraft](https://github.com/facebookresearch/audiocraft)
+- `terry` / MelodyFlow: `http://localhost:8002` via [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp), from [MelodyFlow](https://huggingface.co/spaces/facebook/MelodyFlow)
+- `carey` / ACE-Step: `http://localhost:8003` via [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), our fork of ServeurpersoCom's port of [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), with `lego`, `complete`, and `cover` tasks from [ace-lego](https://github.com/betweentwomidnights/ace-lego)
 - `jerry` / Stable Audio: `http://localhost:8005` via [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), running [stable-audio-open-small](https://huggingface.co/stabilityai/stable-audio-open-small) and its kickbass and jerry grunge finetunes
 - `sa3` / Stable Audio 3: `http://localhost:8006` via [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), running [stable-audio-3](https://github.com/stability-ai/stable-audio-3)
 - `foundation-1`: `http://localhost:8015` via [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), running [Foundation-1](https://huggingface.co/RoyalCities/Foundation-1)
@@ -91,17 +96,17 @@ install and startup flow:
 
 ## LoRA training
 
-LoRA training lives in gary4local. the service panels open the local trainers;
-the plugin loads the resulting adapters for generation. the current workflows
-still use Python, and preserving training is part of the native migration.
-see the [ACE-Step training guide](docs/ace-step-lora-training.md) and
-[SA3 service notes](services/sa3/README.md).
+LoRA training lives in gary4local. the service panels open the local trainers,
+`ace-train` for carey and `sa3-train` for sa3, both native; the plugin loads the
+resulting adapters for generation. see the
+[ACE-Step training guide](docs/ace-step-lora-training.md) and
+[native services](docs/native-services.md).
 
-## custom model backends
+## native services
 
-for more info about some of the custom model backends and localhost-specific
-optimizations in this project, see the
-[custom model backend notes](docs/custom-model-backends.md).
+how each runtime differs from its upstream, and the gary4local-specific
+behavior that doesn't belong on the front page, is in
+[native services](docs/native-services.md).
 
 ## repo layout notes
 

@@ -1,11 +1,12 @@
 {
-    "channel":  "preview",
-    "latest_version":  "0.7.4-linux.1",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/linux-v0.7.4-preview.1/gary4local_0.7.4-linux.1_amd64.deb",
-    "sha256":  "9f70cbaa471dc4605936eb9dec84a73f325c1eab432c4c388ff83e8de3cf7715",
-    "published_at":  "2026-11-17T18:56:57.0000000+00:00",
-    "notes":  [
-                  "Linux updater test build: same code as 0.7.3, at a higher version.",
-                  "Installing asks for your password once, then gary4local restarts."
-              ]
+  "channel": "preview",
+  "latest_version": "0.7.4",
+  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4/gary4local_0.7.4_amd64.deb",
+  "sha256": "f500863b5feb74d18aabb032ff2b759d900fb1a28ad65dd27b61d168ab732905",
+  "published_at": "2026-11-17T22:48:22.0000000+00:00",
+  "notes": [
+    "The first Linux release of gary4local: the same app as on Windows, with Vulkan generation.",
+    "Updates ask for your password once to install the package, then gary4local restarts.",
+    "Compatible with gary4juce v5.0.5-linux-preview.1."
+  ]
 }

@@ -4,6 +4,37 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.4 - 2026-11-17
+
+gary4local runs on Linux. there's a `.deb` for amd64 PCs and one for arm64
+(DGX Spark), built for Ubuntu 24.04. it's the same app as on Windows, not a
+separate preview app: same name, same identity, and its settings, storage
+choice and runtime live in the standard `~/.config` and `~/.local/share`
+folders. generation runs on Vulkan, on NVIDIA as well as AMD and Intel. a
+CPU-only machine isn't a target. the arm64 build was tested end to end on a
+DGX Spark with the gary4juce Linux preview; the amd64 build is built and
+checked by CI but hasn't been hand-tested on a desktop yet, so treat both as
+a preview. the in-app updater works on Linux too. it follows the preview
+feed for your architecture and asks for your password once to install the
+package, then restarts gary4local. install and launch steps are in
+[docs/linux-desktop.md](docs/linux-desktop.md).
+
+runtime releases carry their Linux packages from now on. on Linux,
+acestep.cpp v0.1.5 and sa3.cpp v0.2.4 come from the same releases as on
+Windows; yuey.cpp v0.3.1 and audiocraft.cpp v0.1.4 predate that, so their
+Linux packages still come from their Linux preview releases until their next
+version.
+
+on Windows nothing changes in generation, and the runtime pins are the same
+as v0.7.3, so there's nothing to fetch with `update all runtimes`. the code
+that installs, downloads and checks runtimes moved into a shared crate that
+the coming headless server will use as well, and a software Vulkan driver
+(llvmpipe, lavapipe, SwiftShader) no longer counts as a GPU when a Vulkan
+runtime is installed.
+
+compatible with gary4juce v5.0.5, and with gary4juce v5.0.5-linux-preview.1
+on Linux.
+
 ## v0.7.3 - 2026-11-16
 
 LoRA training takes tracks longer than ten minutes. carey's trainer refused
