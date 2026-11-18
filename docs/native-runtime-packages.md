@@ -16,29 +16,26 @@ validates and activates a native runtime per storage profile before cleanup.
 
 ## who owns what
 
-### Experimental Linux distribution
+### Linux packages
 
-Linux Vulkan previews use a separate immutable release tag,
-`linux-vX.Y.Z-preview.N`, while the engine reports its normal `vX.Y.Z` version.
-The preview tag points at the exact source commit of a successful upstream
-Linux CI run. Promote those verified core/Vulkan ZIP bytes for native x64 and
-ARM64; do not rebuild them during publication. Each preview is a prerelease,
-never the latest release, with per-platform SHA256SUMS and a provenance index.
-Existing Windows/macOS releases and their assets retain their identities.
+every service release also carries Linux packages: a core and a Vulkan zip for
+`linux-x64` and `linux-arm64`, plus `SHA256SUMS-linux-x64` and
+`SHA256SUMS-linux-arm64`, on the same release as Windows. the service repo's
+`release.yml` builds them from the release tag (its `linux` job calls
+`linux-packaging.yml`), checks the tag matches the project version, then attests
+and attaches them. a tagged `platforms=linux` dispatch attaches Linux to a
+release that's missing it.
 
-The publication workflow must verify repository/run/source identity, completed
-packaging jobs, GitHub artifact digests, inner ZIP checksums and BUILD-INFO
-before creating a release. Publish through the repository's GITHUB_TOKEN and
-refuse mismatched existing tags/releases instead of overwriting assets. A
-matching interrupted draft can resume. A prepare-only
-mode produces the concrete release plan before publication.
+`pin_native_release.mjs` reads the Linux sums alongside `SHA256SUMS` and pins
+both. releases from before this (yuey.cpp v0.3.1, audiocraft.cpp v0.1.4) put
+their Linux packages on a separate `linux-vX.Y.Z-preview.N` prerelease; those
+pins stay until the service's next release, when the script moves them onto
+the release itself. a Linux install's identity includes its core and backend
+hashes, so a new package of the same engine version still counts as an update.
 
-`services/manifests/services.json` pins the versioned Linux URLs and SHA256
-values alongside other platforms. A Linux install's identity includes its core
-and backend hashes, so a later preview of the same engine version is an update.
-Legacy Windows stamps remain compatible. Linux CUDA smoke packs
-targeting GB10 are not published as portable CUDA packages. CPU generation is
-not a distribution or validation target; CPU libraries support GPU pipelines.
+Linux is Vulkan only. there's no Linux CUDA package, and CPU generation isn't a
+distribution or validation target; CPU libraries are there to support GPU
+pipelines.
 
 - **each service repo** builds and publishes its own packages from a GitHub
   release: `ci/package-windows.ps1` does the building and
@@ -317,7 +314,7 @@ two overrides, both read from gary4local's environment at launch:
 4. **test the published path** with no override set, on CUDA and on Vulkan:
    install, start, and run the service from gary4juce. this is the first time
    gary4local downloads from the real URLs, so don't skip it.
-5. **ship gary4local** with the pin, by [the release guide](releasing/PHASE2_RELEASE.md).
+5. **ship gary4local** with the pin, by [the release guide](releasing.md).
 
 once gary4local pins a release, its assets don't change. a fix is a new patch
 version, never a new file under an old tag. the one exception is rerunning a
@@ -337,6 +334,16 @@ for sa3.cpp, audiocraft.cpp and acestep.cpp:
    `GARY4LOCAL_NATIVE_PACKAGE_DIR`, then release and pin as above.
 
 ### replacing a python service
+
+the rule that matters most: a working Python setup is never removed as a side
+effect of anything, not an update, not installing a native runtime, not
+switching engines. people have working sa3, jerry, foundation, carey, gary and
+terry setups, and the worst outcome of a migration is losing one of those and
+then hitting a problem with the native one. so the native runtime installs
+beside the Python env, the switch is checked before it's made, cleanup is a
+separate step the user starts and reviews, and user data (LoRAs, training runs
+and checkpoints, prompt pools, captions, outputs) is never on a cleanup list.
+a LoRA that needs another format for the native runtime is converted as a copy.
 
 a service that already ships as python (sa3, foundation-1, stable-audio,
 carey, gary, terry) keeps `"runtime": "python"` in the manifest. users move to
@@ -398,12 +405,12 @@ inventory and cleanup; `sa3_migration::Sa3` is the reference.
 
 ## not yet
 
-- **macOS and Linux.** the platform key (`windows-x64`) leaves room for
-  `macos-arm64` with a Metal backend and `linux-x64`, but nothing is built for
-  them yet. one thing to fix first: ggml calls Metal `MTL`, as both the backend
-  and the device (`MTL0`). a device of `metal` doesn't match it in yuey's
-  device selection or in gary4local's `--props` check, so both need `metal`
-  as an alias before a Mac package can install.
+- **macOS.** the platform key leaves room for `macos-arm64` with a Metal
+  backend, but gary4local doesn't install one yet. one thing to fix first: ggml
+  calls Metal `MTL`, as both the backend and the device (`MTL0`). a device of
+  `metal` doesn't match it in yuey's device selection or in gary4local's
+  `--props` check, so both need `metal` as an alias before a Mac package can
+  install.
 - **native code for older NVIDIA cards.** the CUDA build carries native code
   for RTX 30, 40 and 50 cards. older ones (RTX 20, GTX 10) run through code
   the driver compiles on first use, which needs a driver new enough for CUDA

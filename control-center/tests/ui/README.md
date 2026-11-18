@@ -25,3 +25,12 @@ the shipped catalogs without loading models or running a GPU job.
 
 These checks cover UI behavior; real GPU generation and desktop integration
 still need the packaged application on the target machine.
+
+## fixture pages
+
+`control-center/tests/*.fixture.html` render single components (SA3 migration,
+models, training, LoRA import, storage transfer) against strict mock commands,
+with no filesystem changes. run `npm run dev` from `control-center` and open one
+through Vite, for example `/tests/sa3-migration.fixture.html?case=legacy`. each
+page reads its `case` from the query string; the cases it supports are in the
+file itself.

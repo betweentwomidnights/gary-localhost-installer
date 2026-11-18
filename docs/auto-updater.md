@@ -14,10 +14,18 @@ when the updater is included, gary4local:
 - falls back to `download update` when only the phase 1 manifest is available
 - offers `install update` when a signed native updater feed is also available
 
-production builds use these baked-in stable updater defaults:
+on Windows, `install update` closes gary4local and hands off to the signed
+installer. on Linux, it installs the signed `.deb` with `dpkg -i` through
+`pkexec`, which asks for your password once, then gary4local restarts.
 
-- `docs/updates/gary4local/stable.json`
-- `docs/updates/gary4local/native-stable.json`
+each build follows one feed, fixed when it's built. Windows release builds
+follow `stable`; Linux builds follow `preview` for their architecture, and the
+AMD tester build, `gary4local-rocm`, follows its own preview feed:
+
+- `docs/updates/gary4local/stable.json` and `native-stable.json` (Windows)
+- `docs/updates/gary4local/linux-x86_64/preview.json` and `native-preview.json`
+- `docs/updates/gary4local/linux-aarch64/preview.json` and `native-preview.json`
+- `docs/updates/gary4local-rocm/preview.json` and `native-preview.json`
 
 ## building without the updater
 
@@ -52,5 +60,4 @@ $env:GARY4LOCAL_NATIVE_UPDATER_PUBKEY = Get-Content C:\path\to\gary4local-update
 `GARY4LOCAL_NATIVE_UPDATER_PUBKEY` are runtime-only overrides and aren't baked
 into production builds.
 
-maintainer release instructions live in
-[phase 2 release notes](releasing/PHASE2_RELEASE.md).
+maintainer release instructions live in [releasing gary4local](releasing.md).
