@@ -28,7 +28,7 @@ impl PinnedHfFile {
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
             || !self.filename.split('/').all(safe_part)
-            || ![".gguf", ".safetensors", ".json"]
+            || ![".gguf", ".safetensors", ".json", ".tiktoken"]
                 .iter()
                 .any(|ext| self.filename.ends_with(ext))
             || !is_sha256(&self.sha256)
@@ -90,6 +90,68 @@ pub fn sa3_medium_files(
             .iter()
             .find(|item| item.id == id)
             .ok_or_else(|| format!("Missing catalog component {id}"))?;
+        for file in &component.files {
+            file.validate()?;
+            files.push(file);
+        }
+    }
+    Ok(files)
+}
+
+pub fn service_files(
+    service: crate::service::Service,
+    model: &str,
+    encoding: &str,
+) -> Result<Vec<&'static PinnedHfFile>, String> {
+    use crate::service::Service::*;
+    let tier = encoding.to_ascii_uppercase();
+    macro_rules! catalog {
+        ($file:literal) => {{
+            static ITEMS: std::sync::OnceLock<Vec<CatalogComponent>> = std::sync::OnceLock::new();
+            ITEMS.get_or_init(|| {
+                serde_json::from_str(include_str!($file)).expect("bundled model catalog")
+            })
+        }};
+    }
+    let (catalog, ids) = match service {
+        Gary => (
+            catalog!("../../src-tauri/gary-models.json"),
+            vec![
+                "gary-native::shared".into(),
+                format!("gary-native::{model}::{tier}"),
+            ],
+        ),
+        Melodyflow => (
+            catalog!("../../src-tauri/melodyflow-models.json"),
+            vec![format!("melodyflow-native::{tier}")],
+        ),
+        StableAudio => (
+            catalog!("../../src-tauri/stable-audio-models.json"),
+            vec![format!("stable-audio-native::{tier}")],
+        ),
+        Foundation => (
+            catalog!("../../src-tauri/foundation-models.json"),
+            vec![
+                format!("foundation-native::{tier}"),
+                "foundation-native::encoder".into(),
+            ],
+        ),
+        Carey => (
+            catalog!("../../src-tauri/carey-models.json"),
+            vec![
+                "carey-native::shared".into(),
+                format!("carey-native::{model}::{tier}"),
+            ],
+        ),
+        Yuey => (catalog!("../yuey-models.json"), vec!["shared".into(), tier]),
+        Sa3 => return Err("Use the SA3 component encodings".into()),
+    };
+    let mut files = Vec::new();
+    for id in ids {
+        let component = catalog
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| format!("Unknown model component {id}"))?;
         for file in &component.files {
             file.validate()?;
             files.push(file);

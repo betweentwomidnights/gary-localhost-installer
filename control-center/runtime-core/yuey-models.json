@@ -1,0 +1,93 @@
+[
+  {
+    "id": "shared",
+    "label": "shared",
+    "description": "YuE2 inference",
+    "files": [
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "sheetsage2-mert2-0.7B-v1.0-F16.gguf",
+        "sha256": "29902ab4c24a5dd4571673210af4c93f9e70f3ad9fcd18dc5b923a839d4bcad0",
+        "bytes": 1355653664
+      },
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-instrumental-cot-full-v1.0-F16-LoRA.gguf",
+        "sha256": "45a6ec461c968916bdd4d87269cff1324bb925e7ead35290524dfa82bf3f9c23",
+        "bytes": 139491200
+      },
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-qwen.tiktoken",
+        "sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+        "bytes": 2561218
+      },
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-realaudio-nar-v9-v1.0-F16-LoRA.gguf",
+        "sha256": "4b7bad23fd1e52b9a9540dde568b6226afc37229b756a4c2024f551be8a2557c",
+        "bytes": 70291232
+      },
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-semantic-tokenizer-0.7B-v1.0-F16.gguf",
+        "sha256": "e0005d6ea838e444c83561609624f85a0c0f6fc703bade2e477eb034a327a0cc",
+        "bytes": 1352153056
+      },
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-vae-v1.0-F16.gguf",
+        "sha256": "b6d8d30e69ce997b50f25dbbdd610e9ac7e118bbda91af336550862a6d1aab1f",
+        "bytes": 265190208
+      }
+    ]
+  },
+  {
+    "id": "BF16",
+    "label": "BF16",
+    "description": "YuE2 inference",
+    "files": [
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-3.6B-v1.0-BF16.gguf",
+        "sha256": "9e1e3bb89dce35703345cd39c57a43f996d62e5ca87afb6784ff5ecfcad27a55",
+        "bytes": 7261418848
+      }
+    ]
+  },
+  {
+    "id": "Q4_K_M",
+    "label": "Q4_K_M",
+    "description": "YuE2 inference",
+    "files": [
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-3.6B-v1.0-Q4_K_M.gguf",
+        "sha256": "cca9ab2fc8efca09ddc04d68da63ae6c6e535848bb3b39dc52cb820857281ba9",
+        "bytes": 2529174976
+      }
+    ]
+  },
+  {
+    "id": "Q8_0",
+    "label": "Q8_0",
+    "description": "YuE2 inference",
+    "files": [
+      {
+        "repo": "thepatch/YuE2-3B-GGUF",
+        "revision": "0d62af46c4945fe04ea241fa83db0c53f80f6cfc",
+        "filename": "yue2-3.6B-v1.0-Q8_0.gguf",
+        "sha256": "db3fa40df040288a41802f2af6df62e63a7e985b026ea60d1e0cdfc36469ad79",
+        "bytes": 3909744064
+      }
+    ]
+  }
+]

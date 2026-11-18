@@ -208,7 +208,7 @@ fn first_run_managed_storage_can_preview_and_decline_models() {
     terminal.expect("Save [y/N]: ");
     terminal.send("y\n");
     terminal.expect("gary> ");
-    terminal.send("/models\n");
+    terminal.send("/models sa3\n");
     terminal.expect("GiB total");
     #[cfg(target_os = "linux")]
     terminal.expect("Yes, download or verify weights");

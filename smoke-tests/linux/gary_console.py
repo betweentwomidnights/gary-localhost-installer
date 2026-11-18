@@ -134,9 +134,9 @@ try:
     terminal.send('y\n'); terminal.expect('Created config'); terminal.expect('gary> ')
     assert config.exists() and not runtime.exists()
     results['guided_setup_cancel_and_save_without_runtime_creation'] = True
-    terminal.send('/doctor\n'); terminal.expect('preflight: blocked'); terminal.expect('gary> ')
+    terminal.send('/doctor sa3\n'); terminal.expect('preflight: blocked'); terminal.expect('gary> ')
     assert not runtime.exists()
-    terminal.send('/install\n'); terminal.expect('SA3 runtime installed'); terminal.expect('gary> ')
+    terminal.send('/install sa3\n'); terminal.expect('SA3 runtime installed'); terminal.expect('gary> ')
     terminal.send('/start\n/stop\n'); terminal.expect('Starting SA3'); terminal.expect('SA3 stopped.'); terminal.expect('gary> ')
     no_native_children()
     results['startup_cancellation_releases_owned_children_and_lock'] = True

@@ -2,6 +2,7 @@
 //! production-profile migration is involved in this first SA3 path.
 use crate::runtime::{self, NativeInstall, NativeLaunch};
 use crate::sa3_adapter::{AdapterListener, AdapterOptions};
+use crate::service::Service;
 use crate::workload_job::ManagedChild;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -24,6 +25,8 @@ pub struct Package {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub service: Service,
     #[serde(default = "default_root")]
     pub runtime_root: PathBuf,
     #[serde(default)]
@@ -79,7 +82,9 @@ pub struct ConfigError {
     pub hint: &'static str,
 }
 impl std::fmt::Display for ConfigError {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { out.write_str(&self.message) }
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(&self.message)
+    }
 }
 
 impl Config {
@@ -88,14 +93,16 @@ impl Config {
     }
     pub fn read_checked(path: &Path) -> Result<Self, ConfigError> {
         let raw = std::fs::read(path).map_err(|error| ConfigError {
-            code: "config_unreadable", message: format!("Cannot read config {}: {error}", path.display()),
+            code: "config_unreadable",
+            message: format!("Cannot read config {}: {error}", path.display()),
             hint: "Check the config path and permissions, or create a config with init.",
         })?;
         Self::from_bytes(&raw)
     }
     pub fn from_bytes(raw: &[u8]) -> Result<Self, ConfigError> {
         let mut config: Self = serde_json::from_slice(raw).map_err(|error| ConfigError {
-            code: "config_invalid_json", message: format!("Invalid headless config: {error}"),
+            code: "config_invalid_json",
+            message: format!("Invalid headless config: {error}"),
             hint: "Use schema to inspect the config fields; unknown fields are rejected.",
         })?;
         if config.models_dir.as_os_str().is_empty() {
@@ -111,14 +118,27 @@ impl Config {
         })?;
         Ok(config)
     }
+    pub fn log_path(&self) -> PathBuf {
+        self.runtime_root
+            .join("logs")
+            .join(format!("{}-native.log", self.service.id()))
+    }
     pub fn managed_models_dir(&self) -> PathBuf {
-        self.runtime_root.join("models").join("sa3")
+        self.runtime_root.join("models").join(self.service.id())
     }
     fn model_files(&self) -> Result<Vec<&'static crate::model_catalog::PinnedHfFile>, String> {
-        crate::model_catalog::sa3_medium_files(&self.model, &self.encoding, &self.t5_encoding, &self.ae_encoding)
+        if self.service != Service::Sa3 {
+            return crate::model_catalog::service_files(self.service, &self.model, &self.encoding);
+        }
+        crate::model_catalog::sa3_medium_files(
+            &self.model,
+            &self.encoding,
+            &self.t5_encoding,
+            &self.ae_encoding,
+        )
     }
     pub fn summary(&self) -> Value {
-        json!({"service":"sa3", "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
+        json!({"service":self.service, "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
             "models_dir":self.models_dir, "model":self.model, "encoding":self.encoding,
             "t5_encoding":self.t5_encoding, "ae_encoding":self.ae_encoding,
             "device":self.device, "public_port":self.public_port,"expected_version":self.expected_version,
@@ -150,14 +170,14 @@ impl Config {
         let native = manifest
             .services
             .iter()
-            .find(|s| s.id == "sa3")
+            .find(|s| s.id == self.service.id())
             .and_then(|s| s.native.as_ref())
-            .ok_or("The manifest has no native SA3 service")?;
+            .ok_or("The manifest lacks this native service")?;
         let platform = runtime::current_platform();
         let packages = native
             .platforms
             .get(platform)
-            .ok_or_else(|| format!("No published SA3 package for {platform}"))?;
+            .ok_or_else(|| format!("No published native package for {platform}"))?;
         let backend = packages.backends.get(self.backend_name()).ok_or_else(|| {
             format!(
                 "No published {} package for {platform}; Linux previews currently offer Vulkan",
@@ -237,7 +257,8 @@ impl Config {
     }
     fn installed_dir(&self) -> PathBuf {
         self.runtime_root.join("runtimes").join(format!(
-            "sa3-{}-{}",
+            "{}-{}-{}",
+            self.service.package(),
             self.core.sha256.to_ascii_lowercase(),
             self.backend.sha256.to_ascii_lowercase()
         ))
@@ -250,6 +271,67 @@ impl Config {
             version: None,
             fallback_reason: None,
         };
+        if self.service != Service::Sa3 {
+            let mut args = vec![
+                "--host".into(),
+                "127.0.0.1".into(),
+                "--port".into(),
+                native_port.to_string(),
+                "--device".into(),
+                self.device.clone(),
+                if self.service == Service::Carey {
+                    "--models"
+                } else {
+                    "--models-dir"
+                }
+                .into(),
+                self.models_dir.to_string_lossy().into_owned(),
+            ];
+            match self.service {
+                Service::StableAudio | Service::Foundation => args.extend([
+                    "--model".into(),
+                    self.model.clone(),
+                    "--encoding".into(),
+                    self.encoding.clone(),
+                ]),
+                Service::Yuey => args.extend(["--encoding".into(), self.encoding.clone()]),
+                Service::Carey => args.extend([
+                    "--adapters".into(),
+                    self.runtime_root
+                        .join("adapters")
+                        .to_string_lossy()
+                        .into_owned(),
+                ]),
+                Service::Gary | Service::Melodyflow => args.extend([
+                    "--adapters-dir".into(),
+                    self.runtime_root
+                        .join("adapters")
+                        .to_string_lossy()
+                        .into_owned(),
+                ]),
+                Service::Sa3 => unreachable!(),
+            }
+            return NativeLaunch::new(
+                &self.runtime_root,
+                self.service.executable(),
+                &install,
+                args,
+                vec![
+                    (
+                        "TMPDIR".into(),
+                        self.runtime_root.join("tmp").to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "XDG_CACHE_HOME".into(),
+                        self.runtime_root
+                            .join("cache")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                ],
+                &[],
+            );
+        }
         NativeLaunch::new(
             &self.runtime_root,
             "sa3-server.exe",
@@ -324,6 +406,7 @@ mod tests {
     fn config(root: PathBuf) -> Config {
         let absolute = std::env::temp_dir().canonicalize().unwrap();
         Config {
+            service: Service::Sa3,
             runtime_root: root,
             models_dir: absolute.join("existing-models"),
             core: Package {
@@ -432,48 +515,90 @@ mod tests {
     }
     #[tokio::test]
     async fn expected_session_fences_stop_and_uses_no_pid_signals() {
-        let root = std::env::temp_dir().canonicalize().unwrap().join(format!("gary-stop-fence-{}",serial()));
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("gary-stop-fence-{}", serial()));
         let config = config(root.clone());
         owned_root(&config).unwrap();
         let lease = lock(&config).unwrap();
         let session = lease.session.clone();
-        write_json(&root.join("state.json"), &State {
-            session:session.clone(), pid:std::process::id(),native_pid:std::process::id(),
-            status:"running".into(),public_port:config.public_port,native_port:28102,device:config.device.clone(),
-        }).unwrap();
-        assert!(matches!(stop(&config,Some("a stale session")).await,Err(StopError::SessionMismatch{..})));
+        write_json(
+            &root.join("state.json"),
+            &State {
+                service: config.service,
+                session: session.clone(),
+                pid: std::process::id(),
+                native_pid: std::process::id(),
+                status: "running".into(),
+                public_port: config.public_port,
+                native_port: 28102,
+                device: config.device.clone(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            stop(&config, Some("a stale session")).await,
+            Err(StopError::SessionMismatch { .. })
+        ));
         assert!(active(&config).unwrap());
         assert!(!root.join("stop.request").exists());
         let request = root.join("stop.request");
         let expected = session.clone();
         let owner = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now()+Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
             // Match the serving loop: creation can precede the nonce write.
             while std::fs::read_to_string(&request).ok().as_ref() != Some(&expected) {
-                assert!(std::time::Instant::now() < deadline, "Timed out waiting for the matching stop request");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Timed out waiting for the matching stop request"
+                );
                 std::thread::sleep(Duration::from_millis(5));
             }
             drop(lease);
         });
-        assert_eq!(stop(&config,Some(&session)).await.unwrap()["stopped"],true);
+        assert_eq!(
+            stop(&config, Some(&session)).await.unwrap()["stopped"],
+            true
+        );
         owner.join().unwrap();
         assert!(!active(&config).unwrap());
-        assert_eq!(stop(&config,Some(&session)).await.unwrap()["stopped"],true);
-        assert_eq!(status(&config).await.unwrap()["running"],false,"stale state does not imply a live owner");
+        assert_eq!(
+            stop(&config, Some(&session)).await.unwrap()["stopped"],
+            true
+        );
+        assert_eq!(
+            status(&config).await.unwrap()["running"],
+            false,
+            "stale state does not imply a live owner"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn readable_owner_record_is_required_and_legacy_unix_nonce_is_supported() {
-        let root = std::env::temp_dir().canonicalize().unwrap().join(format!("gary-owner-record-{}",serial()));
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("gary-owner-record-{}", serial()));
         let config = config(root.clone());
         owned_root(&config).unwrap();
         let lease = lock(&config).unwrap();
-        assert_eq!(owner_session(&config).as_deref(),Some(lease.session.as_str()));
-        std::fs::write(root.join("owner.json"),b"invalid").unwrap();
-        assert_eq!(owner_session(&config),None,"malformed owner must not fall back to an old nonce");
+        assert_eq!(
+            owner_session(&config).as_deref(),
+            Some(lease.session.as_str())
+        );
+        std::fs::write(root.join("owner.json"), b"invalid").unwrap();
+        assert_eq!(
+            owner_session(&config),
+            None,
+            "malformed owner must not fall back to an old nonce"
+        );
         std::fs::remove_file(root.join("owner.json")).unwrap();
         #[cfg(unix)]
-        assert_eq!(owner_session(&config).as_deref(),Some(lease.session.as_str()));
+        assert_eq!(
+            owner_session(&config).as_deref(),
+            Some(lease.session.as_str())
+        );
         drop(lease);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -552,25 +677,40 @@ fn inspect_root(config: &Config) -> Result<&'static str, String> {
     match std::fs::symlink_metadata(root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("missing"),
         Err(error) => return Err(err(error)),
-        Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => return Err("Runtime root must be a real directory, not a symlink".into()),
-        _ => {},
+        Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
+            return Err("Runtime root must be a real directory, not a symlink".into())
+        }
+        _ => {}
     }
     reject_symlinks(root)?;
-    if root.join(MARKER).is_file() { return Ok("owned"); }
-    if std::fs::read_dir(root).map_err(err)?.next().is_none() { return Ok("empty"); }
-    Err(format!("Refusing a nonempty, unowned runtime root: {}",root.display()))
+    if root.join(MARKER).is_file() {
+        return Ok("owned");
+    }
+    if std::fs::read_dir(root).map_err(err)?.next().is_none() {
+        return Ok("empty");
+    }
+    Err(format!(
+        "Refusing a nonempty, unowned runtime root: {}",
+        root.display()
+    ))
 }
 
 pub fn model_plan(config: &Config) -> Result<Value, String> {
     let files = config.model_files()?;
     let total: u64 = files.iter().map(|file| file.bytes).sum();
-    let missing: Vec<_> = files.iter().filter(|file| {
-        !std::fs::metadata(config.models_dir.join(&file.filename)).is_ok_and(|m| m.is_file() && m.len() == file.bytes)
-    }).collect();
+    let missing: Vec<_> = files
+        .iter()
+        .filter(|file| {
+            !std::fs::metadata(config.models_dir.join(&file.filename))
+                .is_ok_and(|m| m.is_file() && m.len() == file.bytes)
+        })
+        .collect();
     let missing_bytes: u64 = missing.iter().map(|file| file.bytes).sum();
     let missing_names: Vec<_> = missing.iter().map(|file| &file.filename).collect();
-    Ok(json!({"missing":missing_names,"missing_bytes":missing_bytes,"models_dir":config.models_dir, "managed": config.models_dir == config.managed_models_dir(),
-        "encoding":config.encoding,"bytes":total,"files":files}))
+    Ok(
+        json!({"service":config.service,"model":config.model,"missing":missing_names,"missing_bytes":missing_bytes,"models_dir":config.models_dir, "managed": config.models_dir == config.managed_models_dir(),
+        "encoding":config.encoding,"bytes":total,"files":files}),
+    )
 }
 
 pub async fn download_models(config: &Config) -> Result<Value, String> {
@@ -583,16 +723,27 @@ pub async fn download_models(config: &Config) -> Result<Value, String> {
     let _lease = lock(config)?;
     let client = reqwest::Client::new();
     for file in files {
-        eprintln!("Checking {} ({:.2} GiB)", file.filename, file.bytes as f64 / 1073741824.0);
+        eprintln!(
+            "Checking {} ({:.2} GiB)",
+            file.filename,
+            file.bytes as f64 / 1073741824.0
+        );
         let mut last = None;
-        crate::download::download_verified(&client, &file.url(), Default::default(), &file.sha256,
-            &config.models_dir.join(&file.filename), &mut |done, _| {
+        crate::download::download_verified(
+            &client,
+            &file.url(),
+            Default::default(),
+            &file.sha256,
+            &config.models_dir.join(&file.filename),
+            &mut |done, _| {
                 let percent = done.saturating_mul(100) / file.bytes;
                 if last != Some(percent / 10) {
-                    eprintln!("{}: {percent}%",file.filename);
+                    eprintln!("{}: {percent}%", file.filename);
                     last = Some(percent / 10);
                 }
-            }).await?;
+            },
+        )
+        .await?;
     }
     model_plan(config)
 }
@@ -607,7 +758,11 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
         Ok(state) => json!({"code":"runtime_root","status":"ok","state":state,"path":config.runtime_root}),
         Err(message) => json!({"code":"runtime_root","status":"error","message":message,"hint":"Choose an empty dedicated runtime root; do not remove unrelated data or forge an ownership marker."}),
     });
-    let service = if root_safe { status(config).await? } else { json!({"running":false,"operation_active":false}) };
+    let service = if root_safe {
+        status(config).await?
+    } else {
+        json!({"running":false,"operation_active":false})
+    };
     let running = service["running"] == true;
     let busy = service["operation_active"] == true;
     checks.push(json!({"code":"owner_lock","status":if busy {"error"} else {"ok"},
@@ -621,7 +776,7 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
             if stamp != json!({"core":config.core.sha256.to_ascii_lowercase(),"backend":config.backend.sha256.to_ascii_lowercase()}) {
                 return Err("Runtime package provenance does not match this config".into());
             }
-            if !runtime.join(runtime::executable_name("sa3-server.exe")).is_file() { return Err("Installed runtime is missing its native SA3 server".into()); }
+            if !runtime.join(runtime::executable_name(config.service.executable())).is_file() { return Err("Installed runtime is missing its native server".into()); }
             Ok(info)
         });
         checks.push(match result {
@@ -642,18 +797,22 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
             let mut files = Vec::new();
             for file in expected {
                 let path = config.models_dir.join(&file.filename);
-                let metadata = std::fs::metadata(&path).ok().filter(|metadata| metadata.is_file());
+                let metadata = std::fs::metadata(&path)
+                    .ok()
+                    .filter(|metadata| metadata.is_file());
                 files.push(json!({"path":path,"present":metadata.as_ref().is_some_and(|metadata| metadata.len()>0),
                     "actual_bytes":metadata.as_ref().map(|metadata| metadata.len()),"expected_bytes":file.bytes,
                     "sha256":file.sha256,"repo":file.repo,"revision":file.revision}));
             }
             let missing = files.iter().any(|file| file["present"] != true);
-            let size_mismatch = files.iter().any(|file| file["actual_bytes"] != file["expected_bytes"]);
-            checks.push(json!({"code":"model_files","status":if missing {"error"} else if size_mismatch {"warning"} else {"ok"},
+            let size_mismatch = files
+                .iter()
+                .any(|file| file["actual_bytes"] != file["expected_bytes"]);
+            checks.push(json!({"code":"model_files","status":if missing || (size_mismatch && config.models_dir==config.managed_models_dir()) {"error"} else if size_mismatch {"warning"} else {"ok"},
                 "files":files,"verification":"presence and size only; contents were not hashed or loaded",
                 "message":if missing {"Required model files are missing. Provide existing weights or complete model preparation separately."}
                     else if size_mismatch {"This model layout differs from the pinned catalog; compatibility is unverified."}
-                    else {"Expected medium model components are present."}}));
+                    else {"Expected model components are present."}}));
         } else {
             checks.push(json!({"code":"model_files","status":"warning","message":"This model/component encoding combination has no catalog preflight. Native startup remains the compatibility check; no weights have been loaded."}));
         }
@@ -667,20 +826,39 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
     checks.push(json!({"code":"gpu_probe","status":"not_checked","message":"doctor never probes the GPU or loads a model. install probes the selected GPU; serve verifies model startup."}));
     let can_attempt_serve = checks.iter().all(|check| check["status"] != "error");
     let mut next_actions = Vec::new();
-    if !root_safe { next_actions.push(json!({"action":"edit_config","field":"runtime_root","reason":"ownership boundary must be resolved first"})); }
-    else if busy { next_actions.push(json!({"action":if running {"status_or_stop"} else {"wait_for_owner"},"automatic":false})); }
-    else if !installed { next_actions.push(json!({"action":"install","requires_explicit_action":true})); }
-    if checks.iter().any(|check| matches!(check["code"].as_str(),Some("models_directory"|"model_files")) && check["status"] == "error") {
-        let managed = config.models_dir == config.managed_models_dir() && config.model_files().is_ok();
+    if !root_safe {
+        next_actions.push(json!({"action":"edit_config","field":"runtime_root","reason":"ownership boundary must be resolved first"}));
+    } else if busy {
+        next_actions.push(json!({"action":if running {"status_or_stop"} else {"wait_for_owner"},"automatic":false}));
+    } else if !installed {
+        next_actions.push(json!({"action":"install","requires_explicit_action":true}));
+    }
+    if checks.iter().any(|check| {
+        matches!(
+            check["code"].as_str(),
+            Some("models_directory" | "model_files")
+        ) && check["status"] == "error"
+    }) {
+        let managed =
+            config.models_dir == config.managed_models_dir() && config.model_files().is_ok();
         next_actions.push(json!({"action":if managed {"download-models"} else {"provide_required_model_files"},"model_download_command_available":managed}));
     }
-    if checks.iter().any(|check| check["code"]=="public_port" && check["status"]=="error") {
-        next_actions.push(json!({"action":"edit_config","field":"public_port","reason":"port is occupied"}));
+    if checks
+        .iter()
+        .any(|check| check["code"] == "public_port" && check["status"] == "error")
+    {
+        next_actions.push(
+            json!({"action":"edit_config","field":"public_port","reason":"port is occupied"}),
+        );
     }
-    if can_attempt_serve { next_actions.push(json!({"action":"serve","requires_explicit_action":true,"readiness_reported_only_after_model_load":true})); }
-    Ok(json!({"can_attempt_serve":can_attempt_serve,"checks":checks,"next_actions":next_actions,
+    if can_attempt_serve {
+        next_actions.push(json!({"action":"serve","requires_explicit_action":true,"readiness_reported_only_after_model_load":config.service==Service::Sa3}));
+    }
+    Ok(
+        json!({"service":config.service,"can_attempt_serve":can_attempt_serve,"checks":checks,"next_actions":next_actions,
         "service":service,"resolved":config.summary(),"read_only":true,
-        "limitations":["Model contents and GPU execution were not verified.","Port availability is a snapshot, not a reservation."]}))
+        "limitations":["Model contents and GPU execution were not verified.","Port availability is a snapshot, not a reservation."]}),
+    )
 }
 struct Lease {
     _file: File,
@@ -719,7 +897,10 @@ fn lock(config: &Config) -> Result<Lease, String> {
     // Windows byte-range locks also deny reads through a second handle. Keep
     // the readable nonce separate from the OS-held lock; the matching nonce
     // still distinguishes a new owner from stale state after a crash.
-    write_json(&config.runtime_root.join("owner.json"), &json!({"session":session}))?;
+    write_json(
+        &config.runtime_root.join("owner.json"),
+        &json!({"session":session}),
+    )?;
     Ok(Lease {
         _file: lock,
         session,
@@ -731,7 +912,9 @@ fn owner_session(config: &Config) -> Option<String> {
         Ok(raw) => raw,
         // Compatibility with older Unix hosts that stored the readable nonce
         // only inside manager.lock. An invalid new record must not fall back.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::read(config.runtime_root.join("manager.lock")).ok()?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::read(config.runtime_root.join("manager.lock")).ok()?
+        }
         Err(_) => return None,
     };
     let body: Value = serde_json::from_slice(&raw).ok()?;
@@ -791,7 +974,10 @@ fn verify_archive(package: &Package) -> Result<(), String> {
 fn clean_command_env(command: &mut std::process::Command, launch: &NativeLaunch) {
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
-        if name.starts_with("SA3_")
+        if ["AC_", "ACE_", "YUE2_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+            || name.starts_with("SA3_")
             || name.starts_with("SAT_")
             || name.starts_with("GGML_")
             || name == "LD_LIBRARY_PATH"
@@ -830,19 +1016,30 @@ async fn probe(config: &Config, dir: &Path) -> Result<Value, String> {
         ));
     }
     let props: Value = serde_json::from_slice(&output.stdout).map_err(err)?;
-    if props["service"] != "sa3"
+    if props["service"] != config.service.probe_id()
         || !props["devices"].as_array().is_some_and(|devices| {
-            devices.iter().any(|d| {
-                d["name"] == config.device
-                    && d["backend"]
+            devices
+                .iter()
+                .filter(|d| {
+                    d["backend"]
                         .as_str()
                         .is_some_and(|b| b.eq_ignore_ascii_case(config.backend_name()))
-                    && runtime::is_generation_gpu(d)
-            })
+                })
+                .enumerate()
+                .any(|(index, d)| {
+                    (d["name"] == config.device
+                        || (d["name"].is_null()
+                            && format!("{}{}", d["backend"].as_str().unwrap_or(""), index)
+                                == config.device))
+                        && d["backend"]
+                            .as_str()
+                            .is_some_and(|b| b.eq_ignore_ascii_case(config.backend_name()))
+                        && runtime::is_generation_gpu(d)
+                })
         })
     {
         return Err(format!(
-            "Selected GPU {} is unavailable in the installed SA3 package",
+            "Selected GPU {} is unavailable in the installed runtime",
             config.device
         ));
     }
@@ -852,7 +1049,7 @@ fn metadata(config: &Config, dir: &Path) -> Result<Value, String> {
     let info: Value =
         serde_json::from_slice(&std::fs::read(dir.join("BUILD-INFO.json")).map_err(err)?)
             .map_err(err)?;
-    if info["service"] != "sa3"
+    if info["service"] != config.service.package()
         || info["platform"] != runtime::current_platform()
         || info["dirty"] != false
         || info["tests_run"] != true
@@ -864,7 +1061,8 @@ fn metadata(config: &Config, dir: &Path) -> Result<Value, String> {
             .is_some_and(|v| info["version"] != v.as_str())
     {
         return Err(
-            "Package metadata does not identify a clean, tested SA3 build for this platform".into(),
+            "Package metadata does not identify a clean, tested engine build for this platform"
+                .into(),
         );
     }
     Ok(info)
@@ -928,11 +1126,13 @@ pub async fn install(config: &Config) -> Result<Value, String> {
         }
         result?;
     }
-    Ok(json!({"installed":true,"runtime":target,"backend":config.device}))
+    Ok(json!({"service":config.service,"installed":true,"runtime":target,"backend":config.device}))
 }
 
 #[derive(Serialize, Deserialize)]
 struct State {
+    #[serde(default)]
+    service: Service,
     session: String,
     pid: u32,
     native_pid: u32,
@@ -968,46 +1168,70 @@ async fn termination() {
     }
 }
 
-pub async fn serve(config: &Config, ready: impl Fn(Value) -> Result<(), String>) -> Result<Value, String> {
+// Keep the client port restartable even when the C++ listener does not set
+// SO_REUSEADDR. Passing bytes through preserves uploads, audio and streaming.
+async fn forward_native(listener: tokio::net::TcpListener, port: u16) -> std::io::Result<()> {
+    let mut connections = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            accepted=listener.accept()=>{
+                let (mut client,_) = accepted?;
+                connections.spawn(async move {
+                    let mut native=tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST,port)).await?;
+                    tokio::io::copy_bidirectional(&mut client,&mut native).await
+                });
+            }
+            Some(_)=connections.join_next(), if !connections.is_empty()=>{}
+        }
+    }
+}
+
+pub async fn serve(
+    config: &Config,
+    ready: impl Fn(Value) -> Result<(), String>,
+) -> Result<Value, String> {
     config.validate()?;
     owned_root(config)?;
     let lease = lock(config)?;
     if !config.models_dir.is_dir() {
         return Err("The configured model directory is missing".into());
     }
+    if config.service != Service::Sa3 && config.models_dir == config.managed_models_dir() {
+        let plan = model_plan(config)?;
+        if plan["missing_bytes"] != 0 {
+            return Err(format!(
+                "Missing or incomplete {} weights. Run gary download-models {}.",
+                config.service.id(),
+                config.service.id()
+            ));
+        }
+    }
     let dir = config.installed_dir();
-    eprintln!("Checking the installed SA3 runtime and GPU...");
+    eprintln!(
+        "Checking the installed {} runtime and GPU...",
+        config.service.id()
+    );
     metadata(config, &dir)?;
     probe(config, &dir).await?;
-    // Reserve the public adapter port before any child is created.
     let public = runtime::bind_loopback(config.public_port).map_err(|e| {
         format!(
-            "Cannot bind SA3 client adapter on port {}: {e}",
+            "Cannot bind {} on port {}: {e}",
+            config.service.id(),
             config.public_port
         )
     })?;
-    // The native port is private implementation state. Choose a fresh free
-    // port per session rather than inheriting the C++ listener's TIME_WAIT
-    // reuse policy. The client endpoint remains stable across restarts.
-    let private = runtime::bind_loopback(0).map_err(err)?;
-    let native_port = private.local_addr().map_err(err)?.port();
-    let adapter = AdapterListener::from_listener(
-        public,
-        native_port,
-        config.runtime_root.join("uploads"),
-        config.defaults.clone(),
-        AdapterOptions::default(),
-    )?;
+    let reservation = runtime::bind_loopback(0).map_err(err)?;
+    let native_port = reservation.local_addr().map_err(err)?.port();
     let launch = config.launch(dir, native_port);
     let mut command = launch.std_command();
     clean_command_env(&mut command, &launch);
     // Output paths, temporary files and caches belong to this root, not weights.
     command.current_dir(&config.runtime_root);
-    let logfile = File::create(config.runtime_root.join("logs/sa3-native.log")).map_err(err)?;
+    let logfile = File::create(config.log_path()).map_err(err)?;
     command
         .stdout(logfile.try_clone().map_err(err)?)
         .stderr(logfile);
-    drop(private);
+    drop(reservation);
     let mut child = ManagedChild::spawn(command)?;
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -1015,48 +1239,60 @@ pub async fn serve(config: &Config, ready: impl Fn(Value) -> Result<(), String>)
         .build()
         .map_err(err)?;
     let native_url = format!("http://127.0.0.1:{native_port}/health");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let grace = config
+        .service
+        .definition()
+        .health_check
+        .as_ref()
+        .map(|check| check.startup_grace_seconds as u64)
+        .unwrap_or(30);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(grace);
     loop {
         if let Some(exit) = child.0.try_wait().map_err(err)? {
             return Err(format!(
-                "Native SA3 exited during startup: {exit}; inspect logs/sa3-native.log"
+                "Native server exited during startup: {exit}; inspect the service log"
             ));
         }
         if let Ok(response) = client.get(&native_url).send().await {
             if response.status().is_success() {
                 let health: Value = response.json().await.map_err(err)?;
-                for capability in crate::sa3_adapter::REQUIRED_CAPABILITIES {
-                    if health["capabilities"][capability] != true {
-                        return Err(format!(
-                            "Native SA3 lacks the required {capability} control"
-                        ));
+                if config.service == Service::Sa3 {
+                    for capability in crate::sa3_adapter::REQUIRED_CAPABILITIES {
+                        if health["capabilities"][capability] != true {
+                            return Err(format!(
+                                "Native SA3 lacks the required {capability} control"
+                            ));
+                        }
                     }
                 }
                 break;
             }
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err("Native SA3 health check timed out; inspect logs/sa3-native.log".into());
+            return Err("Native health check timed out; inspect the service log".into());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     // Serving a named model is explicit. Prove that its components resolve and
     // initialize before announcing readiness; this never downloads weights.
-    eprintln!("Loading the configured model; no weights are downloaded...");
-    let loaded = client
-        .post(format!("http://127.0.0.1:{native_port}/load"))
-        .timeout(Duration::from_secs(180))
-        .send()
-        .await
-        .map_err(err)?;
-    let load_status = loaded.status();
-    let loaded: Value = loaded.json().await.map_err(err)?;
-    if !load_status.is_success() || loaded["success"] == false {
-        return Err(format!("SA3 model preparation failed: {loaded}"));
+    if config.service == Service::Sa3 {
+        eprintln!("Loading the configured model; no weights are downloaded...");
+        let loaded = client
+            .post(format!("http://127.0.0.1:{native_port}/load"))
+            .timeout(Duration::from_secs(180))
+            .send()
+            .await
+            .map_err(err)?;
+        let load_status = loaded.status();
+        let loaded: Value = loaded.json().await.map_err(err)?;
+        if !load_status.is_success() || loaded["success"] == false {
+            return Err(format!("SA3 model preparation failed: {loaded}"));
+        }
     }
     let guard = StateGuard {
         config,
         state: State {
+            service: config.service,
             session: lease.session.clone(),
             pid: std::process::id(),
             native_pid: child.0.id(),
@@ -1068,11 +1304,26 @@ pub async fn serve(config: &Config, ready: impl Fn(Value) -> Result<(), String>)
     };
     write_json(&config.runtime_root.join("state.json"), &guard.state)?;
     let mut adapter_tasks = tokio::task::JoinSet::new();
-    adapter_tasks.spawn(adapter.serve());
-    ready(json!({"status":"running","service":"sa3","pid":std::process::id(),"public_port":config.public_port,
+    if config.service == Service::Sa3 {
+        let adapter = AdapterListener::from_listener(
+            public,
+            native_port,
+            config.runtime_root.join("uploads"),
+            config.defaults.clone(),
+            AdapterOptions::default(),
+        )?;
+        adapter_tasks.spawn(adapter.serve());
+    } else {
+        public.set_nonblocking(true).map_err(err)?;
+        let listener = tokio::net::TcpListener::from_std(public).map_err(err)?;
+        adapter_tasks.spawn(forward_native(listener, native_port));
+    }
+    ready(
+        json!({"status":"running","service":config.service,"pid":std::process::id(),"public_port":config.public_port,
         "native_port":native_port,"device":config.device,"session":lease.session,
         "public_url":format!("http://127.0.0.1:{}",config.public_port),
-        "log_path":config.runtime_root.join("logs/sa3-native.log")}))?;
+        "log_path":config.log_path()}),
+    )?;
     let result=async {
         let mut tick=tokio::time::interval(Duration::from_millis(200));
         let termination=termination(); tokio::pin!(termination);
@@ -1081,7 +1332,7 @@ pub async fn serve(config: &Config, ready: impl Fn(Value) -> Result<(), String>)
                 _=&mut termination => return Ok(()),
                 result=adapter_tasks.join_next() => return Err(format!("Client adapter stopped unexpectedly: {result:?}")),
                 _=tick.tick() => {
-                    if let Some(exit)=child.0.try_wait().map_err(err)? { return Err(format!("Native SA3 exited: {exit}")); }
+                    if let Some(exit)=child.0.try_wait().map_err(err)? { return Err(format!("Native server exited: {exit}")); }
                     let request=std::fs::read_to_string(config.runtime_root.join("stop.request")).unwrap_or_default();
                     if request==guard.state.session { return Ok(()); }
                 }
@@ -1092,7 +1343,7 @@ pub async fn serve(config: &Config, ready: impl Fn(Value) -> Result<(), String>)
     child.stop();
     drop(guard);
     result?;
-    Ok(json!({"stopped":true,"service":"sa3","session":lease.session}))
+    Ok(json!({"stopped":true,"service":config.service,"session":lease.session}))
 }
 
 pub async fn status(config: &Config) -> Result<Value, String> {
@@ -1101,7 +1352,9 @@ pub async fn status(config: &Config) -> Result<Value, String> {
     let state = state(config).ok();
     let running = operation_active
         && state.as_ref().is_some_and(|s| {
-            s.status == "running" && owner_session(config).as_deref() == Some(&s.session)
+            s.service == config.service
+                && s.status == "running"
+                && owner_session(config).as_deref() == Some(&s.session)
         });
     let health = if running {
         if let Some(state) = &state {
@@ -1124,9 +1377,11 @@ pub async fn status(config: &Config) -> Result<Value, String> {
     } else {
         None
     };
-    Ok(json!({"running":running,"operation_active":operation_active,"state":state,"health":health,
+    Ok(
+        json!({"service":config.service,"running":running,"operation_active":operation_active,"state":state,"health":health,
         "public_url":format!("http://127.0.0.1:{}",config.public_port),
-        "log_path":config.runtime_root.join("logs/sa3-native.log")}))
+        "log_path":config.log_path()}),
+    )
 }
 
 #[derive(Debug)]
@@ -1134,12 +1389,23 @@ pub enum StopError {
     SessionMismatch { expected: String, actual: String },
     Failed(String),
 }
-impl From<String> for StopError { fn from(message: String) -> Self { Self::Failed(message) } }
-impl From<&str> for StopError { fn from(message: &str) -> Self { Self::Failed(message.into()) } }
+impl From<String> for StopError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+impl From<&str> for StopError {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.into())
+    }
+}
 impl std::fmt::Display for StopError {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SessionMismatch { expected, actual } => write!(out,"Refusing to stop session {actual}: expected {expected}"),
+            Self::SessionMismatch { expected, actual } => write!(
+                out,
+                "Refusing to stop session {actual}: expected {expected}"
+            ),
             Self::Failed(message) => out.write_str(message),
         }
     }
@@ -1148,15 +1414,21 @@ impl std::fmt::Display for StopError {
 pub async fn stop(config: &Config, expected_session: Option<&str>) -> Result<Value, StopError> {
     inspect_root(config)?;
     if !active(config)? {
-        return Ok(json!({"running":false,"stopped":true}));
+        return Ok(json!({"service":config.service,"running":false,"stopped":true}));
     }
     let current = state(config)?;
-    if current.status != "running" || owner_session(config).as_deref() != Some(&current.session) {
+    if current.service != config.service
+        || current.status != "running"
+        || owner_session(config).as_deref() != Some(&current.session)
+    {
         return Err("The active operation is not a serving session".into());
     }
     if let Some(expected) = expected_session {
         if current.session != expected {
-            return Err(StopError::SessionMismatch { expected: expected.into(), actual: current.session });
+            return Err(StopError::SessionMismatch {
+                expected: expected.into(),
+                actual: current.session,
+            });
         }
     }
     let session = current.session;
@@ -1171,5 +1443,5 @@ pub async fn stop(config: &Config, expected_session: Option<&str>) -> Result<Val
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    Ok(json!({"stopped":true,"session":session}))
+    Ok(json!({"service":config.service,"stopped":true,"session":session}))
 }

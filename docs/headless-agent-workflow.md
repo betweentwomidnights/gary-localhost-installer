@@ -1,7 +1,6 @@
 # Headless CLI for agents
 
-CLI 0.3 is an experimental single-SA3 supervisor using the desktop's shared
-native runtime and HTTP adapter. Linux packages cover x64 and ARM64 Vulkan.
+The CLI supervises the seven native desktop services. Each foreground host owns one service. SA3 uses the shared HTTP adapter. Other services expose the native HTTP contract on the configured client port. Linux packages cover x64 and ARM64 Vulkan.
 CUDA can use verified local archives with compatible system libraries; portable
 published Linux CUDA packages are still separate work. CPU generation is refused.
 There is no GUI dependency, interactive prompt or automatic model download.
@@ -13,6 +12,14 @@ Use `gary COMMAND --json` for automation; its optional default config comes from
 `GARY4LOCAL_HEADLESS_CONFIG` or the platform config directory. The original
 `gary4local-server COMMAND --config FILE --json` remains unchanged. Interactive
 training is still unsupported. See the runtime-core README for console setup.
+
+For another service, run `gary init carey --json`, then `gary install carey --json`,
+`gary download-models carey --json` and `gary start carey --json`. Use
+`gary status carey --json` to inspect the session, and
+`gary stop carey --session SESSION --json` to stop it. Named commands use
+per-service configs. An explicit `--config FILE` names the actual service
+config. A ready event on the six direct native services means the HTTP server
+answered its health check. SA3 additionally completes model load before ready.
 
 ## Discover before acting
 

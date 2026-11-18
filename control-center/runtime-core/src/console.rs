@@ -1,10 +1,12 @@
-//! Small line-oriented human console over the same single-SA3 host as the
+//! Small line-oriented human console over the same service supervisors as the
 //! machine CLI. A console owns only the tasks it starts, never stale disk PIDs.
+use crate::service::Service;
 use crate::{
     cli, command,
     headless::{self, Config},
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -14,9 +16,9 @@ use tokio::task::JoinHandle;
 pub const HELP: &str = "Gary — local GPU services\n\n\
   gary                         Open the interactive service console\n\
   gary --config FILE            Open a console with a specific config\n\
-  gary start [sa3]              Run SA3 in the foreground; Ctrl+C stops it\n\
-  gary status [sa3]             Show service status\n\
-  gary stop [sa3]               Stop the current configured SA3 session\n\
+  gary start [service]              Run the service in the foreground; Ctrl+C stops it\n\
+  gary status [service]             Show service status\n\
+  gary stop [service]               Stop the selected service session\n\
   gary doctor                  Inspect setup without running GPU work\n\
   gary models                  Show the selected weights, size and storage folder\n\
   gary download-models         Download and verify the selected managed weights\n\
@@ -26,7 +28,7 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   Add --json for the noninteractive agent protocol. Advanced commands:\n\
   init, validate, capabilities, schema, serve, version (see COMMAND --help).\n\n\
   Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
-  SA3 only in this preview. Training is not implemented yet.\n\
+  Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. Training is not implemented yet.\n\
   Leaving a console stops only services started by that console.\n\
   No runtime/model downloads happen just by opening Gary.";
 
@@ -97,6 +99,11 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
         say(HELP)?;
         return Ok(0);
     }
+    if args == [OsString::from("status")] {
+        let (events, _) = mpsc::unbounded_channel();
+        Console::new(default_config()?, events).status(None).await?;
+        return Ok(0);
+    }
     if let Some(config) = session_args(&args) {
         let config = config?;
         if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -113,21 +120,30 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
         matches!(
             arg.to_str(),
             Some(
-                "start" | "status" | "stop" | "doctor" | "models" | "download-models" | "install" | "init" | "validate" | "serve"
+                "start"
+                    | "status"
+                    | "stop"
+                    | "doctor"
+                    | "models"
+                    | "download-models"
+                    | "install"
+                    | "init"
+                    | "validate"
+                    | "serve"
             )
         )
     });
     if let Some(index) = position {
+        let mut service = match args.windows(2).find(|pair| pair[0] == "--service") {
+            Some(pair) => Service::parse(&pair[1].to_string_lossy())?,
+            None => Service::Sa3,
+        };
         if args
             .get(index + 1)
             .is_some_and(|arg| !arg.to_string_lossy().starts_with('-'))
         {
-            if args[index + 1] != "sa3" {
-                return Err(
-                    "This preview manages SA3 only. Use gary start sa3, stop sa3 or status.".into(),
-                );
-            }
-            args.remove(index + 1);
+            service = Service::parse(&args.remove(index + 1).to_string_lossy())?;
+            args.extend(["--service".into(), service.id().into()]);
         }
         if args[index] == "start" {
             args[index] = "serve".into();
@@ -135,13 +151,44 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
         if !args.iter().any(|arg| arg == "--config")
             && !args.iter().any(|arg| arg == "--help" || arg == "-h")
         {
+            let base = default_config()?;
+            if service != Service::Sa3
+                && args[index] == "init"
+                && !args.iter().any(|arg| arg == "--runtime-root")
+            {
+                args.extend([
+                    "--runtime-root".into(),
+                    companion_root(&base, service)?.into_os_string(),
+                ]);
+            }
             args.extend([
-                OsString::from("--config"),
-                default_config()?.into_os_string(),
+                "--config".into(),
+                profile_path(&base, service).into_os_string(),
             ]);
         }
     }
     Ok(command::run(args, true).await)
+}
+
+fn profile_path(base: &Path, service: Service) -> PathBuf {
+    if service == Service::Sa3 {
+        return base.to_owned();
+    }
+    let mut group = base.file_name().unwrap_or_default().to_os_string();
+    group.push(".services");
+    base.with_file_name(group)
+        .join(format!("{}.json", service.id()))
+}
+
+fn companion_root(base: &Path, service: Service) -> Result<PathBuf, String> {
+    let root = if base.exists() {
+        Config::read(base)?.runtime_root
+    } else {
+        cli::init_root(base)
+    };
+    let mut group = root.into_os_string();
+    group.push(".services");
+    Ok(PathBuf::from(group).join(service.id()))
 }
 
 #[derive(Debug, PartialEq)]
@@ -157,7 +204,7 @@ enum Action {
     Help,
     Quit,
 }
-fn action(line: &str) -> Result<Option<Action>, String> {
+fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
     let words: Vec<_> = line.split_whitespace().collect();
     if words.is_empty() {
         return Ok(None);
@@ -167,29 +214,31 @@ fn action(line: &str) -> Result<Option<Action>, String> {
         name.as_str(),
         "start" | "stop" | "status" | "services" | "models" | "install" | "doctor" | "logs"
     );
-    if words.len() > 1
-        && !(service_action && words.len() == 2 && words[1].eq_ignore_ascii_case("sa3"))
-    {
+    if words.len() > 1 && !(service_action && words.len() == 2) {
         return Err("Use a command on its own or with sa3, for example /start sa3. Type /help for commands.".into());
     }
-    Ok(Some(match name.as_str() {
-        "models" => Action::Models,
-        "setup" => Action::Setup,
-        "install" => Action::Install,
-        "start" => Action::Start,
-        "stop" => Action::Stop,
-        "status" | "services" => Action::Status,
-        "doctor" => Action::Doctor,
-        "logs" => Action::Logs,
-        "help" | "?" => Action::Help,
-        "quit" | "exit" => Action::Quit,
-        _ => {
-            return Err(format!(
-                "Unknown command '{}'. Type /help for commands.",
-                words[0]
-            ))
-        }
-    }))
+    let service = words.get(1).map(|id| Service::parse(id)).transpose()?;
+    Ok(Some((
+        match name.as_str() {
+            "models" => Action::Models,
+            "setup" => Action::Setup,
+            "install" => Action::Install,
+            "start" => Action::Start,
+            "stop" => Action::Stop,
+            "status" | "services" => Action::Status,
+            "doctor" => Action::Doctor,
+            "logs" => Action::Logs,
+            "help" | "?" => Action::Help,
+            "quit" | "exit" => Action::Quit,
+            _ => {
+                return Err(format!(
+                    "Unknown command '{}'. Type /help for commands.",
+                    words[0]
+                ))
+            }
+        },
+        service,
+    )))
 }
 #[path = "console_input.rs"]
 mod console_input;
@@ -230,8 +279,14 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
     }
     say("Set up SA3 — /cancel leaves setup without saving.\nPress Enter to let Gary manage your SA3 weights. You can download them after setup.")?;
     let models = loop {
-        let text = answer(input, "Press Enter for managed storage, or enter a folder of existing SA3 models: ").await?;
-        if text.is_empty() { break None; }
+        let text = answer(
+            input,
+            "Press Enter for managed storage, or enter a folder of existing SA3 models: ",
+        )
+        .await?;
+        if text.is_empty() {
+            break None;
+        }
         let path = model_path(&text);
         if !text.is_empty() && path.is_dir() {
             break Some(path);
@@ -240,7 +295,10 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
     };
     let mut root = cli::init_root(path);
     if models.is_none() {
-        say(format!("Gary will keep the runtime and weights together in {}", root.display()))?;
+        say(format!(
+            "Gary will keep the runtime and weights together in {}",
+            root.display()
+        ))?;
         let location = answer(input, "Storage folder [Enter for default]: ").await?;
         if !location.is_empty() {
             root = model_path(&location);
@@ -311,7 +369,9 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
         "--encoding".into(),
         encoding.into(),
     ];
-    if let Some(models) = models { args.extend(["--models-dir".into(), models.into_os_string()]); }
+    if let Some(models) = models {
+        args.extend(["--models-dir".into(), models.into_os_string()]);
+    }
     let request = cli::Request::parse(&args).map_err(|e| e.message)?;
     say(format!(
         "Save config to {}? No runtime or model downloads will start.",
@@ -340,121 +400,291 @@ struct Running {
     id: u64,
     config: Config,
     session: Option<String>,
-    task: JoinHandle<Result<Value, String>>,
+    task: JoinHandle<()>,
 }
 impl Drop for Running {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
+enum Event {
+    Ready(Service, u64, Value),
+    Finished(Service, u64, Result<Value, String>),
+}
+
 struct Console {
     path: PathBuf,
-    owned: Option<Running>,
+    owned: HashMap<Service, Running>,
     serial: u64,
-    ready: mpsc::UnboundedSender<(u64, Value)>,
+    events: mpsc::UnboundedSender<Event>,
 }
 impl Console {
-    fn config(&self) -> Result<Config, String> {
-        Config::read_checked(&self.path).map_err(|e| {
-            format!(
-                "{}\nUse /setup for a new config, or /doctor after correcting it.\nConfig: {}",
-                e.message,
-                self.path.display()
-            )
-        })
+    fn new(path: PathBuf, events: mpsc::UnboundedSender<Event>) -> Self {
+        Self {
+            path,
+            owned: HashMap::new(),
+            serial: 0,
+            events,
+        }
     }
-    async fn status(&self) -> Result<(), String> {
+    fn config(&self, service: Service) -> Result<Config, String> {
+        let path = profile_path(&self.path, service);
+        let config = Config::read(&path)
+            .map_err(|e| format!("{e}\nUse /install {} to prepare the service.", service.id()))?;
+        if config.service != service {
+            return Err(format!("{} belongs to a different service", path.display()));
+        }
+        Ok(config)
+    }
+    async fn status(&self, only: Option<Service>) -> Result<(), String> {
+        say("SERVICE       STATE             ADDRESS")?;
+        for service in Service::ALL {
+            if only.is_some_and(|id| id != service) {
+                continue;
+            }
+            let id = service.id();
+            let path = profile_path(&self.path, service);
+            if !self.owned.contains_key(&service) && !path.exists() {
+                say(format!("{id:<14}not configured"))?;
+                continue;
+            }
+            match self.state(service).await {
+                Ok(s) => {
+                    let state = if s["running"] == true {
+                        "running"
+                    } else if s["operation_active"] == true {
+                        "busy / starting"
+                    } else {
+                        "stopped"
+                    };
+                    let url = if s["running"] == true {
+                        s["public_url"].as_str().unwrap_or("")
+                    } else {
+                        ""
+                    };
+                    say(format!("{id:<14}{state:<18}{url}"))?;
+                    if s["running"] == true && !self.owned.contains_key(&service) {
+                        say("Running in another session. /quit will leave it running.")?;
+                    }
+                }
+                Err(e) => say(format!("{id:<14}{e}"))?,
+            }
+        }
         if !self.path.exists() {
-            return say("SERVICE  STATE             ADDRESS\nSA3      not configured\n\nType /setup to set up managed storage and GPU settings.");
-        }
-        let mut status = headless::status(&self.config()?).await?;
-        if self
-            .owned
-            .as_ref()
-            .is_some_and(|host| host.session.is_none())
-        {
-            status["operation_active"] = json!(true);
-        }
-        command::human_output("status", &status)?;
-        if status["running"] == true && self.owned.is_none() {
-            say("Running in another session. /quit will leave it running; /stop explicitly stops it.")?;
+            say("Use /setup for SA3 or /install SERVICE to prepare a service.")?;
         }
         Ok(())
     }
-    async fn stop_owned(&mut self) -> Result<(), String> {
-        if let Some(host) = self.owned.as_mut() {
-            if let Some(session) = &host.session {
+    async fn state(&self, service: Service) -> Result<Value, String> {
+        let config = if let Some(host) = self.owned.get(&service) {
+            host.config.clone()
+        } else {
+            self.config(service)?
+        };
+        let mut state = headless::status(&config).await?;
+        if self.owned.contains_key(&service) {
+            state["operation_active"] = json!(true);
+        }
+        Ok(state)
+    }
+    async fn stop_owned(&mut self, service: Service) -> Result<(), String> {
+        if let Some(mut host) = self.owned.remove(&service) {
+            let result = if let Some(session) = &host.session {
                 headless::stop(&host.config, Some(session))
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             } else {
-                host.task.abort();
-            }
-            // Abort is also the bounded fallback after a normal stop has
-            // released ownership. Await it so child/lock destructors finish.
+                Ok(())
+            };
             host.task.abort();
             let _ = (&mut host.task).await;
-            self.owned.take();
+            result?;
         }
         Ok(())
     }
-    async fn handle(&mut self, action: Action, input: &mut Input) -> Result<bool, String> {
+    async fn choose(&self, action: &Action, input: &mut Input) -> Result<Service, String> {
+        let mut choices = Vec::new();
+        for service in Service::ALL {
+            if matches!(action, Action::Stop | Action::Start) {
+                if !self.owned.contains_key(&service) && !profile_path(&self.path, service).exists()
+                {
+                    continue;
+                }
+                let active = self.state(service).await?["operation_active"] == true;
+                if active != matches!(action, Action::Stop) {
+                    continue;
+                }
+            }
+            choices.push(service);
+        }
+        match choices.as_slice() {
+            [] => {
+                return Err(if matches!(action, Action::Stop) {
+                    "No services are running."
+                } else {
+                    "No stopped service is configured. Use /install SERVICE."
+                }
+                .into())
+            }
+            [one] => return Ok(*one),
+            _ => {}
+        }
+        let names: Vec<_> = choices.iter().map(|s| s.id()).collect();
+        #[cfg(target_os = "linux")]
+        {
+            Ok(choices[input.select("Choose a service", &names).await?])
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let choice =
+                answer(input, &format!("Choose a service ({}): ", names.join(", "))).await?;
+            Service::parse(&choice)
+        }
+    }
+    async fn ensure_profile(&self, service: Service) -> Result<(), String> {
+        let path = profile_path(&self.path, service);
+        if path.exists() {
+            return Ok(());
+        }
+        let mut args = vec![
+            "init".into(),
+            "--service".into(),
+            service.id().into(),
+            "--config".into(),
+            path.into_os_string(),
+        ];
+        if service != Service::Sa3 {
+            // Keep companion services beside the selected SA3 storage, each with its own lease.
+            args.extend([
+                "--runtime-root".into(),
+                companion_root(&self.path, service)?.into_os_string(),
+            ]);
+        }
+        let request = cli::Request::parse(&args).map_err(|e| e.message)?;
+        cli::execute(&request, |_| Ok(()))
+            .await
+            .map_err(|e| e.message)?;
+        Ok(())
+    }
+    async fn handle(
+        &mut self,
+        action: Action,
+        explicit: Option<Service>,
+        input: &mut Input,
+    ) -> Result<bool, String> {
         match action {
-            Action::Quit=>return Ok(true),
-            Action::Help=>say("/setup        Set up storage, GPU, precision and port\n/models       See required weights and download them into managed storage\n/install      Install the pinned runtime (explicit download and GPU probe)\n/start [sa3]  Start SA3; you can keep using this console while it loads\n/stop [sa3]   Stop SA3, or cancel startup\n/status       Show services and addresses (/services also works)\n/doctor       Read-only preflight; no GPU work or downloads\n/logs         Show the native log path\n/quit         Stop services started here and leave (Ctrl+C also works)\n\nCommands work with or without '/'. Training is not implemented yet.")?,
-            Action::Setup=>setup(&self.path,input).await?,
+            Action::Quit => return Ok(true),
+            Action::Help => {
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service] — Start a stopped service\n/stop [service] — Stop one service or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/quit — Stop services started here and leave")?;
+                return Ok(false);
+            }
+            Action::Setup => {
+                setup(&self.path, input).await?;
+                return Ok(false);
+            }
+            Action::Status => {
+                self.status(explicit).await?;
+                return Ok(false);
+            }
+            _ => {}
+        }
+        let service = match explicit {
+            Some(s) => s,
+            None => self.choose(&action, input).await?,
+        };
+        let id = service.id();
+        let label = if service == Service::Sa3 { "SA3" } else { id };
+        if matches!(action, Action::Install | Action::Models) {
+            self.ensure_profile(service).await?;
+        }
+        let config = if let Some(host) = self.owned.get(&service) {
+            host.config.clone()
+        } else {
+            self.config(service)?
+        };
+        match action {
+            Action::Logs => say(config.log_path().display())?,
+            Action::Doctor => command::human_output("doctor", &headless::doctor(&config).await?)?,
+            Action::Install => {
+                say(format!("Installing {label} and checking the GPU..."))?;
+                command::human_output("install", &headless::install(&config).await?)?;
+            }
             Action::Models => {
-                let config = self.config()?;
                 let plan = headless::model_plan(&config)?;
                 command::human_output("models", &plan)?;
-                if plan["managed"] != true { return Ok(false); }
-                #[cfg(target_os = "linux")]
-                let download = input.select("SA3 models", &["No, go back", "Yes, download or verify weights"]).await? == 1;
-                #[cfg(not(target_os = "linux"))]
-                let download = matches!(answer(input, "Download or verify these weights [y/N]? ").await?.to_lowercase().as_str(), "y" | "yes");
-                if download {
-                    headless::download_models(&config).await?;
-                    say("SA3 weights verified. Use /start once the runtime is installed.")?;
+                if plan["managed"] == true {
+                    #[cfg(target_os = "linux")]
+                    let download = input
+                        .select(
+                            &format!("{label} models"),
+                            &["No, go back", "Yes, download or verify weights"],
+                        )
+                        .await?
+                        == 1;
+                    #[cfg(not(target_os = "linux"))]
+                    let download = matches!(
+                        answer(input, "Download or verify these weights [y/N]? ")
+                            .await?
+                            .to_lowercase()
+                            .as_str(),
+                        "y" | "yes"
+                    );
+                    if download {
+                        headless::download_models(&config).await?;
+                        say(format!("{label} weights verified."))?;
+                    }
                 }
             }
-            Action::Status=>self.status().await?,
-            Action::Logs=>say(self.config()?.runtime_root.join("logs/sa3-native.log").display())?,
-            Action::Doctor=>command::human_output("doctor",&headless::doctor(&self.config()?).await?)?,
-            Action::Install=>{
-                if self.owned.is_some() { return Err("Stop SA3 before installing its runtime.".into()); }
-                say("Installing verified SA3 runtime packages and checking the GPU...")?;
-                command::human_output("install",&headless::install(&self.config()?).await?)?;
-                say("Next: /doctor, then /start.")?;
-            }
-            Action::Start=>{
-                if self.owned.is_some() { say("SA3 is already started or starting in this console. Use /status or /stop.")?; return Ok(false); }
-                let config=self.config()?;
-                let status=headless::status(&config).await?;
-                if status["operation_active"]==true { self.status().await?; return Ok(false); }
-                let preflight=headless::doctor(&config).await?;
-                if preflight["can_attempt_serve"]!=true {
-                    command::human_output("doctor",&preflight)?;
-                    return Err("Resolve the preflight checks before /start. Use /install if the runtime is missing; use /models to prepare weights.".into());
+            Action::Start => {
+                if self.state(service).await?["operation_active"] == true {
+                    return Err(format!("{label} is already active."));
                 }
-                self.serial+=1;
-                let id=self.serial;
-                let ready=self.ready.clone();
-                let owned_config=config.clone();
-                let task=tokio::spawn(async move { headless::serve(&owned_config,move |value|ready.send((id,value)).map_err(|e|e.to_string())).await });
-                self.owned=Some(Running {id,config,session:None,task});
-                say("Starting SA3 and loading models... /status shows progress; /stop cancels startup.")?;
-            }
-            Action::Stop=>{
-                if self.owned.is_some() { self.stop_owned().await?; }
-                else {
-                    let config=self.config()?;
-                    let status=headless::status(&config).await?;
-                    let session=status["state"]["session"].as_str();
-                    headless::stop(&config,session).await.map_err(|e|e.to_string())?;
+                let report = headless::doctor(&config).await?;
+                if report["can_attempt_serve"] != true {
+                    command::human_output("doctor", &report)?;
+                    return Err(format!("Resolve the preflight checks before /start. Use /install {id} for the runtime and /models {id} for weights."));
                 }
-                say("SA3 stopped.")?;
-                self.status().await?;
+                self.serial += 1;
+                let serial = self.serial;
+                let tx = self.events.clone();
+                let cfg = config.clone();
+                let task = tokio::spawn(async move {
+                    let result = headless::serve(&cfg, |value| {
+                        tx.send(Event::Ready(service, serial, value))
+                            .map_err(|e| e.to_string())
+                    })
+                    .await;
+                    let _ = tx.send(Event::Finished(service, serial, result));
+                });
+                self.owned.insert(
+                    service,
+                    Running {
+                        id: serial,
+                        config,
+                        session: None,
+                        task,
+                    },
+                );
+                say(format!("Starting {label}... /stop {id} cancels startup."))?;
             }
+            Action::Stop => {
+                if self.owned.contains_key(&service) {
+                    self.stop_owned(service).await?;
+                } else {
+                    let state = self.state(service).await?;
+                    if state["operation_active"] == true {
+                        let session=state["state"]["session"].as_str().filter(|_|state["running"]==true)
+                            .ok_or("The service is busy in another session. Wait for startup or installation to finish.")?;
+                        headless::stop(&config, Some(session))
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                say(format!("{label} stopped."))?;
+                self.status(None).await?;
+            }
+            _ => unreachable!(),
         }
         Ok(false)
     }
@@ -473,12 +703,7 @@ async fn termination() {
 }
 async fn shell(path: PathBuf) -> Result<i32, String> {
     let (tx, mut ready) = mpsc::unbounded_channel();
-    let mut console = Console {
-        path,
-        owned: None,
-        serial: 0,
-        ready: tx,
-    };
+    let mut console = Console::new(path, tx);
     let mut input = Input::new();
     let shutdown = termination();
     tokio::pin!(shutdown);
@@ -486,7 +711,7 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
     // prompt. Keep the same future alive through setup and startup.
     tokio::select! { biased; _=&mut shutdown=>return Ok(0), _=std::future::ready(())=>{} }
     say(format!("Gary {} — local GPU services\nConfig: {}\n\nType /help for commands. /quit or Ctrl+C stops services started here.\n",env!("CARGO_PKG_VERSION"),console.path.display()))?;
-    if let Err(e) = console.status().await {
+    if let Err(e) = console.status(None).await {
         say(format!("{e}\nType /help for commands."))?;
     }
     loop {
@@ -499,40 +724,49 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
                 match action {
                     Ok(None)=>{},
                     Err(e)=>say(e)?,
-                    Ok(Some(action))=>{
+                    Ok(Some((action,explicit)))=>{
                         tokio::select! {
                             _=&mut shutdown=>break,
-                            result=console.handle(action,&mut input)=>match result {
+                            result=console.handle(action,explicit,&mut input)=>match result {
                                 Ok(true)=>break,Ok(false)=>{},Err(e)=>say(e)?,
                             }
                         }
                     }
                 }
             }
-            event=ready.recv(), if console.owned.is_some()=>{
-                if let Some((id,value))=event {
-                    if let Some(host)=console.owned.as_mut().filter(|host|host.id==id) {
-                        host.session=value["session"].as_str().map(str::to_owned);
-                        say(format!("\nSA3 ready at {}",value["public_url"].as_str().unwrap_or("")))?;
-                        console.status().await?;
+            Some(event)=ready.recv()=>{
+                match event {
+                    Event::Ready(service,id,value)=>{
+                        if let Some(host)=console.owned.get_mut(&service).filter(|h|h.id==id){
+                            host.session=value["session"].as_str().map(str::to_owned);
+                            let label=if service==Service::Sa3 {"SA3"} else {service.id()};
+                            say(format!("\n{label} ready at {}",value["public_url"].as_str().unwrap_or("")))?;
+                            console.status(None).await?;
+                        }
+                    }
+                    Event::Finished(service,id,result)=>{
+                        if console.owned.get(&service).is_some_and(|h|h.id==id) {
+                            console.owned.remove(&service);
+                            match result { Ok(_)=>say(format!("{} stopped.",service.id()))?, Err(e)=>say(format!("{} stopped: {e}",service.id()))? }
+                            console.status(None).await?;
+                        }
                     }
                 }
-            }
-            result=async { (&mut console.owned.as_mut().expect("guarded host").task).await }, if console.owned.is_some()=>{
-                console.owned.take();
-                match result {
-                    Ok(Ok(_))=>say("\nSA3 stopped.")?,
-                    Ok(Err(e))=>say(format!("\nSA3 stopped with an error: {e}\nUse /doctor and /logs to inspect it."))?,
-                    Err(e)=>say(format!("\nSA3 task ended: {e}"))?,
-                }
-                console.status().await?;
             }
         }
     }
     say("\nLeaving Gary; stopping any service started in this console...")?;
     // The captured owner config/nonce is used, even if the file was edited.
     // Never stop a service that was running before this console opened.
-    console.stop_owned().await?;
+    let mut errors = Vec::new();
+    for service in Service::ALL {
+        if let Err(e) = console.stop_owned(service).await {
+            errors.push(e);
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
     say("Goodbye.")?;
     Ok(0)
 }
@@ -542,11 +776,17 @@ mod tests {
     use super::*;
     #[test]
     fn slash_and_plain_commands_have_the_same_small_service_grammar() {
-        assert_eq!(action("/start sa3"), Ok(Some(Action::Start)));
-        assert_eq!(action("stop"), Ok(Some(Action::Stop)));
-        assert_eq!(action("/services"), Ok(Some(Action::Status)));
+        assert_eq!(
+            action("/start sa3"),
+            Ok(Some((Action::Start, Some(Service::Sa3))))
+        );
+        assert_eq!(action("stop"), Ok(Some((Action::Stop, None))));
+        assert_eq!(action("/services"), Ok(Some((Action::Status, None))));
         assert_eq!(action("  "), Ok(None));
-        assert!(action("/start yuey").is_err());
+        assert_eq!(
+            action("/start yuey"),
+            Ok(Some((Action::Start, Some(Service::Yuey))))
+        );
         assert!(action("/stop sa3 --force").is_err());
         assert!(action("/train").is_err());
     }

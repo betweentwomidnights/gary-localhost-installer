@@ -95,7 +95,7 @@ fn agent_results_remain_versioned_and_unsupported_services_are_not_invented() {
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["schema_version"], 1);
     assert_eq!(result["data"]["running"], false);
-    let output = fixture.run(&["start", "yuey", "--json"]);
+    let output = fixture.run(&["start", "unknown-engine", "--json"]);
     assert_eq!(output.status.code(), Some(2));
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["error"]["code"], "invalid_arguments");
@@ -115,4 +115,25 @@ fn explicit_config_overrides_the_environment_and_help_does_not_read_it() {
     assert_eq!(result["error"]["code"], "config_unreadable");
     assert!(fixture.run(&["--help"]).status.success());
     assert!(fixture.run(&["start", "--help"]).status.success());
+}
+
+#[test]
+fn named_and_flagged_service_commands_use_isolated_profiles() {
+    let fixture = Fixture::new();
+    for args in [vec!["init","carey"],vec!["init","--service","gary"]] {
+        assert!(fixture.run(&args).status.success());
+    }
+    assert!(!fixture.config.exists());
+    for service in ["carey","gary"] {
+        let result=fixture.run(&["validate",service,"--json"]);
+        assert!(result.status.success());
+        let value:Value=serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["data"]["resolved"]["service"],service);
+        assert!(value["data"]["config_path"].as_str().unwrap().ends_with(&format!("{service}.json")));
+    }
+    let list=fixture.run(&["status"]);
+    assert!(list.status.success());
+    for id in ["sa3","gary","melodyflow","stable-audio","carey","foundation","yuey"] {
+        assert!(text(&list).lines().any(|row|row.split_whitespace().next()==Some(id)));
+    }
 }

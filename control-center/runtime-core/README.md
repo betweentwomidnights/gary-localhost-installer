@@ -1,19 +1,37 @@
-# Experimental headless SA3 host (CLI 0.3)
+# Headless GPU services
 
 ## Human terminal console
 
-The new `gary` command opens a small interactive service console in a terminal.
-It shows the configured SA3 service, its state and address. Use `/setup` once and press Enter for managed
-storage, or choose a storage folder on a larger disk. Select your precision,
-then use `/models` to see the required files and size. Confirm to download and
-verify the weights. Use `/install` for the GPU runtime, then `/start`.
-On Linux, use ↑ and ↓ to highlight a precision or model action, Enter to select,
-and Esc to return to the prompt. An existing SA3 weights folder can also be
-selected during setup. Commands also work without the slash. `/stop` stops SA3 or cancels
-startup; `/status` refreshes the table; `/logs` shows the native log path.
-`/quit`, Ctrl+C, SIGTERM and end of input stop services started by this console.
-A service already running in another session is left running on exit; an
-explicit `/stop` can stop that configured session. No daemon is registered.
+Type `gary` to see all seven services and their loopback addresses. To prepare
+and run one service, for example Carey:
+
+```text
+/install carey
+/models carey
+/start carey
+/status
+/stop carey
+```
+
+Use `gary`, `melodyflow`, `stable-audio`, `sa3`, `carey`, `foundation` or `yuey`
+after a command. Without a name, Linux offers an arrow-key picker when several
+services apply. Enter selects and Esc goes back. `/stop` lists active services,
+including ones still starting. `/logs SERVICE` prints the native log path.
+`/quit` stops services this console started. Another console can inspect them
+or explicitly stop an individual session.
+
+`/install` and `/models` create a missing profile with defaults. Runtime
+installation probes the selected GPU. Model downloads require confirmation.
+`/setup` retains the original guided SA3 setup. For other services, use
+`gary init SERVICE --models-dir /absolute/path` to reuse external weights, or
+supply `--runtime-root`, `--port`, `--model` and `--encoding` before the first
+install. Use `gary capabilities --json` to inspect the defaults.
+
+The six companion configs live in `<sa3-config-filename>.services/`. Their
+default runtime roots sit under `<sa3-runtime-root>.services/<service>`. Each
+has its own process lock, settings, weights and log. The client ports match the
+desktop manifest for the six new services. SA3 keeps the port in its existing
+config. For a remote DAW, forward the displayed loopback ports with SSH.
 
 Linux preview archives include both binaries and `install-gary.sh`:
 
@@ -52,8 +70,7 @@ Application Support on macOS or LOCALAPPDATA on Windows, below
 never overwrites an existing config and never downloads weights or runtimes.
 Opening Gary does not create storage. A nonterminal invocation never prompts.
 
-This is a line-oriented console, not a full-screen terminal UI. It currently
-manages SA3 only; other services and guided training are future additions.
+The console manages service lifecycles. Clients use each service’s HTTP API for inference.
 Scripts can use `gary COMMAND --json` or the original `gary4local-server`.
 `gary start --json` aliases `serve`, including its protocol command name.
 
@@ -65,11 +82,10 @@ ZIP extraction, process-lifetime controls and SA3 HTTP adapter. Desktop LoRA
 catalog validation, prompt preparation and decoder correction connect through
 the adapter's registry interface and retain their existing implementations.
 
-This first host manages one explicitly configured SA3 service. Its local JSON
+Each foreground host manages one explicitly configured service. Its local JSON
 configuration is separate from desktop profiles and migration records. It
 installs pinned core/backend ZIPs with SHA256 verification, checks a real GPU,
-loads the selected model, and exposes the existing Gary client contract through
-the shared Rust adapter. Use `download-models` to prepare managed weights before starting the host.
+and exposes the service’s client routes. SA3 preloads its model through the shared Rust adapter. The other native servers report readiness at their health endpoints and handle loading as in the desktop app. Use `download-models` to prepare managed weights before starting the host.
 
 ## Build and run
 

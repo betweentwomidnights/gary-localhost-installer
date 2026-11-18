@@ -74,12 +74,16 @@ const INIT_OPTIONS: &[&str] = &[
     "device",
     "port",
     "encoding",
+    "service",
+    "model",
 ];
 fn command_flags(command: &str) -> &'static [&'static str] {
     match command {
         "init" => INIT_OPTIONS,
-        "validate" | "doctor" | "models" | "download-models" | "install" | "serve" | "status" => &["config"],
-        "stop" => &["config", "session"],
+        "validate" | "doctor" | "models" | "download-models" | "install" | "serve" | "status" => {
+            &["config", "service"]
+        }
+        "stop" => &["config", "session", "service"],
         "schema" => &["target"],
         _ => &[],
     }
@@ -164,7 +168,7 @@ impl Request {
 
 pub fn help() -> &'static str {
     "gary4local-server COMMAND [OPTIONS]\n\n\
-     init --config FILE [--models-dir DIR] [--runtime-root DIR] [--device Vulkan0] [--port 28300] [--encoding f16]\n\
+     init --config FILE [--service ID] [--model NAME] [--models-dir DIR] [--runtime-root DIR] [--device Vulkan0] [--port 28300] [--encoding f16]\n\
      validate --config FILE      Check configuration and resolve pinned packages; no downloads\n\
      models --config FILE       List pinned weights for this configuration\n\
      download-models --config FILE  Fetch and verify weights in managed storage\n\
@@ -178,7 +182,7 @@ pub fn help() -> &'static str {
      version                     Print the binary version\n\n\
      --json                      Versioned JSON results/errors; serve emits newline-delimited JSON\n\
      --help                      Global or per-command help (never reads config)\n\n\
-     SA3 only. All service listeners bind to 127.0.0.1. download-models explicitly fetches the configured weights.\n\
+     All service listeners bind to 127.0.0.1. download-models explicitly fetches the configured weights.\n\
      Training commands are not implemented. init never overwrites a different config."
 }
 
@@ -199,7 +203,8 @@ pub fn capabilities() -> Value {
     }).collect::<Vec<_>>()).unwrap_or_default();
     backends.sort_by_key(|backend| backend["name"].as_str().unwrap_or("").to_string());
     json!({"binary":"gary4local-server","version":env!("CARGO_PKG_VERSION"),"schema_version":SCHEMA_VERSION,
-        "platform":crate::runtime::current_platform(),"services":["sa3"],"validated_models":["medium"],
+        "platform":crate::runtime::current_platform(),"services":crate::service::Service::ALL,
+        "service_defaults":crate::service::Service::ALL.map(|s|json!({"service":s,"model":s.defaults().0,"encoding":s.defaults().1,"port":s.default_port(),"readiness":if s==crate::service::Service::Sa3 {"loaded"}else{"healthy_listener"}})),"validated_models":["medium"],
         "commands":COMMANDS.iter().filter(|command| **command != "help").map(|command| json!({
             "name":command,"requires_config":matches!(*command,"init"|"validate"|"doctor"|"models"|"download-models"|"install"|"serve"|"status"|"stop"),
             "effects":match *command {"init"=>"writes_config","download-models"=>"downloads_and_verifies_weights","install"=>"installs_runtime_and_probes_gpu","serve"=>"loads_model_and_serves","stop"=>"stops_owned_session",_=>"read_only"},
@@ -219,13 +224,14 @@ pub fn config_schema() -> Value {
         "type":"object","additionalProperties":false,
         "required":["device","public_port","model","encoding"],
         "properties":{
+            "service":{"enum":crate::service::Service::ALL,"default":"sa3"},
             "runtime_root":{"type":"string","minLength":1,"description":"Absolute normalized dedicated runtime directory. Defaults to platform data storage."},
-            "models_dir":{"type":"string","minLength":1,"description":"Optional external model directory. Omit to manage models under runtime_root/models/sa3."},
+            "models_dir":{"type":"string","minLength":1,"description":"Optional external model directory. Omit to manage models under runtime_root/models/<service>."},
             "core":{"$ref":"#/$defs/package"},"backend":{"$ref":"#/$defs/package"},
             "manifest":{"type":["string","null"],"description":"Optional absolute path to a local package manifest; otherwise use bundled pins."},
             "device":{"type":"string","pattern":"^(CUDA|Vulkan)","description":"Exact GPU name returned by engine properties, such as Vulkan0 or CUDA0."},
             "public_port":{"type":"integer","minimum":1,"maximum":65535},
-            "model":{"type":"string","description":"Native SA3 model family. medium is the validated headless path."},
+            "model":{"type":"string","description":"Selected native model. See capabilities for per-service defaults."},
             "encoding":{"type":"string","description":"Generation precision, such as f16 or q4_k_m."},
             "t5_encoding":{"type":"string","default":"f16"},"ae_encoding":{"type":"string","default":"f16","description":"Must match existing weights. Current medium preview weights use f32; init sets it explicitly."},
             "threads":{"type":"integer","minimum":1,"maximum":256,"default":4},"defaults":{"type":"object","default":{}}},
@@ -347,7 +353,13 @@ pub(crate) fn init_root(config_path: &Path) -> PathBuf {
     if crate::console::standard_config().as_deref() == Ok(config_path) {
         return headless::default_root().join("sa3");
     }
-    config_path.with_file_name(format!("{}.data", config_path.file_stem().unwrap_or_default().to_string_lossy()))
+    config_path.with_file_name(format!(
+        "{}.data",
+        config_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+    ))
 }
 
 fn init(request: &Request) -> Result<Value, Error> {
@@ -359,19 +371,22 @@ fn init(request: &Request) -> Result<Value, Error> {
     };
     let compared_root = comparable(&root)?;
     if comparable(&config_path)?.starts_with(&compared_root) {
-        return Err(Error::new("config_invalid", "Config is inside the runtime root", "Choose a config path outside the runtime root.", 3));
+        return Err(Error::new(
+            "config_invalid",
+            "Config is inside the runtime root",
+            "Choose a config path outside the runtime root.",
+            3,
+        ));
     }
     let models = if let Some(path) = request.path("models-dir") {
-        let models = path
-            .canonicalize()
-            .map_err(|error| {
-                Error::new(
-                    "models_unreadable",
-                    error.to_string(),
-                    "--models-dir must name an existing directory containing your weights.",
-                    3,
-                )
-            })?;
+        let models = path.canonicalize().map_err(|error| {
+            Error::new(
+                "models_unreadable",
+                error.to_string(),
+                "--models-dir must name an existing directory containing your weights.",
+                3,
+            )
+        })?;
         if !models.is_dir() {
             return Err(Error::new(
                 "models_unreadable",
@@ -389,19 +404,35 @@ fn init(request: &Request) -> Result<Value, Error> {
             ));
         }
         if models.starts_with(&compared_root) || compared_root.starts_with(&models) {
-            return Err(Error::new("config_invalid", "External models overlap the runtime root", "Omit --models-dir for managed storage or supply an independent directory.", 3));
+            return Err(Error::new(
+                "config_invalid",
+                "External models overlap the runtime root",
+                "Omit --models-dir for managed storage or supply an independent directory.",
+                3,
+            ));
         }
         Some(models)
-    } else { None };
+    } else {
+        None
+    };
+    let service = crate::service::Service::parse(request.text("service")?.unwrap_or("sa3"))
+        .map_err(Error::usage)?;
+    let (model, encoding) = service.defaults();
+    let default_port = service.default_port().to_string();
     let port = request
         .text("port")?
-        .unwrap_or("28300")
+        .unwrap_or(&default_port)
         .parse::<u16>()
         .map_err(|_| Error::usage("--port must be an integer from 1 to 65535"))?;
     let mut body = json!({"runtime_root":root,"device":request.text("device")?.unwrap_or("Vulkan0"),
-        "public_port":port,"model":"medium","encoding":request.text("encoding")?.unwrap_or("f16").to_ascii_lowercase(),
+        "public_port":port,"model":request.text("model")?.unwrap_or(model),"encoding":request.text("encoding")?.unwrap_or(encoding).to_ascii_lowercase(),
         "t5_encoding":"f16","ae_encoding":"f32","threads":4,"defaults":{}});
-    if let Some(models) = models { body["models_dir"] = json!(models); }
+    if service != crate::service::Service::Sa3 {
+        body["service"] = json!(service);
+    }
+    if let Some(models) = models {
+        body["models_dir"] = json!(models);
+    }
     let raw = serde_json::to_vec_pretty(&body).expect("JSON config");
     let config = Config::from_bytes(&raw)?;
     let mut options = std::fs::OpenOptions::new();
@@ -412,7 +443,14 @@ fn init(request: &Request) -> Result<Value, Error> {
         options.mode(0o600);
     }
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| Error::new("config_write_failed", error.to_string(), "Check config directory permissions.", 3))?;
+        std::fs::create_dir_all(parent).map_err(|error| {
+            Error::new(
+                "config_write_failed",
+                error.to_string(),
+                "Check config directory permissions.",
+                3,
+            )
+        })?;
     }
     let created = match options.open(&config_path) {
         Ok(mut file) => {
@@ -471,6 +509,11 @@ pub async fn execute(
     }
     let path = request.path("config").unwrap();
     let config = Config::read_checked(&path)?;
+    if let Some(id) = request.text("service")? {
+        if crate::service::Service::parse(id).map_err(Error::usage)? != config.service {
+            return Err(Error::usage("The config belongs to a different service"));
+        }
+    }
     if request.command == "stop" {
         let expected = request.text("session")?;
         if expected == Some("") {

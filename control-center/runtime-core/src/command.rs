@@ -17,27 +17,47 @@ fn output(value: &Value, pretty: bool) -> Result<(), String> {
 
 pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
     let mut out = std::io::stdout().lock();
+    let service = data["service"].as_str().unwrap_or("sa3");
+    let service = if service == "sa3" { "SA3" } else { service };
     let write = (|| -> std::io::Result<()> {
         match command {
             "models" | "download-models" => {
-                writeln!(out, "SA3 medium {} — {:.2} GiB total", data["encoding"].as_str().unwrap_or(""), data["bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0)?;
-                writeln!(out, "Storage: {}",data["models_dir"].as_str().unwrap_or(""))?;
-                writeln!(out, "{:.2} GiB of missing or incomplete weights", data["missing_bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0)?;
+                writeln!(
+                    out,
+                    "{service} {} {} — {:.2} GiB total",
+                    data["model"].as_str().unwrap_or(""),
+                    data["encoding"].as_str().unwrap_or(""),
+                    data["bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0
+                )?;
+                writeln!(
+                    out,
+                    "Storage: {}",
+                    data["models_dir"].as_str().unwrap_or("")
+                )?;
+                let missing = data["missing_bytes"].as_u64().unwrap_or(0);
+                if missing == 0 {
+                    writeln!(out, "All files are present at the expected size.")?;
+                } else {
+                    writeln!(out, "{missing} bytes of missing or incomplete weights")?;
+                }
                 for file in data["files"].as_array().into_iter().flatten() {
                     writeln!(out, "  {}", file["filename"].as_str().unwrap_or(""))?;
                 }
-                if command == "download-models" { writeln!(out, "SA3 weights verified.")?; }
-                else if data["managed"] == false { writeln!(out, "Using external weights from your selected folder.")?; }
+                if command == "download-models" {
+                    writeln!(out, "{service} weights verified.")?;
+                } else if data["managed"] == false {
+                    writeln!(out, "Using external weights from your selected folder.")?;
+                }
             }
             "install" => writeln!(
                 out,
-                "SA3 runtime installed ({})",
+                "{service} runtime installed ({})",
                 data["backend"].as_str().unwrap_or("GPU")
             )?,
-            "stop" => writeln!(out, "SA3 stopped.")?,
+            "stop" => writeln!(out, "{service} stopped.")?,
             "serve" => writeln!(
                 out,
-                "SA3 ready at {}. Press Ctrl+C to stop.",
+                "{service} ready at {}. Press Ctrl+C to stop.",
                 data["public_url"].as_str().unwrap_or("")
             )?,
             "status" => {
@@ -51,7 +71,7 @@ pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
                 };
                 writeln!(
                     out,
-                    "SA3      {state:<18}{}",
+                    "{service:<13}{state:<18}{}",
                     if data["running"] == true {
                         data["public_url"].as_str().unwrap_or("")
                     } else {
@@ -78,7 +98,10 @@ pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
                     "Runtime root: {}",
                     data["config"]["runtime_root"].as_str().unwrap_or("")
                 )?;
-                writeln!(out,"Use models to inspect weights and install to prepare the runtime.")?;
+                writeln!(
+                    out,
+                    "Use models to inspect weights and install to prepare the runtime."
+                )?;
             }
             "validate" => {
                 writeln!(
@@ -93,7 +116,7 @@ pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
             "doctor" => {
                 writeln!(
                     out,
-                    "SA3 preflight: {}",
+                    "{service} preflight: {}",
                     if data["can_attempt_serve"] == true {
                         "startup can be attempted"
                     } else {
@@ -183,8 +206,11 @@ pub async fn run(args: Vec<std::ffi::OsString>, human: bool) -> i32 {
                     .map_err(|error| error.to_string())
             } else if request.command == "serve" {
                 Ok(())
-            } else if matches!(request.command.as_str(), "init" | "validate" | "doctor" | "models" | "download-models")
-                || human && matches!(request.command.as_str(), "install" | "status" | "stop")
+            } else if matches!(
+                request.command.as_str(),
+                "init" | "validate" | "doctor" | "models" | "download-models"
+            ) || human
+                && matches!(request.command.as_str(), "install" | "status" | "stop")
             {
                 human_output(&request.command, &outcome.data)
             } else {
