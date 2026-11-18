@@ -67,7 +67,7 @@ This first host manages one explicitly configured SA3 service. Its local JSON
 configuration is separate from desktop profiles and migration records. It
 installs pinned core/backend ZIPs with SHA256 verification, checks a real GPU,
 loads the selected model, and exposes the existing Gary client contract through
-the shared Rust adapter. It does not download models.
+the shared Rust adapter. Use `download-models` to prepare managed weights before starting the host.
 
 ## Build and run
 
@@ -81,8 +81,7 @@ Build from the repository layout: the core embeds the canonical
 `services/manifests/services.json` and `control-center/src-tauri/sa3-models.json`
 at compile time. Neither introduces desktop runtime dependencies.
 
-Create a config pointing to weights you already have (create its parent folder
-first):
+To reuse weights you already have, supply their folder at init:
 
 ```sh
 gary4local-server init --config /absolute/path/sa3.json --models-dir /absolute/path/models --port 28300
