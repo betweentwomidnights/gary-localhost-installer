@@ -3,9 +3,11 @@
 ## Human terminal console
 
 The new `gary` command opens a small interactive service console in a terminal.
-It shows the configured SA3 service, its state and address. Use `/setup` once to
-choose existing weights, GPU, precision and port, then `/doctor`, `/install` and
-`/start`. Commands also work without the slash. `/stop` stops SA3 or cancels
+It shows the configured SA3 service, its state and address. Use `/setup` once and press Enter for managed
+storage, or choose a storage folder on a larger disk. Select your precision,
+then use `/models` to see the required files and size. Confirm to download and
+verify the weights. Use `/install` for the GPU runtime, then `/start`.
+An existing SA3 weights folder can instead be selected during setup. Commands also work without the slash. `/stop` stops SA3 or cancels
 startup; `/status` refreshes the table; `/logs` shows the native log path.
 `/quit`, Ctrl+C, SIGTERM and end of input stop services started by this console.
 A service already running in another session is left running on exit; an
@@ -25,6 +27,19 @@ printed by the installer. `--config /absolute/path/sa3.json` on the installer
 pins a contained experiment config for every launch. `--bin-dir DIR` selects a
 different command directory. On Windows, build `gary.exe` with Cargo and place
 it in a directory already on PATH; no Windows command installer is supplied yet.
+
+For scripts, `gary init`, `gary models --json` and `gary download-models --json`
+use the same model selection. Downloads resume partial files and verify each
+SHA-256. An external weights folder is read-only to these commands.
+
+The standard Linux setup keeps data under
+`${XDG_DATA_HOME:-$HOME/.local/share}/gary4local/headless/sa3`. A custom config
+defaults to a sibling `<config-stem>.data` folder. Managed weights live in
+`models/sa3` under the chosen root. To move managed storage later, stop SA3,
+quit Gary and finish any download. Copy the entire root (including hidden files)
+to an empty folder, change `runtime_root` in the saved config to its absolute
+path, then run `gary doctor` and start the service before removing the old copy.
+External weights keep their independently configured location.
 
 Outside the console, `gary start sa3`, `gary status`, `gary stop` and
 `gary doctor` reuse the saved config. `start` is a foreground host; Ctrl+C stops

@@ -108,7 +108,7 @@ def wait_ready():
 try:
     discovery = command('capabilities', configured=False)['data']
     assert discovery['features']['training'] is False
-    assert discovery['features']['model_downloads'] is False
+    assert discovery['features']['model_downloads'] is True
     assert any(p['name'] == 'vulkan' and p['install_supported'] for p in discovery['published_backends'])
     command('schema', ['--target', 'config'], configured=False)
     command('schema', ['--target', 'response'], configured=False)

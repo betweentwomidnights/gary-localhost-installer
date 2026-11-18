@@ -1,4 +1,4 @@
-//! Experimental single-service host. No desktop runtime, model downloads, or
+//! Experimental single-service host. No desktop runtime or
 //! production-profile migration is involved in this first SA3 path.
 use crate::runtime::{self, NativeInstall, NativeLaunch};
 use crate::sa3_adapter::{AdapterListener, AdapterOptions};
@@ -26,6 +26,7 @@ pub struct Package {
 pub struct Config {
     #[serde(default = "default_root")]
     pub runtime_root: PathBuf,
+    #[serde(default)]
     pub models_dir: PathBuf,
     #[serde(default)]
     pub core: Package,
@@ -56,7 +57,7 @@ fn f16() -> String {
 fn threads() -> usize {
     4
 }
-fn default_root() -> PathBuf {
+pub(crate) fn default_root() -> PathBuf {
     #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]
@@ -97,6 +98,9 @@ impl Config {
             code: "config_invalid_json", message: format!("Invalid headless config: {error}"),
             hint: "Use schema to inspect the config fields; unknown fields are rejected.",
         })?;
+        if config.models_dir.as_os_str().is_empty() {
+            config.models_dir = config.managed_models_dir();
+        }
         config.resolve_packages().map_err(|message| ConfigError {
             code: "config_package_resolution", message,
             hint: "Inspect capabilities for published backends, or provide a verified local archive pair.",
@@ -106,6 +110,12 @@ impl Config {
             hint: "Use absolute paths, a dedicated runtime root, a nonzero port and an exact GPU device name.",
         })?;
         Ok(config)
+    }
+    pub fn managed_models_dir(&self) -> PathBuf {
+        self.runtime_root.join("models").join("sa3")
+    }
+    fn model_files(&self) -> Result<Vec<&'static crate::model_catalog::PinnedHfFile>, String> {
+        crate::model_catalog::sa3_medium_files(&self.model, &self.encoding, &self.t5_encoding, &self.ae_encoding)
     }
     pub fn summary(&self) -> Value {
         json!({"service":"sa3", "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
@@ -548,6 +558,42 @@ fn inspect_root(config: &Config) -> Result<&'static str, String> {
     Err(format!("Refusing a nonempty, unowned runtime root: {}",root.display()))
 }
 
+pub fn model_plan(config: &Config) -> Result<Value, String> {
+    let files = config.model_files()?;
+    let total: u64 = files.iter().map(|file| file.bytes).sum();
+    let missing: Vec<_> = files.iter().filter(|file| {
+        !std::fs::metadata(config.models_dir.join(&file.filename)).is_ok_and(|m| m.is_file() && m.len() == file.bytes)
+    }).collect();
+    let missing_bytes: u64 = missing.iter().map(|file| file.bytes).sum();
+    let missing_names: Vec<_> = missing.iter().map(|file| &file.filename).collect();
+    Ok(json!({"missing":missing_names,"missing_bytes":missing_bytes,"models_dir":config.models_dir, "managed": config.models_dir == config.managed_models_dir(),
+        "encoding":config.encoding,"bytes":total,"files":files}))
+}
+
+pub async fn download_models(config: &Config) -> Result<Value, String> {
+    let files = config.model_files()?;
+    if config.models_dir != config.managed_models_dir() {
+        return Err("This config uses external weights. To enable managed downloads, omit models_dir in your config.".into());
+    }
+    inspect_root(config)?;
+    owned_root(config)?;
+    let _lease = lock(config)?;
+    let client = reqwest::Client::new();
+    for file in files {
+        eprintln!("Checking {} ({:.2} GiB)", file.filename, file.bytes as f64 / 1073741824.0);
+        let mut last = None;
+        crate::download::download_verified(&client, &file.url(), Default::default(), &file.sha256,
+            &config.models_dir.join(&file.filename), &mut |done, _| {
+                let percent = done.saturating_mul(100) / file.bytes;
+                if last != Some(percent / 10) {
+                    eprintln!("{}: {percent}%",file.filename);
+                    last = Some(percent / 10);
+                }
+            }).await?;
+    }
+    model_plan(config)
+}
+
 /// Filesystem/ownership/port inspection only. No adoption, downloads, GPU probe,
 /// model load or persistent listener. Size checks are not a model hash proof.
 pub async fn doctor(config: &Config) -> Result<Value, String> {
@@ -586,31 +632,24 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
     };
 
     if !config.models_dir.is_dir() {
-        checks.push(json!({"code":"models_directory","status":"error","path":config.models_dir,"hint":"Point models_dir to the directory containing your existing weights. No models are downloaded by this CLI."}));
+        checks.push(json!({"code":"models_directory","status":"error","path":config.models_dir,"hint":"Check your configured model directory. Managed storage can be populated with download-models."}));
     } else {
         checks.push(json!({"code":"models_directory","status":"ok","path":config.models_dir}));
-        if config.model.eq_ignore_ascii_case("medium") && config.t5_encoding.eq_ignore_ascii_case("f16") && config.ae_encoding.eq_ignore_ascii_case("f32") {
-            static CATALOG: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
-            let catalog = CATALOG.get_or_init(|| serde_json::from_str(include_str!("../../src-tauri/sa3-models.json")).expect("bundled SA3 catalog"));
-            let ids = ["sa3-native::text".to_string(),"sa3-native::medium-decoder".to_string(),format!("sa3-native::medium-{}",config.encoding.to_ascii_uppercase())];
+        if let Ok(expected) = config.model_files() {
             let mut files = Vec::new();
-            let mut known = true;
-            for id in ids {
-                let Some(component) = catalog.iter().find(|entry| entry["id"] == id) else { known = false; continue; };
-                for expected in component["files"].as_array().expect("catalog files") {
-                    let path = config.models_dir.join(expected["filename"].as_str().expect("catalog filename"));
-                    let metadata = std::fs::metadata(&path).ok().filter(|metadata| metadata.is_file());
-                    files.push(json!({"path":path,"present":metadata.as_ref().is_some_and(|metadata| metadata.len()>0),
-                        "actual_bytes":metadata.as_ref().map(|metadata| metadata.len()),"expected_bytes":expected["bytes"],
-                        "sha256":expected["sha256"],"repo":expected["repo"],"revision":expected["revision"]}));
-                }
+            for file in expected {
+                let path = config.models_dir.join(&file.filename);
+                let metadata = std::fs::metadata(&path).ok().filter(|metadata| metadata.is_file());
+                files.push(json!({"path":path,"present":metadata.as_ref().is_some_and(|metadata| metadata.len()>0),
+                    "actual_bytes":metadata.as_ref().map(|metadata| metadata.len()),"expected_bytes":file.bytes,
+                    "sha256":file.sha256,"repo":file.repo,"revision":file.revision}));
             }
             let missing = files.iter().any(|file| file["present"] != true);
             let size_mismatch = files.iter().any(|file| file["actual_bytes"] != file["expected_bytes"]);
-            checks.push(json!({"code":"model_files","status":if missing {"error"} else if !known || size_mismatch {"warning"} else {"ok"},
+            checks.push(json!({"code":"model_files","status":if missing {"error"} else if size_mismatch {"warning"} else {"ok"},
                 "files":files,"verification":"presence and size only; contents were not hashed or loaded",
                 "message":if missing {"Required model files are missing. Provide existing weights or complete model preparation separately."}
-                    else if !known || size_mismatch {"This model layout differs from the pinned catalog; compatibility is unverified."}
+                    else if size_mismatch {"This model layout differs from the pinned catalog; compatibility is unverified."}
                     else {"Expected medium model components are present."}}));
         } else {
             checks.push(json!({"code":"model_files","status":"warning","message":"This model/component encoding combination has no catalog preflight. Native startup remains the compatibility check; no weights have been loaded."}));
@@ -629,7 +668,8 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
     else if busy { next_actions.push(json!({"action":if running {"status_or_stop"} else {"wait_for_owner"},"automatic":false})); }
     else if !installed { next_actions.push(json!({"action":"install","requires_explicit_action":true})); }
     if checks.iter().any(|check| matches!(check["code"].as_str(),Some("models_directory"|"model_files")) && check["status"] == "error") {
-        next_actions.push(json!({"action":"provide_required_model_files","model_download_command_available":false}));
+        let managed = config.models_dir == config.managed_models_dir() && config.model_files().is_ok();
+        next_actions.push(json!({"action":if managed {"download-models"} else {"provide_required_model_files"},"model_download_command_available":managed}));
     }
     if checks.iter().any(|check| check["code"]=="public_port" && check["status"]=="error") {
         next_actions.push(json!({"action":"edit_config","field":"public_port","reason":"port is occupied"}));

@@ -23,12 +23,14 @@ gary4local-server schema --target response --json
 ```
 
 Read `data.commands`, option requirements, effects and `data.features` from
-capabilities. Unsupported features currently include training, model downloads,
+capabilities. Unsupported features currently include training,
 named LoRA registries and migration from desktop profiles. Do not invent commands
 for them. Command discovery describes this binary, including its platform's
 published packages. `--help` also works without a config, globally or per command.
 
 ## Prepare and run
+
+For managed storage, omit `--models-dir` at init, inspect `models --config FILE --json`, and explicitly run `download-models --config FILE --json` before serve. Downloads verify the desktop catalog’s pinned hashes.
 
 This POSIX shell example uses existing weights and a dedicated working directory.
 On Windows the same commands accept Windows paths; use PowerShell's own process

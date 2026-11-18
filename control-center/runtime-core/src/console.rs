@@ -18,12 +18,14 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   gary status [sa3]             Show service status\n\
   gary stop [sa3]               Stop the current configured SA3 session\n\
   gary doctor                  Inspect setup without running GPU work\n\
+  gary models                  Show the selected weights, size and storage folder\n\
+  gary download-models         Download and verify the selected managed weights\n\
   gary install                 Explicitly install the pinned GPU runtime\n\n\
   Add --config FILE to any service command. Otherwise use the saved default.\n\
   GARY4LOCAL_HEADLESS_CONFIG overrides the default config path.\n\
   Add --json for the noninteractive agent protocol. Advanced commands:\n\
   init, validate, capabilities, schema, serve, version (see COMMAND --help).\n\n\
-  Console: /setup /install /start /stop /status /doctor /logs /help /quit\n\
+  Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
   SA3 only in this preview. Training is not implemented yet.\n\
   Leaving a console stops only services started by that console.\n\
   No runtime/model downloads happen just by opening Gary.";
@@ -50,6 +52,10 @@ pub fn default_config() -> Result<PathBuf, String> {
             Err("GARY4LOCAL_HEADLESS_CONFIG must be an absolute path.".into())
         };
     }
+    standard_config()
+}
+
+pub(crate) fn standard_config() -> Result<PathBuf, String> {
     #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]
@@ -107,7 +113,7 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
         matches!(
             arg.to_str(),
             Some(
-                "start" | "status" | "stop" | "doctor" | "install" | "init" | "validate" | "serve"
+                "start" | "status" | "stop" | "doctor" | "models" | "download-models" | "install" | "init" | "validate" | "serve"
             )
         )
     });
@@ -141,6 +147,7 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
 #[derive(Debug, PartialEq)]
 enum Action {
     Setup,
+    Models,
     Install,
     Start,
     Stop,
@@ -158,7 +165,7 @@ fn action(line: &str) -> Result<Option<Action>, String> {
     let name = words[0].trim_start_matches('/').to_ascii_lowercase();
     let service_action = matches!(
         name.as_str(),
-        "start" | "stop" | "status" | "services" | "install" | "doctor" | "logs"
+        "start" | "stop" | "status" | "services" | "models" | "install" | "doctor" | "logs"
     );
     if words.len() > 1
         && !(service_action && words.len() == 2 && words[1].eq_ignore_ascii_case("sa3"))
@@ -166,6 +173,7 @@ fn action(line: &str) -> Result<Option<Action>, String> {
         return Err("Use a command on its own or with sa3, for example /start sa3. Type /help for commands.".into());
     }
     Ok(Some(match name.as_str() {
+        "models" => Action::Models,
         "setup" => Action::Setup,
         "install" => Action::Install,
         "start" => Action::Start,
@@ -238,15 +246,27 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
     if path.exists() {
         return Err(format!("Config already exists: {}\nSetup will not overwrite it. Use /doctor to inspect it or edit the file deliberately.",path.display()));
     }
-    say("Set up SA3 — /cancel leaves setup without saving.\nExisting medium weights are reused: F16 T5, F32 autoencoder, and your chosen DiT precision.")?;
+    say("Set up SA3 — /cancel leaves setup without saving.\nPress Enter to let Gary manage your SA3 weights. You can download them after setup.")?;
     let models = loop {
-        let text = answer(input, "Folder containing your existing SA3 models: ").await?;
+        let text = answer(input, "Press Enter for managed storage, or enter a folder of existing SA3 models: ").await?;
+        if text.is_empty() { break None; }
         let path = model_path(&text);
         if !text.is_empty() && path.is_dir() {
-            break path;
+            break Some(path);
         }
         say("That folder does not exist. Enter a folder path, or /cancel.")?;
     };
+    let mut root = cli::init_root(path);
+    if models.is_none() {
+        say(format!("Gary will keep the runtime and weights together in {}", root.display()))?;
+        let location = answer(input, "Storage folder [Enter for default]: ").await?;
+        if !location.is_empty() {
+            root = model_path(&location);
+            if !root.is_absolute() {
+                return Err("Choose an absolute storage path, then run /setup again.".into());
+            }
+        }
+    }
     let port = loop {
         let value = answer(input, "Client port [28300]: ").await?;
         let value = if value.is_empty() {
@@ -288,14 +308,14 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
         if ["f16", "q8_0", "q5_k_m", "q4_k_m"].contains(&value.as_str()) {
             break value;
         }
-        say("Choose one of the listed precisions matching your downloaded DiT weights.")?;
+        say("Choose one of the listed inference precisions.")?;
     };
-    let args: Vec<OsString> = vec![
+    let mut args: Vec<OsString> = vec![
         "init".into(),
         "--config".into(),
         path.into(),
-        "--models-dir".into(),
-        models.into_os_string(),
+        "--runtime-root".into(),
+        root.into_os_string(),
         "--port".into(),
         port.into(),
         "--device".into(),
@@ -303,6 +323,7 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
         "--encoding".into(),
         encoding.into(),
     ];
+    if let Some(models) = models { args.extend(["--models-dir".into(), models.into_os_string()]); }
     let request = cli::Request::parse(&args).map_err(|e| e.message)?;
     say(format!(
         "Save config to {}? No runtime or model downloads will start.",
@@ -324,7 +345,7 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
         .await
         .map_err(|e| format!("{}\n{}", e.message, e.hint))?;
     command::human_output("init", &result.data)?;
-    say("Next: /doctor, then /install when you want to install the runtime.")
+    say("Next: /models to prepare weights, /install for the runtime, then /start.")
 }
 
 struct Running {
@@ -356,7 +377,7 @@ impl Console {
     }
     async fn status(&self) -> Result<(), String> {
         if !self.path.exists() {
-            return say("SERVICE  STATE             ADDRESS\nSA3      not configured\n\nType /setup to choose your model folder and GPU settings.");
+            return say("SERVICE  STATE             ADDRESS\nSA3      not configured\n\nType /setup to set up managed storage and GPU settings.");
         }
         let mut status = headless::status(&self.config()?).await?;
         if self
@@ -392,8 +413,17 @@ impl Console {
     async fn handle(&mut self, action: Action, input: &mut Input) -> Result<bool, String> {
         match action {
             Action::Quit=>return Ok(true),
-            Action::Help=>say("/setup        Choose existing models, GPU, precision and port\n/install      Install the pinned runtime (explicit download and GPU probe)\n/start [sa3]  Start SA3; you can keep using this console while it loads\n/stop [sa3]   Stop SA3, or cancel startup\n/status       Show services and addresses (/services also works)\n/doctor       Read-only preflight; no GPU work or downloads\n/logs         Show the native log path\n/quit         Stop services started here and leave (Ctrl+C also works)\n\nCommands work with or without '/'. Training is not implemented yet.")?,
+            Action::Help=>say("/setup        Set up storage, GPU, precision and port\n/models       See required weights and download them into managed storage\n/install      Install the pinned runtime (explicit download and GPU probe)\n/start [sa3]  Start SA3; you can keep using this console while it loads\n/stop [sa3]   Stop SA3, or cancel startup\n/status       Show services and addresses (/services also works)\n/doctor       Read-only preflight; no GPU work or downloads\n/logs         Show the native log path\n/quit         Stop services started here and leave (Ctrl+C also works)\n\nCommands work with or without '/'. Training is not implemented yet.")?,
             Action::Setup=>setup(&self.path,input).await?,
+            Action::Models => {
+                let config = self.config()?;
+                let plan = headless::model_plan(&config)?;
+                command::human_output("models", &plan)?;
+                if plan["managed"] == true && matches!(answer(input, "Download or verify these weights [y/N]? ").await?.to_lowercase().as_str(), "y" | "yes") {
+                    headless::download_models(&config).await?;
+                    say("SA3 weights verified. Use /start once the runtime is installed.")?;
+                }
+            }
             Action::Status=>self.status().await?,
             Action::Logs=>say(self.config()?.runtime_root.join("logs/sa3-native.log").display())?,
             Action::Doctor=>command::human_output("doctor",&headless::doctor(&self.config()?).await?)?,
@@ -411,7 +441,7 @@ impl Console {
                 let preflight=headless::doctor(&config).await?;
                 if preflight["can_attempt_serve"]!=true {
                     command::human_output("doctor",&preflight)?;
-                    return Err("Resolve the preflight checks before /start. Use /install if the runtime is missing; model files must already exist.".into());
+                    return Err("Resolve the preflight checks before /start. Use /install if the runtime is missing; use /models to prepare weights.".into());
                 }
                 self.serial+=1;
                 let id=self.serial;

@@ -58,6 +58,8 @@ const COMMANDS: &[&str] = &[
     "doctor",
     "capabilities",
     "schema",
+    "models",
+    "download-models",
     "install",
     "serve",
     "status",
@@ -76,7 +78,7 @@ const INIT_OPTIONS: &[&str] = &[
 fn command_flags(command: &str) -> &'static [&'static str] {
     match command {
         "init" => INIT_OPTIONS,
-        "validate" | "doctor" | "install" | "serve" | "status" => &["config"],
+        "validate" | "doctor" | "models" | "download-models" | "install" | "serve" | "status" => &["config"],
         "stop" => &["config", "session"],
         "schema" => &["target"],
         _ => &[],
@@ -143,11 +145,6 @@ impl Request {
         if allowed.contains(&"config") && !request.options.contains_key("config") {
             return Err(Error::usage("--config FILE is required"));
         }
-        if request.command == "init" && !request.options.contains_key("models-dir") {
-            return Err(Error::usage(
-                "init requires --models-dir DIR pointing to existing weights",
-            ));
-        }
         Ok(request)
     }
     fn path(&self, name: &str) -> Option<PathBuf> {
@@ -167,8 +164,10 @@ impl Request {
 
 pub fn help() -> &'static str {
     "gary4local-server COMMAND [OPTIONS]\n\n\
-     init --config FILE --models-dir DIR [--runtime-root DIR] [--device Vulkan0] [--port 28300] [--encoding f16]\n\
+     init --config FILE [--models-dir DIR] [--runtime-root DIR] [--device Vulkan0] [--port 28300] [--encoding f16]\n\
      validate --config FILE      Check configuration and resolve pinned packages; no downloads\n\
+     models --config FILE       List pinned weights for this configuration\n\
+     download-models --config FILE  Fetch and verify weights in managed storage\n\
      doctor --config FILE        Read-only storage/runtime/model/port preflight; no GPU jobs\n\
      install --config FILE       Explicitly install and GPU-probe verified runtime packages\n\
      serve --config FILE         Foreground supervisor; load the model, then report readiness\n\
@@ -179,7 +178,7 @@ pub fn help() -> &'static str {
      version                     Print the binary version\n\n\
      --json                      Versioned JSON results/errors; serve emits newline-delimited JSON\n\
      --help                      Global or per-command help (never reads config)\n\n\
-     SA3 only. All service listeners bind to 127.0.0.1. Models are never downloaded.\n\
+     SA3 only. All service listeners bind to 127.0.0.1. download-models explicitly fetches the configured weights.\n\
      Training commands are not implemented. init never overwrites a different config."
 }
 
@@ -202,13 +201,13 @@ pub fn capabilities() -> Value {
     json!({"binary":"gary4local-server","version":env!("CARGO_PKG_VERSION"),"schema_version":SCHEMA_VERSION,
         "platform":crate::runtime::current_platform(),"services":["sa3"],"validated_models":["medium"],
         "commands":COMMANDS.iter().filter(|command| **command != "help").map(|command| json!({
-            "name":command,"requires_config":matches!(*command,"init"|"validate"|"doctor"|"install"|"serve"|"status"|"stop"),
-            "effects":match *command {"init"=>"writes_config","install"=>"installs_runtime_and_probes_gpu","serve"=>"loads_model_and_serves","stop"=>"stops_owned_session",_=>"read_only"},
+            "name":command,"requires_config":matches!(*command,"init"|"validate"|"doctor"|"models"|"download-models"|"install"|"serve"|"status"|"stop"),
+            "effects":match *command {"init"=>"writes_config","download-models"=>"downloads_and_verifies_weights","install"=>"installs_runtime_and_probes_gpu","serve"=>"loads_model_and_serves","stop"=>"stops_owned_session",_=>"read_only"},
             "json_stream":*command=="serve","supports_expected_session":*command=="stop",
             "options":command_flags(command).iter().map(|flag| json!({"flag":format!("--{flag}"),
-                "required":*flag=="config" || *command=="init" && *flag=="models-dir",
+                "required":*flag=="config",
                 "value":match *flag {"config"=>"FILE","models-dir"|"runtime-root"=>"DIR","port"=>"PORT","session"=>"SESSION_ID",_=>"TEXT"}})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
-        "features":{"training":false,"model_downloads":false,"named_lora_registry":false,"desktop_profile_migration":false,"loopback_only":true},
+        "features":{"training":false,"model_downloads":true,"named_lora_registry":false,"desktop_profile_migration":false,"loopback_only":true},
         "published_backends":backends,"local_archive_backends":["cuda","vulkan"],
         "exit_codes":{"0":"success","1":"operation failed","2":"invalid arguments","3":"config or init failed","4":"doctor found blocking issues"},
         "json_protocol":{"format":"one JSON result per finite command; serve emits ready event then terminal result","progress":"stderr","versioned":true},
@@ -218,10 +217,10 @@ pub fn capabilities() -> Value {
 pub fn config_schema() -> Value {
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:gary4local:headless-config:v1","title":"gary4local headless SA3 configuration",
         "type":"object","additionalProperties":false,
-        "required":["models_dir","device","public_port","model","encoding"],
+        "required":["device","public_port","model","encoding"],
         "properties":{
             "runtime_root":{"type":"string","minLength":1,"description":"Absolute normalized dedicated runtime directory. Defaults to platform data storage."},
-            "models_dir":{"type":"string","minLength":1,"description":"Absolute directory containing existing model files; no model downloads are performed."},
+            "models_dir":{"type":"string","minLength":1,"description":"Optional external model directory. Omit to manage models under runtime_root/models/sa3."},
             "core":{"$ref":"#/$defs/package"},"backend":{"$ref":"#/$defs/package"},
             "manifest":{"type":["string","null"],"description":"Optional absolute path to a local package manifest; otherwise use bundled pins."},
             "device":{"type":"string","pattern":"^(CUDA|Vulkan)","description":"Exact GPU name returned by engine properties, such as Vulkan0 or CUDA0."},
@@ -344,62 +343,65 @@ fn comparable(path: &Path) -> Result<PathBuf, Error> {
         }
     }
 }
+pub(crate) fn init_root(config_path: &Path) -> PathBuf {
+    if crate::console::standard_config().as_deref() == Ok(config_path) {
+        return headless::default_root().join("sa3");
+    }
+    config_path.with_file_name(format!("{}.data", config_path.file_stem().unwrap_or_default().to_string_lossy()))
+}
+
 fn init(request: &Request) -> Result<Value, Error> {
     use std::io::Write;
     let config_path = absolute(&request.path("config").unwrap())?;
-    let models = request
-        .path("models-dir")
-        .unwrap()
-        .canonicalize()
-        .map_err(|error| {
-            Error::new(
-                "models_unreadable",
-                error.to_string(),
-                "--models-dir must name an existing directory containing your weights.",
-                3,
-            )
-        })?;
-    if !models.is_dir() {
-        return Err(Error::new(
-            "models_unreadable",
-            "--models-dir is not a directory",
-            "Choose the directory containing existing weights.",
-            3,
-        ));
-    }
-    if models.to_str().is_none() {
-        return Err(Error::new(
-            "path_not_utf8",
-            "JSON configuration requires UTF-8 model paths",
-            "Choose a model path representable in JSON.",
-            3,
-        ));
-    }
     let root = match request.path("runtime-root") {
         Some(path) => absolute(&path)?,
-        None => config_path.with_file_name(format!(
-            "{}.data",
-            config_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-        )),
+        None => init_root(&config_path),
     };
     let compared_root = comparable(&root)?;
-    if comparable(&config_path)?.starts_with(&compared_root)
-        || models.starts_with(&compared_root)
-        || compared_root.starts_with(&models)
-    {
-        return Err(Error::new("config_invalid", "Keep config, runtime root and existing model sources separate", "Store the config outside the runtime root; choose a root that does not overlap the models directory.", 3));
+    if comparable(&config_path)?.starts_with(&compared_root) {
+        return Err(Error::new("config_invalid", "Config is inside the runtime root", "Choose a config path outside the runtime root.", 3));
     }
+    let models = if let Some(path) = request.path("models-dir") {
+        let models = path
+            .canonicalize()
+            .map_err(|error| {
+                Error::new(
+                    "models_unreadable",
+                    error.to_string(),
+                    "--models-dir must name an existing directory containing your weights.",
+                    3,
+                )
+            })?;
+        if !models.is_dir() {
+            return Err(Error::new(
+                "models_unreadable",
+                "--models-dir is not a directory",
+                "Choose the directory containing existing weights.",
+                3,
+            ));
+        }
+        if models.to_str().is_none() {
+            return Err(Error::new(
+                "path_not_utf8",
+                "JSON configuration requires UTF-8 model paths",
+                "Choose a model path representable in JSON.",
+                3,
+            ));
+        }
+        if models.starts_with(&compared_root) || compared_root.starts_with(&models) {
+            return Err(Error::new("config_invalid", "External models overlap the runtime root", "Omit --models-dir for managed storage or supply an independent directory.", 3));
+        }
+        Some(models)
+    } else { None };
     let port = request
         .text("port")?
         .unwrap_or("28300")
         .parse::<u16>()
         .map_err(|_| Error::usage("--port must be an integer from 1 to 65535"))?;
-    let body = json!({"runtime_root":root,"models_dir":models,"device":request.text("device")?.unwrap_or("Vulkan0"),
+    let mut body = json!({"runtime_root":root,"device":request.text("device")?.unwrap_or("Vulkan0"),
         "public_port":port,"model":"medium","encoding":request.text("encoding")?.unwrap_or("f16").to_ascii_lowercase(),
         "t5_encoding":"f16","ae_encoding":"f32","threads":4,"defaults":{}});
+    if let Some(models) = models { body["models_dir"] = json!(models); }
     let raw = serde_json::to_vec_pretty(&body).expect("JSON config");
     let config = Config::from_bytes(&raw)?;
     let mut options = std::fs::OpenOptions::new();
@@ -408,6 +410,9 @@ fn init(request: &Request) -> Result<Value, Error> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
+    }
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| Error::new("config_write_failed", error.to_string(), "Check config directory permissions.", 3))?;
     }
     let created = match options.open(&config_path) {
         Ok(mut file) => {
@@ -483,12 +488,14 @@ pub async fn execute(
     }
     let result = match request.command.as_str() {
         "doctor" => headless::doctor(&config).await,
+        "models" => headless::model_plan(&config),
+        "download-models" => headless::download_models(&config).await,
         "install" => headless::install(&config).await,
         "serve" => headless::serve(&config, emit_event).await,
         "status" => headless::status(&config).await,
         _ => unreachable!("validated command"),
     }.map_err(|message| Error::new(match request.command.as_str() {
-        "install"=>"install_failed","serve"=>"serve_failed","status"=>"status_failed","stop"=>"stop_failed",_=>"doctor_failed",
+        "models"=>"models_unavailable","download-models"=>"model_download_failed","install"=>"install_failed","serve"=>"serve_failed","status"=>"status_failed","stop"=>"stop_failed",_=>"doctor_failed",
     }, message, "Run doctor --config FILE --json for preflight details; inspect the reported native log if startup failed. Do not blindly retry a mutation.", 1))?;
     if request.command == "doctor" && result["can_attempt_serve"] == false {
         return Ok(Outcome { data: result, error: Some(Error::new("not_ready", "Preflight found blocking issues", "Follow the checks and next_actions in data; install and serve remain explicit actions.", 4)), exit_code: 4 });

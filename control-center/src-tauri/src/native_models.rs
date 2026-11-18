@@ -11,50 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-/// A model artifact pinned with the application, independently of HF's main.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PinnedHfFile {
-    pub repo: String,
-    pub revision: String,
-    pub filename: String,
-    pub sha256: String,
-    pub bytes: u64,
-}
-
-impl PinnedHfFile {
-    pub fn validate(&self) -> Result<(), String> {
-        let parts: Vec<_> = self.repo.split('/').collect();
-        let safe_part = |part: &str| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-                && part != "."
-                && part != ".."
-        };
-        // A file may sit in a repo subfolder (SAOS finetunes do), and keeps
-        // that relative path under the models folder.
-        if parts.len() != 2
-            || !parts.iter().all(|part| safe_part(part))
-            || self.revision.len() != 40
-            || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
-            || !self.filename.split('/').all(safe_part)
-            || ![".gguf", ".safetensors", ".json"].iter().any(|ext| self.filename.ends_with(ext))
-            || !is_sha256(&self.sha256)
-            || self.bytes == 0
-        {
-            return Err("Invalid pinned Hugging Face model artifact.".into());
-        }
-        Ok(())
-    }
-
-    fn url(&self) -> String {
-        format!(
-            "https://huggingface.co/{}/resolve/{}/{}",
-            self.repo, self.revision, self.filename
-        )
-    }
-}
+pub use gary4local_core::model_catalog::{CatalogComponent, PinnedHfFile};
 
 fn download_headers() -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -85,16 +42,6 @@ async fn finish_download(
         return Err(error);
     }
     Ok(())
-}
-
-/// A downloadable part of a native service's models: pinned files that are
-/// fetched, verified and kept together.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct CatalogComponent {
-    pub id: String,
-    pub label: String,
-    pub description: String,
-    pub files: Vec<PinnedHfFile>,
 }
 
 /// A native service's published model components, and the folder under the

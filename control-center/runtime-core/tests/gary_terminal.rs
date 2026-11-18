@@ -186,3 +186,30 @@ fn ctrl_c_exits_without_waiting_for_enter_or_creating_storage() {
     assert!(!fixture.config.exists());
     assert!(!fixture.root.join("sa3.data").exists());
 }
+
+#[test]
+fn first_run_managed_storage_can_preview_and_decline_models() {
+    let fixture = Fixture::new();
+    let mut terminal = fixture.open();
+    terminal.expect("gary> ");
+    terminal.send("/setup\n");
+    terminal.expect("SA3 models: ");
+    terminal.send("\n");
+    terminal.expect("Storage folder");
+    terminal.send("\n");
+    for question in ["Client port", "GPU device", "Generation precision"] {
+        terminal.expect(question);
+        terminal.send("\n");
+    }
+    terminal.expect("Save [y/N]: ");
+    terminal.send("y\n");
+    terminal.expect("gary> ");
+    terminal.send("/models\n");
+    terminal.expect("GiB total");
+    terminal.expect("Download or verify");
+    terminal.send("\n");
+    terminal.expect("gary> ");
+    assert!(!fixture.root.join("sa3.data").exists());
+    terminal.send("/quit\n");
+    terminal.exited();
+}

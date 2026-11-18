@@ -19,6 +19,16 @@ pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
     let mut out = std::io::stdout().lock();
     let write = (|| -> std::io::Result<()> {
         match command {
+            "models" | "download-models" => {
+                writeln!(out, "SA3 medium {} — {:.2} GiB total", data["encoding"].as_str().unwrap_or(""), data["bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0)?;
+                writeln!(out, "Storage: {}",data["models_dir"].as_str().unwrap_or(""))?;
+                writeln!(out, "{:.2} GiB of missing or incomplete weights", data["missing_bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0)?;
+                for file in data["files"].as_array().into_iter().flatten() {
+                    writeln!(out, "  {}", file["filename"].as_str().unwrap_or(""))?;
+                }
+                if command == "download-models" { writeln!(out, "SA3 weights verified.")?; }
+                else if data["managed"] == false { writeln!(out, "Using external weights from your selected folder.")?; }
+            }
             "install" => writeln!(
                 out,
                 "SA3 runtime installed ({})",
@@ -68,7 +78,7 @@ pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
                     "Runtime root: {}",
                     data["config"]["runtime_root"].as_str().unwrap_or("")
                 )?;
-                writeln!(out,"Next: validate, doctor, then an explicit install. Existing model files are reused.")?;
+                writeln!(out,"Use models to inspect weights and install to prepare the runtime.")?;
             }
             "validate" => {
                 writeln!(
@@ -173,7 +183,7 @@ pub async fn run(args: Vec<std::ffi::OsString>, human: bool) -> i32 {
                     .map_err(|error| error.to_string())
             } else if request.command == "serve" {
                 Ok(())
-            } else if matches!(request.command.as_str(), "init" | "validate" | "doctor")
+            } else if matches!(request.command.as_str(), "init" | "validate" | "doctor" | "models" | "download-models")
                 || human && matches!(request.command.as_str(), "install" | "status" | "stop")
             {
                 human_output(&request.command, &outcome.data)

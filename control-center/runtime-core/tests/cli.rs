@@ -104,7 +104,7 @@ fn discovery_is_config_free_and_machine_options_are_discoverable() {
     let b = parsed(&command(&["--json", "capabilities"]), 0);
     assert_eq!(a, b);
     assert_eq!(a["data"]["features"]["training"], false);
-    assert_eq!(a["data"]["features"]["model_downloads"], false);
+    assert_eq!(a["data"]["features"]["model_downloads"], true);
     let commands = a["data"]["commands"].as_array().unwrap();
     let stop = commands
         .iter()
@@ -358,4 +358,41 @@ fn stop_rejects_a_root_symlink_without_writing_through_it() {
         "stop_failed"
     );
     assert!(!elsewhere.join("stop.request").exists());
+}
+
+#[test]
+fn managed_model_plan_uses_selected_precision_without_creating_storage() {
+    let fixture = Fixture::new();
+    parsed(&fixture.run("init", &["--encoding", "q4_k_m"]), 0);
+    let plan = parsed(&fixture.run("models", &[]), 0);
+    let data = &plan["data"];
+    assert_eq!(data["managed"], true);
+    assert_eq!(
+        PathBuf::from(data["models_dir"].as_str().unwrap()),
+        fixture.owned().join("models/sa3")
+    );
+    assert_eq!(data["files"].as_array().unwrap().len(), 5);
+    assert_eq!(data["bytes"], data["missing_bytes"]);
+    assert!(data["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|name| name.as_str().unwrap().contains("Q4_K_M")));
+    assert!(!fixture.owned().exists());
+    std::fs::create_dir(&fixture.owned()).unwrap();
+    std::fs::write(fixture.owned().join("unrelated"), b"keep").unwrap();
+    parsed(&fixture.run("download-models", &[]), 1);
+    assert!(!fixture.owned().join("models").exists());
+}
+
+#[test]
+fn downloading_never_writes_into_external_weights() {
+    let fixture = Fixture::new();
+    fixture.init();
+    let result = parsed(&fixture.run("download-models", &[]), 1);
+    assert!(result["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("external weights"));
+    assert!(!fixture.owned().exists());
 }
