@@ -191,28 +191,10 @@ fn action(line: &str) -> Result<Option<Action>, String> {
         }
     }))
 }
-type Input = mpsc::UnboundedReceiver<Result<String, String>>;
-fn input() -> Input {
-    let (tx, rx) = mpsc::unbounded_channel();
-    // A plain OS thread is intentional: Tokio's blocking-stdin task would keep
-    // runtime shutdown waiting for Enter after Ctrl+C/SIGTERM.
-    std::thread::spawn(move || loop {
-        let mut line = String::new();
-        match std::io::stdin().read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                if tx.send(Ok(line)).is_err() {
-                    break;
-                }
-            }
-            Err(e) => {
-                let _ = tx.send(Err(e.to_string()));
-                break;
-            }
-        }
-    });
-    rx
-}
+#[path = "console_input.rs"]
+mod console_input;
+use console_input::Input;
+
 async fn answer(input: &mut Input, question: &str) -> Result<String, String> {
     prompt(question)?;
     let answer = input
@@ -293,6 +275,12 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
         }
         say("Use an exact GPU name such as Vulkan0 or CUDA0. Linux published previews currently provide Vulkan.")?;
     };
+    #[cfg(target_os = "linux")]
+    let encoding = {
+        let choices = ["f16", "q8_0", "q5_k_m", "q4_k_m"];
+        choices[input.select("Generation precision", &choices).await?].to_owned()
+    };
+    #[cfg(not(target_os = "linux"))]
     let encoding = loop {
         let value = answer(
             input,
@@ -419,7 +407,12 @@ impl Console {
                 let config = self.config()?;
                 let plan = headless::model_plan(&config)?;
                 command::human_output("models", &plan)?;
-                if plan["managed"] == true && matches!(answer(input, "Download or verify these weights [y/N]? ").await?.to_lowercase().as_str(), "y" | "yes") {
+                if plan["managed"] != true { return Ok(false); }
+                #[cfg(target_os = "linux")]
+                let download = input.select("SA3 models", &["No, go back", "Yes, download or verify weights"]).await? == 1;
+                #[cfg(not(target_os = "linux"))]
+                let download = matches!(answer(input, "Download or verify these weights [y/N]? ").await?.to_lowercase().as_str(), "y" | "yes");
+                if download {
                     headless::download_models(&config).await?;
                     say("SA3 weights verified. Use /start once the runtime is installed.")?;
                 }
@@ -486,7 +479,7 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
         serial: 0,
         ready: tx,
     };
-    let mut input = input();
+    let mut input = Input::new();
     let shutdown = termination();
     tokio::pin!(shutdown);
     // Register signal handlers before showing a prompt, including the first

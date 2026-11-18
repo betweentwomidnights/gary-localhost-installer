@@ -7,7 +7,9 @@ It shows the configured SA3 service, its state and address. Use `/setup` once an
 storage, or choose a storage folder on a larger disk. Select your precision,
 then use `/models` to see the required files and size. Confirm to download and
 verify the weights. Use `/install` for the GPU runtime, then `/start`.
-An existing SA3 weights folder can instead be selected during setup. Commands also work without the slash. `/stop` stops SA3 or cancels
+On Linux, use ↑ and ↓ to highlight a precision or model action, Enter to select,
+and Esc to return to the prompt. An existing SA3 weights folder can also be
+selected during setup. Commands also work without the slash. `/stop` stops SA3 or cancels
 startup; `/status` refreshes the table; `/logs` shows the native log path.
 `/quit`, Ctrl+C, SIGTERM and end of input stop services started by this console.
 A service already running in another session is left running on exit; an

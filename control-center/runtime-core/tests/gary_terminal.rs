@@ -197,16 +197,31 @@ fn first_run_managed_storage_can_preview_and_decline_models() {
     terminal.send("\n");
     terminal.expect("Storage folder");
     terminal.send("\n");
-    for question in ["Client port", "GPU device", "Generation precision"] {
+    for question in ["Client port", "GPU device"] {
         terminal.expect(question);
         terminal.send("\n");
     }
+    terminal.expect("Generation precision");
+    #[cfg(target_os = "linux")]
+    terminal.send("\x1b[B\x1b[B\x1b[A");
+    terminal.send("\n");
     terminal.expect("Save [y/N]: ");
     terminal.send("y\n");
     terminal.expect("gary> ");
     terminal.send("/models\n");
     terminal.expect("GiB total");
+    #[cfg(target_os = "linux")]
+    terminal.expect("Yes, download or verify weights");
+    #[cfg(not(target_os = "linux"))]
     terminal.expect("Download or verify");
+    #[cfg(target_os = "linux")]
+    {
+        let config: serde_json::Value = serde_json::from_slice(&std::fs::read(&fixture.config).unwrap()).unwrap();
+        assert_eq!(config["encoding"], "q8_0");
+        terminal.send("\x1b[B\x1b");
+        terminal.expect("Selection cancelled.");
+    }
+    #[cfg(not(target_os = "linux"))]
     terminal.send("\n");
     terminal.expect("gary> ");
     assert!(!fixture.root.join("sa3.data").exists());
