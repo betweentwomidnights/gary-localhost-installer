@@ -534,7 +534,7 @@ pub async fn execute(
         "models" => headless::model_plan(&config),
         "download-models" => headless::download_models(&config).await,
         "install" => headless::install(&config).await,
-        "serve" => headless::serve(&config, emit_event).await,
+        "serve" => headless::serve(&config, headless::Sa3Startup::PrepareModel, emit_event).await,
         "status" => headless::status(&config).await,
         _ => unreachable!("validated command"),
     }.map_err(|message| Error::new(match request.command.as_str() {

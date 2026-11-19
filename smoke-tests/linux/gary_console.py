@@ -142,7 +142,7 @@ try:
     results['startup_cancellation_releases_owned_children_and_lock'] = True
     terminal.send('/start sa3\n'); terminal.expect('SA3 ready at '); terminal.expect('gary> ')
     state = command('status')
-    assert state['running'] and state['health']
+    assert state['running'] and state['health']['loaded'] is False, state
     first_session = state['state']['session']
     terminal.send('/status\n'); terminal.expect('running'); terminal.expect('gary> ')
     submitted = http('/generate', {'prompt': 'a short warm synth chord', 'duration': 2, 'tail_pad': 0,
@@ -185,6 +185,8 @@ try:
             pass
         assert time.monotonic() < deadline
         time.sleep(.1)
+    assert command('status')['health']['loaded'] is True
+    results['scripted_serve_confirms_model_initialization'] = True
     terminal = Terminal('external-owner-preserved')
     terminal.expect('Running in another session.'); terminal.expect('gary> ')
     terminal.send('/quit\n'); terminal.expect('Goodbye.'); terminal.exited(); terminal = None

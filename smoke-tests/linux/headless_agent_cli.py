@@ -134,7 +134,8 @@ try:
     assert ready['public_url'] == f'http://127.0.0.1:{public}'
     assert Path(ready['log_path']) == runtime / 'logs' / 'sa3-native.log'
     state = command('status')['data']
-    assert state['running'] and state['health'] and state['state']['session'] == session
+    assert state['running'] and state['health']['loaded'] is True, state
+    assert state['state']['session'] == session
     native, private = state['state']['native_pid'], state['state']['native_port']
     mismatch = command('stop', ['--session', 'stale-' + session], expected=1)
     assert mismatch['error']['code'] == 'session_mismatch'

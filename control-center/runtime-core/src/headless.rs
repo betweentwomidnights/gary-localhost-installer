@@ -1198,8 +1198,14 @@ async fn forward_native(listener: tokio::net::TcpListener, port: u16) -> std::io
     }
 }
 
+pub enum Sa3Startup {
+    Cold,
+    PrepareModel,
+}
+
 pub async fn serve(
     config: &Config,
+    sa3_startup: Sa3Startup,
     ready: impl Fn(Value) -> Result<(), String>,
 ) -> Result<Value, String> {
     config.validate()?;
@@ -1285,10 +1291,10 @@ pub async fn serve(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    // Serving a named model is explicit. Prove that its components resolve and
-    // initialize before announcing readiness; this never downloads weights.
-    if config.service == Service::Sa3 {
-        eprintln!("Loading the configured model; no weights are downloaded...");
+    // Scripted serve verifies the model before reporting readiness. The
+    // interactive console starts the listener cold, like the desktop app.
+    if config.service == Service::Sa3 && matches!(sa3_startup, Sa3Startup::PrepareModel) {
+        eprintln!("Preparing SA3 from the local model files...");
         let loaded = client
             .post(format!("http://127.0.0.1:{native_port}/load"))
             .timeout(Duration::from_secs(180))

@@ -650,7 +650,7 @@ impl Console {
                 let tx = self.events.clone();
                 let cfg = config.clone();
                 let task = tokio::spawn(async move {
-                    let result = headless::serve(&cfg, |value| {
+                    let result = headless::serve(&cfg, headless::Sa3Startup::Cold, |value| {
                         tx.send(Event::Ready(service, serial, value))
                             .map_err(|e| e.to_string())
                     })

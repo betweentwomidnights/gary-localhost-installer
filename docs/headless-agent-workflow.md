@@ -19,7 +19,8 @@ For another service, run `gary init carey --json`, then `gary install carey --js
 `gary stop carey --session SESSION --json` to stop it. Named commands use
 per-service configs. An explicit `--config FILE` names the actual service
 config. A ready event on the six direct native services means the HTTP server
-answered its health check. SA3 additionally completes model load before ready.
+answered its health check. For scripted SA3 starts, the ready event also confirms
+model initialization. Interactive `/start sa3` starts with the model unloaded.
 
 ## Discover before acting
 

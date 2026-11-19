@@ -85,7 +85,12 @@ the adapter's registry interface and retain their existing implementations.
 Each foreground host manages one explicitly configured service. Its local JSON
 configuration is separate from desktop profiles and migration records. It
 installs pinned core/backend ZIPs with SHA256 verification, checks a real GPU,
-and exposes the service’s client routes. SA3 preloads its model through the shared Rust adapter. The other native servers report readiness at their health endpoints and handle loading as in the desktop app. Use `download-models` to prepare managed weights before starting the host.
+and exposes the service’s client routes. Interactive `/start sa3` starts the
+listener with the model unloaded, as the desktop app does. The first generation
+prepares the model from local weights. Explicit `gary start sa3` and
+`gary4local-server serve` verify SA3 model initialization before reporting
+readiness. Use `download-models` to prepare managed weights before starting
+the host.
 
 ## Build and run
 
