@@ -25,7 +25,7 @@ pub const SHARED: &str = "carey-native::shared";
 /// tier generates comes down to its DiT's weights. On an 8 GB RTX 5070 this
 /// recommends the 2B base at BF16 and XL at Q8_0, both of which rendered 120 s
 /// there, and rules out XL BF16, whose weights alone exceed the card.
-pub const HEADROOM_BYTES: u64 = 2 << 30;
+pub use gary4local_core::model_catalog::CAREY_HEADROOM_BYTES as HEADROOM_BYTES;
 
 pub fn models() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
@@ -86,15 +86,10 @@ pub fn options(tier: &str) -> Vec<String> {
 /// The best tier of `variant` whose DiT fits a GPU with `memory_bytes` beside
 /// the headroom; the smallest tier when none does.
 pub fn recommended_tier(variant: &str, memory_bytes: u64) -> &'static str {
-    TIERS
-        .iter()
-        .copied()
-        .find(|tier| {
-            models().component(&dit_component(variant, tier)).is_some_and(|component| {
-                component.files.iter().map(|file| file.bytes).sum::<u64>() + HEADROOM_BYTES <= memory_bytes
-            })
-        })
-        .unwrap_or(TIERS[TIERS.len() - 1])
+    let tier = gary4local_core::model_catalog::recommended_model_precision(
+        gary4local_core::service::Service::Carey, variant, memory_bytes,
+    );
+    if tier.is_empty() { TIERS[TIERS.len() - 1] } else { tier }
 }
 
 /// The tier to prepare (the base DiT's), and every DiT at its own best tier:

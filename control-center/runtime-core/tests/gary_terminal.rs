@@ -211,11 +211,7 @@ fn first_run_managed_storage_can_preview_and_decline_models() {
     terminal.send("y\n");
     terminal.expect("gary> ");
     terminal.send("/models sa3\n");
-    terminal.expect("GiB total");
-    #[cfg(target_os = "linux")]
-    terminal.expect("Yes, download or verify weights");
-    #[cfg(not(target_os = "linux"))]
-    terminal.expect("Download or verify");
+    terminal.expect("medium · precision");
     #[cfg(target_os = "linux")]
     {
         let config: serde_json::Value = serde_json::from_slice(&std::fs::read(&fixture.config).unwrap()).unwrap();
@@ -224,7 +220,7 @@ fn first_run_managed_storage_can_preview_and_decline_models() {
         terminal.expect("Selection cancelled.");
     }
     #[cfg(not(target_os = "linux"))]
-    terminal.send("\n");
+    terminal.send("/cancel\n");
     terminal.expect("gary> ");
     assert!(!fixture.root.join("sa3.data").exists());
     terminal.send("/quit\n");

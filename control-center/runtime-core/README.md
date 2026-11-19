@@ -24,9 +24,18 @@ It includes running services started by another console. `/quit` stops
 services this console started.
 
 `/install` and `/models` create a missing profile with defaults. Runtime
-installation probes the selected GPU. If managed weights are the only missing
-prerequisite, `/start SERVICE` offers to download them and continues into
-startup after verification. `/start all` skips services that need downloads.
+installation probes the selected GPU. With managed storage, `/models SERVICE`
+lets you pick a checkpoint and precision. It shows installed variants and the
+additional download size. Where available, the install probe supplies the GPU
+recommendation. After a successful download, Gary saves your selection. Stop a
+running service before changing its selection. If managed weights are the only
+missing prerequisite, `/start SERVICE` opens the same picker and starts after
+verification. `/start all` skips services that need downloads.
+
+Carey and MusicGen retain independent selections per checkpoint. For example,
+Carey can serve 2B Base BF16 and XL Base Q8_0 from one server. It advertises those
+files to clients and keeps other downloaded variants available for switching.
+Carey's requests select an exact advertised GGUF filename using `synth_model`.
 `/setup` retains the original guided SA3 setup. For other services, use
 `gary init SERVICE --models-dir /absolute/path` to reuse external weights, or
 supply `--runtime-root`, `--port`, `--model` and `--encoding` before the first

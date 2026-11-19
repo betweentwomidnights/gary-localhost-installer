@@ -5534,15 +5534,8 @@ pub(crate) fn yuey_missing_models(models_dir: &Path) -> Option<String> {
 /// recommend Q5_K_M, which is not published yet; the next smaller tier that
 /// is published is the safe substitute.
 fn yuey_default_tier(recommended: Option<&str>) -> &'static str {
-    const BY_SIZE: [&str; 4] = ["Q4_K_M", "Q5_K_M", "Q8_0", "BF16"];
-    let limit = recommended
-        .and_then(|tier| BY_SIZE.iter().position(|candidate| *candidate == tier))
-        .unwrap_or(0);
-    BY_SIZE[..=limit]
-        .iter()
-        .rev()
-        .find(|tier| model_manager::yuey_files(&format!("yuey::{tier}")).is_some())
-        .copied()
+    recommended
+        .and_then(gary4local_core::model_catalog::recommended_yuey_tier)
         .unwrap_or("Q4_K_M")
 }
 

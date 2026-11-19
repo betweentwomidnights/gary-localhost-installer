@@ -51,13 +51,22 @@ impl Input {
 
     #[cfg(target_os = "linux")]
     pub(super) async fn select(&mut self, title: &str, choices: &[&str]) -> Result<usize, String> {
+        self.select_at(title, choices, 0).await
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) async fn select_at(
+        &mut self,
+        title: &str,
+        choices: &[&str],
+        mut selected: usize,
+    ) -> Result<usize, String> {
         use super::{prompt, say};
         use std::time::Duration;
         let _mode = PickerMode::enter()?;
         say(format!(
             "{title}  (↑/↓ to choose, Enter to select, Esc to cancel)"
         ))?;
-        let mut selected = 0;
         let mut prefix = String::new();
         let draw = |index: usize| {
             let mut rows = String::new();

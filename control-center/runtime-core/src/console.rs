@@ -439,6 +439,59 @@ fn start_blockers(report: &Value, service: Service) -> String {
     lines.join("\n")
 }
 
+fn model_size(bytes: u64) -> String {
+    if bytes >= 1 << 30 {
+        format!("{:.2} GiB", bytes as f64 / (1u64 << 30) as f64)
+    } else if bytes >= 1 << 20 {
+        format!("{:.0} MiB", bytes as f64 / (1u64 << 20) as f64)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
+async fn choose_row(
+    input: &mut Input,
+    title: &str,
+    rows: &[String],
+    initial: usize,
+) -> Result<usize, String> {
+    if rows.len() == 1 {
+        return Ok(0);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let labels: Vec<_> = rows.iter().map(String::as_str).collect();
+        input.select_at(title, &labels, initial).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        say(title)?;
+        for (index, row) in rows.iter().enumerate() {
+            say(format!("{}  {row}", index + 1))?;
+        }
+        let selected = answer(input, &format!("Select a row [{}]: ", initial + 1)).await?;
+        if selected.is_empty() {
+            return Ok(initial);
+        }
+        selected
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .filter(|&n| n < rows.len())
+            .ok_or_else(|| "Choose a listed row.".into())
+    }
+}
+
+fn checkpoint_label(service: Service, model: &str) -> String {
+    if service != Service::Carey {
+        return model.to_owned();
+    }
+    match model.strip_prefix("xl-") {
+        Some(name) => format!("XL {name}"),
+        None => format!("2B {model}"),
+    }
+}
+
 struct Running {
     id: u64,
     config: Config,
@@ -610,6 +663,142 @@ impl Console {
             .map_err(|e| e.message)?;
         Ok(())
     }
+    async fn pick_model(
+        &self,
+        config: &Config,
+        input: &mut Input,
+        start: bool,
+    ) -> Result<Option<Config>, String> {
+        let service = config.service;
+        let label = service_label(service);
+        let path = profile_path(&self.path, service);
+        let original = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let current = Config::from_bytes(&original).map_err(|e| e.to_string())?;
+        let variants = crate::model_catalog::variants(service);
+        let mut checkpoints = Vec::new();
+        for &(model, _) in &variants {
+            if checkpoints.last() != Some(&model) {
+                checkpoints.push(model);
+            }
+        }
+        let choice_rows: Vec<_> = checkpoints
+            .iter()
+            .map(|&model| {
+                let name = checkpoint_label(service, model);
+                let selected = current
+                    .selected_models
+                    .get(model)
+                    .map(String::as_str)
+                    .or_else(|| (current.model == model).then_some(current.encoding.as_str()));
+                match selected {
+                    Some(tier) => format!("{name}  ·  {}", tier.to_ascii_uppercase()),
+                    None => name,
+                }
+            })
+            .collect();
+        let checkpoint = checkpoints[choose_row(
+            input,
+            &format!("{label} model"),
+            &choice_rows,
+            checkpoints
+                .iter()
+                .position(|&m| m == current.model)
+                .unwrap_or(0),
+        )
+        .await?];
+        let recommended = current.recommended_tier(checkpoint);
+        let mut options = Vec::new();
+        let mut rows = Vec::new();
+        let mut initial = 0;
+        let mut installed_choice = None;
+        let mut installed = Vec::new();
+        for (_, tier) in variants
+            .into_iter()
+            .filter(|(model, _)| *model == checkpoint)
+        {
+            let mut candidate = current.clone();
+            candidate.model = checkpoint.to_owned();
+            candidate.encoding = tier.to_ascii_lowercase();
+            candidate.selected_models.clear();
+            let plan = match headless::model_plan(&candidate) {
+                Ok(plan) => plan,
+                Err(_) => continue,
+            };
+            let bytes = plan["missing_bytes"].as_u64().unwrap_or_default();
+            if bytes == 0 {
+                installed.push(options.len());
+            }
+            let selected = current
+                .selected_models
+                .get(checkpoint)
+                .is_some_and(|saved| saved.eq_ignore_ascii_case(tier))
+                || (current.model == checkpoint && current.encoding.eq_ignore_ascii_case(tier));
+            let mut row = if bytes == 0 {
+                format!("{tier:<8} Installed")
+            } else {
+                format!("{tier:<8} Download {}", model_size(bytes))
+            };
+            if selected {
+                row.push_str(if bytes == 0 {
+                    " · selected"
+                } else {
+                    " · configured"
+                });
+                if bytes == 0 {
+                    installed_choice = Some(options.len());
+                }
+            }
+            if Some(tier) == recommended {
+                row.push_str(" · recommended");
+                initial = options.len();
+            }
+            rows.push(row);
+            options.push((candidate, bytes));
+        }
+        if rows.is_empty() {
+            return Err("No published precisions match this model configuration.".into());
+        }
+        let index = choose_row(
+            input,
+            &format!("{} · precision", checkpoint_label(service, checkpoint)),
+            &rows,
+            installed_choice
+                .or_else(|| match installed.as_slice() {
+                    [only] => Some(*only),
+                    _ => None,
+                })
+                .unwrap_or(initial),
+        )
+        .await?;
+        let (candidate, bytes) = &options[index];
+        if *bytes > 0 {
+            let action = if start {
+                "Download and start"
+            } else {
+                "Download and use"
+            };
+            let question = format!(
+                "{action} {label} {} ({}, {})? [y/N] ",
+                checkpoint_label(service, checkpoint),
+                candidate.encoding.to_ascii_uppercase(),
+                model_size(*bytes)
+            );
+            let confirm = answer(input, &question).await?;
+            if !matches!(confirm.to_ascii_lowercase().as_str(), "y" | "yes") {
+                say("Model selection cancelled.")?;
+                return Ok(None);
+            }
+        }
+        let updated =
+            headless::select_model(&path, &original, &current, candidate, *bytes > 0).await?;
+        say(format!(
+            "{label} will use {} at {}.",
+            checkpoint_label(service, checkpoint),
+            updated.encoding.to_ascii_uppercase()
+        ))?;
+        Ok(Some(updated))
+    }
+
     async fn start_service(
         &mut self,
         service: Service,
@@ -620,7 +809,7 @@ impl Console {
         if self.state(service).await?["operation_active"] == true {
             return Err(format!("{label} is already active."));
         }
-        let config = self.config(service)?;
+        let mut config = self.config(service)?;
         let report = headless::doctor(&config).await?;
         if report["can_attempt_serve"] != true {
             let models_only = report["checks"].as_array().is_some_and(|checks| {
@@ -637,34 +826,13 @@ impl Console {
             let Some(input) = input.filter(|_| models_only) else {
                 return Err(start_blockers(&report, service));
             };
-            let plan = headless::model_plan(&config)
-                .ok()
-                .filter(|plan| plan["managed"] == true);
-            let Some((plan, bytes)) = plan.as_ref().and_then(|plan| {
-                plan["missing_bytes"]
-                    .as_u64()
-                    .filter(|&bytes| bytes > 0)
-                    .map(|bytes| (plan, bytes))
-            }) else {
+            if config.models_dir != config.managed_models_dir() {
                 return Err(start_blockers(&report, service));
-            };
-            let size = if bytes >= 1 << 30 {
-                format!("{:.2} GiB", bytes as f64 / (1u64 << 30) as f64)
-            } else if bytes >= 1 << 20 {
-                format!("{:.0} MiB", bytes as f64 / (1u64 << 20) as f64)
-            } else {
-                format!("{bytes} bytes")
-            };
-            let model = plan["model"].as_str().unwrap_or(id);
-            let encoding = plan["encoding"].as_str().unwrap_or("");
-            say(format!("{label} needs {model} ({encoding}) weights. Missing or incomplete files total {size}."))?;
-            let confirm = answer(input, &format!("Download and start {label}? [y/N] ")).await?;
-            if !matches!(confirm.to_ascii_lowercase().as_str(), "y" | "yes") {
-                return say(format!("{label} was not started."));
             }
-            headless::download_models(&config)
-                .await
-                .map_err(|error| format!("Download failed: {error}\nRun /start {id} to retry."))?;
+            let Some(updated) = self.pick_model(&config, input, true).await? else {
+                return Ok(());
+            };
+            config = updated;
             let report = headless::doctor(&config).await?;
             if report["can_attempt_serve"] != true {
                 return Err(start_blockers(&report, service));
@@ -793,29 +961,20 @@ impl Console {
                 command::human_output("install", &headless::install(&config).await?)?;
             }
             Action::Models => {
-                let plan = headless::model_plan(&config)?;
-                command::human_output("models", &plan)?;
-                if plan["managed"] == true {
-                    #[cfg(target_os = "linux")]
-                    let download = input
-                        .select(
-                            &format!("{label} models"),
-                            &["No, go back", "Yes, download or verify weights"],
-                        )
-                        .await?
-                        == 1;
-                    #[cfg(not(target_os = "linux"))]
-                    let download = matches!(
-                        answer(input, "Download or verify these weights [y/N]? ")
-                            .await?
-                            .to_lowercase()
-                            .as_str(),
-                        "y" | "yes"
-                    );
-                    if download {
-                        headless::download_models(&config).await?;
-                        say(format!("{label} weights verified."))?;
+                if config.models_dir != config.managed_models_dir() {
+                    command::human_output("models", &headless::model_plan(&config)?)?;
+                } else if self.state(service).await?["operation_active"] == true {
+                    command::human_output("models", &headless::model_plan(&config)?)?;
+                    for (model, encoding) in &config.selected_models {
+                        say(format!(
+                            "  {} · {}",
+                            checkpoint_label(service, model),
+                            encoding.to_ascii_uppercase()
+                        ))?;
                     }
+                    say(format!("Stop {label} to change its model selection."))?;
+                } else {
+                    self.pick_model(&config, input, false).await?;
                 }
             }
             _ => unreachable!(),

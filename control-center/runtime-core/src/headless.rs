@@ -45,6 +45,8 @@ pub struct Config {
     pub public_port: u16,
     pub model: String,
     pub encoding: String,
+    #[serde(default)]
+    pub selected_models: std::collections::BTreeMap<String, String>,
     #[serde(default = "f16")]
     pub t5_encoding: String,
     #[serde(default = "f16")]
@@ -126,20 +128,75 @@ impl Config {
     pub fn managed_models_dir(&self) -> PathBuf {
         self.runtime_root.join("models").join(self.service.id())
     }
-    fn model_files(&self) -> Result<Vec<&'static crate::model_catalog::PinnedHfFile>, String> {
-        if self.service != Service::Sa3 {
-            return crate::model_catalog::service_files(self.service, &self.model, &self.encoding);
+    pub fn model_files(&self) -> Result<Vec<&'static crate::model_catalog::PinnedHfFile>, String> {
+        if self.service == Service::Sa3 {
+            return crate::model_catalog::sa3_medium_files(
+                &self.model,
+                &self.encoding,
+                &self.t5_encoding,
+                &self.ae_encoding,
+            );
         }
-        crate::model_catalog::sa3_medium_files(
-            &self.model,
-            &self.encoding,
-            &self.t5_encoding,
-            &self.ae_encoding,
-        )
+        let mut files =
+            crate::model_catalog::service_files(self.service, &self.model, &self.encoding)?;
+        let mut names: std::collections::HashSet<_> =
+            files.iter().map(|file| file.filename.as_str()).collect();
+        for (model, encoding) in &self.selected_models {
+            files.extend(
+                crate::model_catalog::service_files(self.service, model, encoding)?
+                    .into_iter()
+                    .filter(|file| names.insert(&file.filename)),
+            );
+        }
+        Ok(files)
+    }
+
+    pub fn recommended_tier(&self, model: &str) -> Option<&'static str> {
+        use crate::model_catalog::{recommended_model_precision, recommended_yuey_tier};
+        let props: Value =
+            serde_json::from_slice(&std::fs::read(self.installed_dir().join("props.json")).ok()?)
+                .ok()?;
+        let device = self.selected_gpu(&props)?;
+        let memory = device["memory_total_bytes"]
+            .as_u64()
+            .filter(|&bytes| bytes > 0)?;
+        match self.service {
+            Service::Gary | Service::Carey => {
+                Some(recommended_model_precision(self.service, model, memory))
+                    .filter(|tier| !tier.is_empty())
+            }
+            Service::Yuey => {
+                let hardware = &props["hardware"];
+                if hardware["memory_total_bytes"].as_u64() != Some(memory) {
+                    return None;
+                }
+                recommended_yuey_tier(hardware["recommended_encoding"].as_str()?)
+            }
+            _ => None,
+        }
+    }
+
+    fn selected_gpu<'a>(&self, props: &'a Value) -> Option<&'a Value> {
+        props["devices"]
+            .as_array()?
+            .iter()
+            .filter(|device| {
+                device["backend"]
+                    .as_str()
+                    .is_some_and(|backend| backend.eq_ignore_ascii_case(self.backend_name()))
+            })
+            .enumerate()
+            .find_map(|(index, device)| {
+                let matches = device["name"] == self.device
+                    || (device["name"].is_null()
+                        && format!("{}{}", device["backend"].as_str().unwrap_or(""), index)
+                            == self.device);
+                (matches && runtime::is_generation_gpu(device)).then_some(device)
+            })
     }
     pub fn summary(&self) -> Value {
         json!({"service":self.service, "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
-            "models_dir":self.models_dir, "model":self.model, "encoding":self.encoding,
+            "models_dir":self.models_dir, "model":self.model, "encoding":self.encoding, "selected_models":self.selected_models,
             "t5_encoding":self.t5_encoding, "ae_encoding":self.ae_encoding,
             "device":self.device, "public_port":self.public_port,"expected_version":self.expected_version,
             "public_url":format!("http://127.0.0.1:{}",self.public_port),
@@ -230,6 +287,21 @@ impl Config {
             return Err(
                 "Use a dedicated runtime root, separate from the existing models directory".into(),
             );
+        }
+        if !self.selected_models.is_empty() {
+            if !matches!(self.service, Service::Gary | Service::Carey)
+                || self.models_dir != self.managed_models_dir()
+            {
+                return Err(
+                    "Multiple model selections require managed Gary or Carey storage.".into(),
+                );
+            }
+            if self.selected_models.get(&self.model) != Some(&self.encoding) {
+                return Err(
+                    "The primary model and encoding must match its selected_models entry.".into(),
+                );
+            }
+            self.model_files()?;
         }
         if self.public_port == 0 {
             return Err("Use a nonzero public loopback port".into());
@@ -423,6 +495,7 @@ mod tests {
             public_port: 28101,
             model: "medium".into(),
             encoding: "f16".into(),
+            selected_models: Default::default(),
             t5_encoding: f16(),
             ae_encoding: f16(),
             threads: 4,
@@ -709,7 +782,7 @@ pub fn model_plan(config: &Config) -> Result<Value, String> {
     let missing_names: Vec<_> = missing.iter().map(|file| &file.filename).collect();
     Ok(
         json!({"service":config.service,"model":config.model,"missing":missing_names,"missing_bytes":missing_bytes,"models_dir":config.models_dir, "managed": config.models_dir == config.managed_models_dir(),
-        "encoding":config.encoding,"bytes":total,"files":files}),
+        "encoding":config.encoding,"selected_models":config.selected_models,"bytes":total,"files":files}),
     )
 }
 
@@ -721,6 +794,14 @@ pub async fn download_models(config: &Config) -> Result<Value, String> {
     inspect_root(config)?;
     owned_root(config)?;
     let _lease = lock(config)?;
+    fetch_model_files(config, files).await?;
+    model_plan(config)
+}
+
+async fn fetch_model_files(
+    config: &Config,
+    files: Vec<&crate::model_catalog::PinnedHfFile>,
+) -> Result<(), String> {
     let client = reqwest::Client::new();
     for file in files {
         eprintln!(
@@ -745,7 +826,73 @@ pub async fn download_models(config: &Config) -> Result<Value, String> {
         )
         .await?;
     }
-    model_plan(config)
+    Ok(())
+}
+
+/// Download the selected checkpoint with its shared components, then commit
+/// the preference. A failed download or changed config leaves the previous
+/// choice intact. The lease prevents racing serve/install/download operations.
+pub async fn select_model(
+    path: &Path,
+    original: &[u8],
+    previous: &Config,
+    candidate: &Config,
+    download: bool,
+) -> Result<Config, String> {
+    if previous.models_dir != previous.managed_models_dir() {
+        return Err("Use managed storage to select a model from the catalog.".into());
+    }
+    let files = candidate.model_files()?;
+    let mut updated = previous.clone();
+    updated.model = candidate.model.clone();
+    updated.encoding = candidate.encoding.clone();
+    if matches!(previous.service, Service::Gary | Service::Carey) {
+        if updated.selected_models.is_empty()
+            && model_plan(previous).is_ok_and(|plan| plan["missing_bytes"] == 0)
+        {
+            updated
+                .selected_models
+                .insert(previous.model.clone(), previous.encoding.clone());
+        }
+        updated
+            .selected_models
+            .insert(updated.model.clone(), updated.encoding.clone());
+    }
+    updated.validate()?;
+    inspect_root(previous)?;
+    owned_root(previous)?;
+    let _lease = lock(previous)?;
+    if !std::fs::symlink_metadata(path).map_err(err)?.is_file() {
+        return Err("Model selection requires a regular service config file.".into());
+    }
+    if std::fs::read(path).map_err(err)? != original {
+        return Err("The service config changed. Reopen /models and try again.".into());
+    }
+    if download {
+        fetch_model_files(previous, files).await?;
+    } else {
+        for file in files {
+            if crate::download::sha256_file(&previous.models_dir.join(&file.filename)).await?
+                != file.sha256
+            {
+                return Err(format!(
+                    "{} failed verification. Use verified model weights and reopen /models.",
+                    file.filename
+                ));
+            }
+        }
+    }
+    if std::fs::read(path).map_err(err)? != original {
+        return Err("The service config changed. Reopen /models and try again.".into());
+    }
+    let mut body: Value = serde_json::from_slice(original).map_err(err)?;
+    body["model"] = json!(updated.model);
+    body["encoding"] = json!(updated.encoding);
+    if !updated.selected_models.is_empty() {
+        body["selected_models"] = json!(updated.selected_models);
+    }
+    write_json(path, &body)?;
+    Ok(updated)
 }
 
 /// Filesystem/ownership/port inspection only. No adoption, downloads, GPU probe,
@@ -941,16 +1088,25 @@ fn active(config: &Config) -> Result<bool, String> {
 }
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let temporary = path.with_extension(format!("{}.tmp", serial()));
-    let mut file = File::create_new(&temporary).map_err(err)?;
-    file.write_all(serde_json::to_string_pretty(value).map_err(err)?.as_bytes())
-        .map_err(err)?;
-    file.sync_all().map_err(err)?;
-    drop(file);
-    #[cfg(windows)]
-    if path.exists() {
-        std::fs::remove_file(path).map_err(err)?;
+    let bytes = serde_json::to_vec_pretty(value).map_err(err)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    std::fs::rename(&temporary, path).map_err(err)
+    let mut file = options.open(&temporary).map_err(err)?;
+    let written = file
+        .write_all(&bytes)
+        .and_then(|_| file.write_all(b"\n"))
+        .and_then(|_| file.sync_all());
+    drop(file);
+    let result = written.and_then(|_| std::fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result.map_err(err)
 }
 fn hash_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(err)?;
@@ -993,6 +1149,9 @@ async fn probe(config: &Config, dir: &Path) -> Result<Value, String> {
     // The installation probe never starts a listener or loads weights.
     let mut command = std::process::Command::new(&launch.program);
     command.arg("--props").current_dir(dir);
+    if config.service == Service::Carey {
+        command.args(["--device", &config.device]);
+    }
     clean_command_env(&mut command, &launch);
     let mut command = tokio::process::Command::from(command);
     command
@@ -1012,44 +1171,42 @@ async fn probe(config: &Config, dir: &Path) -> Result<Value, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.contains("createDevice") || stderr.contains("InitializationFailedError") {
+        let detail = if stderr.contains("createDevice")
+            || stderr.contains("InitializationFailedError")
+        {
             "Vulkan could not initialize the GPU. If another GPU workload is active, try again after it finishes."
         } else {
             "The GPU probe exited before it could confirm the device."
         };
         let path = config.log_path();
-        let result = OpenOptions::new().append(true).create(true).open(&path).and_then(|mut log| {
-            writeln!(log, "\nGPU probe --props failed at {:?} ({}):\n{}\n{}", SystemTime::now(), output.status, stderr, stdout)
-        });
-        let message = format!("{} probe failed ({}). {detail}", config.device, output.status);
+        let result = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .and_then(|mut log| {
+                writeln!(
+                    log,
+                    "\nGPU probe --props failed at {:?} ({}):\n{}\n{}",
+                    SystemTime::now(),
+                    output.status,
+                    stderr,
+                    stdout
+                )
+            });
+        let message = format!(
+            "{} probe failed ({}). {detail}",
+            config.device, output.status
+        );
         return Err(match result {
             Ok(()) => format!("{message} Details: {}", path.display()),
-            Err(error) => format!("{message} Could not write {}: {error}\n{stderr}", path.display()),
+            Err(error) => format!(
+                "{message} Could not write {}: {error}\n{stderr}",
+                path.display()
+            ),
         });
     }
     let props: Value = serde_json::from_slice(&output.stdout).map_err(err)?;
-    if props["service"] != config.service.probe_id()
-        || !props["devices"].as_array().is_some_and(|devices| {
-            devices
-                .iter()
-                .filter(|d| {
-                    d["backend"]
-                        .as_str()
-                        .is_some_and(|b| b.eq_ignore_ascii_case(config.backend_name()))
-                })
-                .enumerate()
-                .any(|(index, d)| {
-                    (d["name"] == config.device
-                        || (d["name"].is_null()
-                            && format!("{}{}", d["backend"].as_str().unwrap_or(""), index)
-                                == config.device))
-                        && d["backend"]
-                            .as_str()
-                            .is_some_and(|b| b.eq_ignore_ascii_case(config.backend_name()))
-                        && runtime::is_generation_gpu(d)
-                })
-        })
-    {
+    if props["service"] != config.service.probe_id() || config.selected_gpu(&props).is_none() {
         return Err(format!(
             "Selected GPU {} is unavailable in the installed runtime",
             config.device
@@ -1115,7 +1272,8 @@ pub async fn install(config: &Config) -> Result<Value, String> {
             return Err("Existing runtime has different package provenance".into());
         }
         metadata(config, &target)?;
-        probe(config, &target).await?;
+        let props = probe(config, &target).await?;
+        write_json(&target.join("props.json"), &props)?;
     } else {
         let staging = config
             .runtime_root
@@ -1198,6 +1356,42 @@ async fn forward_native(listener: tokio::net::TcpListener, port: u16) -> std::io
     }
 }
 
+struct ModelDirectory(PathBuf);
+
+impl Drop for ModelDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn selected_model_directory(config: &Config) -> Result<Option<ModelDirectory>, String> {
+    if config.selected_models.is_empty() {
+        return Ok(None);
+    }
+    let path = config
+        .runtime_root
+        .join("tmp")
+        .join(format!("selected-models-{}", serial()));
+    std::fs::create_dir(&path).map_err(err)?;
+    let view = ModelDirectory(path);
+    let mut files = config.model_files()?;
+    if config.service == Service::Carey {
+        files.extend(crate::model_catalog::installed_carey_lms(
+            &config.models_dir,
+        ));
+    }
+    for file in files {
+        let source = config.models_dir.join(&file.filename);
+        let dest = view.0.join(&file.filename);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(err)?;
+        }
+        std::fs::hard_link(&source, &dest)
+            .map_err(|e| format!("Cannot expose selected model {}: {e}", source.display()))?;
+    }
+    Ok(Some(view))
+}
+
 pub enum Sa3Startup {
     Cold,
     PrepareModel,
@@ -1240,7 +1434,12 @@ pub async fn serve(
     })?;
     let reservation = runtime::bind_loopback(0).map_err(err)?;
     let native_port = reservation.local_addr().map_err(err)?.port();
-    let launch = config.launch(dir, native_port);
+    let view = selected_model_directory(config)?;
+    let mut launch_config = config.clone();
+    if let Some(view) = &view {
+        launch_config.models_dir = view.0.clone();
+    }
+    let launch = launch_config.launch(dir, native_port);
     let mut command = launch.std_command();
     clean_command_env(&mut command, &launch);
     // Output paths, temporary files and caches belong to this root, not weights.

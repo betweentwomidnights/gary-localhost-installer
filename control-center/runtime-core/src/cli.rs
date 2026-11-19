@@ -232,6 +232,7 @@ pub fn config_schema() -> Value {
             "device":{"type":"string","pattern":"^(CUDA|Vulkan)","description":"Exact GPU name returned by engine properties, such as Vulkan0 or CUDA0."},
             "public_port":{"type":"integer","minimum":1,"maximum":65535},
             "model":{"type":"string","description":"Selected native model. See capabilities for per-service defaults."},
+            "selected_models":{"type":"object","additionalProperties":{"type":"string"},"description":"Selected encoding per Gary or Carey checkpoint in managed storage."},
             "encoding":{"type":"string","description":"Generation precision, such as f16 or q4_k_m."},
             "t5_encoding":{"type":"string","default":"f16"},"ae_encoding":{"type":"string","default":"f16","description":"Must match existing weights. Current medium preview weights use f32; init sets it explicitly."},
             "threads":{"type":"integer","minimum":1,"maximum":256,"default":4},"defaults":{"type":"object","default":{}}},
