@@ -268,6 +268,7 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
             "doctor" => Action::Doctor,
             "logs" => Action::Logs,
             "training" => Action::Training,
+            "cancel" => Action::CancelTraining,
             "help" | "?" => Action::Help,
             "quit" | "exit" => Action::Quit,
             _ => {
@@ -1000,7 +1001,7 @@ impl Console {
         match action {
             Action::Quit => return Ok(true),
             Action::Help => {
-                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel training — Request a checkpoint and stop training\n/quit — Stop services started here and leave")?;
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/quit — Stop services started here and leave")?;
                 return Ok(false);
             }
             Action::StartAll | Action::StopAll => {
@@ -1226,6 +1227,12 @@ mod tests {
         );
         assert!(action("/stop sa3 --force").is_err());
         assert!(action("/train").is_err());
+        assert_eq!(action("/cancel"), Ok(Some((Action::CancelTraining, None))));
+        assert_eq!(action("cancel"), Ok(Some((Action::CancelTraining, None))));
+        assert_eq!(
+            action("/cancel training"),
+            Ok(Some((Action::CancelTraining, None)))
+        );
     }
     #[test]
     fn model_folders_can_contain_spaces_and_are_never_shell_evaluated() {

@@ -413,7 +413,7 @@ impl Console {
     ) -> Result<(), String> {
         if self.training.is_some() {
             return Err(
-                "A training job is already active here. Use /training or /cancel training.".into(),
+                "A training job is already active here. Use /training for progress or /cancel to stop it.".into(),
             );
         }
         let config = self.config(service)?;
@@ -471,7 +471,10 @@ impl Console {
             return say("Training cancelled.");
         }
         let job = training_job::start(&config, settings).await?;
-        say(format!("Training started. /training shows the job paths. /cancel training saves at a checkpoint boundary.\nLog {}",job.log.display()))?;
+        say(format!(
+            "Training started. Type /cancel to stop safely.\n/training shows progress and log paths.\nLog {}",
+            job.log.display()
+        ))?;
         if service == Service::Sa3 {
             say(
                 "SA3 pre-encodes the audio before step 1. Progress updates as each track finishes.",

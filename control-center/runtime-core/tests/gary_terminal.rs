@@ -140,6 +140,12 @@ fn real_terminal_setup_can_cancel_save_and_report_missing_runtime_without_downlo
     let mut terminal = fixture.open();
     terminal.expect("not configured");
     terminal.expect("gary> ");
+    terminal.send("/help\n");
+    terminal.expect("/cancel — Request a safe stop for training in this console");
+    terminal.expect("gary> ");
+    terminal.send("/cancel\n");
+    terminal.expect("No training job is running in this console.");
+    terminal.expect("gary> ");
     terminal.send("/setup\n");
     terminal.expect("SA3 models: ");
     terminal.send("/cancel\n");
