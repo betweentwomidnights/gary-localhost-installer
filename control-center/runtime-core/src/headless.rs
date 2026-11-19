@@ -855,7 +855,7 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
         next_actions.push(json!({"action":"serve","requires_explicit_action":true,"readiness_reported_only_after_model_load":config.service==Service::Sa3}));
     }
     Ok(
-        json!({"service":config.service,"can_attempt_serve":can_attempt_serve,"checks":checks,"next_actions":next_actions,
+        json!({"can_attempt_serve":can_attempt_serve,"checks":checks,"next_actions":next_actions,
         "service":service,"resolved":config.summary(),"read_only":true,
         "limitations":["Model contents and GPU execution were not verified.","Port availability is a snapshot, not a reservation."]}),
     )

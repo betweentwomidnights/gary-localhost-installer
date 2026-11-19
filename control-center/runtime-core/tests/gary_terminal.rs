@@ -164,7 +164,7 @@ fn real_terminal_setup_can_cancel_save_and_report_missing_runtime_without_downlo
     assert!(fixture.config.exists());
     assert!(!fixture.root.join("sa3.data").exists());
     terminal.send("/start\n");
-    terminal.expect("Resolve the preflight checks before /start");
+    terminal.expect("Runtime missing or invalid. Run /install sa3.");
     terminal.expect("gary> ");
     assert!(!fixture.root.join("sa3.data").exists());
     terminal.send("/train\n");

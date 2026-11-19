@@ -17,7 +17,10 @@ fn output(value: &Value, pretty: bool) -> Result<(), String> {
 
 pub fn human_output(command: &str, data: &Value) -> Result<(), String> {
     let mut out = std::io::stdout().lock();
-    let service = data["service"].as_str().unwrap_or("sa3");
+    let service = data["service"]
+        .as_str()
+        .or_else(|| data["resolved"]["service"].as_str())
+        .unwrap_or("sa3");
     let service = if service == "sa3" { "SA3" } else { service };
     let write = (|| -> std::io::Result<()> {
         match command {

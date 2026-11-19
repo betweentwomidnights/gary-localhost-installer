@@ -24,7 +24,9 @@ It includes running services started by another console. `/quit` stops
 services this console started.
 
 `/install` and `/models` create a missing profile with defaults. Runtime
-installation probes the selected GPU. Model downloads require confirmation.
+installation probes the selected GPU. If managed weights are the only missing
+prerequisite, `/start SERVICE` offers to download them and continues into
+startup after verification. `/start all` skips services that need downloads.
 `/setup` retains the original guided SA3 setup. For other services, use
 `gary init SERVICE --models-dir /absolute/path` to reuse external weights, or
 supply `--runtime-root`, `--port`, `--model` and `--encoding` before the first

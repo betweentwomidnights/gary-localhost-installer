@@ -417,6 +417,28 @@ fn service_label(service: Service) -> &'static str {
     }
 }
 
+fn start_blockers(report: &Value, service: Service) -> String {
+    let id = service.id();
+    let mut lines: Vec<String> = report["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|check| check["status"] == "error")
+        .map(|check| match check["code"].as_str() {
+            Some("installed_runtime") => format!("Runtime missing or invalid. Run /install {id}."),
+            Some("models_directory" | "model_files") => {
+                format!("Required weights are missing or incomplete. See /models {id}.")
+            }
+            _ => check["message"]
+                .as_str()
+                .unwrap_or("A startup check failed.")
+                .to_owned(),
+        })
+        .collect();
+    lines.push(format!("Run /doctor {id} for details."));
+    lines.join("\n")
+}
+
 struct Running {
     id: u64,
     config: Config,
@@ -588,7 +610,11 @@ impl Console {
             .map_err(|e| e.message)?;
         Ok(())
     }
-    async fn start_service(&mut self, service: Service, show_checks: bool) -> Result<(), String> {
+    async fn start_service(
+        &mut self,
+        service: Service,
+        input: Option<&mut Input>,
+    ) -> Result<(), String> {
         let id = service.id();
         let label = service_label(service);
         if self.state(service).await?["operation_active"] == true {
@@ -597,11 +623,52 @@ impl Console {
         let config = self.config(service)?;
         let report = headless::doctor(&config).await?;
         if report["can_attempt_serve"] != true {
-            if show_checks {
-                command::human_output("doctor", &report)?;
-                return Err(format!("Resolve the preflight checks before /start. Use /install {id} for the runtime and /models {id} for weights."));
+            let models_only = report["checks"].as_array().is_some_and(|checks| {
+                checks
+                    .iter()
+                    .filter(|check| check["status"] == "error")
+                    .all(|check| {
+                        matches!(
+                            check["code"].as_str(),
+                            Some("models_directory" | "model_files")
+                        )
+                    })
+            });
+            let Some(input) = input.filter(|_| models_only) else {
+                return Err(start_blockers(&report, service));
+            };
+            let plan = headless::model_plan(&config)
+                .ok()
+                .filter(|plan| plan["managed"] == true);
+            let Some((plan, bytes)) = plan.as_ref().and_then(|plan| {
+                plan["missing_bytes"]
+                    .as_u64()
+                    .filter(|&bytes| bytes > 0)
+                    .map(|bytes| (plan, bytes))
+            }) else {
+                return Err(start_blockers(&report, service));
+            };
+            let size = if bytes >= 1 << 30 {
+                format!("{:.2} GiB", bytes as f64 / (1u64 << 30) as f64)
+            } else if bytes >= 1 << 20 {
+                format!("{:.0} MiB", bytes as f64 / (1u64 << 20) as f64)
+            } else {
+                format!("{bytes} bytes")
+            };
+            let model = plan["model"].as_str().unwrap_or(id);
+            let encoding = plan["encoding"].as_str().unwrap_or("");
+            say(format!("{label} needs {model} ({encoding}) weights. Missing or incomplete files total {size}."))?;
+            let confirm = answer(input, &format!("Download and start {label}? [y/N] ")).await?;
+            if !matches!(confirm.to_ascii_lowercase().as_str(), "y" | "yes") {
+                return say(format!("{label} was not started."));
             }
-            return Err(format!("Preflight blocked. Run /doctor {id} for details."));
+            headless::download_models(&config)
+                .await
+                .map_err(|error| format!("Download failed: {error}\nRun /start {id} to retry."))?;
+            let report = headless::doctor(&config).await?;
+            if report["can_attempt_serve"] != true {
+                return Err(start_blockers(&report, service));
+            }
         }
         self.serial += 1;
         let serial = self.serial;
@@ -654,7 +721,7 @@ impl Console {
             }
             let label = service_label(service);
             if action == Action::StartAll {
-                if let Err(error) = self.start_service(service, false).await {
+                if let Err(error) = self.start_service(service, None).await {
                     say(format!("{label} skipped: {error}"))?;
                 }
             } else {
@@ -701,7 +768,7 @@ impl Console {
         let label = service_label(service);
         match action {
             Action::Start => {
-                self.start_service(service, true).await?;
+                self.start_service(service, Some(input)).await?;
                 return Ok(false);
             }
             Action::Stop => {
