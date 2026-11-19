@@ -895,6 +895,136 @@ pub async fn select_model(
     Ok(updated)
 }
 
+#[derive(PartialEq, Eq)]
+pub struct ModelRemoval {
+    files: Vec<(PathBuf, u64)>,
+}
+
+impl ModelRemoval {
+    pub fn bytes(&self) -> u64 {
+        self.files.iter().map(|(_, bytes)| bytes).sum()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+}
+
+pub fn model_removal(config: &Config, model: &str, encoding: &str) -> Result<ModelRemoval, String> {
+    if config.models_dir != config.managed_models_dir() {
+        return Err("Model removal requires managed storage.".into());
+    }
+    inspect_root(config)?;
+    if !crate::model_catalog::variants(config.service)
+        .iter()
+        .any(|&(name, tier)| name == model && tier.eq_ignore_ascii_case(encoding))
+    {
+        return Err("Unknown catalog variant.".into());
+    }
+    let mut files = Vec::new();
+    for file in crate::model_catalog::removable_variant_files(
+        config.service,
+        model,
+        encoding,
+        &config.models_dir,
+    )? {
+        let weight = config.models_dir.join(&file.filename);
+        let partial = crate::download::partial_path(&weight);
+        for path in [weight, partial] {
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_file() => files.push((path, meta.len())),
+                Ok(_) => {
+                    return Err(format!(
+                        "Cannot remove a non-regular weight file at {}",
+                        path.display()
+                    ))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+        }
+    }
+    Ok(ModelRemoval { files })
+}
+
+pub fn remove_model(
+    path: &Path,
+    original: &[u8],
+    config: &Config,
+    model: &str,
+    encoding: &str,
+    plan: &ModelRemoval,
+) -> Result<(), String> {
+    inspect_root(config)?;
+    let _lease = lock(config)?;
+    if !std::fs::symlink_metadata(path).map_err(err)?.is_file()
+        || std::fs::read(path).map_err(err)? != original
+        || model_removal(config, model, encoding)? != *plan
+    {
+        return Err("The model inventory or config changed. Reopen /models and try again.".into());
+    }
+    let mut updated = config.clone();
+    updated
+        .selected_models
+        .retain(|name, tier| name != model || !tier.eq_ignore_ascii_case(encoding));
+    if updated.model == model && updated.encoding.eq_ignore_ascii_case(encoding) {
+        if let Some((name, tier)) = updated.selected_models.iter().next() {
+            updated.model = name.clone();
+            updated.encoding = tier.clone();
+        }
+    }
+    updated.validate()?;
+    let mut body: Value = serde_json::from_slice(original).map_err(err)?;
+    body["model"] = json!(updated.model);
+    body["encoding"] = json!(updated.encoding);
+    if updated.selected_models.is_empty() {
+        body.as_object_mut()
+            .expect("validated config")
+            .remove("selected_models");
+    } else {
+        body["selected_models"] = json!(updated.selected_models);
+    }
+    // Keep originals recoverable until every move and the config update succeed.
+    let staged = config
+        .runtime_root
+        .join(format!(".remove-model-{}", serial()));
+    std::fs::create_dir(&staged).map_err(err)?;
+    let mut moved = Vec::new();
+    let result = (|| -> Result<(), String> {
+        for (original, _) in &plan.files {
+            let relative = original.strip_prefix(&config.models_dir).map_err(err)?;
+            let saved = staged.join(relative);
+            if let Some(parent) = saved.parent() {
+                std::fs::create_dir_all(parent).map_err(err)?;
+            }
+            std::fs::rename(original, &saved).map_err(err)?;
+            moved.push((original, saved));
+        }
+        write_json(path, &body)
+    })();
+    if let Err(error) = result {
+        let mut failures = Vec::new();
+        for (original, saved) in moved.into_iter().rev() {
+            if let Err(e) = std::fs::rename(&saved, original) {
+                failures.push(format!("{} → {}: {e}", saved.display(), original.display()));
+            }
+        }
+        if failures.is_empty() {
+            let _ = std::fs::remove_dir_all(&staged);
+            return Err(error);
+        }
+        return Err(format!(
+            "{error}\nCould not restore all model files:\n{}",
+            failures.join("\n")
+        ));
+    }
+    std::fs::remove_dir_all(&staged).map_err(|e| {
+        format!(
+            "Removed model from the catalog. Could not clear {}: {e}",
+            staged.display()
+        )
+    })
+}
+
 /// Filesystem/ownership/port inspection only. No adoption, downloads, GPU probe,
 /// model load or persistent listener. Size checks are not a model hash proof.
 pub async fn doctor(config: &Config) -> Result<Value, String> {

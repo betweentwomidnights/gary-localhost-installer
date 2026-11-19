@@ -32,6 +32,11 @@ running service before changing its selection. If managed weights are the only
 missing prerequisite, `/start SERVICE` opens the same picker and starts after
 verification. `/start all` skips services that need downloads.
 
+To remove an installed precision, open `/models SERVICE`, select the
+checkpoint and precision, and choose **Remove weights**. Gary shows the file
+size and asks for confirmation. Stop the service before removing its managed
+weights. Shared components and other installed precisions stay available.
+
 Carey and MusicGen retain independent selections per checkpoint. For example,
 Carey can serve 2B Base BF16 and XL Base Q8_0 from one server. It advertises those
 files to clients and keeps other downloaded variants available for switching.

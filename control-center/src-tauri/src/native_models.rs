@@ -111,17 +111,10 @@ impl Catalog {
     /// another component on disk still needs (a finetune's prompt bank is
     /// shared by every tier of it).
     pub fn removable_files(&self, id: &str, dir: &Path) -> Vec<PinnedHfFile> {
-        let Some(component) = self.component(id) else {
-            return Vec::new();
-        };
-        let needed_elsewhere = |file: &PinnedHfFile| {
-            self.components.iter().any(|other| {
-                other.id != id
-                    && other.files.iter().any(|shared| shared.filename == file.filename)
-                    && Self::present(other, dir)
-            })
-        };
-        component.files.iter().filter(|file| !needed_elsewhere(file)).cloned().collect()
+        gary4local_core::model_catalog::removable_component_files(self.components(), id, dir)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Why `ids` cannot run yet: the labels of those not on disk.

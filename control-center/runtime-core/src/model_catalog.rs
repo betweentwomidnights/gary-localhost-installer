@@ -95,6 +95,62 @@ pub fn sa3_medium_files(
     Ok(files)
 }
 
+/// The variant's own catalog component. Shared encoder/decoder components
+/// have independent identities and are kept when a variant is removed.
+pub fn removable_variant_files(
+    service: Service,
+    model: &str,
+    encoding: &str,
+    dir: &std::path::Path,
+) -> Result<Vec<&'static PinnedHfFile>, String> {
+    let tier = encoding.to_ascii_uppercase();
+    let id = match service {
+        Service::Sa3 => format!("sa3-native::medium-{tier}"),
+        Service::Gary | Service::Carey => format!("{}-native::{model}::{tier}", service.id()),
+        Service::Yuey => tier,
+        Service::StableAudio if model != "saos" && model != "arc" => {
+            format!("stable-audio-native::{model}::{tier}")
+        }
+        _ => format!("{}-native::{tier}", service.id()),
+    };
+    let catalog = catalog(service);
+    if !catalog.iter().any(|item| item.id == id) {
+        return Err(format!("Unknown model component {id}"));
+    }
+    let files = removable_component_files(catalog, &id, dir);
+    for file in &files {
+        file.validate()?;
+    }
+    Ok(files)
+}
+
+pub fn removable_component_files<'a>(
+    catalog: &'a [CatalogComponent],
+    id: &str,
+    dir: &std::path::Path,
+) -> Vec<&'a PinnedHfFile> {
+    let Some(component) = catalog.iter().find(|item| item.id == id) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for file in &component.files {
+        if !catalog.iter().any(|other| {
+            other.id != id
+                && other
+                    .files
+                    .iter()
+                    .any(|shared| shared.filename == file.filename)
+                && other.files.iter().all(|required| {
+                    std::fs::symlink_metadata(dir.join(&required.filename))
+                        .is_ok_and(|meta| meta.is_file() && meta.len() == required.bytes)
+                })
+        }) {
+            files.push(file);
+        }
+    }
+    files
+}
+
 pub fn service_files(
     service: crate::service::Service,
     model: &str,

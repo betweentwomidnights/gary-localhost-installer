@@ -771,6 +771,58 @@ impl Console {
         )
         .await?;
         let (candidate, bytes) = &options[index];
+        if !start {
+            let plan = headless::model_removal(&current, &candidate.model, &candidate.encoding)?;
+            if !plan.is_empty() {
+                let primary = if *bytes == 0 {
+                    "Use this precision"
+                } else {
+                    "Download and use"
+                };
+                let choices = [
+                    primary.to_owned(),
+                    format!("Remove weights ({})", model_size(plan.bytes())),
+                ];
+                if choose_row(
+                    input,
+                    &format!(
+                        "{label} {} {}",
+                        checkpoint_label(service, checkpoint),
+                        candidate.encoding.to_ascii_uppercase()
+                    ),
+                    &choices,
+                    0,
+                )
+                .await?
+                    == 1
+                {
+                    let confirm = answer(
+                        input,
+                        &format!(
+                            "Remove {label} {} {} files totaling {}? [y/N] ",
+                            checkpoint_label(service, checkpoint),
+                            candidate.encoding.to_ascii_uppercase(),
+                            model_size(plan.bytes())
+                        ),
+                    )
+                    .await?;
+                    if matches!(confirm.to_ascii_lowercase().as_str(), "y" | "yes") {
+                        headless::remove_model(
+                            &path,
+                            &original,
+                            &current,
+                            &candidate.model,
+                            &candidate.encoding,
+                            &plan,
+                        )?;
+                        say("Model weights removed. Shared files are kept.")?;
+                    } else {
+                        say("Model removal cancelled.")?;
+                    }
+                    return Ok(None);
+                }
+            }
+        }
         if *bytes > 0 {
             let action = if start {
                 "Download and start"
@@ -972,7 +1024,7 @@ impl Console {
                             encoding.to_ascii_uppercase()
                         ))?;
                     }
-                    say(format!("Stop {label} to change its model selection."))?;
+                    say(format!("Stop {label} to change or remove models."))?;
                 } else {
                     self.pick_model(&config, input, false).await?;
                 }
