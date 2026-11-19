@@ -39,6 +39,51 @@ async fn setting<T: FromStr + Display>(
     }
 }
 
+async fn sa3_window(input: &mut Input) -> Result<f64, String> {
+    say(format!(
+        "Full tracks use SA3’s {0}-second window. Longer tracks use random crops of {0} seconds. Shorter windows use less VRAM.",
+        sa3::FULL_TRACK_SECONDS
+    ))?;
+    loop {
+        let value = answer(input, "Training window (full or seconds) [47]: ").await?;
+        match value.to_ascii_lowercase().as_str() {
+            "" => return Ok(47.0),
+            "full" | "full track" | "full tracks" | "full-track" | "full-tracks" => {
+                return Ok(sa3::FULL_TRACK_SECONDS);
+            }
+            _ => {
+                if let Ok(seconds) = value.parse::<f64>() {
+                    if sa3::DURATION_SECONDS.contains(&seconds) {
+                        return Ok(seconds);
+                    }
+                }
+            }
+        }
+        say("Enter full or a window between 0.1 and 380 seconds.")?;
+    }
+}
+
+async fn learning_rate(input: &mut Input, default: f64) -> Result<f64, String> {
+    say("Learning rate sets the size of each update. Compared with 1e-4, 3e-4 takes larger steps and 1e-5 takes smaller steps.")?;
+    loop {
+        let value = answer(input, &format!("Learning rate [{default:e}]: ")).await?;
+        if value.is_empty() {
+            return Ok(default);
+        }
+        if let Ok(rate) = value.parse::<f64>() {
+            if rate > 0.0 && rate <= 1.0 {
+                return Ok(rate);
+            }
+        }
+        say("Enter a learning rate greater than 0 and at most 1, such as 1e-4.")?;
+    }
+}
+
+async fn rank(input: &mut Input, default: u32) -> Result<u32, String> {
+    say("Higher rank (for example, 64–128) gives the adapter more capacity within the selected layers and uses more memory.")?;
+    setting(input, "Rank", default).await
+}
+
 async fn lora_name(input: &mut Input) -> Result<String, String> {
     let input = answer(input, "LoRA name: ").await?;
     training::sanitize_lora_name(&input)
@@ -66,7 +111,7 @@ async fn settings(
             .to_uppercase(),
             steps: setting(input, "Training steps", 2000).await?,
             checkpoint_every: setting(input, "Save every N steps", 500).await?,
-            duration: setting(input, "Training window in seconds", 47.0).await?,
+            duration: sa3_window(input).await?,
             rank: 16,
             batch_size: 1,
             learning_rate: 1e-4,
@@ -82,8 +127,8 @@ async fn settings(
         )
         .await?
         {
-            value.learning_rate = setting(input, "Learning rate", value.learning_rate).await?;
-            value.rank = setting(input, "Rank", value.rank).await?;
+            value.learning_rate = learning_rate(input, value.learning_rate).await?;
+            value.rank = rank(input, value.rank).await?;
             value.batch_size = setting(input, "Batch size", value.batch_size).await?;
             value.layer_scope = setting(
                 input,
@@ -136,8 +181,8 @@ async fn settings(
         )
         .await?
         {
-            value.learning_rate = setting(input, "Learning rate", value.learning_rate).await?;
-            value.rank = setting(input, "Rank", value.rank).await?;
+            value.learning_rate = learning_rate(input, value.learning_rate).await?;
+            value.rank = rank(input, value.rank).await?;
             value.adapter_type =
                 setting(input, "Adapter type (lora or dora)", value.adapter_type).await?;
             value.profile =
@@ -427,6 +472,11 @@ impl Console {
         }
         let job = training_job::start(&config, settings).await?;
         say(format!("Training started. /training shows the job paths. /cancel training saves at a checkpoint boundary.\nLog {}",job.log.display()))?;
+        if service == Service::Sa3 {
+            say(
+                "SA3 pre-encodes the audio before step 1. Progress updates as each track finishes.",
+            )?;
+        }
         self.training = Some(job);
         Ok(())
     }

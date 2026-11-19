@@ -33,6 +33,11 @@ pub fn resolve_sa3_lora_layer_scope(
 
 pub mod sa3 {
     use super::*;
+
+    // The desktop full-track option uses the native 3072-token window.
+    pub(crate) const FULL_TRACK_SECONDS: f64 = 285.35;
+    pub(crate) const DURATION_SECONDS: std::ops::RangeInclusive<f64> = 0.1..=380.0;
+
     #[derive(Clone, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Options {
@@ -91,8 +96,7 @@ pub mod sa3 {
             || !(1..=64).contains(&options.batch_size)
             || options.checkpoint_every == 0
             || options.checkpoint_every > i32::MAX as u32
-            || !options.duration.is_finite()
-            || !(0.1..=380.0).contains(&options.duration)
+            || !DURATION_SECONDS.contains(&options.duration)
             || !options.learning_rate.is_finite()
             || options.learning_rate <= 0.0
             || options.learning_rate > 1.0

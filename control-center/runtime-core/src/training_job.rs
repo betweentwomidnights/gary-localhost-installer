@@ -249,13 +249,81 @@ pub(crate) struct Job {
     captions: Vec<String>,
     pub progress: PathBuf,
     pub log: PathBuf,
-    last_progress: Option<(String, u32, u32)>,
+    last_progress: Option<String>,
     _lease: Lease,
+}
+
+fn progress_line(service: Service, value: &sa3::Progress) -> String {
+    if service == Service::Sa3 && value.phase == "pre-encode" {
+        // The native trainer updates its message for each track before any steps advance.
+        let detail = value
+            .message
+            .trim()
+            .strip_prefix("[pre-encode] ")
+            .unwrap_or_default()
+            .chars()
+            .filter(|ch| !ch.is_control())
+            .collect::<String>();
+        if !detail.is_empty() {
+            return format!("sa3 training · pre-encode · {detail}");
+        }
+        return "sa3 training · pre-encode".into();
+    }
+    format!(
+        "{} training · {} · step {}/{} · epoch {}",
+        service.id(),
+        value.phase,
+        value.step,
+        value.max_steps,
+        value.epoch
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sa3_pre_encode_updates_before_the_first_step() {
+        let mut progress: sa3::Progress = serde_json::from_value(json!({
+            "schema_version": 1,
+            "status": "running",
+            "phase": "pre-encode",
+            "message": "[pre-encode] track-a: 90.0s -> 969 frames, gain 1.0000\n",
+            "error": "",
+            "step": 0,
+            "max_steps": 2000,
+            "final_adapter": "",
+            "adapter_checkpoint": ""
+        }))
+        .unwrap();
+        assert_eq!(
+            progress_line(Service::Sa3, &progress),
+            "sa3 training · pre-encode · track-a: 90.0s -> 969 frames, gain 1.0000"
+        );
+        progress.message = "[pre-encode] track-b: reused 468 frames\n".into();
+        assert_eq!(
+            progress_line(Service::Sa3, &progress),
+            "sa3 training · pre-encode · track-b: reused 468 frames"
+        );
+        progress.phase = "training".into();
+        progress.step = 1;
+        assert_eq!(
+            progress_line(Service::Sa3, &progress),
+            "sa3 training · training · step 1/2000 · epoch 0"
+        );
+    }
 }
 
 impl Job {
     pub fn cancel(&self) -> Result<(), String> {
         fs::write(self.directory.join("cancel.requested"), b"cancel\n").map_err(|e| e.to_string())
+    }
+
+    pub fn progress_summary(&self) -> Option<String> {
+        sa3::read_progress(&self.progress)
+            .ok()
+            .map(|value| progress_line(self.config.service, &value))
     }
 
     pub fn poll(&mut self) -> Result<Option<String>, String> {
@@ -299,18 +367,10 @@ impl Job {
                 dest.display()
             )));
         }
-        if let Ok(value) = sa3::read_progress(&self.progress) {
-            let key = (value.phase.clone(), value.step, value.epoch);
-            if self.last_progress.as_ref() != Some(&key) {
-                println!(
-                    "{} training · {} · step {}/{} · epoch {}",
-                    self.config.service.id(),
-                    value.phase,
-                    value.step,
-                    value.max_steps,
-                    value.epoch
-                );
-                self.last_progress = Some(key);
+        if let Some(line) = self.progress_summary() {
+            if self.last_progress.as_ref() != Some(&line) {
+                println!("{line}");
+                self.last_progress = Some(line);
             }
         }
         Ok(None)

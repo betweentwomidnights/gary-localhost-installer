@@ -1009,6 +1009,9 @@ impl Console {
             }
             Action::Training => {
                 if let Some(job) = &self.training {
+                    if let Some(progress) = job.progress_summary() {
+                        say(progress)?;
+                    }
                     say(format!(
                         "Progress {}\nLog {}",
                         job.progress.display(),
