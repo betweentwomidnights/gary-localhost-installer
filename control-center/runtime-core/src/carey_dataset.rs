@@ -88,7 +88,11 @@ async fn stage_audio(source: &Path, dest: &Path) -> Result<(), String> {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"));
     if wav && readable_wav(source) {
         // Training reads its inputs without changing them, so a link is enough.
-        if std::fs::hard_link(source, dest).is_ok() {
+        if source
+            .canonicalize()
+            .and_then(|target| std::fs::hard_link(target, dest))
+            .is_ok()
+        {
             return Ok(());
         }
         return std::fs::copy(source, dest)

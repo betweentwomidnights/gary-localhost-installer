@@ -1,7 +1,13 @@
 #[cfg(test)]
 use gary4local_core::dataset::parse_carey_ace_sidecar_content;
 use gary4local_core::training::{sanitize_lora_name,resolve_sa3_lora_layer_scope};
-use gary4local_core::dataset::{collect_sa3_dataset_audio_files,CareyAceSidecarFields,CareyAceDatasetSidecarEntry,Sa3DatasetSidecarEntry,read_dir_sorted,is_sa3_dataset_audio_file,user_facing_windows_path,canonical_sa3_dataset_root,read_sa3_dataset_sidecars,is_carey_ace_dataset_audio_file,canonical_carey_ace_dataset_root,render_carey_ace_sidecar,read_carey_ace_dataset_sidecars};
+use gary4local_core::dataset::{
+    canonical_carey_ace_dataset_root, canonical_sa3_dataset_root, check_writable_sidecar,
+    collect_sa3_dataset_audio_files, is_carey_ace_dataset_audio_file, is_sa3_dataset_audio_file,
+    read_carey_ace_dataset_sidecars, read_dir_sorted, read_sa3_dataset_sidecars,
+    render_carey_ace_sidecar, resolve_dataset_audio_entry, user_facing_windows_path,
+    CareyAceDatasetSidecarEntry, CareyAceSidecarFields, Sa3DatasetSidecarEntry,
+};
 mod ace_client;
 mod carey_migration;
 mod carey_caption;
@@ -1859,21 +1865,11 @@ fn save_sa3_dataset_sidecar_updates(
 
     for sidecar in sidecars {
         let requested_audio = PathBuf::from(sidecar.audio_path.trim());
-        let audio_path = requested_audio
-            .canonicalize()
-            .map_err(|e| format!("Cannot resolve {}: {}", requested_audio.display(), e))?;
-        if !audio_path.starts_with(&root)
-            || !audio_path.is_file()
-            || !is_sa3_dataset_audio_file(&audio_path)
-        {
-            return Err(format!(
-                "{} is not an audio file inside {}",
-                audio_path.display(),
-                root.display()
-            ));
-        }
-
+        let audio_path =
+            resolve_dataset_audio_entry(&root, &requested_audio, is_sa3_dataset_audio_file)?;
         let sidecar_path = audio_path.with_extension("txt");
+        check_writable_sidecar(&sidecar_path)
+            .map_err(|e| format!("Cannot update {}: {}", sidecar_path.display(), e))?;
         let content = sidecar.content.trim();
         if content.is_empty() {
             if sidecar_path.is_file() {
@@ -1918,21 +1914,11 @@ fn save_carey_ace_dataset_sidecar_updates(
 
     for sidecar in sidecars {
         let requested_audio = PathBuf::from(sidecar.audio_path.trim());
-        let audio_path = requested_audio
-            .canonicalize()
-            .map_err(|e| format!("Cannot resolve {}: {}", requested_audio.display(), e))?;
-        if !audio_path.starts_with(&root)
-            || !audio_path.is_file()
-            || !is_carey_ace_dataset_audio_file(&audio_path)
-        {
-            return Err(format!(
-                "{} is not an audio file inside {}",
-                audio_path.display(),
-                root.display()
-            ));
-        }
-
+        let audio_path =
+            resolve_dataset_audio_entry(&root, &requested_audio, is_carey_ace_dataset_audio_file)?;
         let sidecar_path = audio_path.with_extension("txt");
+        check_writable_sidecar(&sidecar_path)
+            .map_err(|e| format!("Cannot update {}: {}", sidecar_path.display(), e))?;
         if carey_ace_fields_are_empty(&sidecar.fields) {
             if sidecar_path.is_file() {
                 std::fs::remove_file(&sidecar_path)
@@ -8983,17 +8969,7 @@ async fn suggest_sa3_track_metadata(
 ) -> Result<Sa3TrackMetadataSuggestion, String> {
     let root = canonical_sa3_dataset_root(&dataset_path)?;
     let requested = PathBuf::from(audio_path.trim());
-    let resolved = requested
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))?;
-    if !resolved.starts_with(&root) || !resolved.is_file() || !is_sa3_dataset_audio_file(&resolved)
-    {
-        return Err(format!(
-            "{} is not an audio file inside {}",
-            resolved.display(),
-            root.display()
-        ));
-    }
+    let resolved = resolve_dataset_audio_entry(&root, &requested, is_sa3_dataset_audio_file)?;
 
     if storage::storage_info(repo_root.inner()).pending_restart {
         return Err("Restart to use your selected storage before audio analysis.".into());

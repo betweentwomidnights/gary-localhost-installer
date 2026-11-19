@@ -651,6 +651,7 @@ pub async fn label_sa3_dataset(
 fn write_sidecar(path: &Path, text: &str, overwrite: bool) -> std::io::Result<()> {
     use std::io::Write;
     if overwrite {
+        crate::dataset::check_writable_sidecar(path)?;
         return std::fs::write(path, text);
     }
     match std::fs::File::create_new(path) {

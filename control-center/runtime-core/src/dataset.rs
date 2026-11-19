@@ -124,6 +124,16 @@ pub fn collect_sa3_dataset_audio_files(
     visited: &mut std::collections::HashSet<PathBuf>,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
+    collect_dataset_audio_files(root, directory, visited, files, is_sa3_dataset_audio_file)
+}
+
+fn collect_dataset_audio_files(
+    root: &Path,
+    directory: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    files: &mut Vec<PathBuf>,
+    is_audio: fn(&Path) -> bool,
+) -> Result<(), String> {
     let canonical_directory = directory
         .canonicalize()
         .map_err(|e| format!("Cannot resolve {}: {}", directory.display(), e))?;
@@ -132,19 +142,52 @@ pub fn collect_sa3_dataset_audio_files(
     }
 
     for entry in read_dir_sorted(&canonical_directory)? {
-        let Ok(canonical_entry) = entry.canonicalize() else {
+        let Ok(metadata) = std::fs::metadata(&entry) else {
             continue;
         };
-        if !canonical_entry.starts_with(root) {
-            continue;
-        }
-        if canonical_entry.is_dir() {
-            collect_sa3_dataset_audio_files(root, &canonical_entry, visited, files)?;
-        } else if canonical_entry.is_file() && is_sa3_dataset_audio_file(&canonical_entry) {
-            files.push(canonical_entry);
+        if metadata.is_dir() {
+            collect_dataset_audio_files(root, &entry, visited, files, is_audio)?;
+        } else if metadata.is_file() && is_audio(&entry) {
+            // Pair linked audio with the sidecar beside the link, using its name.
+            files.push(entry);
         }
     }
     Ok(())
+}
+
+/// Validate a track path from the dataset editor while retaining its local name.
+pub fn resolve_dataset_audio_entry(
+    root: &Path,
+    requested: &Path,
+    is_audio: fn(&Path) -> bool,
+) -> Result<PathBuf, String> {
+    if let (Some(parent), Some(name)) = (requested.parent(), requested.file_name()) {
+        let directory = parent
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve {}: {}", parent.display(), e))?;
+        let entry = directory.join(name);
+        if directory.starts_with(root) && is_audio(&entry) && entry.is_file() {
+            return Ok(entry);
+        }
+    }
+    Err(format!(
+        "{} is not an audio file inside {}",
+        requested.display(),
+        root.display()
+    ))
+}
+
+/// Allow creating a sidecar or editing a regular file beside the track.
+pub fn check_writable_sidecar(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(()),
+        Ok(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Use a regular sidecar file at {}", path.display()),
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn sa3_dataset_json_sidecar_exists(root: &Path, audio_path: &Path) -> bool {
@@ -236,35 +279,6 @@ pub fn canonical_carey_ace_dataset_root(dataset_path: &str) -> Result<PathBuf, S
     requested
         .canonicalize()
         .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))
-}
-
-fn collect_carey_ace_dataset_audio_files(
-    root: &Path,
-    directory: &Path,
-    visited: &mut std::collections::HashSet<PathBuf>,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    let canonical_directory = directory
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", directory.display(), e))?;
-    if !canonical_directory.starts_with(root) || !visited.insert(canonical_directory.clone()) {
-        return Ok(());
-    }
-
-    for entry in read_dir_sorted(&canonical_directory)? {
-        let Ok(canonical_entry) = entry.canonicalize() else {
-            continue;
-        };
-        if !canonical_entry.starts_with(root) {
-            continue;
-        }
-        if canonical_entry.is_dir() {
-            collect_carey_ace_dataset_audio_files(root, &canonical_entry, visited, files)?;
-        } else if canonical_entry.is_file() && is_carey_ace_dataset_audio_file(&canonical_entry) {
-            files.push(canonical_entry);
-        }
-    }
-    Ok(())
 }
 
 fn normalize_carey_ace_sidecar_key(raw: &str) -> Option<&'static str> {
@@ -420,7 +434,13 @@ pub fn read_carey_ace_dataset_sidecars(
     let root = canonical_carey_ace_dataset_root(dataset_path)?;
     let mut files = Vec::new();
     let mut visited = std::collections::HashSet::new();
-    collect_carey_ace_dataset_audio_files(&root, &root, &mut visited, &mut files)?;
+    collect_dataset_audio_files(
+        &root,
+        &root,
+        &mut visited,
+        &mut files,
+        is_carey_ace_dataset_audio_file,
+    )?;
     files.sort_by(|left, right| {
         left.strip_prefix(&root)
             .unwrap_or(left)
@@ -463,4 +483,56 @@ pub fn read_carey_ace_dataset_sidecars(
             }
         })
         .collect())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn linked_audio_uses_the_dataset_sidecar() {
+        let fixture =
+            std::env::temp_dir().join(format!("gary-linked-audio-{}", std::process::id()));
+        let dataset = fixture.join("dataset");
+        let source = fixture.join("source");
+        fs::create_dir_all(&dataset).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("original.wav"), b"audio").unwrap();
+        fs::write(source.join("original.txt"), "Source caption").unwrap();
+        symlink("../source/original.wav", dataset.join("track.wav")).unwrap();
+        fs::write(dataset.join("track.txt"), "caption: Dataset caption").unwrap();
+        symlink("../source", dataset.join("outside")).unwrap();
+        symlink("../source/missing.wav", dataset.join("missing.wav")).unwrap();
+
+        let root = dataset.canonicalize().unwrap();
+        let sa3 = read_sa3_dataset_sidecars(dataset.to_str().unwrap()).unwrap();
+        assert_eq!(sa3.len(), 1);
+        assert_eq!(sa3[0].relative_path, "track.wav");
+        assert_eq!(sa3[0].content, "caption: Dataset caption");
+        let carey = read_carey_ace_dataset_sidecars(dataset.to_str().unwrap()).unwrap();
+        assert_eq!(carey.len(), 1);
+        assert_eq!(carey[0].audio_path, sa3[0].audio_path);
+        assert_eq!(carey[0].fields.caption, "Dataset caption");
+        assert_eq!(
+            resolve_dataset_audio_entry(
+                &root,
+                &dataset.join("track.wav"),
+                is_sa3_dataset_audio_file
+            )
+            .unwrap()
+            .with_extension("txt"),
+            root.join("track.txt")
+        );
+        assert!(resolve_dataset_audio_entry(
+            &root,
+            &dataset.join("outside/original.wav"),
+            is_sa3_dataset_audio_file
+        )
+        .is_err());
+        symlink("../source/original.txt", dataset.join("linked.txt")).unwrap();
+        assert!(check_writable_sidecar(&dataset.join("linked.txt")).is_err());
+        fs::remove_dir_all(fixture).unwrap();
+    }
 }
