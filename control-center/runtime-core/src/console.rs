@@ -28,6 +28,7 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   Add --json for the noninteractive agent protocol. Advanced commands:\n\
   init, validate, capabilities, schema, serve, version (see COMMAND --help).\n\n\
   Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
+  Use /start all and /stop all inside the console.\n\
   Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. Training is not implemented yet.\n\
   Leaving a console stops only services started by that console.\n\
   No runtime/model downloads happen just by opening Gary.";
@@ -197,7 +198,9 @@ enum Action {
     Models,
     Install,
     Start,
+    StartAll,
     Stop,
+    StopAll,
     Status,
     Doctor,
     Logs,
@@ -216,6 +219,16 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
     );
     if words.len() > 1 && !(service_action && words.len() == 2) {
         return Err("Use a command on its own or with sa3, for example /start sa3. Type /help for commands.".into());
+    }
+    if words
+        .get(1)
+        .is_some_and(|id| id.eq_ignore_ascii_case("all"))
+    {
+        return match name.as_str() {
+            "start" => Ok(Some((Action::StartAll, None))),
+            "stop" => Ok(Some((Action::StopAll, None))),
+            _ => Err("Use all with /start or /stop.".into()),
+        };
     }
     let service = words.get(1).map(|id| Service::parse(id)).transpose()?;
     Ok(Some((
@@ -396,6 +409,14 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
     say("Next: /models to prepare weights, /install for the runtime, then /start.")
 }
 
+fn service_label(service: Service) -> &'static str {
+    if service == Service::Sa3 {
+        "SA3"
+    } else {
+        service.id()
+    }
+}
+
 struct Running {
     id: u64,
     config: Config,
@@ -567,6 +588,86 @@ impl Console {
             .map_err(|e| e.message)?;
         Ok(())
     }
+    async fn start_service(&mut self, service: Service, show_checks: bool) -> Result<(), String> {
+        let id = service.id();
+        let label = service_label(service);
+        if self.state(service).await?["operation_active"] == true {
+            return Err(format!("{label} is already active."));
+        }
+        let config = self.config(service)?;
+        let report = headless::doctor(&config).await?;
+        if report["can_attempt_serve"] != true {
+            if show_checks {
+                command::human_output("doctor", &report)?;
+                return Err(format!("Resolve the preflight checks before /start. Use /install {id} for the runtime and /models {id} for weights."));
+            }
+            return Err(format!("Preflight blocked. Run /doctor {id} for details."));
+        }
+        self.serial += 1;
+        let serial = self.serial;
+        let tx = self.events.clone();
+        let cfg = config.clone();
+        let task = tokio::spawn(async move {
+            let result = headless::serve(&cfg, headless::Sa3Startup::Cold, |value| {
+                tx.send(Event::Ready(service, serial, value))
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+            let _ = tx.send(Event::Finished(service, serial, result));
+        });
+        self.owned.insert(
+            service,
+            Running {
+                id: serial,
+                config,
+                session: None,
+                task,
+            },
+        );
+        say(format!("Starting {label}... /stop {id} cancels startup."))
+    }
+
+    async fn stop_service(&mut self, service: Service) -> Result<bool, String> {
+        if self.owned.contains_key(&service) {
+            self.stop_owned(service).await?;
+            return Ok(true);
+        }
+        let config = self.config(service)?;
+        let state = headless::status(&config).await?;
+        if state["operation_active"] != true {
+            return Ok(false);
+        }
+        let session = state["state"]["session"]
+            .as_str()
+            .filter(|_| state["running"] == true)
+            .ok_or("The service is busy in another session. Wait for startup or installation to finish.")?;
+        headless::stop(&config, Some(session))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    async fn handle_all(&mut self, action: Action) -> Result<(), String> {
+        for service in Service::ALL {
+            if !self.owned.contains_key(&service) && !profile_path(&self.path, service).exists() {
+                continue;
+            }
+            let label = service_label(service);
+            if action == Action::StartAll {
+                if let Err(error) = self.start_service(service, false).await {
+                    say(format!("{label} skipped: {error}"))?;
+                }
+            } else {
+                match self.stop_service(service).await {
+                    Ok(true) => say(format!("{label} stopped."))?,
+                    Ok(false) => {}
+                    Err(error) => say(format!("Could not stop {label}: {error}"))?,
+                }
+            }
+        }
+        self.status(None).await
+    }
+
     async fn handle(
         &mut self,
         action: Action,
@@ -576,7 +677,11 @@ impl Console {
         match action {
             Action::Quit => return Ok(true),
             Action::Help => {
-                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service] — Start a stopped service\n/stop [service] — Stop one service or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/quit — Stop services started here and leave")?;
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/quit — Stop services started here and leave")?;
+                return Ok(false);
+            }
+            Action::StartAll | Action::StopAll => {
+                self.handle_all(action).await?;
                 return Ok(false);
             }
             Action::Setup => {
@@ -593,10 +698,20 @@ impl Console {
             Some(s) => s,
             None => self.choose(&action, input).await?,
         };
-        let id = service.id();
-        let label = if service == Service::Sa3 { "SA3" } else { id };
-        if matches!(action, Action::Install | Action::Models) {
-            self.ensure_profile(service).await?;
+        let label = service_label(service);
+        match action {
+            Action::Start => {
+                self.start_service(service, true).await?;
+                return Ok(false);
+            }
+            Action::Stop => {
+                self.stop_service(service).await?;
+                say(format!("{label} stopped."))?;
+                self.status(None).await?;
+                return Ok(false);
+            }
+            Action::Install | Action::Models => self.ensure_profile(service).await?,
+            _ => {}
         }
         let config = if let Some(host) = self.owned.get(&service) {
             host.config.clone()
@@ -635,54 +750,6 @@ impl Console {
                         say(format!("{label} weights verified."))?;
                     }
                 }
-            }
-            Action::Start => {
-                if self.state(service).await?["operation_active"] == true {
-                    return Err(format!("{label} is already active."));
-                }
-                let report = headless::doctor(&config).await?;
-                if report["can_attempt_serve"] != true {
-                    command::human_output("doctor", &report)?;
-                    return Err(format!("Resolve the preflight checks before /start. Use /install {id} for the runtime and /models {id} for weights."));
-                }
-                self.serial += 1;
-                let serial = self.serial;
-                let tx = self.events.clone();
-                let cfg = config.clone();
-                let task = tokio::spawn(async move {
-                    let result = headless::serve(&cfg, headless::Sa3Startup::Cold, |value| {
-                        tx.send(Event::Ready(service, serial, value))
-                            .map_err(|e| e.to_string())
-                    })
-                    .await;
-                    let _ = tx.send(Event::Finished(service, serial, result));
-                });
-                self.owned.insert(
-                    service,
-                    Running {
-                        id: serial,
-                        config,
-                        session: None,
-                        task,
-                    },
-                );
-                say(format!("Starting {label}... /stop {id} cancels startup."))?;
-            }
-            Action::Stop => {
-                if self.owned.contains_key(&service) {
-                    self.stop_owned(service).await?;
-                } else {
-                    let state = self.state(service).await?;
-                    if state["operation_active"] == true {
-                        let session=state["state"]["session"].as_str().filter(|_|state["running"]==true)
-                            .ok_or("The service is busy in another session. Wait for startup or installation to finish.")?;
-                        headless::stop(&config, Some(session))
-                            .await
-                            .map_err(|e| e.to_string())?;
-                    }
-                }
-                say(format!("{label} stopped."))?;
-                self.status(None).await?;
             }
             _ => unreachable!(),
         }
@@ -739,7 +806,7 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
                     Event::Ready(service,id,value)=>{
                         if let Some(host)=console.owned.get_mut(&service).filter(|h|h.id==id){
                             host.session=value["session"].as_str().map(str::to_owned);
-                            let label=if service==Service::Sa3 {"SA3"} else {service.id()};
+                            let label = service_label(service);
                             say(format!("\n{label} ready at {}",value["public_url"].as_str().unwrap_or("")))?;
                             console.status(None).await?;
                         }
@@ -781,6 +848,10 @@ mod tests {
             Ok(Some((Action::Start, Some(Service::Sa3))))
         );
         assert_eq!(action("stop"), Ok(Some((Action::Stop, None))));
+        assert_eq!(action("/start all"), Ok(Some((Action::StartAll, None))));
+        assert_eq!(action("stop ALL"), Ok(Some((Action::StopAll, None))));
+        assert!(action("/install all").is_err());
+        assert!(action("/stop all sa3").is_err());
         assert_eq!(action("/services"), Ok(Some((Action::Status, None))));
         assert_eq!(action("  "), Ok(None));
         assert_eq!(

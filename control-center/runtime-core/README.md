@@ -17,8 +17,11 @@ Use `gary`, `melodyflow`, `stable-audio`, `sa3`, `carey`, `foundation` or `yuey`
 after a command. Without a name, Linux offers an arrow-key picker when several
 services apply. Enter selects and Esc goes back. `/stop` lists active services,
 including ones still starting. `/logs SERVICE` prints the native log path.
-`/quit` stops services this console started. Another console can inspect them
-or explicitly stop an individual session.
+`/start all` starts every service with an installed runtime and available
+weights, skipping unavailable or active services. `/stop all` stops all
+running services in this profile and cancels starts owned by this console.
+It includes running services started by another console. `/quit` stops
+services this console started.
 
 `/install` and `/models` create a missing profile with defaults. Runtime
 installation probes the selected GPU. Model downloads require confirmation.
