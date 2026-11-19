@@ -148,6 +148,7 @@ fn init_is_idempotent_without_owning_storage_or_overwriting_different_config() {
     let initial = fixture.init();
     assert_eq!(initial["data"]["created"], true);
     assert_eq!(fixture.body()["ae_encoding"], "f32");
+    assert_eq!(fixture.body()["public_port"], 8006);
     assert!(!fixture.owned().exists());
     let bytes = std::fs::read(&fixture.config).unwrap();
     assert_eq!(fixture.init()["data"]["created"], false);
@@ -175,6 +176,14 @@ fn init_is_idempotent_without_owning_storage_or_overwriting_different_config() {
             0o600
         );
     }
+}
+
+#[test]
+fn init_accepts_an_explicit_client_port() {
+    let fixture = Fixture::new();
+    let result = fixture.run("init", &["--port", "28309"]);
+    assert_eq!(parsed(&result, 0)["data"]["created"], true);
+    assert_eq!(fixture.body()["public_port"], 28309);
 }
 
 #[test]

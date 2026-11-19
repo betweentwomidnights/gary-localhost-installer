@@ -145,7 +145,7 @@ at compile time. Neither introduces desktop runtime dependencies.
 To reuse weights you already have, supply their folder at init:
 
 ```sh
-gary4local-server init --config /absolute/path/sa3.json --models-dir /absolute/path/models --port 28300
+gary4local-server init --config /absolute/path/sa3.json --models-dir /absolute/path/models
 gary4local-server validate --config /absolute/path/sa3.json
 gary4local-server doctor --config /absolute/path/sa3.json
 ```
@@ -155,6 +155,11 @@ gary4local-server doctor --config /absolute/path/sa3.json
 config, and refuses to overwrite a different one. Use `--runtime-root`, `--device`
 or `--encoding` to change those choices. Existing example JSON files also work;
 their machine-specific paths must be replaced. Configs reject unknown fields.
+
+New profiles use the same client ports as desktop gary4local and gary4juce,
+including port 8006 for SA3. To override a port, enter it in `/setup` for SA3
+or pass `--port PORT` to `gary init`. To change an existing profile, stop the
+service, edit `public_port` in its saved config, then start it again.
 
 `validate` resolves config and pinned package choices without inspecting the GPU
 or loading models. `doctor` checks ownership, installed runtime metadata,
@@ -191,8 +196,8 @@ gary4local-server stop --config /absolute/path/headless.json --session SESSION_F
 ```
 
 Both the client adapter and private native server bind to **127.0.0.1**. Use SSH
-forwarding for a remote client. The example client port is 28300; a fresh private
-native port is selected for each session and recorded in `state.json`. Only
+forwarding for a remote client. The default SA3 client port is 8006. Gary selects
+a fresh private native port for each session and records it in `state.json`. Only
 forward the client port. The adapter supports its
 existing generation, loop, transform, continuation, polling, health and model
 lifecycle routes. Initial headless operation has no prepared LoRA registry or

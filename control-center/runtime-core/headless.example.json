@@ -2,7 +2,7 @@
   "runtime_root": "/home/kev/gary4local-packaging/headless/sa3-demo",
   "models_dir": "/home/kev/sa3.cpp/models",
   "device": "Vulkan0",
-  "public_port": 28300,
+  "public_port": 8006,
   "model": "medium",
   "encoding": "f16",
   "t5_encoding": "f16",

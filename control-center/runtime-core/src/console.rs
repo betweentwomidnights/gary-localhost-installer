@@ -350,13 +350,13 @@ async fn setup(path: &Path, input: &mut Input) -> Result<(), String> {
             }
         }
     }
+    let default_port = Service::Sa3.default_port().to_string();
+    let port_prompt = format!("Client port [{default_port}]: ");
     let port = loop {
-        let value = answer(input, "Client port [28300]: ").await?;
-        let value = if value.is_empty() {
-            "28300".to_string()
-        } else {
-            value
-        };
+        let value = answer(input, &port_prompt).await?;
+        if value.is_empty() {
+            break default_port;
+        }
         if value.parse::<u16>().is_ok_and(|p| p > 0) {
             break value;
         }

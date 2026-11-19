@@ -10,7 +10,7 @@
     "sha256": "REPLACE_WITH_SHA256_FROM_VERIFIED_SHA256SUMS"
   },
   "device": "Vulkan0",
-  "public_port": 28300,
+  "public_port": 8006,
   "model": "medium",
   "encoding": "f16",
   "t5_encoding": "f16",

@@ -73,11 +73,7 @@ impl Service {
         }
     }
     pub fn default_port(self) -> u16 {
-        if self == Self::Sa3 {
-            28300
-        } else {
-            self.definition().port
-        }
+        self.definition().port
     }
     pub fn defaults(self) -> (&'static str, &'static str) {
         match self {

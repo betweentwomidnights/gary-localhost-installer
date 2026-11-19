@@ -168,7 +168,7 @@ impl Request {
 
 pub fn help() -> &'static str {
     "gary4local-server COMMAND [OPTIONS]\n\n\
-     init --config FILE [--service ID] [--model NAME] [--models-dir DIR] [--runtime-root DIR] [--device Vulkan0] [--port 28300] [--encoding f16]\n\
+     init --config FILE [--service ID] [--model NAME] [--models-dir DIR] [--runtime-root DIR] [--device Vulkan0] [--port PORT] [--encoding f16]\n\
      validate --config FILE      Check configuration and resolve pinned packages; no downloads\n\
      models --config FILE       List pinned weights for this configuration\n\
      download-models --config FILE  Fetch and verify weights in managed storage\n\
@@ -182,6 +182,7 @@ pub fn help() -> &'static str {
      version                     Print the binary version\n\n\
      --json                      Versioned JSON results/errors; serve emits newline-delimited JSON\n\
      --help                      Global or per-command help (never reads config)\n\n\
+     Client ports default to the desktop ports for each service (SA3: 8006).\n\
      All service listeners bind to 127.0.0.1. download-models explicitly fetches the configured weights.\n\
      Training commands are not implemented. init never overwrites a different config."
 }

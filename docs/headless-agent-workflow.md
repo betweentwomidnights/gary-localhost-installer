@@ -40,13 +40,14 @@ For managed storage, omit `--models-dir` at init, inspect `models --config FILE 
 
 This POSIX shell example uses existing weights and a dedicated working directory.
 On Windows the same commands accept Windows paths; use PowerShell's own process
-management. Set the model path and choose a free loopback port deliberately.
+management. Set the model path. SA3 defaults to the desktop client port 8006.
+Use `--port PORT` to choose a different loopback port when needed.
 
 ```sh
 mkdir -p "$HOME/gary-headless"
 cd "$HOME/gary-headless"
 gary4local-server init --config "$PWD/sa3.json" \
-  --models-dir /absolute/path/to/existing/models --port 28300 --json
+  --models-dir /absolute/path/to/existing/models --json
 gary4local-server validate --config "$PWD/sa3.json" --json
 gary4local-server doctor --config "$PWD/sa3.json" --json
 # First doctor normally exits 4 because no runtime is installed.

@@ -155,7 +155,7 @@ fn real_terminal_setup_can_cancel_save_and_report_missing_runtime_without_downlo
     terminal.send("/setup\n");
     terminal.expect("SA3 models: ");
     terminal.send(&format!("{}\n", models.display()));
-    terminal.expect("Client port");
+    terminal.expect("Client port [8006]");
     terminal.send("0\n");
     terminal.expect("Choose a port from 1 to 65535.");
     terminal.send("\n");
@@ -168,6 +168,9 @@ fn real_terminal_setup_can_cancel_save_and_report_missing_runtime_without_downlo
     terminal.expect("Created config");
     terminal.expect("gary> ");
     assert!(fixture.config.exists());
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.config).unwrap()).unwrap();
+    assert_eq!(config["public_port"], 8006);
     assert!(!fixture.root.join("sa3.data").exists());
     terminal.send("/start\n");
     terminal.expect("Runtime missing or invalid. Run /install sa3.");
