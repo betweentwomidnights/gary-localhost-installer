@@ -1010,10 +1010,22 @@ async fn probe(config: &Config, dir: &Path) -> Result<Value, String> {
         .map_err(|_| "GPU probe timed out".to_string())?
         .map_err(err)?;
     if !output.status.success() {
-        return Err(format!(
-            "GPU probe failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.contains("createDevice") || stderr.contains("InitializationFailedError") {
+            "Vulkan could not initialize the GPU. If another GPU workload is active, try again after it finishes."
+        } else {
+            "The GPU probe exited before it could confirm the device."
+        };
+        let path = config.log_path();
+        let result = OpenOptions::new().append(true).create(true).open(&path).and_then(|mut log| {
+            writeln!(log, "\nGPU probe --props failed at {:?} ({}):\n{}\n{}", SystemTime::now(), output.status, stderr, stdout)
+        });
+        let message = format!("{} probe failed ({}). {detail}", config.device, output.status);
+        return Err(match result {
+            Ok(()) => format!("{message} Details: {}", path.display()),
+            Err(error) => format!("{message} Could not write {}: {error}\n{stderr}", path.display()),
+        });
     }
     let props: Value = serde_json::from_slice(&output.stdout).map_err(err)?;
     if props["service"] != config.service.probe_id()

@@ -12,8 +12,10 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
-            "gary-terminal-{}-{}",
+            "gary-terminal-{}-{}-{serial}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
