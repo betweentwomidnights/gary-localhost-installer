@@ -10,8 +10,7 @@ also offers a terminal-only human console with `/setup`, `/start`, `/stop` and
 status display. It never opens prompts for redirected input/output or `--json`.
 Use `gary COMMAND --json` for automation; its optional default config comes from
 `GARY4LOCAL_HEADLESS_CONFIG` or the platform config directory. The original
-`gary4local-server COMMAND --config FILE --json` remains unchanged. Interactive
-training is still unsupported. See the runtime-core README for console setup.
+`gary4local-server COMMAND --config FILE --json` remains unchanged. Training is available in the interactive console. See the runtime-core README for setup.
 
 For another service, run `gary init carey --json`, then `gary install carey --json`,
 `gary download-models carey --json` and `gary start carey --json`. Use
@@ -31,10 +30,9 @@ gary4local-server schema --target response --json
 ```
 
 Read `data.commands`, option requirements, effects and `data.features` from
-capabilities. Unsupported features currently include training,
-named LoRA registries and migration from desktop profiles. Do not invent commands
-for them. Command discovery describes this binary, including its platform's
-published packages. `--help` also works without a config, globally or per command.
+capabilities. The interactive console offers LoRA training and import for SA3
+and Carey. Agents can inspect the exposed adapters through the service APIs.
+Command discovery describes this binary and its platform's published packages. `--help` also works without a config, globally or per command.
 
 ## Prepare and run
 

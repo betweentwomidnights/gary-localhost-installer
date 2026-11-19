@@ -29,7 +29,7 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   init, validate, capabilities, schema, serve, version (see COMMAND --help).\n\n\
   Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
   Use /start all and /stop all inside the console.\n\
-  Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. Training is not implemented yet.\n\
+  Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. LoRA tools: /add lora and /train lora for SA3 and Carey.\n\
   Leaving a console stops only services started by that console.\n\
   No runtime/model downloads happen just by opening Gary.";
 
@@ -206,6 +206,10 @@ enum Action {
     Logs,
     Help,
     Quit,
+    AddLora,
+    TrainLora,
+    Training,
+    CancelTraining,
 }
 fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
     let words: Vec<_> = line.split_whitespace().collect();
@@ -213,6 +217,28 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
         return Ok(None);
     }
     let name = words[0].trim_start_matches('/').to_ascii_lowercase();
+    if name == "cancel" && words.len() == 2 && words[1].eq_ignore_ascii_case("training") {
+        return Ok(Some((Action::CancelTraining, None)));
+    }
+    if matches!(name.as_str(), "add" | "train")
+        && words
+            .get(1)
+            .is_some_and(|word| word.eq_ignore_ascii_case("lora"))
+        && words.len() <= 3
+    {
+        let service = words.get(2).map(|id| Service::parse(id)).transpose()?;
+        if service.is_some_and(|s| !matches!(s, Service::Sa3 | Service::Carey)) {
+            return Err("LoRA tools are available for SA3 and Carey.".into());
+        }
+        return Ok(Some((
+            if name == "add" {
+                Action::AddLora
+            } else {
+                Action::TrainLora
+            },
+            service,
+        )));
+    }
     let service_action = matches!(
         name.as_str(),
         "start" | "stop" | "status" | "services" | "models" | "install" | "doctor" | "logs"
@@ -241,6 +267,7 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
             "status" | "services" => Action::Status,
             "doctor" => Action::Doctor,
             "logs" => Action::Logs,
+            "training" => Action::Training,
             "help" | "?" => Action::Help,
             "quit" | "exit" => Action::Quit,
             _ => {
@@ -256,6 +283,8 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
 #[path = "console_input.rs"]
 mod console_input;
 use console_input::Input;
+#[path = "console_training.rs"]
+mod console_training;
 
 async fn answer(input: &mut Input, question: &str) -> Result<String, String> {
     prompt(question)?;
@@ -513,6 +542,7 @@ struct Console {
     owned: HashMap<Service, Running>,
     serial: u64,
     events: mpsc::UnboundedSender<Event>,
+    training: Option<crate::training_job::Job>,
 }
 impl Console {
     fn new(path: PathBuf, events: mpsc::UnboundedSender<Event>) -> Self {
@@ -521,6 +551,7 @@ impl Console {
             owned: HashMap::new(),
             serial: 0,
             events,
+            training: None,
         }
     }
     fn config(&self, service: Service) -> Result<Config, String> {
@@ -602,6 +633,11 @@ impl Console {
     async fn choose(&self, action: &Action, input: &mut Input) -> Result<Service, String> {
         let mut choices = Vec::new();
         for service in Service::ALL {
+            if matches!(action, Action::AddLora | Action::TrainLora)
+                && !matches!(service, Service::Sa3 | Service::Carey)
+            {
+                continue;
+            }
             if matches!(action, Action::Stop | Action::Start) {
                 if !self.owned.contains_key(&service) && !profile_path(&self.path, service).exists()
                 {
@@ -964,11 +1000,32 @@ impl Console {
         match action {
             Action::Quit => return Ok(true),
             Action::Help => {
-                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/quit — Stop services started here and leave")?;
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel training — Request a checkpoint and stop training\n/quit — Stop services started here and leave")?;
                 return Ok(false);
             }
             Action::StartAll | Action::StopAll => {
                 self.handle_all(action).await?;
+                return Ok(false);
+            }
+            Action::Training => {
+                if let Some(job) = &self.training {
+                    say(format!(
+                        "Progress {}\nLog {}",
+                        job.progress.display(),
+                        job.log.display()
+                    ))?;
+                } else {
+                    say("No training job is running in this console.")?;
+                }
+                return Ok(false);
+            }
+            Action::CancelTraining => {
+                if let Some(job) = &self.training {
+                    job.cancel()?;
+                    say("Cancellation requested.")?;
+                } else {
+                    say("No training job is running in this console.")?;
+                }
                 return Ok(false);
             }
             Action::Setup => {
@@ -987,6 +1044,14 @@ impl Console {
         };
         let label = service_label(service);
         match action {
+            Action::TrainLora => {
+                self.train_lora(input, service).await?;
+                return Ok(false);
+            }
+            Action::AddLora => {
+                self.add_lora(input, service).await?;
+                return Ok(false);
+            }
             Action::Start => {
                 self.start_service(service, Some(input)).await?;
                 return Ok(false);
@@ -1059,8 +1124,13 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
     if let Err(e) = console.status(None).await {
         say(format!("{e}\nType /help for commands."))?;
     }
+    let mut training_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    let mut show_prompt = true;
     loop {
-        prompt("\ngary> ")?;
+        if show_prompt {
+            prompt("\ngary> ")?;
+        }
+        show_prompt = true;
         tokio::select! {
             _=&mut shutdown=>break,
             line=input.recv()=>{
@@ -1078,6 +1148,15 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
                         }
                     }
                 }
+            }
+            _=training_tick.tick(), if console.training.is_some()=>{
+                let job=console.training.as_mut().expect("active training job");
+                match job.poll() {
+                    Ok(None)=>{show_prompt=false;continue;},
+                    Ok(Some(message))=>say(message)?,
+                    Err(error)=>say(error)?,
+                }
+                console.training.take();
             }
             Some(event)=ready.recv()=>{
                 match event {
@@ -1104,6 +1183,12 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
     // The captured owner config/nonce is used, even if the file was edited.
     // Never stop a service that was running before this console opened.
     let mut errors = Vec::new();
+    if let Some(mut job) = console.training.take() {
+        say("Cancelling the active training job and waiting for its checkpoint.")?;
+        if let Err(error) = job.cancel_and_wait().await {
+            errors.push(error);
+        }
+    }
     for service in Service::ALL {
         if let Err(e) = console.stop_owned(service).await {
             errors.push(e);

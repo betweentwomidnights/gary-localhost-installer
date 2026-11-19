@@ -194,6 +194,10 @@ pub fn service_files(
     Ok(files)
 }
 
+pub fn component(service: Service, id: &str) -> Option<&'static CatalogComponent> {
+    catalog(service).iter().find(|item| item.id == id)
+}
+
 fn catalog(service: Service) -> &'static [CatalogComponent] {
     macro_rules! catalog {
         ($file:literal) => {{

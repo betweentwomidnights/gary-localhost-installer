@@ -327,7 +327,7 @@ impl Config {
             "vulkan"
         }
     }
-    fn installed_dir(&self) -> PathBuf {
+    pub(crate) fn installed_dir(&self) -> PathBuf {
         self.runtime_root.join("runtimes").join(format!(
             "{}-{}-{}",
             self.service.package(),
@@ -335,7 +335,7 @@ impl Config {
             self.backend.sha256.to_ascii_lowercase()
         ))
     }
-    fn launch(&self, directory: PathBuf, native_port: u16) -> NativeLaunch {
+    pub(crate) fn launch(&self, directory: PathBuf, native_port: u16) -> NativeLaunch {
         let install = NativeInstall {
             dir: directory,
             backend: self.device.clone(),
@@ -679,7 +679,7 @@ mod tests {
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
-fn serial() -> String {
+pub(crate) fn serial() -> String {
     format!(
         "{}-{}",
         std::process::id(),
@@ -724,11 +724,41 @@ fn owned_root(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+// ace-train atomically publishes these relative directory links inside the
+// job's run folder. Walk the generation directories themselves, never links.
+fn native_checkpoint_pointer(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root.join("training/jobs")) else {
+        return false;
+    };
+    let parts: Vec<_> = relative.iter().collect();
+    if !matches!(parts.len(), 3 | 4) || parts[1] != "run" {
+        return false;
+    }
+    let name = parts[parts.len() - 1].to_string_lossy();
+    if name != "checkpoint.current" && !name.starts_with("checkpoint.current-") {
+        return false;
+    }
+    let Ok(target) = std::fs::read_link(path) else {
+        return false;
+    };
+    let mut pieces = target.components();
+    matches!(pieces.next(), Some(std::path::Component::Normal(name)) if name == ".checkpoint-generations")
+        && matches!(pieces.next(), Some(std::path::Component::Normal(name)) if name.to_string_lossy().starts_with("generation-"))
+        && pieces.next().is_none()
+}
+
 fn reject_symlinks(root: &Path) -> Result<(), String> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(path) = pending.pop() {
-        let metadata = std::fs::symlink_metadata(&path).map_err(err)?;
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && path != root => continue,
+            Err(error) => return Err(err(error)),
+        };
         if metadata.file_type().is_symlink() {
+            if native_checkpoint_pointer(root, &path) {
+                continue;
+            }
             return Err(format!(
                 "Runtime-owned paths cannot be symlinks: {}",
                 path.display()
@@ -798,7 +828,7 @@ pub async fn download_models(config: &Config) -> Result<Value, String> {
     model_plan(config)
 }
 
-async fn fetch_model_files(
+pub(crate) async fn fetch_model_files(
     config: &Config,
     files: Vec<&crate::model_catalog::PinnedHfFile>,
 ) -> Result<(), String> {
@@ -1137,7 +1167,7 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
         "limitations":["Model contents and GPU execution were not verified.","Port availability is a snapshot, not a reservation."]}),
     )
 }
-struct Lease {
+pub(crate) struct Lease {
     _file: File,
     session: String,
 }
@@ -1216,7 +1246,7 @@ fn active(config: &Config) -> Result<bool, String> {
         Err(error) => Err(err(error)),
     }
 }
-fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let temporary = path.with_extension(format!("{}.tmp", serial()));
     let bytes = serde_json::to_vec_pretty(value).map_err(err)?;
     let mut options = OpenOptions::new();
@@ -1257,7 +1287,7 @@ fn verify_archive(package: &Package) -> Result<(), String> {
     }
     Ok(())
 }
-fn clean_command_env(command: &mut std::process::Command, launch: &NativeLaunch) {
+pub(crate) fn clean_command_env(command: &mut std::process::Command, launch: &NativeLaunch) {
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
         if ["AC_", "ACE_", "YUE2_"]
@@ -1365,6 +1395,13 @@ fn metadata(config: &Config, dir: &Path) -> Result<Value, String> {
         );
     }
     Ok(info)
+}
+
+pub(crate) fn reserve_tool(config: &Config) -> Result<Lease, String> {
+    owned_root(config)?;
+    let lease = lock(config)?;
+    metadata(config, &config.installed_dir())?;
+    Ok(lease)
 }
 
 async fn acquire(package: &Package) -> Result<(), String> {
@@ -1657,7 +1694,12 @@ pub async fn serve(
             native_port,
             config.runtime_root.join("uploads"),
             config.defaults.clone(),
-            AdapterOptions::default(),
+            AdapterOptions {
+                registry: Some(std::sync::Arc::new(crate::training_job::AdapterDirectory(
+                    config.runtime_root.join("adapters"),
+                ))),
+                ..AdapterOptions::default()
+            },
         )?;
         adapter_tasks.spawn(adapter.serve());
     } else {

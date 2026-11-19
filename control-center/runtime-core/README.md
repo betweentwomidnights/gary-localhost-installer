@@ -93,6 +93,24 @@ The console manages service lifecycles. Clients use each service’s HTTP API fo
 Scripts can use `gary COMMAND --json` or the original `gary4local-server`.
 `gary start --json` aliases `serve`, including its protocol command name.
 
+## LoRA tools
+
+Run `train lora sa3` or `train lora carey` and enter the dataset folder.
+Choose whether to auto-label with Carey's captioner. Existing text sidecars
+are kept unless you confirm replacement. Review tracks by number and edit
+text sidecars in the console before continuing to settings. SA3 uses steps
+and a single training window. Carey uses epochs and minimum/maximum windows.
+The wizard offers the remaining trainer settings and links to Discord help.
+
+Training runs under the service profile's runtime root. Stop that service
+before training. Use `/training` for the progress and log paths and
+`/cancel training` to request a checkpoint. A completed run adds its final
+adapter to the service. The run folder retains its settings and checkpoints.
+
+Use `add lora sa3` to import a GGUF adapter or convert a safetensors adapter.
+Use `add lora carey` to import a PEFT folder and declare its 2B or XL family.
+Start the service afterward to expose the added adapter to clients.
+
 ## Shared core
 
 `gary4local-server` builds without Tauri, GTK, WebKit, tray libraries, Node or a
@@ -226,7 +244,7 @@ For compatibility, without `--json` the original install/status/stop commands
 retain their unversioned JSON and serve prints only its legacy ready object.
 New init/validate/doctor commands have readable summaries. See
 [`docs/headless-agent-workflow.md`](../../docs/headless-agent-workflow.md) for a
-complete shell recipe and retry rules. Training is not implemented in this CLI.
+complete shell recipe and retry rules. The interactive console has a guided training workflow.
 The same guide is bundled as `AGENT-WORKFLOW.md` in CLI archives.
 
 ## Storage and process ownership

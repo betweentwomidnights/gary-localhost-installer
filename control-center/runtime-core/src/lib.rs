@@ -11,3 +11,12 @@ pub mod sa3_adapter;
 pub mod workload_job;
 
 pub mod service;
+
+pub mod ace_client;
+pub mod carey_caption;
+pub mod carey_dataset;
+pub mod dataset;
+pub mod sa3_gguf;
+pub mod training;
+
+mod training_job;

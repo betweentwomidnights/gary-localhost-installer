@@ -212,7 +212,7 @@ pub fn capabilities() -> Value {
             "options":command_flags(command).iter().map(|flag| json!({"flag":format!("--{flag}"),
                 "required":*flag=="config",
                 "value":match *flag {"config"=>"FILE","models-dir"|"runtime-root"=>"DIR","port"=>"PORT","session"=>"SESSION_ID",_=>"TEXT"}})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
-        "features":{"training":false,"model_downloads":true,"named_lora_registry":false,"desktop_profile_migration":false,"loopback_only":true},
+        "features":{"training":false,"interactive_training":["sa3","carey"],"model_downloads":true,"named_lora_registry":true,"desktop_profile_migration":false,"loopback_only":true},
         "published_backends":backends,"local_archive_backends":["cuda","vulkan"],
         "exit_codes":{"0":"success","1":"operation failed","2":"invalid arguments","3":"config or init failed","4":"doctor found blocking issues"},
         "json_protocol":{"format":"one JSON result per finite command; serve emits ready event then terminal result","progress":"stderr","versioned":true},
