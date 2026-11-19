@@ -129,6 +129,7 @@ fn publish(
     source: &Path,
     family: &str,
     captions: &[String],
+    sa3_dataset: Option<&Path>,
 ) -> Result<PathBuf, String> {
     let dest = adapter_dest(config, name)?;
     let stage = Scratch::new(config, "adapter")?;
@@ -136,6 +137,10 @@ fn publish(
         let file = stage.0.join("adapter.gguf");
         fs::copy(source, &file).map_err(|e| e.to_string())?;
         crate::sa3_gguf::creative_adapter(&file)?;
+        if let Some(dataset) = sa3_dataset {
+            crate::sa3_prompts::build(&config.runtime_root.join("prompts"), name, dataset, false)
+                .map_err(|error| format!("Cannot build dice prompts for {name}: {error}"))?;
+        }
         fs::rename(&file, &dest).map_err(|e| e.to_string())?;
     } else {
         let source = if source.join("checkpoint.current").is_file() {
@@ -186,7 +191,7 @@ pub(crate) async fn add_lora(
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
     {
-        return publish(config, name, source, family, &[]);
+        return publish(config, name, source, family, &[], None);
     }
     if !source
         .extension()
@@ -216,7 +221,7 @@ pub(crate) async fn add_lora(
             String::from_utf8_lossy(&result.stderr)
         ));
     }
-    publish(config, name, &output, family, &[])
+    publish(config, name, &output, family, &[], None)
 }
 
 fn tool(config: &Config, name: &str) -> Result<tokio::process::Command, String> {
@@ -247,6 +252,7 @@ pub(crate) struct Job {
     name: String,
     family: &'static str,
     captions: Vec<String>,
+    sa3_dataset: Option<PathBuf>,
     pub progress: PathBuf,
     pub log: PathBuf,
     last_progress: Option<String>,
@@ -282,6 +288,36 @@ fn progress_line(service: Service, value: &sa3::Progress) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sa3_adapter::AdapterRegistry;
+
+    #[test]
+    fn published_sa3_training_has_a_registry_entry_and_dice_prompts() {
+        let root =
+            std::env::temp_dir().join(format!("gary-sa3-publication-{}", headless::serial()));
+        for dir in ["tmp", "adapters", "prompts", "dataset"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let config: Config = serde_json::from_value(json!({
+            "runtime_root": &root, "device": "Vulkan0", "public_port": 28309,
+            "model": "medium", "encoding": "f16"
+        }))
+        .unwrap();
+        let checkpoint = root.join("adapter-final.gguf");
+        fs::write(&checkpoint, crate::sa3_gguf::fixture("sa3-lora", "dit")).unwrap();
+        let dataset = root.join("dataset");
+        fs::write(dataset.join("a.txt"), "Dusty drum break, 95 bpm, A minor").unwrap();
+        fs::write(dataset.join("b.txt"), "dusty drum break, Key: A min").unwrap();
+
+        let published = publish(&config, "trained", &checkpoint, "", &[], Some(&dataset)).unwrap();
+        let registry = AdapterDirectory(root.join("adapters")).entries().unwrap();
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry[0].name, "trained");
+        assert_eq!(registry[0].source_path, published.to_string_lossy());
+        let pool: Value =
+            serde_json::from_slice(&fs::read(root.join("prompts/trained.json")).unwrap()).unwrap();
+        assert_eq!(pool["dice"]["instrumental"], json!(["Dusty drum break"]));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn sa3_pre_encode_updates_before_the_first_step() {
@@ -360,11 +396,17 @@ impl Job {
                 &final_adapter,
                 self.family,
                 &self.captions,
+                self.sa3_dataset.as_deref(),
             )
             .map_err(|e| format!("{e}\nTraining output is in {}", self.output.display()))?;
             return Ok(Some(format!(
-                "Training complete. LoRA added at {}",
-                dest.display()
+                "Training complete. LoRA added at {}{}",
+                dest.display(),
+                if self.sa3_dataset.is_some() {
+                    "\nDice prompts saved for this LoRA."
+                } else {
+                    ""
+                }
             )));
         }
         if let Some(line) = self.progress_summary() {
@@ -437,9 +479,8 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
     let log = directory.join("training.log");
     let cache = config.runtime_root.join("training").join("cache");
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
-    let mut captions = Vec::new();
     let mut command = tool(config, executable)?;
-    match settings {
+    let (captions, sa3_dataset) = match settings {
         Settings::Sa3(options) => {
             let prompts = directory.join("prompt-config.json");
             headless::write_json(&prompts, &sa3::caption_prompt_config(&options.fixed_prompt))?;
@@ -455,12 +496,12 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
                 &cancel,
             )?;
             command.arg("--prompt-config").arg(prompts);
+            (Vec::new(), Some(options.dataset))
         }
         Settings::Carey(options) => {
             let staged = directory.join("dataset");
             let data =
                 crate::carey_dataset::stage(&options.dataset, &staged, &options.trigger).await?;
-            captions = data.captions;
             headless::write_json(&directory.join("native-options.json"), &options)?;
             command
                 .arg("--models")
@@ -476,8 +517,9 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
                 .arg(&progress)
                 .arg("--cancel-file")
                 .arg(cancel);
+            (data.captions, None)
         }
-    }
+    };
     let writer = fs::File::create(&log).map_err(|e| e.to_string())?;
     command
         .stdout(writer.try_clone().map_err(|e| e.to_string())?)
@@ -497,6 +539,7 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
         name,
         family,
         captions,
+        sa3_dataset,
         progress,
         log,
         last_progress: None,

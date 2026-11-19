@@ -179,64 +179,7 @@ pub fn resume_options(root: &Path, name: &str, requested: &Path) -> Result<Optio
 }
 
 pub(crate) fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    save_with_policy(path, value, true)
-}
-
-pub(crate) fn save_with_policy(
-    path: &Path,
-    value: &impl Serialize,
-    overwrite: bool,
-) -> Result<(), String> {
-    use std::io::Write;
-    let stage = path.with_extension(format!(
-        "json-{}-{}.tmp",
-        std::process::id(),
-        NEXT_JOB.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&stage)
-        .map_err(|error| error.to_string())?;
-    let result = (|| {
-        file.write_all(&serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        drop(file);
-        if overwrite {
-            std::fs::rename(&stage, path).map_err(|error| error.to_string())
-        } else {
-            match publish_new(&stage, path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-                Err(error) => Err(error.to_string()),
-            }
-        }
-    })();
-    if stage.exists() {
-        let _ = std::fs::remove_file(stage);
-    }
-    result
-}
-
-#[cfg(windows)]
-fn publish_new(stage: &Path, dest: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-    let stage: Vec<u16> = stage.as_os_str().encode_wide().chain(Some(0)).collect();
-    let dest: Vec<u16> = dest.as_os_str().encode_wide().chain(Some(0)).collect();
-    // No REPLACE_EXISTING: preserve a curated pool created during caption scanning.
-    // A rename also works on custom FAT/exFAT storage without hard-link support.
-    if unsafe { MoveFileExW(stage.as_ptr(), dest.as_ptr(), MOVEFILE_WRITE_THROUGH) } != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(windows))]
-fn publish_new(stage: &Path, dest: &Path) -> std::io::Result<()> {
-    std::fs::hard_link(stage, dest)
+    gary4local_core::sa3_prompts::save_with_policy(path, value, true)
 }
 
 pub(crate) fn checked_folder(root: &Path, folders: &[&str]) -> Result<PathBuf, String> {

@@ -105,7 +105,8 @@ The wizard offers the remaining trainer settings and links to Discord help.
 Training runs under the service profile's runtime root. Stop that service
 before training. Use `/training` for progress and log paths and
 `/cancel` to request a safe stop. A completed run adds its final
-adapter to the service. The run folder retains its settings and checkpoints.
+adapter to the service. SA3 also builds the LoRA's dice prompts from the
+dataset's text sidecars. The run folder retains its settings and checkpoints.
 
 Use `add lora sa3` to import a GGUF adapter or convert a safetensors adapter.
 Use `add lora carey` to import a PEFT folder and declare its 2B or XL family.

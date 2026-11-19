@@ -175,7 +175,7 @@ pub fn creative_adapter(path: &Path) -> Result<(), String> {
 #[path = "sa3_gguf_fixture.rs"]
 mod fixture_data;
 #[cfg(test)]
-use fixture_data::fixture;
+pub(crate) use fixture_data::fixture;
 
 #[cfg(test)]
 mod tests {

@@ -17,6 +17,7 @@ pub mod carey_caption;
 pub mod carey_dataset;
 pub mod dataset;
 pub mod sa3_gguf;
+pub mod sa3_prompts;
 pub mod training;
 
 mod training_job;
