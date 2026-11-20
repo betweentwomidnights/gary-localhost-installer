@@ -222,14 +222,16 @@ fn carey_reviews_incompatible_sidecars_before_training_settings() {
     terminal.send(&format!("{}\n", dataset.display()));
     terminal.expect("track.wav  ·  no caption");
     terminal.expect("1 of 1 tracks need a Carey sidecar");
-    terminal.expect("Type /label to label missing sidecars or /label all to label every track.");
+    terminal.expect("Type label to label missing sidecars or label all to label every track.");
     terminal.expect("Track number to review or edit");
     terminal.send("\n");
-    terminal.expect("Edit the flagged sidecars or use /label all before choosing training settings.");
-    terminal.expect("Track number to review or edit");
-    terminal.send("/label all\n");
-    terminal.expect("Replace existing text sidecars with Carey labels?");
-    terminal.send("n\n");
+    terminal.expect("Edit the flagged sidecars or use label all before choosing training settings.");
+    for command in ["label all\n", "/label all\n"] {
+        terminal.expect("Track number to review or edit");
+        terminal.send(command);
+        terminal.expect("Replace existing text sidecars with Carey labels?");
+        terminal.send("n\n");
+    }
     terminal.expect("Track number to review or edit");
     assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), sa3_caption);
     terminal.send("1\n");

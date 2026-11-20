@@ -315,12 +315,12 @@ async fn review(
                     rows.len()
                 ))?;
             }
-            say("Type /label to label missing sidecars or /label all to label every track.")?;
+            say("Type label to label missing sidecars or label all to label every track.")?;
         }
         let choice = answer(
             input,
             if invalid > 0 {
-                "Track number to review or edit [/label all or /cancel]: "
+                "Track number to review or edit [label all or /cancel]: "
             } else {
                 "Track number to review or edit [Enter for training settings]: "
             },
@@ -330,11 +330,13 @@ async fn review(
             if invalid == 0 {
                 return Ok(());
             }
-            say("Edit the flagged sidecars or use /label all before choosing training settings.")?;
+            say("Edit the flagged sidecars or use label all before choosing training settings.")?;
             continue;
         }
-        if service == Service::Carey && matches!(choice.as_str(), "/label" | "/label all") {
-            let overwrite = choice == "/label all";
+        let command = choice.trim_start_matches('/').to_ascii_lowercase();
+        let words: Vec<_> = command.split_whitespace().collect();
+        if service == Service::Carey && matches!(words.as_slice(), ["label"] | ["label", "all"]) {
+            let overwrite = words.len() == 2;
             if overwrite
                 && rows.iter().any(|row| row.sidecar.is_file())
                 && !yes(

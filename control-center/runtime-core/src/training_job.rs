@@ -143,10 +143,17 @@ fn publish(
         }
         fs::rename(&file, &dest).map_err(|e| e.to_string())?;
     } else {
-        let source = if source.join("checkpoint.current").is_file() {
-            carey::resolve_checkpoint(source)?
-        } else {
-            source.to_owned()
+        let pointer = source.join("checkpoint.current");
+        let source = match fs::symlink_metadata(&pointer) {
+            Ok(meta) if meta.is_file() || meta.is_symlink() => carey::resolve_checkpoint(source)?,
+            Ok(_) => {
+                return Err(format!(
+                    "Invalid checkpoint pointer at {}",
+                    pointer.display()
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => source.to_owned(),
+            Err(error) => return Err(format!("Cannot inspect {}: {error}", pointer.display())),
         };
         for name in ["adapter_model.safetensors", "adapter_config.json"] {
             let src = source.join(name);
@@ -320,6 +327,53 @@ mod tests {
     }
 
     #[test]
+    fn publishes_careys_checkpoint_generation_with_dice_prompts() {
+        let root =
+            std::env::temp_dir().join(format!("gary-carey-publication-{}", headless::serial()));
+        let checkpoint = root.join("run");
+        let relative = ".checkpoint-generations/generation-1";
+        let generation = checkpoint.join(relative);
+        for dir in [root.join("adapters"), root.join("tmp"), generation.clone()] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(generation.join("adapter_model.safetensors"), b"latest").unwrap();
+        fs::write(
+            generation.join("adapter_config.json"),
+            b"{\"peft_type\":\"LORA\"}",
+        )
+        .unwrap();
+        fs::write(checkpoint.join("adapter_model.safetensors"), b"previous").unwrap();
+        fs::write(
+            checkpoint.join("adapter_config.json"),
+            b"{\"peft_type\":\"LORA\"}",
+        )
+        .unwrap();
+        let config: Config = serde_json::from_value(json!({
+            "service": "carey", "runtime_root": &root, "device": "Vulkan0",
+            "public_port": 8003, "model": "xl-base", "encoding": "bf16"
+        }))
+        .unwrap();
+        let pointer = checkpoint.join("checkpoint.current");
+        fs::write(&pointer, relative).unwrap();
+        #[cfg(unix)]
+        {
+            fs::remove_file(&pointer).unwrap();
+            std::os::unix::fs::symlink(relative, &pointer).unwrap();
+        }
+        let captions = ["Quiet synth chords".into(), "ambient, drone".into()];
+        let published = publish(&config, "trained", &checkpoint, "xl", &captions, None).unwrap();
+        assert_eq!(
+            fs::read(published.join("adapter_model.safetensors")).unwrap(),
+            b"latest"
+        );
+        let info: Value =
+            serde_json::from_slice(&fs::read(published.join("adapter_info.json")).unwrap())
+                .unwrap();
+        assert_eq!(info, json!({"model_family":"xl","captions":captions}));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn sa3_pre_encode_updates_before_the_first_step() {
         let mut progress: sa3::Progress = serde_json::from_value(json!({
             "schema_version": 1,
@@ -402,7 +456,7 @@ impl Job {
             return Ok(Some(format!(
                 "Training complete. LoRA added at {}{}",
                 dest.display(),
-                if self.sa3_dataset.is_some() {
+                if self.sa3_dataset.is_some() || !self.captions.is_empty() {
                     "\nDice prompts saved for this LoRA."
                 } else {
                     ""
