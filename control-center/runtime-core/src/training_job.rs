@@ -11,6 +11,7 @@ use crate::{
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::{self, BufRead, BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -267,7 +268,87 @@ pub(crate) struct Job {
     pub progress: PathBuf,
     pub log: PathBuf,
     last_progress: Option<String>,
+    carey_pre_encode: Option<CareyPreEncode>,
     _lease: Lease,
+}
+
+struct CareyPreEncode {
+    total: usize,
+    encoded: usize,
+    offset: u64,
+    started: bool,
+    cache: Option<(usize, usize)>,
+}
+
+impl CareyPreEncode {
+    fn new(total: usize) -> Self {
+        Self {
+            total,
+            encoded: 0,
+            offset: 0,
+            started: false,
+            cache: None,
+        }
+    }
+
+    fn summary(&self) -> String {
+        let detail = if let Some((reused, written)) = self.cache {
+            format!(
+                "{} tracks ready ({written} encoded, {reused} reused from cache)",
+                reused + written
+            )
+        } else if self.encoded > 0 {
+            format!("encoded {}/{} tracks", self.encoded, self.total)
+        } else {
+            format!("preparing {} tracks", self.total)
+        };
+        format!("carey training · pre-encode · {detail}")
+    }
+
+    fn updates(&mut self, log: &Path) -> io::Result<Vec<String>> {
+        let mut updates = Vec::new();
+        if self.cache.is_some() {
+            return Ok(updates);
+        }
+        let mut reader = BufReader::new(fs::File::open(log)?);
+        reader.seek(SeekFrom::Start(self.offset))?;
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let count = reader.read_until(b'\n', &mut line)?;
+            if !line.ends_with(b"\n") {
+                // The trainer can still be writing this line. Read it on the next poll.
+                break;
+            }
+            self.offset += count as u64;
+            if line.starts_with(b"[Ace-Train] Preprocessing ") {
+                self.started = true;
+            }
+            if !self.started {
+                continue;
+            }
+            // ace-train prepares one track per chunk. Batch0 is the track's
+            // caption conditioning, with optional genre conditioning in Batch1.
+            if let Some(detail) = line.strip_prefix(b"[Encode-Text Batch0] ") {
+                if detail.first().is_some_and(u8::is_ascii_digit) && self.encoded < self.total {
+                    self.encoded += 1;
+                    updates.push(self.summary());
+                }
+            }
+            if let Some(detail) = line.strip_prefix(b"[Ace-Train] preprocess cache: ") {
+                let detail = String::from_utf8_lossy(detail);
+                let mut counts = detail.split_whitespace();
+                let reused = counts.next().and_then(|count| count.parse::<usize>().ok());
+                let written = counts.nth(1).and_then(|count| count.parse::<usize>().ok());
+                if let Some((reused, written)) = reused.zip(written) {
+                    self.cache = Some((reused, written));
+                    updates.push(self.summary());
+                    break;
+                }
+            }
+        }
+        Ok(updates)
+    }
 }
 
 fn progress_line(service: Service, value: &sa3::Progress) -> String {
@@ -300,6 +381,44 @@ fn progress_line(service: Service, value: &sa3::Progress) -> String {
 mod tests {
     use super::*;
     use crate::sa3_adapter::AdapterRegistry;
+
+    #[test]
+    fn carey_reports_each_pre_encoded_track_and_cache_reuse() {
+        use std::io::Write;
+
+        let log = std::env::temp_dir().join(format!("carey-progress-{}.log", headless::serial()));
+        let mut writer = fs::File::create(&log).unwrap();
+        let mut progress = CareyPreEncode::new(3);
+        write!(
+            writer,
+            "[Encode-Text Batch0] 3+1 tokens -> enc_S=4\n\
+             [Ace-Train] Preprocessing 3 examples in model phases\r\n\
+             [Encode-Text Batch0] 163+15 tokens -> enc_S=179, 16.7 ms\r\n\
+             [Encode-Text Batch1] 61+15 tokens -> enc_S=77, 15.0 ms\n\
+             [Encode-Text Batch0] 89+15 tokens"
+        )
+        .unwrap();
+        assert_eq!(
+            progress.updates(&log).unwrap(),
+            ["carey training · pre-encode · encoded 1/3 tracks"]
+        );
+        assert!(progress.updates(&log).unwrap().is_empty());
+        write!(
+            writer,
+            " -> enc_S=105, 15.0 ms\n\
+             [Ace-Train] preprocess cache: 1 reused, 2 written, 0 corrupt/incompatible rebuilt; LRU budget=128 MiB\n"
+        ).unwrap();
+        assert_eq!(
+            progress.updates(&log).unwrap(),
+            [
+                "carey training · pre-encode · encoded 2/3 tracks",
+                "carey training · pre-encode · 3 tracks ready (2 encoded, 1 reused from cache)",
+            ]
+        );
+        assert!(progress.updates(&log).unwrap().is_empty());
+        drop(writer);
+        fs::remove_file(log).unwrap();
+    }
 
     #[test]
     fn uses_bf16_for_new_carey_caption_model_downloads() {
@@ -430,13 +549,28 @@ impl Job {
     }
 
     pub fn progress_summary(&self) -> Option<String> {
-        sa3::read_progress(&self.progress)
-            .ok()
-            .map(|value| progress_line(self.config.service, &value))
+        sa3::read_progress(&self.progress).ok().map(|value| {
+            if value.phase == "pre-encode" {
+                if let Some(carey) = &self.carey_pre_encode {
+                    return carey.summary();
+                }
+            }
+            progress_line(self.config.service, &value)
+        })
     }
 
     pub fn poll(&mut self) -> Result<Option<String>, String> {
-        if let Some(exit) = self.child.try_wait().map_err(|e| e.to_string())? {
+        let exit = self.child.try_wait().map_err(|e| e.to_string())?;
+        if let Some(carey) = &mut self.carey_pre_encode {
+            // Display failures must not interrupt the trainer.
+            if let Ok(updates) = carey.updates(&self.log) {
+                for line in updates {
+                    println!("{line}");
+                    self.last_progress = Some(line);
+                }
+            }
+        }
+        if let Some(exit) = exit {
             let result = sa3::read_progress(&self.progress).map_err(|e| {
                 format!(
                     "Trainer exited with {exit}. {e}. Log {}",
@@ -553,7 +687,7 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
     let cache = config.runtime_root.join("training").join("cache");
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     let mut command = tool(config, executable)?;
-    let (captions, sa3_dataset) = match settings {
+    let (captions, sa3_dataset, carey_pre_encode) = match settings {
         Settings::Sa3(options) => {
             let prompts = directory.join("prompt-config.json");
             headless::write_json(&prompts, &sa3::caption_prompt_config(&options.fixed_prompt))?;
@@ -569,7 +703,7 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
                 &cancel,
             )?;
             command.arg("--prompt-config").arg(prompts);
-            (Vec::new(), Some(options.dataset))
+            (Vec::new(), Some(options.dataset), None)
         }
         Settings::Carey(options) => {
             let staged = directory.join("dataset");
@@ -590,7 +724,7 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
                 .arg(&progress)
                 .arg("--cancel-file")
                 .arg(cancel);
-            (data.captions, None)
+            (data.captions, None, Some(CareyPreEncode::new(data.count)))
         }
     };
     let writer = fs::File::create(&log).map_err(|e| e.to_string())?;
@@ -616,6 +750,7 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
         progress,
         log,
         last_progress: None,
+        carey_pre_encode,
     })
 }
 
