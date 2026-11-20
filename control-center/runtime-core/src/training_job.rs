@@ -302,6 +302,21 @@ mod tests {
     use crate::sa3_adapter::AdapterRegistry;
 
     #[test]
+    fn uses_bf16_for_new_carey_caption_model_downloads() {
+        let models =
+            std::env::temp_dir().join(format!("gary-caption-default-{}", headless::serial()));
+        let config: Config = serde_json::from_value(json!({
+            "service": "carey", "models_dir": models, "device": "Vulkan0",
+            "public_port": 8003, "model": "base", "encoding": "bf16"
+        }))
+        .unwrap();
+        assert_eq!(
+            caption_files(&config).unwrap()[0].filename,
+            "acestep-5Hz-lm-1.7B-BF16.gguf"
+        );
+    }
+
+    #[test]
     fn published_sa3_training_has_a_registry_entry_and_dice_prompts() {
         let root =
             std::env::temp_dir().join(format!("gary-sa3-publication-{}", headless::serial()));
@@ -615,13 +630,16 @@ pub(crate) fn caption_files(config: &Config) -> Result<Vec<&'static PinnedHfFile
         .find(|item| missing_bytes(config, &item.files.iter().collect::<Vec<_>>()) == 0)
         .or_else(|| component(Service::Carey, "carey-native::base::Q4_K_M"))
         .ok_or("Carey's caption catalog has no DiT")?;
-    let fallback = component(Service::Carey, "carey-native::lm-1.7B::Q8_0")
-        .and_then(|item| item.files.first());
+    let default_lm = component(Service::Carey, "carey-native::lm-1.7B::BF16")
+        .and_then(|item| item.files.first())
+        .ok_or("Carey's caption catalog has no default LM")?;
     let lm = installed_carey_lms(&config.models_dir)
-        .find(|file| file.filename.contains("1.7B"))
+        .find(|file| file.filename == default_lm.filename)
+        .or_else(|| {
+            installed_carey_lms(&config.models_dir).find(|file| file.filename.contains("1.7B"))
+        })
         .or_else(|| installed_carey_lms(&config.models_dir).next())
-        .or(fallback)
-        .ok_or("Carey's caption catalog has no LM")?;
+        .unwrap_or(default_lm);
     Ok(vec![lm, &dit.files[0], vae])
 }
 

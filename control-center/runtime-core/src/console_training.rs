@@ -628,6 +628,7 @@ impl Console {
             return Err("Stop Carey before running the captioner.".into());
         }
         let caption = training_job::caption_files(&carey)?;
+        let caption_model = caption[0];
         let missing = training_job::missing_bytes(&carey, &caption);
         if missing > 0 {
             if !yes(
@@ -643,6 +644,7 @@ impl Console {
             }
             training_job::fetch(&carey, caption).await?;
         }
+        say(format!("Caption model {}", caption_model.filename))?;
         training_job::auto_label(&carey, service, folder, &files, overwrite).await?;
         say("Auto-labeling finished. Review the generated sidecars before training.")
     }
