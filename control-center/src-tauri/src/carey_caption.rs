@@ -57,7 +57,7 @@ pub fn caption_dit(root: &Path) -> Result<String, String> {
 }
 
 pub async fn caption_dataset(server: &PrivateServer, options: &Options, scratch: &Path, progress: impl FnMut(shared::Progress<'_>), cancelled: impl Fn() -> bool) -> Result<(usize, usize), String> {
-    shared::caption_dataset(&CaptionEndpoint { client: &server.client, base: &server.base }, options, scratch, progress, cancelled).await
+    shared::caption_dataset(&CaptionEndpoint { client: &server.client, base: &server.base }, options, scratch, progress, cancelled, Err).await
 }
 pub async fn label_sa3_dataset(server: &PrivateServer, options: &Options, files: &[PathBuf], labeled: bool, scratch: &Path, progress: impl FnMut(shared::Progress<'_>), cancelled: impl Fn() -> bool) -> Result<(), String> {
     shared::label_sa3_dataset(&CaptionEndpoint { client: &server.client, base: &server.base }, options, files, labeled, scratch, progress, cancelled).await

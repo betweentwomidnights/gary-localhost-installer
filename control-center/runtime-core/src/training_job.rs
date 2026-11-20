@@ -643,8 +643,8 @@ pub(crate) async fn auto_label(
     let launch = config.launch(config.installed_dir(), port);
     let mut command = launch.std_command();
     headless::clean_command_env(&mut command, &launch);
-    let log = fs::File::create(config.runtime_root.join("logs").join("caption.log"))
-        .map_err(|e| e.to_string())?;
+    let log_path = config.runtime_root.join("logs/caption.log");
+    let log = fs::File::create(&log_path).map_err(|e| e.to_string())?;
     command
         .current_dir(&scratch.0)
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
@@ -661,7 +661,8 @@ pub(crate) async fn auto_label(
     loop {
         if let Some(exit) = child.0.try_wait().map_err(|e| e.to_string())? {
             return Err(format!(
-                "Carey caption server exited with {exit}. See logs/caption.log."
+                "Carey caption server exited with {exit}. Log {}",
+                log_path.display()
             ));
         }
         if client
@@ -674,7 +675,10 @@ pub(crate) async fn auto_label(
             break;
         }
         if tokio::time::Instant::now() > deadline {
-            return Err("Carey caption server startup timed out. See logs/caption.log.".into());
+            return Err(format!(
+                "Carey caption server startup timed out. Log {}",
+                log_path.display()
+            ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -695,7 +699,7 @@ pub(crate) async fn auto_label(
     let display = |info: carey_caption::Progress<'_>| {
         println!("Labeling track {} of {}", info.index, info.total)
     };
-    if service == Service::Sa3 {
+    let result = if service == Service::Sa3 {
         carey_caption::label_sa3_dataset(
             &endpoint,
             &options,
@@ -705,12 +709,24 @@ pub(crate) async fn auto_label(
             display,
             || false,
         )
-        .await?;
+        .await
     } else {
-        carey_caption::caption_dataset(&endpoint, &options, &scratch.0, display, || false).await?;
-    }
+        carey_caption::caption_dataset(
+            &endpoint,
+            &options,
+            &scratch.0,
+            display,
+            || false,
+            |error| {
+                println!("Skipped a track after retrying.\n{error}");
+                Ok(())
+            },
+        )
+        .await
+        .map(|(captioned, total)| println!("Captioned {captioned} of {total} dataset tracks."))
+    };
     child.stop();
-    Ok(())
+    result.map_err(|error| format!("{error}\nLog {}", log_path.display()))
 }
 
 /// SA3's public adapter uses these managed names to resolve client requests.

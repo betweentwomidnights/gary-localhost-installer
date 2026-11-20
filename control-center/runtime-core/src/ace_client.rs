@@ -22,6 +22,39 @@ pub async fn run(
     timeout: Duration,
     what: &str,
 ) -> Result<(Vec<u8>, String), String> {
+    run_job(client, base, path, body, timeout, what)
+        .await
+        .map_err(JobError::message)
+}
+
+#[derive(Debug)]
+pub(crate) enum JobError {
+    Failed(String),
+    Other(String),
+}
+
+impl JobError {
+    pub(crate) fn message(self) -> String {
+        match self {
+            Self::Failed(message) | Self::Other(message) => message,
+        }
+    }
+}
+
+impl From<String> for JobError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+pub(crate) async fn run_job(
+    client: &reqwest::Client,
+    base: &str,
+    path: &str,
+    body: Body<'_>,
+    timeout: Duration,
+    what: &str,
+) -> Result<(Vec<u8>, String), JobError> {
     let request = client.post(format!("{base}{path}"));
     let request = match body {
         Body::Json(json) => request.json(json),
@@ -37,7 +70,7 @@ pub async fn run(
         .await
         .map_err(|error| format!("{what} returned an unreadable reply: {error}"))?;
     if !status.is_success() {
-        return Err(format!("{what} was refused: {}", reply["error"].as_str().unwrap_or(status.as_str())));
+        return Err(format!("{what} was refused: {}", reply["error"].as_str().unwrap_or(status.as_str())).into());
     }
     let id = reply["id"]
         .as_str()
@@ -60,11 +93,19 @@ pub async fn run(
         match status["status"].as_str() {
             Some("done") => break,
             Some("running") => {}
-            other => return Err(format!("{what} {}; inspect the server log", other.unwrap_or("failed"))),
+            Some("failed") => {
+                let detail = status["error"].as_str().filter(|s| !s.trim().is_empty());
+                let message = detail.map_or_else(
+                    || format!("{what} failed without an error message from ACE-Step"),
+                    |detail| format!("{what} failed: {detail}"),
+                );
+                return Err(JobError::Failed(message));
+            }
+            other => return Err(format!("{what} {}; inspect the server log", other.unwrap_or("failed")).into()),
         }
         if Instant::now() >= deadline {
             let _ = client.post(format!("{base}/job?id={id}&cancel=1")).send().await;
-            return Err(format!("{what} timed out"));
+            return Err(format!("{what} timed out").into());
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

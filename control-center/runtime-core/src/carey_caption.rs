@@ -4,9 +4,9 @@
 //! the Python job's policy, ported here: a filename BPM is ground truth, local
 //! analysis corrects the LM where it is confident, LM lyrics are never written
 //! (they are invented, not transcribed), and unusable captions are retried on
-//! a two-minute excerpt before failing.
+//! shorter excerpts before failing.
 
-use crate::ace_client::{self, Body};
+use crate::ace_client::{self, Body, JobError};
 use crate::dataset::{self, CareyAceSidecarFields};
 pub struct CaptionEndpoint<'a> {
     pub client: &'a reqwest::Client,
@@ -21,6 +21,7 @@ use std::time::Duration;
 const MAX_CAPTION_SECONDS: f64 = 600.0;
 /// The Python job's fallback excerpt for a caption that fails quality checks.
 const EXCERPT_SECONDS: f64 = 120.0;
+const SHORT_EXCERPT_SECONDS: f64 = 30.0;
 /// The Python job's thresholds; the native estimators score confidence the
 /// same way (best over runner-up for tempo, best minus runner-up for key).
 const BPM_TOLERANCE: f64 = 5.0;
@@ -385,13 +386,12 @@ pub fn sidecar_fields(
 // ---------------------------------------------------------------------------
 // Running it
 
-/// `audio` as WAV bytes /caption accepts: the file itself when it is a WAV of
-/// at most ten minutes, otherwise FFmpeg's decode, cut to a centered
-/// `excerpt` when one is asked for or the song is too long.
+/// `audio` as WAV bytes /caption accepts. A WAV that fits the requested window
+/// goes through directly. FFmpeg decodes other inputs and makes excerpts.
 async fn caption_audio(
     audio: &Path,
     scratch: &Path,
-    excerpt: Option<f64>,
+    excerpt: Option<(f64, Option<f64>)>,
 ) -> Result<Vec<u8>, String> {
     let is_wav = audio
         .extension()
@@ -406,9 +406,9 @@ async fn caption_audio(
     let window = excerpt.or_else(|| {
         duration
             .filter(|seconds| *seconds > MAX_CAPTION_SECONDS)
-            .map(|_| EXCERPT_SECONDS)
+            .map(|_| (EXCERPT_SECONDS, None))
     });
-    if is_wav && duration.is_some() && window.is_none() {
+    if duration.is_some_and(|seconds| window.is_none_or(|(limit, _)| seconds <= limit)) {
         return std::fs::read(audio).map_err(|error| error.to_string());
     }
     let decoded = scratch.join("caption.wav");
@@ -417,14 +417,17 @@ async fn caption_audio(
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     command.args(["-nostdin", "-v", "error", "-y"]);
-    if let Some(window) = window {
-        // Centered when the length is known; FFmpeg reads a shorter file to its end.
-        let start = duration.map_or(0.0, |seconds| ((seconds - window) / 2.0).max(0.0));
+    if let Some((seconds, offset)) = window {
+        // Keep the whole excerpt within a known duration.
+        let start = duration.map_or(0.0, |length| {
+            let last_start = (length - seconds).max(0.0);
+            offset.unwrap_or(last_start / 2.0).min(last_start)
+        });
         command
             .arg("-ss")
             .arg(start.to_string())
             .arg("-t")
-            .arg(window.to_string());
+            .arg(seconds.to_string());
     }
     command
         .arg("-i")
@@ -453,7 +456,7 @@ async fn caption_audio(
         .map(|reader| reader.duration() as f64 / reader.spec().sample_rate as f64)
         .unwrap_or(0.0);
     if window.is_none() && seconds > MAX_CAPTION_SECONDS {
-        return Box::pin(caption_audio(audio, scratch, Some(EXCERPT_SECONDS))).await;
+        return Box::pin(caption_audio(audio, scratch, Some((EXCERPT_SECONDS, None)))).await;
     }
     Ok(bytes)
 }
@@ -463,10 +466,10 @@ async fn caption_once(
     options: &Options,
     audio: &[u8],
     what: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, JobError> {
     let request =
         serde_json::json!({"lm_model": options.lm, "synth_model": options.dit, "vae": options.vae});
-    let (body, _) = ace_client::run(
+    let (body, _) = ace_client::run_job(
         server.client,
         server.base,
         "/caption",
@@ -476,12 +479,11 @@ async fn caption_once(
     )
     .await?;
     serde_json::from_slice(&body)
-        .map_err(|error| format!("{what} returned unreadable JSON: {error}"))
+        .map_err(|error| JobError::Other(format!("{what} returned unreadable JSON: {error}")))
 }
 
-/// /caption's result for `audio`, asked again on a centered two-minute
-/// excerpt when `check` finds the whole song's unusable. The inner `Err` is
-/// why the excerpt's is unusable too.
+/// Retry model failures and unusable results on shorter excerpts.
+/// Connection errors and rejected requests still stop the run immediately.
 async fn caption_checked(
     server: &CaptionEndpoint<'_>,
     options: &Options,
@@ -489,25 +491,40 @@ async fn caption_checked(
     scratch: &Path,
     what: &str,
     check: impl Fn(&serde_json::Value) -> Option<String>,
-) -> Result<Result<serde_json::Value, String>, String> {
-    let result = caption_once(
-        server,
-        options,
-        &caption_audio(audio, scratch, None).await?,
-        what,
-    )
-    .await?;
-    if check(&result).is_none() {
-        return Ok(Ok(result));
+    cancelled: impl Fn() -> bool,
+) -> Result<serde_json::Value, JobError> {
+    let mut failures = Vec::new();
+    let mut failed_job = false;
+    for (description, window) in [
+        ("", None),
+        (" (120-second excerpt)", Some((EXCERPT_SECONDS, None))),
+        (" (30-second early excerpt)", Some((SHORT_EXCERPT_SECONDS, Some(20.0)))),
+        (" (30-second middle excerpt)", Some((SHORT_EXCERPT_SECONDS, None))),
+    ] {
+        if cancelled() {
+            return Err(JobError::Other("Captioning cancelled.".into()));
+        }
+        // If the model could not finish at all, try a much shorter section first.
+        if failed_job && window == Some((EXCERPT_SECONDS, None)) {
+            continue;
+        }
+        let attempt = format!("{what}{description}");
+        let audio = caption_audio(audio, scratch, window)
+            .await
+            .map_err(|error| format!("{attempt}: {error}"))?;
+        match caption_once(server, options, &audio, &attempt).await {
+            Ok(result) => match check(&result) {
+                Some(reason) => failures.push(format!("{attempt}: {reason}")),
+                None => return Ok(result),
+            },
+            Err(JobError::Failed(message)) => {
+                failed_job = true;
+                failures.push(message);
+            }
+            Err(error) => return Err(error),
+        }
     }
-    let result = caption_once(
-        server,
-        options,
-        &caption_audio(audio, scratch, Some(EXCERPT_SECONDS)).await?,
-        what,
-    )
-    .await?;
-    Ok(check(&result).map_or(Ok(result), Err))
+    Err(JobError::Failed(failures.join("\n")))
 }
 
 /// What a caption run reports as it goes.
@@ -519,20 +536,23 @@ pub struct Progress<'a> {
 
 /// Caption every song in `options.dataset` that has no sidecar (or every
 /// song, with `overwrite`), writing Carey sidecars beside them. `cancelled`
-/// is checked between songs. Returns how many were captioned and how many
-/// songs the dataset holds.
+/// is checked between songs and retries. `on_unusable` can stop the batch
+/// or continue after a song exhausts its retries without writing a sidecar.
+/// Returns how many were captioned and how many songs the dataset holds.
 pub async fn caption_dataset(
     server: &CaptionEndpoint<'_>,
     options: &Options,
     scratch: &Path,
     mut progress: impl FnMut(Progress<'_>),
     cancelled: impl Fn() -> bool,
+    mut on_unusable: impl FnMut(String) -> Result<(), String>,
 ) -> Result<(usize, usize), String> {
     let entries = dataset::read_carey_ace_dataset_sidecars(&options.dataset.to_string_lossy())?;
     let pending: Vec<_> = entries
         .iter()
         .filter(|entry| options.overwrite || !entry.exists)
         .collect();
+    let mut captioned = 0;
     for (index, entry) in pending.iter().enumerate() {
         if cancelled() {
             return Err("Captioning cancelled.".into());
@@ -552,12 +572,14 @@ pub async fn caption_dataset(
                     .flatten()
             })
         };
-        let result = caption_checked(server, options, &audio, scratch, &what, check).await?.map_err(|reason| {
-            format!(
-                "The LM wrote an unusable caption for {}: {reason}. Try another LM size, or write that sidecar in the dataset editor.",
-                entry.relative_path
-            )
-        })?;
+        let result = match caption_checked(server, options, &audio, scratch, &what, check, &cancelled).await {
+            Ok(result) => result,
+            Err(JobError::Failed(error)) => {
+                on_unusable(error)?;
+                continue;
+            }
+            Err(error) => return Err(error.message()),
+        };
         let fields = sidecar_fields(&audio, &result, options);
         write_sidecar(
             Path::new(&entry.sidecar_path),
@@ -565,8 +587,9 @@ pub async fn caption_dataset(
             options.overwrite,
         )
         .map_err(|error| format!("Cannot write {}: {error}", entry.sidecar_path))?;
+        captioned += 1;
     }
-    Ok((pending.len(), entries.len()))
+    Ok((captioned, entries.len()))
 }
 
 // ---------------------------------------------------------------------------
@@ -630,11 +653,9 @@ pub async fn label_sa3_dataset(
             name: &name,
         });
         let what = format!("Labeling {name}");
-        let result = caption_checked(server, options, audio, scratch, &what, |result| sa3_genre(result).err())
-            .await?
-            .map_err(|reason| {
-                format!("The LM gave {name} an unusable genre ({reason}). Try another LM size, or write that sidecar by hand.")
-            })?;
+        let result = caption_checked(
+            server, options, audio, scratch, &what, |result| sa3_genre(result).err(), &cancelled,
+        ).await.map_err(JobError::message)?;
         let genre = sa3_genre(&result)?;
         let (bpm, key) = tempo_and_key(audio, &result, options);
         let sidecar = audio.with_extension("txt");
@@ -658,5 +679,130 @@ fn write_sidecar(path: &Path, text: &str, overwrite: bool) -> std::io::Result<()
         Ok(mut file) => file.write_all(text.as_bytes()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        extract::Query,
+        routing::{get, post},
+        Json, Router,
+    };
+    use serde_json::{json, Value};
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    #[tokio::test]
+    async fn retries_when_the_caption_job_fails_without_a_result() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route(
+                "/caption",
+                post({
+                    let requests = requests.clone();
+                    move || async move {
+                        let id = requests.fetch_add(1, Ordering::Relaxed) + 1;
+                        Json(json!({"id": id.to_string()}))
+                    }
+                }),
+            )
+            .route(
+                "/job",
+                get(|Query(query): Query<HashMap<String, String>>| async move {
+                    if !matches!(query["id"].as_str(), "3" | "7") {
+                        Json(json!({"status":"failed","error":"Token limit reached"}))
+                    } else if query.contains_key("result") {
+                        Json(json!({"caption":"Warm synth chords"}))
+                    } else {
+                        Json(json!({"status":"done"}))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root =
+            std::env::temp_dir().join(format!("gary-caption-retry-{}", crate::headless::serial()));
+        std::fs::create_dir(&root).unwrap();
+        let audio = root.join("track.wav");
+        let mut writer = hound::WavWriter::create(
+            &audio,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 8000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        writer.write_sample(0_i16).unwrap();
+        writer.finalize().unwrap();
+        let options = Options {
+            dataset: root.clone(),
+            lm: "lm".into(),
+            dit: "dit".into(),
+            vae: "vae".into(),
+            overwrite: false,
+            bpm_analysis: false,
+            key_analysis: false,
+            trigger: String::new(),
+        };
+        let endpoint = CaptionEndpoint {
+            client: &reqwest::Client::new(),
+            base: &base,
+        };
+        let result: Value = caption_checked(
+            &endpoint,
+            &options,
+            &audio,
+            &root,
+            "Captioning track.wav",
+            |result| quality_error(result["caption"].as_str().unwrap_or_default(), "caption"),
+            || false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["caption"], "Warm synth chords");
+        assert_eq!(requests.load(Ordering::Relaxed), 3);
+
+        std::fs::copy(&audio, root.join("a.wav")).unwrap();
+        std::fs::write(root.join("a.txt"), "Existing label").unwrap();
+        let options = Options {
+            overwrite: true,
+            ..options
+        };
+        let mut skipped = Vec::new();
+        let outcome = caption_dataset(
+            &endpoint,
+            &options,
+            &root,
+            |_| {},
+            || false,
+            |error| {
+                skipped.push(error);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, (1, 2));
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].contains("Token limit reached"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "Existing label"
+        );
+        assert!(std::fs::read_to_string(root.join("track.txt"))
+            .unwrap()
+            .contains("Warm synth chords"));
+        task.abort();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
