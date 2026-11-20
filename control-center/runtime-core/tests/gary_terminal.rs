@@ -1,0 +1,288 @@
+#![cfg(unix)]
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+struct Fixture {
+    root: PathBuf,
+    config: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
+            "gary-terminal-{}-{}-{serial}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        Self {
+            config: root.join("sa3.json"),
+            root,
+        }
+    }
+    fn open(&self) -> Terminal {
+        let mut master = -1;
+        let mut slave = -1;
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            },
+            0
+        );
+        for fd in [master, slave] {
+            assert_ne!(
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
+                -1
+            );
+        }
+        let master = unsafe { File::from_raw_fd(master) };
+        let slave = unsafe { File::from_raw_fd(slave) };
+        let child = Command::new(env!("CARGO_BIN_EXE_gary"))
+            .env("GARY4LOCAL_HEADLESS_CONFIG", &self.config)
+            .stdin(Stdio::from(slave.try_clone().unwrap()))
+            .stdout(Stdio::from(slave.try_clone().unwrap()))
+            .stderr(Stdio::from(slave))
+            .spawn()
+            .unwrap();
+        Terminal {
+            master,
+            child,
+            text: String::new(),
+            consumed: 0,
+        }
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+struct Terminal {
+    master: File,
+    child: Child,
+    text: String,
+    consumed: usize,
+}
+impl Terminal {
+    fn send(&mut self, line: &str) {
+        self.master.write_all(line.as_bytes()).unwrap();
+    }
+    fn expect(&mut self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(offset) = self.text[self.consumed..].find(needle) {
+                self.consumed += offset + needle.len();
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Waiting for {needle:?}: {}",
+                self.text
+            );
+            let mut fd = libc::pollfd {
+                fd: self.master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            if unsafe { libc::poll(&mut fd, 1, 100) } > 0 {
+                let mut bytes = [0; 4096];
+                let n = self
+                    .master
+                    .read(&mut bytes)
+                    .unwrap_or_else(|e| panic!("{e}: {}", self.text));
+                assert!(n > 0, "Terminal closed before {needle}: {}", self.text);
+                self.text.push_str(&String::from_utf8_lossy(&bytes[..n]));
+            }
+        }
+    }
+    fn exited(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                assert!(status.success(), "{}", self.text);
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Console did not exit: {}",
+                self.text
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn real_terminal_setup_can_cancel_save_and_report_missing_runtime_without_downloads() {
+    let fixture = Fixture::new();
+    let models = fixture.root.join("existing models with spaces");
+    std::fs::create_dir(&models).unwrap();
+    let mut terminal = fixture.open();
+    terminal.expect("not configured");
+    terminal.expect("gary> ");
+    terminal.send("/help\n");
+    terminal.expect("/cancel — Request a safe stop for training in this console");
+    terminal.expect("gary> ");
+    terminal.send("/cancel\n");
+    terminal.expect("No training job is running in this console.");
+    terminal.expect("gary> ");
+    terminal.send("/setup\n");
+    terminal.expect("SA3 models: ");
+    terminal.send("/cancel\n");
+    terminal.expect("no config was saved");
+    terminal.expect("gary> ");
+    assert!(!fixture.config.exists());
+    terminal.send("/setup\n");
+    terminal.expect("SA3 models: ");
+    terminal.send(&format!("{}\n", models.display()));
+    terminal.expect("Client port [8006]");
+    terminal.send("0\n");
+    terminal.expect("Choose a port from 1 to 65535.");
+    terminal.send("\n");
+    terminal.expect("GPU device");
+    terminal.send("\n");
+    terminal.expect("Generation precision");
+    terminal.send("\n");
+    terminal.expect("Save [y/N]: ");
+    terminal.send("y\n");
+    terminal.expect("Created config");
+    terminal.expect("gary> ");
+    assert!(fixture.config.exists());
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.config).unwrap()).unwrap();
+    assert_eq!(config["public_port"], 8006);
+    assert!(!fixture.root.join("sa3.data").exists());
+    terminal.send("/start\n");
+    terminal.expect("Runtime missing or invalid. Run /install sa3.");
+    terminal.expect("gary> ");
+    assert!(!fixture.root.join("sa3.data").exists());
+    terminal.send("/train\n");
+    terminal.expect("Unknown command");
+    terminal.expect("gary> ");
+    terminal.send("/quit\n");
+    terminal.expect("Goodbye.");
+    terminal.exited();
+}
+#[test]
+fn ctrl_c_exits_without_waiting_for_enter_or_creating_storage() {
+    let fixture = Fixture::new();
+    let mut terminal = fixture.open();
+    terminal.expect("gary> ");
+    assert_eq!(
+        unsafe { libc::kill(terminal.child.id() as i32, libc::SIGINT) },
+        0
+    );
+    terminal.expect("Goodbye.");
+    terminal.exited();
+    assert!(!fixture.config.exists());
+    assert!(!fixture.root.join("sa3.data").exists());
+}
+
+#[test]
+fn carey_reviews_incompatible_sidecars_before_training_settings() {
+    let fixture = Fixture::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_gary"))
+        .args(["init", "carey", "--json"])
+        .env("GARY4LOCAL_HEADLESS_CONFIG", &fixture.config)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let dataset = fixture.root.join("dataset");
+    std::fs::create_dir(&dataset).unwrap();
+    std::fs::write(dataset.join("track.wav"), b"audio").unwrap();
+    let sidecar = dataset.join("track.txt");
+    let sa3_caption = "synthwave, 110 bpm, C minor\n";
+    std::fs::write(&sidecar, sa3_caption).unwrap();
+
+    let mut terminal = fixture.open();
+    terminal.expect("gary> ");
+    terminal.send("train lora carey\n");
+    terminal.expect("Where’s your dataset?");
+    terminal.send(&format!("{}\n", dataset.display()));
+    terminal.expect("track.wav  ·  no caption");
+    terminal.expect("1 of 1 tracks need a Carey sidecar");
+    terminal.expect("Type label to label missing sidecars or label all to label every track.");
+    terminal.expect("Track number to review or edit");
+    terminal.send("\n");
+    terminal.expect("Edit the flagged sidecars or use label all before choosing training settings.");
+    for command in ["label all\n", "/label all\n"] {
+        terminal.expect("Track number to review or edit");
+        terminal.send(command);
+        terminal.expect("Replace existing text sidecars with Carey labels?");
+        terminal.send("n\n");
+    }
+    terminal.expect("Track number to review or edit");
+    assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), sa3_caption);
+    terminal.send("1\n");
+    terminal.expect("Replace this text sidecar?");
+    terminal.send("y\n");
+    terminal.expect("Enter /save");
+    terminal.send("caption: Bright synth arpeggio\nbpm: 110\n/save\n");
+    terminal.expect("track.wav  ·  ready for Carey");
+    terminal.expect("Enter for training settings");
+    terminal.send("\n");
+    terminal.expect("LoRA name:");
+    terminal.send("/cancel\n");
+    terminal.expect("gary> ");
+    terminal.send("/quit\n");
+    terminal.exited();
+}
+
+#[test]
+fn first_run_managed_storage_can_preview_and_decline_models() {
+    let fixture = Fixture::new();
+    let mut terminal = fixture.open();
+    terminal.expect("gary> ");
+    terminal.send("/setup\n");
+    terminal.expect("SA3 models: ");
+    terminal.send("\n");
+    terminal.expect("Storage folder");
+    terminal.send("\n");
+    for question in ["Client port", "GPU device"] {
+        terminal.expect(question);
+        terminal.send("\n");
+    }
+    terminal.expect("Generation precision");
+    #[cfg(target_os = "linux")]
+    terminal.send("\x1b[B\x1b[B\x1b[A");
+    terminal.send("\n");
+    terminal.expect("Save [y/N]: ");
+    terminal.send("y\n");
+    terminal.expect("gary> ");
+    terminal.send("/models sa3\n");
+    terminal.expect("medium · precision");
+    #[cfg(target_os = "linux")]
+    {
+        let config: serde_json::Value = serde_json::from_slice(&std::fs::read(&fixture.config).unwrap()).unwrap();
+        assert_eq!(config["encoding"], "q8_0");
+        terminal.send("\x1b[B\x1b");
+        terminal.expect("Selection cancelled.");
+    }
+    #[cfg(not(target_os = "linux"))]
+    terminal.send("/cancel\n");
+    terminal.expect("gary> ");
+    assert!(!fixture.root.join("sa3.data").exists());
+    terminal.send("/quit\n");
+    terminal.exited();
+}

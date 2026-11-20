@@ -1,3 +1,13 @@
+#[cfg(test)]
+use gary4local_core::dataset::parse_carey_ace_sidecar_content;
+use gary4local_core::training::{sanitize_lora_name,resolve_sa3_lora_layer_scope};
+use gary4local_core::dataset::{
+    canonical_carey_ace_dataset_root, canonical_sa3_dataset_root, check_writable_sidecar,
+    collect_sa3_dataset_audio_files, is_carey_ace_dataset_audio_file, is_sa3_dataset_audio_file,
+    read_carey_ace_dataset_sidecars, read_dir_sorted, read_sa3_dataset_sidecars,
+    render_carey_ace_sidecar, resolve_dataset_audio_entry, user_facing_windows_path,
+    CareyAceDatasetSidecarEntry, CareyAceSidecarFields, Sa3DatasetSidecarEntry,
+};
 mod ace_client;
 mod carey_migration;
 mod carey_caption;
@@ -410,54 +420,6 @@ struct CareyCaptionsBuildResult {
     output: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct CareyAceSidecarFields {
-    #[serde(default)]
-    caption: String,
-    #[serde(default)]
-    genre: String,
-    #[serde(default)]
-    bpm: String,
-    #[serde(default)]
-    bpm_source: String,
-    #[serde(default)]
-    lm_bpm: String,
-    #[serde(default)]
-    local_bpm: String,
-    #[serde(default)]
-    filename_bpm: String,
-    #[serde(default)]
-    keyscale: String,
-    #[serde(default)]
-    key_source: String,
-    #[serde(default)]
-    lm_keyscale: String,
-    #[serde(default)]
-    local_keyscale: String,
-    #[serde(default)]
-    timesignature: String,
-    #[serde(default)]
-    language: String,
-    #[serde(default)]
-    is_instrumental: bool,
-    #[serde(default)]
-    custom_tag: String,
-    #[serde(default)]
-    lyrics: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CareyAceDatasetSidecarEntry {
-    audio_path: String,
-    relative_path: String,
-    sidecar_path: String,
-    exists: bool,
-    raw_content: String,
-    fields: CareyAceSidecarFields,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CareyAceDatasetSidecarUpdate {
@@ -700,17 +662,6 @@ struct RuntimeCacheClearResult {
 struct ModelRemovalResult {
     model_id: String,
     removed_bytes: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Sa3DatasetSidecarEntry {
-    audio_path: String,
-    relative_path: String,
-    sidecar_path: String,
-    content: String,
-    exists: bool,
-    json_sidecar_exists: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1331,25 +1282,6 @@ fn hide_std_console_window(cmd: &mut std::process::Command) {
     }
 }
 
-fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut entries = Vec::new();
-    let reader =
-        std::fs::read_dir(dir).map_err(|e| format!("Cannot read {}: {}", dir.display(), e))?;
-
-    for entry in reader {
-        let entry = entry.map_err(|e| format!("Cannot read entry in {}: {}", dir.display(), e))?;
-        entries.push(entry.path());
-    }
-
-    entries.sort_by(|a, b| {
-        a.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .cmp(&b.file_name().unwrap_or_default().to_string_lossy())
-    });
-    Ok(entries)
-}
-
 fn compute_bundle_sync_stamp(bundle_root: &Path) -> Result<String, String> {
     let services_dir = bundle_root.join("services");
     if !services_dir.is_dir() {
@@ -1775,21 +1707,6 @@ fn merge_app_settings(patch: AppSettingsPatch) -> AppSettings {
     current
 }
 
-fn sanitize_lora_name(raw: &str) -> Option<String> {
-    let normalized = raw.trim().to_lowercase();
-    if normalized.is_empty() {
-        return None;
-    }
-    if normalized
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
-    {
-        Some(normalized)
-    } else {
-        None
-    }
-}
-
 fn lora_name_availability<I>(raw: &str, occupied_names: I) -> Result<LoraNameAvailability, String>
 where
     I: IntoIterator,
@@ -1938,132 +1855,6 @@ fn count_caption_sidecars(dir: &Path) -> usize {
     }
 }
 
-fn is_sa3_dataset_audio_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "wav" | "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aiff" | "aif"
-            )
-        })
-        .unwrap_or(false)
-}
-
-pub(crate) fn user_facing_windows_path(path: &Path) -> String {
-    let value = path.to_string_lossy();
-    if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
-        return format!(r"\\{}", unc_path);
-    }
-    value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
-}
-
-fn canonical_sa3_dataset_root(dataset_path: &str) -> Result<PathBuf, String> {
-    let trimmed = dataset_path.trim();
-    if trimmed.is_empty() {
-        return Err("Choose a dataset folder first".to_string());
-    }
-    let requested = PathBuf::from(trimmed);
-    if !requested.is_dir() {
-        return Err(format!(
-            "{} is not a valid dataset folder",
-            requested.display()
-        ));
-    }
-    requested
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))
-}
-
-fn collect_sa3_dataset_audio_files(
-    root: &Path,
-    directory: &Path,
-    visited: &mut std::collections::HashSet<PathBuf>,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    let canonical_directory = directory
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", directory.display(), e))?;
-    if !canonical_directory.starts_with(root) || !visited.insert(canonical_directory.clone()) {
-        return Ok(());
-    }
-
-    for entry in read_dir_sorted(&canonical_directory)? {
-        let Ok(canonical_entry) = entry.canonicalize() else {
-            continue;
-        };
-        if !canonical_entry.starts_with(root) {
-            continue;
-        }
-        if canonical_entry.is_dir() {
-            collect_sa3_dataset_audio_files(root, &canonical_entry, visited, files)?;
-        } else if canonical_entry.is_file() && is_sa3_dataset_audio_file(&canonical_entry) {
-            files.push(canonical_entry);
-        }
-    }
-    Ok(())
-}
-
-fn sa3_dataset_json_sidecar_exists(root: &Path, audio_path: &Path) -> bool {
-    let mut candidates = vec![audio_path.with_extension("json")];
-    if let (Some(parent), Some(stem)) = (audio_path.parent(), audio_path.file_stem()) {
-        if let Some(grandparent) = parent.parent() {
-            candidates.push(grandparent.join("json").join(stem).with_extension("json"));
-        }
-    }
-    candidates
-        .into_iter()
-        .any(|candidate| candidate.starts_with(root) && candidate.is_file())
-}
-
-fn read_sa3_dataset_sidecars(dataset_path: &str) -> Result<Vec<Sa3DatasetSidecarEntry>, String> {
-    let root = canonical_sa3_dataset_root(dataset_path)?;
-    let mut files = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    collect_sa3_dataset_audio_files(&root, &root, &mut visited, &mut files)?;
-    files.sort_by(|left, right| {
-        left.strip_prefix(&root)
-            .unwrap_or(left)
-            .to_string_lossy()
-            .to_lowercase()
-            .cmp(
-                &right
-                    .strip_prefix(&root)
-                    .unwrap_or(right)
-                    .to_string_lossy()
-                    .to_lowercase(),
-            )
-    });
-
-    Ok(files
-        .into_iter()
-        .map(|audio_path| {
-            let sidecar_path = audio_path.with_extension("txt");
-            let exists = sidecar_path.is_file();
-            let content = if exists {
-                std::fs::read_to_string(&sidecar_path)
-                    .unwrap_or_default()
-                    .trim_start_matches('\u{feff}')
-                    .to_string()
-            } else {
-                String::new()
-            };
-            Sa3DatasetSidecarEntry {
-                relative_path: audio_path
-                    .strip_prefix(&root)
-                    .unwrap_or(&audio_path)
-                    .to_string_lossy()
-                    .to_string(),
-                audio_path: user_facing_windows_path(&audio_path),
-                sidecar_path: user_facing_windows_path(&sidecar_path),
-                content,
-                exists,
-                json_sidecar_exists: sa3_dataset_json_sidecar_exists(&root, &audio_path),
-            }
-        })
-        .collect())
-}
-
 fn save_sa3_dataset_sidecar_updates(
     dataset_path: &str,
     sidecars: Vec<Sa3DatasetSidecarUpdate>,
@@ -2074,21 +1865,11 @@ fn save_sa3_dataset_sidecar_updates(
 
     for sidecar in sidecars {
         let requested_audio = PathBuf::from(sidecar.audio_path.trim());
-        let audio_path = requested_audio
-            .canonicalize()
-            .map_err(|e| format!("Cannot resolve {}: {}", requested_audio.display(), e))?;
-        if !audio_path.starts_with(&root)
-            || !audio_path.is_file()
-            || !is_sa3_dataset_audio_file(&audio_path)
-        {
-            return Err(format!(
-                "{} is not an audio file inside {}",
-                audio_path.display(),
-                root.display()
-            ));
-        }
-
+        let audio_path =
+            resolve_dataset_audio_entry(&root, &requested_audio, is_sa3_dataset_audio_file)?;
         let sidecar_path = audio_path.with_extension("txt");
+        check_writable_sidecar(&sidecar_path)
+            .map_err(|e| format!("Cannot update {}: {}", sidecar_path.display(), e))?;
         let content = sidecar.content.trim();
         if content.is_empty() {
             if sidecar_path.is_file() {
@@ -2111,165 +1892,6 @@ fn save_sa3_dataset_sidecar_updates(
     })
 }
 
-fn is_carey_ace_dataset_audio_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "wav" | "flac" | "mp3" | "ogg" | "opus" | "m4a"
-            )
-        })
-        .unwrap_or(false)
-}
-
-fn canonical_carey_ace_dataset_root(dataset_path: &str) -> Result<PathBuf, String> {
-    let trimmed = dataset_path.trim();
-    if trimmed.is_empty() {
-        return Err("Choose a dataset folder first".to_string());
-    }
-    let requested = PathBuf::from(trimmed);
-    if !requested.is_dir() {
-        return Err(format!(
-            "{} is not a valid dataset folder",
-            requested.display()
-        ));
-    }
-    requested
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))
-}
-
-fn collect_carey_ace_dataset_audio_files(
-    root: &Path,
-    directory: &Path,
-    visited: &mut std::collections::HashSet<PathBuf>,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    let canonical_directory = directory
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", directory.display(), e))?;
-    if !canonical_directory.starts_with(root) || !visited.insert(canonical_directory.clone()) {
-        return Ok(());
-    }
-
-    for entry in read_dir_sorted(&canonical_directory)? {
-        let Ok(canonical_entry) = entry.canonicalize() else {
-            continue;
-        };
-        if !canonical_entry.starts_with(root) {
-            continue;
-        }
-        if canonical_entry.is_dir() {
-            collect_carey_ace_dataset_audio_files(root, &canonical_entry, visited, files)?;
-        } else if canonical_entry.is_file() && is_carey_ace_dataset_audio_file(&canonical_entry) {
-            files.push(canonical_entry);
-        }
-    }
-    Ok(())
-}
-
-fn normalize_carey_ace_sidecar_key(raw: &str) -> Option<&'static str> {
-    match raw.trim().to_ascii_lowercase().replace(' ', "_").as_str() {
-        "caption" => Some("caption"),
-        "genre" => Some("genre"),
-        "bpm" => Some("bpm"),
-        "bpm_source" => Some("bpm_source"),
-        "lm_bpm" => Some("lm_bpm"),
-        "local_bpm" => Some("local_bpm"),
-        "filename_bpm" => Some("filename_bpm"),
-        "key" | "keyscale" => Some("keyscale"),
-        "key_source" => Some("key_source"),
-        "lm_keyscale" => Some("lm_keyscale"),
-        "local_keyscale" => Some("local_keyscale"),
-        "signature" | "timesignature" | "time_signature" => Some("timesignature"),
-        "language" => Some("language"),
-        "is_instrumental" => Some("is_instrumental"),
-        "custom_tag" => Some("custom_tag"),
-        "lyrics" => Some("lyrics"),
-        _ => None,
-    }
-}
-
-fn commit_carey_ace_sidecar_value(
-    values: &mut BTreeMap<String, String>,
-    key: &mut Option<&'static str>,
-    lines: &mut Vec<String>,
-) {
-    if let Some(name) = key.take() {
-        values.insert(name.to_string(), lines.join("\n").trim().to_string());
-        lines.clear();
-    }
-}
-
-fn parse_carey_ace_sidecar_content(raw: &str) -> CareyAceSidecarFields {
-    let mut values = BTreeMap::<String, String>::new();
-    let mut current_key: Option<&'static str> = None;
-    let mut current_lines: Vec<String> = Vec::new();
-    let mut saw_known_key = false;
-
-    for line in raw.trim_start_matches('\u{feff}').lines() {
-        let parsed = line.split_once(':').and_then(|(key, value)| {
-            if key
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ' ')
-            {
-                normalize_carey_ace_sidecar_key(key).map(|name| (name, value.trim_start()))
-            } else {
-                None
-            }
-        });
-
-        if let Some((name, value)) = parsed {
-            commit_carey_ace_sidecar_value(&mut values, &mut current_key, &mut current_lines);
-            saw_known_key = true;
-            current_key = Some(name);
-            current_lines.push(value.trim_end().to_string());
-        } else if current_key.is_some() {
-            current_lines.push(line.trim_end().to_string());
-        }
-    }
-    commit_carey_ace_sidecar_value(&mut values, &mut current_key, &mut current_lines);
-
-    if !saw_known_key && !raw.trim().is_empty() {
-        return CareyAceSidecarFields {
-            lyrics: raw.trim().to_string(),
-            ..CareyAceSidecarFields::default()
-        };
-    }
-
-    CareyAceSidecarFields {
-        caption: values.remove("caption").unwrap_or_default(),
-        genre: values.remove("genre").unwrap_or_default(),
-        bpm: values.remove("bpm").unwrap_or_default(),
-        bpm_source: values.remove("bpm_source").unwrap_or_default(),
-        lm_bpm: values.remove("lm_bpm").unwrap_or_default(),
-        local_bpm: values.remove("local_bpm").unwrap_or_default(),
-        filename_bpm: values.remove("filename_bpm").unwrap_or_default(),
-        keyscale: values.remove("keyscale").unwrap_or_default(),
-        key_source: values.remove("key_source").unwrap_or_default(),
-        lm_keyscale: values.remove("lm_keyscale").unwrap_or_default(),
-        local_keyscale: values.remove("local_keyscale").unwrap_or_default(),
-        timesignature: values.remove("timesignature").unwrap_or_default(),
-        language: values.remove("language").unwrap_or_default(),
-        is_instrumental: values
-            .remove("is_instrumental")
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false),
-        custom_tag: values.remove("custom_tag").unwrap_or_default(),
-        lyrics: values.remove("lyrics").unwrap_or_default(),
-    }
-}
-
-fn clean_carey_ace_scalar(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 fn carey_ace_fields_are_empty(fields: &CareyAceSidecarFields) -> bool {
     fields.caption.trim().is_empty()
         && fields.genre.trim().is_empty()
@@ -2282,103 +1904,6 @@ fn carey_ace_fields_are_empty(fields: &CareyAceSidecarFields) -> bool {
         && !fields.is_instrumental
 }
 
-fn render_carey_ace_sidecar(fields: &CareyAceSidecarFields) -> String {
-    let mut lines = Vec::new();
-    for (key, value) in [
-        ("caption", fields.caption.as_str()),
-        ("genre", fields.genre.as_str()),
-        ("bpm", fields.bpm.as_str()),
-        ("bpm_source", fields.bpm_source.as_str()),
-        ("lm_bpm", fields.lm_bpm.as_str()),
-        ("local_bpm", fields.local_bpm.as_str()),
-        ("filename_bpm", fields.filename_bpm.as_str()),
-        ("keyscale", fields.keyscale.as_str()),
-        ("key_source", fields.key_source.as_str()),
-        ("lm_keyscale", fields.lm_keyscale.as_str()),
-        ("local_keyscale", fields.local_keyscale.as_str()),
-        ("timesignature", fields.timesignature.as_str()),
-        ("language", fields.language.as_str()),
-    ] {
-        let scalar = clean_carey_ace_scalar(value);
-        if !scalar.is_empty() {
-            lines.push(format!("{}: {}", key, scalar));
-        }
-    }
-    lines.push(format!(
-        "is_instrumental: {}",
-        if fields.is_instrumental {
-            "true"
-        } else {
-            "false"
-        }
-    ));
-    let tag = clean_carey_ace_scalar(&fields.custom_tag);
-    if !tag.is_empty() {
-        lines.push(format!("custom_tag: {}", tag));
-    }
-
-    let mut lyrics = fields.lyrics.trim().to_string();
-    if lyrics.is_empty() && fields.is_instrumental {
-        lyrics = "[Instrumental]".to_string();
-    }
-    let mut lyric_lines = lyrics.lines();
-    let first = lyric_lines.next().unwrap_or("");
-    lines.push(format!("lyrics: {}", first));
-    lines.extend(lyric_lines.map(|line| line.to_string()));
-    format!("{}\n", lines.join("\n"))
-}
-
-fn read_carey_ace_dataset_sidecars(
-    dataset_path: &str,
-) -> Result<Vec<CareyAceDatasetSidecarEntry>, String> {
-    let root = canonical_carey_ace_dataset_root(dataset_path)?;
-    let mut files = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    collect_carey_ace_dataset_audio_files(&root, &root, &mut visited, &mut files)?;
-    files.sort_by(|left, right| {
-        left.strip_prefix(&root)
-            .unwrap_or(left)
-            .to_string_lossy()
-            .to_lowercase()
-            .cmp(
-                &right
-                    .strip_prefix(&root)
-                    .unwrap_or(right)
-                    .to_string_lossy()
-                    .to_lowercase(),
-            )
-    });
-
-    Ok(files
-        .into_iter()
-        .map(|audio_path| {
-            let sidecar_path = audio_path.with_extension("txt");
-            let exists = sidecar_path.is_file();
-            let raw_content = if exists {
-                std::fs::read_to_string(&sidecar_path)
-                    .unwrap_or_default()
-                    .trim_start_matches('\u{feff}')
-                    .to_string()
-            } else {
-                String::new()
-            };
-            let fields = parse_carey_ace_sidecar_content(&raw_content);
-            CareyAceDatasetSidecarEntry {
-                relative_path: audio_path
-                    .strip_prefix(&root)
-                    .unwrap_or(&audio_path)
-                    .to_string_lossy()
-                    .to_string(),
-                audio_path: user_facing_windows_path(&audio_path),
-                sidecar_path: user_facing_windows_path(&sidecar_path),
-                exists,
-                raw_content,
-                fields,
-            }
-        })
-        .collect())
-}
-
 fn save_carey_ace_dataset_sidecar_updates(
     dataset_path: &str,
     sidecars: Vec<CareyAceDatasetSidecarUpdate>,
@@ -2389,21 +1914,11 @@ fn save_carey_ace_dataset_sidecar_updates(
 
     for sidecar in sidecars {
         let requested_audio = PathBuf::from(sidecar.audio_path.trim());
-        let audio_path = requested_audio
-            .canonicalize()
-            .map_err(|e| format!("Cannot resolve {}: {}", requested_audio.display(), e))?;
-        if !audio_path.starts_with(&root)
-            || !audio_path.is_file()
-            || !is_carey_ace_dataset_audio_file(&audio_path)
-        {
-            return Err(format!(
-                "{} is not an audio file inside {}",
-                audio_path.display(),
-                root.display()
-            ));
-        }
-
+        let audio_path =
+            resolve_dataset_audio_entry(&root, &requested_audio, is_carey_ace_dataset_audio_file)?;
         let sidecar_path = audio_path.with_extension("txt");
+        check_writable_sidecar(&sidecar_path)
+            .map_err(|e| format!("Cannot update {}: {}", sidecar_path.display(), e))?;
         if carey_ace_fields_are_empty(&sidecar.fields) {
             if sidecar_path.is_file() {
                 std::fs::remove_file(&sidecar_path)
@@ -5534,15 +5049,8 @@ pub(crate) fn yuey_missing_models(models_dir: &Path) -> Option<String> {
 /// recommend Q5_K_M, which is not published yet; the next smaller tier that
 /// is published is the safe substitute.
 fn yuey_default_tier(recommended: Option<&str>) -> &'static str {
-    const BY_SIZE: [&str; 4] = ["Q4_K_M", "Q5_K_M", "Q8_0", "BF16"];
-    let limit = recommended
-        .and_then(|tier| BY_SIZE.iter().position(|candidate| *candidate == tier))
-        .unwrap_or(0);
-    BY_SIZE[..=limit]
-        .iter()
-        .rev()
-        .find(|tier| model_manager::yuey_files(&format!("yuey::{tier}")).is_some())
-        .copied()
+    recommended
+        .and_then(gary4local_core::model_catalog::recommended_yuey_tier)
         .unwrap_or("Q4_K_M")
 }
 
@@ -9461,17 +8969,7 @@ async fn suggest_sa3_track_metadata(
 ) -> Result<Sa3TrackMetadataSuggestion, String> {
     let root = canonical_sa3_dataset_root(&dataset_path)?;
     let requested = PathBuf::from(audio_path.trim());
-    let resolved = requested
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {}: {}", requested.display(), e))?;
-    if !resolved.starts_with(&root) || !resolved.is_file() || !is_sa3_dataset_audio_file(&resolved)
-    {
-        return Err(format!(
-            "{} is not an audio file inside {}",
-            resolved.display(),
-            root.display()
-        ));
-    }
+    let resolved = resolve_dataset_audio_entry(&root, &requested, is_sa3_dataset_audio_file)?;
 
     if storage::storage_info(repo_root.inner()).pending_restart {
         return Err("Restart to use your selected storage before audio analysis.".into());
@@ -10144,19 +9642,6 @@ fn sa3_lora_name_availability(name: &str) -> Result<LoraNameAvailability, String
 #[tauri::command]
 fn get_sa3_lora_name_availability(name: String) -> Result<LoraNameAvailability, String> {
     sa3_lora_name_availability(&name)
-}
-
-fn resolve_sa3_lora_layer_scope(
-    layer_scope: &str,
-) -> Result<(Option<&'static str>, Option<&'static str>), String> {
-    match layer_scope.trim() {
-        // Seven adapters per block: self-attention (2), cross-attention (3),
-        // and feed-forward (2). 24 medium-DiT blocks * 7 = 168.
-        "transformer-core" => Ok((Some("transformer.layers"), Some("to_local_embed"))),
-        "full" => Ok((None, None)),
-        "full-no-seconds" => Ok((None, Some("seconds_total"))),
-        _ => Err(format!("Unknown SA3 LoRA layer scope: {layer_scope}")),
-    }
 }
 
 fn resolve_sa3_training_runtime(native_selected: bool, requested: Option<&str>) -> Result<bool, String> {
