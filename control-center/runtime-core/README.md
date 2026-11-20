@@ -114,6 +114,11 @@ Use `add lora sa3` to import a GGUF adapter or convert a safetensors adapter.
 Use `add lora carey` to import a PEFT folder and declare its 2B or XL family.
 Start the service afterward to expose the added adapter to clients.
 
+Use `loras sa3` or `loras carey` to browse registered adapters and their
+training checkpoints. Stop the service before activating a different checkpoint.
+The adapter name, dice prompts and Carey model family carry across checkpoint
+changes. Choose Final to return to the completed run's final weights.
+
 ## Shared core
 
 `gary4local-server` builds without Tauri, GTK, WebKit, tray libraries, Node or a

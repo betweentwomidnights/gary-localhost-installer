@@ -21,3 +21,4 @@ pub mod sa3_prompts;
 pub mod training;
 
 mod training_job;
+mod lora_history;

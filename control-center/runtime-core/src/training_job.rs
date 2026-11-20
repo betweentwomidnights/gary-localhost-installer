@@ -86,7 +86,7 @@ pub(crate) async fn fetch(
     headless::fetch_model_files(config, files).await
 }
 
-fn adapter_dest(config: &Config, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn adapter_path(config: &Config, name: &str) -> Result<PathBuf, String> {
     let valid = crate::training::sanitize_lora_name(name).as_deref() == Some(name)
         && !["none", "default", "defaults"].contains(&name);
     if !valid {
@@ -97,7 +97,11 @@ fn adapter_dest(config: &Config, name: &str) -> Result<PathBuf, String> {
     } else {
         name.to_owned()
     };
-    let path = config.runtime_root.join("adapters").join(leaf);
+    Ok(config.runtime_root.join("adapters").join(leaf))
+}
+
+fn adapter_dest(config: &Config, name: &str) -> Result<PathBuf, String> {
+    let path = adapter_path(config, name)?;
     if path.exists() {
         return Err(format!(
             "A LoRA named {name} already exists. Choose another name."
@@ -106,9 +110,9 @@ fn adapter_dest(config: &Config, name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-struct Scratch(PathBuf);
+pub(crate) struct Scratch(pub PathBuf);
 impl Scratch {
-    fn new(config: &Config, kind: &str) -> Result<Self, String> {
+    pub fn new(config: &Config, kind: &str) -> Result<Self, String> {
         let path = config
             .runtime_root
             .join("tmp")

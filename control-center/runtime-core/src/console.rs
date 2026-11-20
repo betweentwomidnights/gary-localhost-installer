@@ -29,7 +29,7 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   init, validate, capabilities, schema, serve, version (see COMMAND --help).\n\n\
   Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
   Use /start all and /stop all inside the console.\n\
-  Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. LoRA tools: /add lora and /train lora for SA3 and Carey.\n\
+  Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. LoRA tools: /loras, /add lora and /train lora for SA3 and Carey.\n\
   Leaving a console stops only services started by that console.\n\
   No runtime/model downloads happen just by opening Gary.";
 
@@ -207,6 +207,7 @@ enum Action {
     Help,
     Quit,
     AddLora,
+    Loras,
     TrainLora,
     Training,
     CancelTraining,
@@ -241,7 +242,7 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
     }
     let service_action = matches!(
         name.as_str(),
-        "start" | "stop" | "status" | "services" | "models" | "install" | "doctor" | "logs"
+        "start" | "stop" | "status" | "services" | "models" | "install" | "doctor" | "logs" | "loras"
     );
     if words.len() > 1 && !(service_action && words.len() == 2) {
         return Err("Use a command on its own or with sa3, for example /start sa3. Type /help for commands.".into());
@@ -267,6 +268,7 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
             "status" | "services" => Action::Status,
             "doctor" => Action::Doctor,
             "logs" => Action::Logs,
+            "loras" => Action::Loras,
             "training" => Action::Training,
             "cancel" => Action::CancelTraining,
             "help" | "?" => Action::Help,
@@ -634,7 +636,7 @@ impl Console {
     async fn choose(&self, action: &Action, input: &mut Input) -> Result<Service, String> {
         let mut choices = Vec::new();
         for service in Service::ALL {
-            if matches!(action, Action::AddLora | Action::TrainLora)
+            if matches!(action, Action::AddLora | Action::TrainLora | Action::Loras)
                 && !matches!(service, Service::Sa3 | Service::Carey)
             {
                 continue;
@@ -1001,7 +1003,7 @@ impl Console {
         match action {
             Action::Quit => return Ok(true),
             Action::Help => {
-                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/quit — Stop services started here and leave")?;
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/loras [sa3|carey] — Browse LoRAs and switch checkpoints\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/quit — Stop services started here and leave")?;
                 return Ok(false);
             }
             Action::StartAll | Action::StopAll => {
@@ -1048,6 +1050,10 @@ impl Console {
         };
         let label = service_label(service);
         match action {
+            Action::Loras => {
+                self.loras(input, service).await?;
+                return Ok(false);
+            }
             Action::TrainLora => {
                 self.train_lora(input, service).await?;
                 return Ok(false);

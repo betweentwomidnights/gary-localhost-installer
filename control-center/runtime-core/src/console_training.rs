@@ -1,6 +1,6 @@
-use super::{answer, model_path, model_size, say, service_label, Console, Input};
+use super::{answer, choose_row, model_path, model_size, say, service_label, Console, Input};
 use crate::{
-    dataset,
+    dataset, lora_history,
     service::Service,
     training::{self, carey, sa3},
     training_job::{self, Settings},
@@ -422,6 +422,56 @@ async fn review(
 }
 
 impl Console {
+    pub(super) async fn loras(&self, input: &mut Input, service: Service) -> Result<(), String> {
+        if !matches!(service, Service::Sa3 | Service::Carey) {
+            return Err("LoRA checkpoint selection is available for SA3 and Carey.".into());
+        }
+        let config = self.config(service)?;
+        let names = lora_history::registered(&config)?;
+        if names.is_empty() {
+            return say(format!(
+                "No registered LoRAs for {}.",
+                service_label(service)
+            ));
+        }
+        let name = &names[choose_row(input, "Choose a LoRA", &names, 0).await?];
+        say(format!("LoRA {name}"))?;
+        let Some(history) = lora_history::history(&config, name)? else {
+            return say("This LoRA has no saved training checkpoints.");
+        };
+        let rows: Vec<_> = history
+            .checkpoints
+            .iter()
+            .enumerate()
+            .map(|(index, checkpoint)| {
+                if index == history.active {
+                    format!("{} · active", checkpoint.label)
+                } else {
+                    checkpoint.label.clone()
+                }
+            })
+            .collect();
+        if rows.len() == 1 {
+            return say(&rows[0]);
+        }
+        let selected = choose_row(input, "Choose a checkpoint", &rows, history.active).await?;
+        let checkpoint = &history.checkpoints[selected].label;
+        if selected == history.active {
+            return say(format!("{checkpoint} is already active for {name}."));
+        }
+        if self.state(service).await?["operation_active"] == true {
+            return Err(format!(
+                "Stop {} or let its current job finish before switching checkpoints.",
+                service_label(service)
+            ));
+        }
+        lora_history::activate(&config, name, &history, selected)?;
+        say(format!(
+            "{name} now uses {checkpoint}. Start {} to use it.",
+            service.id()
+        ))
+    }
+
     pub(super) async fn add_lora(&self, input: &mut Input, service: Service) -> Result<(), String> {
         let config = self.config(service)?;
         if self.state(service).await?["operation_active"] == true {
