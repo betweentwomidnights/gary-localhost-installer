@@ -199,6 +199,55 @@ fn ctrl_c_exits_without_waiting_for_enter_or_creating_storage() {
 }
 
 #[test]
+fn carey_reviews_incompatible_sidecars_before_training_settings() {
+    let fixture = Fixture::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_gary"))
+        .args(["init", "carey", "--json"])
+        .env("GARY4LOCAL_HEADLESS_CONFIG", &fixture.config)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+
+    let dataset = fixture.root.join("dataset");
+    std::fs::create_dir(&dataset).unwrap();
+    std::fs::write(dataset.join("track.wav"), b"audio").unwrap();
+    let sidecar = dataset.join("track.txt");
+    let sa3_caption = "synthwave, 110 bpm, C minor\n";
+    std::fs::write(&sidecar, sa3_caption).unwrap();
+
+    let mut terminal = fixture.open();
+    terminal.expect("gary> ");
+    terminal.send("train lora carey\n");
+    terminal.expect("Where’s your dataset?");
+    terminal.send(&format!("{}\n", dataset.display()));
+    terminal.expect("track.wav  ·  no caption");
+    terminal.expect("1 of 1 tracks need a Carey sidecar");
+    terminal.expect("Type /label to label missing sidecars or /label all to label every track.");
+    terminal.expect("Track number to review or edit");
+    terminal.send("\n");
+    terminal.expect("Edit the flagged sidecars or use /label all before choosing training settings.");
+    terminal.expect("Track number to review or edit");
+    terminal.send("/label all\n");
+    terminal.expect("Replace existing text sidecars with Carey labels?");
+    terminal.send("n\n");
+    terminal.expect("Track number to review or edit");
+    assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), sa3_caption);
+    terminal.send("1\n");
+    terminal.expect("Replace this text sidecar?");
+    terminal.send("y\n");
+    terminal.expect("Enter /save");
+    terminal.send("caption: Bright synth arpeggio\nbpm: 110\n/save\n");
+    terminal.expect("track.wav  ·  ready for Carey");
+    terminal.expect("Enter for training settings");
+    terminal.send("\n");
+    terminal.expect("LoRA name:");
+    terminal.send("/cancel\n");
+    terminal.expect("gary> ");
+    terminal.send("/quit\n");
+    terminal.exited();
+}
+
+#[test]
 fn first_run_managed_storage_can_preview_and_decline_models() {
     let fixture = Fixture::new();
     let mut terminal = fixture.open();

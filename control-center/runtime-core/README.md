@@ -96,10 +96,12 @@ Scripts can use `gary COMMAND --json` or the original `gary4local-server`.
 ## LoRA tools
 
 Run `train lora sa3` or `train lora carey` and enter the dataset folder.
-Choose whether to auto-label with Carey's captioner. Existing text sidecars
-are kept unless you confirm replacement. Review tracks by number and edit
-text sidecars in the console before continuing to settings. SA3 uses steps
-and a single training window. Carey uses epochs and minimum/maximum windows.
+Review tracks by number and edit text sidecars in the console before continuing
+to settings. SA3 offers auto-labeling before review. Carey checks for a caption
+and BPM during review. Use `/label` for missing sidecars or `/label all` to
+relabel every track, including those with SA3-format labels. Gary asks before
+replacing existing text sidecars. SA3 uses steps and a single training window.
+Carey uses epochs and minimum/maximum windows.
 The wizard offers the remaining trainer settings and links to Discord help.
 
 Training runs under the service profile's runtime root. Stop that service

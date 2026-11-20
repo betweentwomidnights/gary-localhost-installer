@@ -212,6 +212,21 @@ struct Track {
     has_json: bool,
 }
 
+impl Track {
+    fn carey_sidecar_issue(&self) -> Option<String> {
+        match fs::read_to_string(&self.sidecar) {
+            Ok(text) => {
+                let fields = dataset::parse_carey_ace_sidecar_content(&text);
+                crate::carey_dataset::metadata(&fields, "").err()
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Some("missing sidecar".into())
+            }
+            Err(error) => Some(format!("cannot read sidecar ({error})")),
+        }
+    }
+}
+
 fn tracks(service: Service, path: &Path) -> Result<Vec<Track>, String> {
     let folder = path.to_str().ok_or("Use a UTF-8 dataset path.")?;
     let rows: Vec<_> = if service == Service::Sa3 {
@@ -262,15 +277,30 @@ fn safe_text(text: &str) -> String {
         .collect()
 }
 
-async fn review(input: &mut Input, rows: &[Track]) -> Result<(), String> {
+async fn review(
+    console: &Console,
+    input: &mut Input,
+    service: Service,
+    folder: &Path,
+    rows: &[Track],
+) -> Result<(), String> {
     loop {
+        let mut invalid = 0;
         for (index, row) in rows.iter().enumerate() {
-            let status = if row.sidecar.is_file() {
-                "text sidecar"
+            let status = if service == Service::Carey {
+                match row.carey_sidecar_issue() {
+                    Some(issue) => {
+                        invalid += 1;
+                        safe_text(&issue)
+                    }
+                    None => "ready for Carey".into(),
+                }
+            } else if row.sidecar.is_file() {
+                "text sidecar".into()
             } else if row.has_json {
-                "JSON metadata"
+                "JSON metadata".into()
             } else {
-                "missing sidecar"
+                "missing sidecar".into()
             };
             say(format!(
                 "{:>3}  {}  ·  {status}",
@@ -278,13 +308,50 @@ async fn review(input: &mut Input, rows: &[Track]) -> Result<(), String> {
                 safe_text(&row.relative)
             ))?;
         }
+        if service == Service::Carey {
+            if invalid > 0 {
+                say(format!(
+                    "{invalid} of {} tracks need a Carey sidecar with a caption and BPM. SA3 labels use a different format.",
+                    rows.len()
+                ))?;
+            }
+            say("Type /label to label missing sidecars or /label all to label every track.")?;
+        }
         let choice = answer(
             input,
-            "Track number to review or edit [Enter for training settings]: ",
+            if invalid > 0 {
+                "Track number to review or edit [/label all or /cancel]: "
+            } else {
+                "Track number to review or edit [Enter for training settings]: "
+            },
         )
         .await?;
         if choice.is_empty() {
-            return Ok(());
+            if invalid == 0 {
+                return Ok(());
+            }
+            say("Edit the flagged sidecars or use /label all before choosing training settings.")?;
+            continue;
+        }
+        if service == Service::Carey && matches!(choice.as_str(), "/label" | "/label all") {
+            let overwrite = choice == "/label all";
+            if overwrite
+                && rows.iter().any(|row| row.sidecar.is_file())
+                && !yes(
+                    input,
+                    "Replace existing text sidecars with Carey labels? [y/N] ",
+                )
+                .await?
+            {
+                continue;
+            }
+            if let Err(error) = console
+                .label_dataset(input, service, folder, rows, overwrite)
+                .await
+            {
+                say(format!("Auto-labeling stopped: {error}"))?;
+            }
+            continue;
         }
         let Some(row) = choice
             .parse::<usize>()
@@ -436,15 +503,19 @@ impl Console {
             rows.len(),
             folder.display()
         ))?;
-        if yes(input, "Auto-label the dataset? [y/N] ").await? {
-            let result = self.label_dataset(input, service, &folder, &rows).await;
+        if service == Service::Sa3 && yes(input, "Auto-label the dataset? [y/N] ").await? {
+            let overwrite = rows.iter().any(|row| row.sidecar.is_file())
+                && yes(input, "Replace existing text sidecars too? [y/N] ").await?;
+            let result = self
+                .label_dataset(input, service, &folder, &rows, overwrite)
+                .await;
             if let Err(error) = result {
                 say(format!(
                     "Auto-labeling stopped: {error}\nYou can review or edit sidecars below."
                 ))?;
             }
         }
-        review(input, &rows).await?;
+        review(self, input, service, &folder, &rows).await?;
         say(format!(
             "Training settings help · \x1b]8;;{SUPPORT}\x1b\\{SUPPORT}\x1b]8;;\x1b\\ @kev"
         ))?;
@@ -490,9 +561,8 @@ impl Console {
         service: Service,
         folder: &Path,
         rows: &[Track],
+        overwrite: bool,
     ) -> Result<(), String> {
-        let overwrite = rows.iter().any(|row| row.sidecar.is_file())
-            && yes(input, "Replace existing text sidecars too? [y/N] ").await?;
         let files: Vec<_> = rows
             .iter()
             .filter(|row| overwrite || (!row.sidecar.exists() && !row.has_json))
