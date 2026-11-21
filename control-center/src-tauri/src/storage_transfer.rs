@@ -212,6 +212,7 @@ fn checked(root: &Path, relative: &Path) -> Result<PathBuf, String> {
 }
 
 fn visit(root: &Path, relative: &Path, entries: &mut Vec<Entry>) -> Result<(), String> {
+    if relative.file_name().is_some_and(|name| name == ".lora-library.lock") { return Ok(()); }
     let path = checked(root, relative)?;
     let meta = match fs::symlink_metadata(&path) {
         Ok(meta) => meta,

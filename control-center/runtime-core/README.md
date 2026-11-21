@@ -104,7 +104,8 @@ replacing existing text sidecars. SA3 uses steps and a single training window.
 Carey uses epochs and minimum/maximum windows.
 The wizard offers the remaining trainer settings and links to Discord help.
 
-Training runs under the service profile's runtime root. Stop that service
+Training history lives in the selected LoRA library (or the runtime root for
+legacy isolated profiles). Stop that service
 before training. Use `/training` for progress and log paths and
 `/cancel` to request a safe stop. A completed run adds its final
 adapter to the service. SA3 also builds the LoRA's dice prompts from the
@@ -118,6 +119,39 @@ Use `loras sa3` or `loras carey` to browse registered adapters and their
 training checkpoints. Stop the service before activating a different checkpoint.
 The adapter name, dice prompts and Carey model family carry across checkpoint
 changes. Choose Final to return to the completed run's final weights.
+
+## One LoRA library for desktop and terminal
+
+New standard `gary` profiles for SA3 and Carey use `library_root: "desktop"`.
+This resolves desktop's selected storage at each command, including a storage
+location changed through desktop settings. LoRA catalogs, prepared adapters,
+training history, selected inference checkpoints and dice prompts are shared.
+Runtime packages, model storage and service settings still belong to each
+interface's profile. A shared registry does not copy model weights.
+
+Existing experimental profiles remain isolated until explicitly connected.
+Stop that service in both interfaces first, then run:
+
+```sh
+gary share-loras sa3 --library-root desktop
+gary share-loras carey --library-root desktop
+```
+
+For a sandbox desktop launched with custom storage, substitute its absolute
+runtime storage directory. Migration preserves the active checkpoint and
+copies completed/cancelled training history, using hard links where possible.
+It backs up the headless config and retains the original adapters and jobs.
+Conflicting same-name adapters with different weights stop the migration.
+Inspect and remove old copies yourself only after validating the shared library.
+Do not run an old Gary session after migration; exit it and launch `gary` again.
+
+For a container or custom profile, use `init --library-root /absolute/library`
+to keep a persistent library separately from runtime packages, or
+`--library-root desktop` to follow desktop storage. Omitting it for a custom
+profile keeps that profile isolated. Up-to-date desktop and headless builds
+hold a per-service OS lock while serving, training or changing its library.
+Stop the service in one process before using its library from another.
+Different services can still run together.
 
 ## Shared core
 
@@ -207,10 +241,10 @@ forwarding for a remote client. The default SA3 client port is 8006. Gary select
 a fresh private native port for each session and records it in `state.json`. Only
 forward the client port. The adapter supports its
 existing generation, loop, transform, continuation, polling, health and model
-lifecycle routes. Initial headless operation has no prepared LoRA registry or
-decoder-correction selection; named adapters are rejected. Desktop behavior
-continues to use its validated registry. Training and migration are not exposed
-by this first CLI.
+lifecycle routes. Named creative LoRAs come from the configured library,
+including adapters imported or trained through desktop. The interactive console
+offers training, import and checkpoint selection. Decoder-correction selection
+is still desktop-only.
 
 `install` is explicit and model-free. It requires clean/tested native build
 metadata for the current architecture and a real CUDA/Vulkan device from
@@ -274,7 +308,8 @@ owned root or create the root with `install` before placing files inside it.
 
 If omitted, the root uses XDG data storage on Linux, Application Support on
 macOS, or LOCALAPPDATA on Windows. Explicit roots avoid mixing experiments with
-an existing installation. A complete desktop-profile migration is not performed.
+an existing installation. `library_root` controls only shared LoRA data and
+training history; it does not migrate model or runtime profiles.
 
 Windows keeps the existing kill-on-close Job Object. Unix uses a separate process
 group with bounded TERM/KILL shutdown, including descendants that ignore TERM.

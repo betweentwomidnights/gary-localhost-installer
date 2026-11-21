@@ -1,5 +1,5 @@
-//! Experimental single-service host. No desktop runtime or
-//! production-profile migration is involved in this first SA3 path.
+//! GUI-free native service host with independent runtime profiles and an optional
+//! desktop-compatible LoRA library.
 use crate::runtime::{self, NativeInstall, NativeLaunch};
 use crate::sa3_adapter::{AdapterListener, AdapterOptions};
 use crate::service::Service;
@@ -31,6 +31,9 @@ pub struct Config {
     pub runtime_root: PathBuf,
     #[serde(default)]
     pub models_dir: PathBuf,
+    /// Desktop-compatible LoRA and training storage. None preserves an isolated legacy profile.
+    #[serde(default)]
+    pub library_root: Option<PathBuf>,
     #[serde(default)]
     pub core: Package,
     #[serde(default)]
@@ -107,6 +110,12 @@ impl Config {
             message: format!("Invalid headless config: {error}"),
             hint: "Use schema to inspect the config fields; unknown fields are rejected.",
         })?;
+        if config.library_root.as_deref() == Some(Path::new("desktop")) {
+            config.library_root = Some(crate::lora_library::desktop_root().map_err(|message| ConfigError {
+                code: "library_unavailable", message,
+                hint: "Check desktop storage settings or set an absolute library_root.",
+            })?);
+        }
         if config.models_dir.as_os_str().is_empty() {
             config.models_dir = config.managed_models_dir();
         }
@@ -127,6 +136,24 @@ impl Config {
     }
     pub fn managed_models_dir(&self) -> PathBuf {
         self.runtime_root.join("models").join(self.service.id())
+    }
+    pub fn adapters_dir(&self) -> PathBuf {
+        self.library_root.as_ref().map_or_else(
+            || self.runtime_root.join("adapters"),
+            |root| crate::lora_library::adapters_dir(root, self.service),
+        )
+    }
+    pub fn prompts_dir(&self) -> PathBuf {
+        self.library_root.as_ref().map_or_else(
+            || self.runtime_root.join("prompts"),
+            |root| root.join(self.service.id()).join("prompts"),
+        )
+    }
+    pub fn training_dir(&self) -> PathBuf {
+        self.library_root.as_ref().map_or_else(
+            || self.runtime_root.join("training"),
+            |root| root.join(self.service.id()).join("training"),
+        )
     }
     pub fn model_files(&self) -> Result<Vec<&'static crate::model_catalog::PinnedHfFile>, String> {
         if self.service == Service::Sa3 {
@@ -198,7 +225,7 @@ impl Config {
         json!({"service":self.service, "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
             "models_dir":self.models_dir, "model":self.model, "encoding":self.encoding, "selected_models":self.selected_models,
             "t5_encoding":self.t5_encoding, "ae_encoding":self.ae_encoding,
-            "device":self.device, "public_port":self.public_port,"expected_version":self.expected_version,
+            "device":self.device, "library_root":self.library_root, "public_port":self.public_port,"expected_version":self.expected_version,
             "public_url":format!("http://127.0.0.1:{}",self.public_port),
             "runtime_directory":self.installed_dir(),
             "packages":{"core":{"path":self.core.path,"sha256":self.core.sha256,"url":self.core.url},
@@ -266,7 +293,7 @@ impl Config {
         self.expected_version = Some(native.version.clone());
         Ok(())
     }
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         for path in [
             &self.runtime_root,
             &self.models_dir,
@@ -302,6 +329,11 @@ impl Config {
                 );
             }
             self.model_files()?;
+        }
+        if let Some(root) = &self.library_root {
+            if !root.is_absolute() || root.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                return Err("Use an absolute normalized library_root".into());
+            }
         }
         if self.public_port == 0 {
             return Err("Use a nonzero public loopback port".into());
@@ -369,15 +401,13 @@ impl Config {
                 Service::Yuey => args.extend(["--encoding".into(), self.encoding.clone()]),
                 Service::Carey => args.extend([
                     "--adapters".into(),
-                    self.runtime_root
-                        .join("adapters")
+                    self.adapters_dir()
                         .to_string_lossy()
                         .into_owned(),
                 ]),
                 Service::Gary | Service::Melodyflow => args.extend([
                     "--adapters-dir".into(),
-                    self.runtime_root
-                        .join("adapters")
+                    self.adapters_dir()
                         .to_string_lossy()
                         .into_owned(),
                 ]),
@@ -430,11 +460,11 @@ impl Config {
                 ("SA3_DEVICE".into(), self.device.clone()),
                 (
                     "SA3_ADAPTERS_DIR".into(),
-                    self.runtime_root.join("adapters").to_string_lossy().into(),
+                    self.adapters_dir().to_string_lossy().into(),
                 ),
                 (
                     "SA3_PROMPTS_DIR".into(),
-                    self.runtime_root.join("prompts").to_string_lossy().into(),
+                    self.prompts_dir().to_string_lossy().into(),
                 ),
                 (
                     "TMPDIR".into(),
@@ -479,6 +509,7 @@ mod tests {
         let absolute = std::env::temp_dir().canonicalize().unwrap();
         Config {
             service: Service::Sa3,
+            library_root: None,
             runtime_root: root,
             models_dir: absolute.join("existing-models"),
             core: Package {
@@ -1169,6 +1200,7 @@ pub async fn doctor(config: &Config) -> Result<Value, String> {
 }
 pub(crate) struct Lease {
     _file: File,
+    _library: Option<crate::lora_library::Lease>,
     session: String,
 }
 impl Drop for Lease {
@@ -1180,6 +1212,9 @@ impl Drop for Lease {
     }
 }
 fn lock(config: &Config) -> Result<Lease, String> {
+    let library = config.library_root.as_ref()
+        .map(|root| crate::lora_library::lease(root, config.service))
+        .transpose()?.flatten();
     let mut lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -1210,6 +1245,7 @@ fn lock(config: &Config) -> Result<Lease, String> {
     )?;
     Ok(Lease {
         _file: lock,
+        _library: library,
         session,
     })
 }
@@ -1695,9 +1731,10 @@ pub async fn serve(
             config.runtime_root.join("uploads"),
             config.defaults.clone(),
             AdapterOptions {
-                registry: Some(std::sync::Arc::new(crate::training_job::AdapterDirectory(
-                    config.runtime_root.join("adapters"),
-                ))),
+                registry: Some(match &config.library_root {
+                    Some(root) => std::sync::Arc::new(crate::lora_library::Registry(root.clone())),
+                    None => std::sync::Arc::new(crate::training_job::AdapterDirectory(config.adapters_dir())),
+                }),
                 ..AdapterOptions::default()
             },
         )?;

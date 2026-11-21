@@ -32,6 +32,14 @@ gary4local-server schema --target response --json
 Read `data.commands`, option requirements, effects and `data.features` from
 capabilities. The interactive console offers LoRA training and import for SA3
 and Carey. Agents can inspect the exposed adapters through the service APIs.
+New standard SA3/Carey profiles share desktop's LoRA library. Custom profiles
+can opt in with `init --library-root desktop` or an explicit absolute library
+path. Existing isolated profiles use the explicit `share-loras --library-root`
+command after stopping that service. It backs up the config and preserves
+original adapters/history. A per-service cross-process lock prevents desktop
+and headless from concurrently using that library. See the runtime-core README
+for migration and container storage details.
+
 Command discovery describes this binary and its platform's published packages. `--help` also works without a config, globally or per command.
 
 ## Prepare and run

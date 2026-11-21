@@ -225,6 +225,7 @@ pub async fn probe(
 }
 
 pub struct Job {
+    _library: Option<gary4local_core::lora_library::Lease>,
     child: tokio::process::Child,
     root: PathBuf,
     status_path: PathBuf,
@@ -240,6 +241,7 @@ pub async fn start(
     runtime_path: Option<&std::ffi::OsStr>,
     mut options: Options,
 ) -> Result<Job, String> {
+    let library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     validate(&options)?;
     probe(executable, runtime_path).await?;
     let models = sa3_models::checked_models_dir(root)?;
@@ -376,6 +378,7 @@ pub async fn start(
         return Err(error);
     }
     Ok(Job {
+        _library: library,
         child,
         root: root.to_path_buf(),
         status_path,

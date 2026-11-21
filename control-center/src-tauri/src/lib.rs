@@ -2079,10 +2079,7 @@ fn save_carey_lora_catalog_to(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
     }
-    let json = serde_json::to_string_pretty(catalog)
-        .map_err(|e| format!("Cannot serialize LoRA catalog: {}", e))?;
-    std::fs::write(path, json).map_err(|e| format!("Cannot save {}: {}", path.display(), e))?;
-    Ok(())
+    gary4local_core::sa3_prompts::save_with_policy(path, catalog, true)
 }
 
 fn save_carey_lora_catalog(
@@ -6993,6 +6990,7 @@ async fn upsert_carey_lora(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(repo_root.inner(), gary4local_core::service::Service::Carey)?;
     let normalized_name = sanitize_lora_name(&name)
         .ok_or_else(|| "LoRA name must use lowercase letters, numbers, '-' or '_'".to_string())?;
     let checkpoint_dir = PathBuf::from(checkpoint_path.trim());
@@ -7058,6 +7056,7 @@ async fn activate_carey_lora_checkpoint(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(repo_root.inner(), gary4local_core::service::Service::Carey)?;
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
     let requested_id = checkpoint_id.trim();
@@ -7120,6 +7119,7 @@ async fn remove_carey_lora(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(repo_root.inner(), gary4local_core::service::Service::Carey)?;
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
     let mut catalog = read_carey_lora_catalog()?;
@@ -7151,6 +7151,7 @@ async fn delete_carey_trained_lora(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(repo_root.inner(), gary4local_core::service::Service::Carey)?;
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
     let mut catalog = read_carey_lora_catalog()?;
@@ -7269,6 +7270,7 @@ async fn delete_carey_training_checkpoint(
     checkpoint_id: String,
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<CareyLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(repo_root.inner(), gary4local_core::service::Service::Carey)?;
     let normalized_name =
         sanitize_lora_name(&name).ok_or_else(|| "Invalid LoRA name".to_string())?;
     let checkpoint_id = checkpoint_id.trim();
@@ -7318,6 +7320,7 @@ async fn build_carey_lora_captions(
     repo_root: tauri::State<'_, std::path::PathBuf>,
     manager: tauri::State<'_, ManagerState>,
 ) -> Result<CareyCaptionsBuildResult, String> {
+    let _library = gary4local_core::lora_library::lease(repo_root.inner(), gary4local_core::service::Service::Carey)?;
     let initial_state = build_carey_lora_state(repo_root.inner())?;
     // captions.json is Python Carey's /captions pool. The C++ server's clients
     // read each LoRA's captions from its adapter_info.json, written at launch.
@@ -8290,6 +8293,7 @@ async fn edit_sa3_lora_registry<T>(
     manager: &ManagerState,
     operation: impl std::future::Future<Output = Result<T, String>>,
 ) -> Result<T, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     if storage::storage_info(root).pending_restart {
         return Err("Restart before editing adapters in your selected storage.".into());
     }
@@ -11984,3 +11988,6 @@ fn reveal_path(path: String) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod shared_lora_tests;

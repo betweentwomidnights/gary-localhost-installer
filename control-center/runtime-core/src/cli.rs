@@ -54,6 +54,7 @@ pub struct Request {
 }
 const COMMANDS: &[&str] = &[
     "init",
+    "share-loras",
     "validate",
     "doctor",
     "capabilities",
@@ -71,6 +72,7 @@ const INIT_OPTIONS: &[&str] = &[
     "config",
     "models-dir",
     "runtime-root",
+    "library-root",
     "device",
     "port",
     "encoding",
@@ -80,6 +82,7 @@ const INIT_OPTIONS: &[&str] = &[
 fn command_flags(command: &str) -> &'static [&'static str] {
     match command {
         "init" => INIT_OPTIONS,
+        "share-loras" => &["config", "service", "library-root"],
         "validate" | "doctor" | "models" | "download-models" | "install" | "serve" | "status" => {
             &["config", "service"]
         }
@@ -168,7 +171,8 @@ impl Request {
 
 pub fn help() -> &'static str {
     "gary4local-server COMMAND [OPTIONS]\n\n\
-     init --config FILE [--service ID] [--model NAME] [--models-dir DIR] [--runtime-root DIR] [--device Vulkan0] [--port PORT] [--encoding f16]\n\
+     init --config FILE [--service ID] [--model NAME] [--models-dir DIR] [--runtime-root DIR] [--library-root desktop|DIR] [--device Vulkan0] [--port PORT] [--encoding f16]\n\
+     share-loras --config FILE --library-root DIR  Share existing LoRAs with desktop storage\n\
      validate --config FILE      Check configuration and resolve pinned packages; no downloads\n\
      models --config FILE       List pinned weights for this configuration\n\
      download-models --config FILE  Fetch and verify weights in managed storage\n\
@@ -207,8 +211,8 @@ pub fn capabilities() -> Value {
         "platform":crate::runtime::current_platform(),"services":crate::service::Service::ALL,
         "service_defaults":crate::service::Service::ALL.map(|s|json!({"service":s,"model":s.defaults().0,"encoding":s.defaults().1,"port":s.default_port(),"readiness":if s==crate::service::Service::Sa3 {"loaded"}else{"healthy_listener"}})),"validated_models":["medium"],
         "commands":COMMANDS.iter().filter(|command| **command != "help").map(|command| json!({
-            "name":command,"requires_config":matches!(*command,"init"|"validate"|"doctor"|"models"|"download-models"|"install"|"serve"|"status"|"stop"),
-            "effects":match *command {"init"=>"writes_config","download-models"=>"downloads_and_verifies_weights","install"=>"installs_runtime_and_probes_gpu","serve"=>"loads_model_and_serves","stop"=>"stops_owned_session",_=>"read_only"},
+            "name":command,"requires_config":matches!(*command,"share-loras"|"init"|"validate"|"doctor"|"models"|"download-models"|"install"|"serve"|"status"|"stop"),
+            "effects":match *command {"share-loras"=>"migrates_loras_and_updates_profile","init"=>"writes_config","download-models"=>"downloads_and_verifies_weights","install"=>"installs_runtime_and_probes_gpu","serve"=>"loads_model_and_serves","stop"=>"stops_owned_session",_=>"read_only"},
             "json_stream":*command=="serve","supports_expected_session":*command=="stop",
             "options":command_flags(command).iter().map(|flag| json!({"flag":format!("--{flag}"),
                 "required":*flag=="config",
@@ -228,6 +232,7 @@ pub fn config_schema() -> Value {
             "service":{"enum":crate::service::Service::ALL,"default":"sa3"},
             "runtime_root":{"type":"string","minLength":1,"description":"Absolute normalized dedicated runtime directory. Defaults to platform data storage."},
             "models_dir":{"type":"string","minLength":1,"description":"Optional external model directory. Omit to manage models under runtime_root/models/<service>."},
+            "library_root":{"type":["string","null"],"description":"Absolute desktop-compatible LoRA library, or desktop to follow desktop's selected storage."},
             "core":{"$ref":"#/$defs/package"},"backend":{"$ref":"#/$defs/package"},
             "manifest":{"type":["string","null"],"description":"Optional absolute path to a local package manifest; otherwise use bundled pins."},
             "device":{"type":"string","pattern":"^(CUDA|Vulkan)","description":"Exact GPU name returned by engine properties, such as Vulkan0 or CUDA0."},
@@ -432,6 +437,13 @@ fn init(request: &Request) -> Result<Value, Error> {
     if service != crate::service::Service::Sa3 {
         body["service"] = json!(service);
     }
+    if let Some(path) = request.path("library-root") {
+        body["library_root"] = if path == Path::new("desktop") { json!("desktop") } else { json!(absolute(&path)?) };
+    } else if matches!(service, crate::service::Service::Sa3 | crate::service::Service::Carey) && crate::console::standard_config().is_ok_and(|standard| {
+        crate::console::profile_path(&standard, service) == config_path
+    }) {
+        body["library_root"] = json!("desktop");
+    }
     if let Some(models) = models {
         body["models_dir"] = json!(models);
     }
@@ -525,6 +537,12 @@ pub async fn execute(
             let code = if matches!(error, headless::StopError::SessionMismatch { .. }) { "session_mismatch" } else { "stop_failed" };
             Error::new(code, error.to_string(), "Inspect status. Never retry with a newer session ID unless stopping that session is intended.", 1)
         });
+    }
+    if request.command == "share-loras" {
+        let root = request.path("library-root").ok_or_else(|| Error::usage("share-loras requires --library-root"))?;
+        let root = if root == Path::new("desktop") { root } else { absolute(&root)? };
+        return crate::lora_library::share(&path, &root).map(Outcome::success)
+            .map_err(|e| Error::new("library_sharing_failed", e, "Stop this service in both modes and inspect the library paths before retrying.", 1));
     }
     if request.command == "validate" {
         return Ok(Outcome::success(

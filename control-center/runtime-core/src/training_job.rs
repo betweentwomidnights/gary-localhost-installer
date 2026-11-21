@@ -98,10 +98,24 @@ pub(crate) fn adapter_path(config: &Config, name: &str) -> Result<PathBuf, Strin
     } else {
         name.to_owned()
     };
-    Ok(config.runtime_root.join("adapters").join(leaf))
+    if let Some(root) = &config.library_root {
+        if config.service == Service::Sa3 {
+            if let Some(path) = crate::lora_library::catalog(root, config.service)?
+                .get(name)
+                .and_then(|v| v["nativePath"].as_str())
+            {
+                return Ok(PathBuf::from(path));
+            }
+        }
+    }
+    Ok(config.adapters_dir().join(leaf))
 }
 
 fn adapter_dest(config: &Config, name: &str) -> Result<PathBuf, String> {
+    if config.library_root.is_some() {
+        crate::lora_library::available(config, name)?;
+        return adapter_path(config, name);
+    }
     let path = adapter_path(config, name)?;
     if path.exists() {
         return Err(format!(
@@ -136,6 +150,9 @@ fn publish(
     captions: &[String],
     sa3_dataset: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    if config.library_root.is_some() {
+        return crate::lora_library::publish(config, name, source, family, captions, sa3_dataset);
+    }
     let dest = adapter_dest(config, name)?;
     let stage = Scratch::new(config, "adapter")?;
     if config.service == Service::Sa3 {
@@ -674,11 +691,15 @@ pub(crate) async fn start(config: &Config, settings: Settings) -> Result<Job, St
                 .into(),
         );
     }
+    let prefix = if config.library_root.is_some() {
+        "native-"
+    } else {
+        ""
+    };
     let directory = config
-        .runtime_root
-        .join("training")
+        .training_dir()
         .join("jobs")
-        .join(format!("{name}-{}", headless::serial()));
+        .join(format!("{prefix}{name}-{}", headless::serial()));
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let output = directory.join("run");
     let progress = directory.join("native-progress.json");

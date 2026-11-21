@@ -24,7 +24,13 @@ fn directory(path: &Path) -> bool {
 }
 
 pub(crate) fn registered(config: &Config) -> Result<Vec<String>, String> {
-    let adapters = config.runtime_root.join("adapters");
+    if let Some(root) = &config.library_root {
+        return Ok(crate::lora_library::catalog(root, config.service)?
+            .keys()
+            .cloned()
+            .collect());
+    }
+    let adapters = config.adapters_dir();
     if !directory(&adapters) {
         return Ok(Vec::new());
     }
@@ -84,7 +90,7 @@ fn same_bytes(left: &Path, right: &Path) -> io::Result<bool> {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Checkpoint {
     pub label: String,
-    weights: PathBuf,
+    pub(crate) weights: PathBuf,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -198,7 +204,7 @@ fn run_checkpoints(
 
 pub(crate) fn history(config: &Config, name: &str) -> Result<Option<History>, String> {
     let active = published_weights(config, name)?;
-    let training = config.runtime_root.join("training");
+    let training = config.training_dir();
     let jobs = training.join("jobs");
     if !directory(&training) || !directory(&jobs) {
         return Ok(None);
@@ -225,7 +231,7 @@ pub(crate) fn history(config: &Config, name: &str) -> Result<Option<History>, St
             continue;
         };
         let run = job.join("run");
-        if progress.status != "completed" || !directory(&run) {
+        if !matches!(progress.status.as_str(), "completed" | "cancelled") || !directory(&run) {
             continue;
         }
         let run = run.canonicalize().map_err(|error| error.to_string())?;
@@ -258,6 +264,9 @@ pub(crate) fn activate(
         .get(selected)
         .ok_or("Unknown checkpoint.")?;
     let dest = published_weights(config, name)?;
+    if config.library_root.is_some() {
+        return crate::lora_library::select(config, name, &checkpoint.weights);
+    }
     let stage = Scratch::new(config, "checkpoint")?;
     let weights = stage.0.join("weights");
     fs::copy(&checkpoint.weights, &weights).map_err(|error| error.to_string())?;

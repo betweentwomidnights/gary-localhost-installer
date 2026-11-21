@@ -62,6 +62,62 @@ fn opening_without_a_terminal_never_prompts_or_writes_configuration() {
     assert_eq!(result.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&result.stderr).contains("needs a terminal"));
 }
+
+#[test]
+fn standard_profiles_follow_desktops_selected_library_without_creating_it() {
+    let fixture = Fixture::new();
+    let config_home = fixture.root.join("config");
+    let data_home = fixture.root.join("local");
+    let settings = data_home.join("com.betweentwomidnights.gary4local/storage.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_gary"))
+            .args(args)
+            .env_remove("GARY4LOCAL_HEADLESS_CONFIG")
+            .env_remove("GARY4LOCAL_RUNTIME_ROOT")
+            .env_remove("GARY4LOCAL_HOME")
+            .env("XDG_CONFIG_HOME", &config_home)
+            .env("XDG_DATA_HOME", &data_home)
+            .env("LOCALAPPDATA", &data_home)
+            .output()
+            .unwrap()
+    };
+    for service in ["sa3", "carey"] {
+        let result = run(&["init", service, "--json"]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        let result: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(result["data"]["config"]["library_root"], "desktop");
+    }
+    for name in ["library-one", "moved-library"] {
+        let library = fixture.root.join(name);
+        std::fs::write(
+            &settings,
+            serde_json::json!({"runtimeRoot":library}).to_string(),
+        )
+        .unwrap();
+        for service in ["sa3", "carey"] {
+            let result = run(&["validate", service, "--json"]);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            let result: Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(
+                result["data"]["resolved"]["library_root"],
+                serde_json::json!(library)
+            );
+        }
+        assert!(
+            !library.exists(),
+            "init/validate must not create desktop library storage"
+        );
+    }
+}
 #[test]
 fn short_commands_use_the_saved_config_and_readable_service_status() {
     let fixture = Fixture::new();

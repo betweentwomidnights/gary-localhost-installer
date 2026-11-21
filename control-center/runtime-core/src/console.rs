@@ -26,7 +26,7 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   Add --config FILE to any service command. Otherwise use the saved default.\n\
   GARY4LOCAL_HEADLESS_CONFIG overrides the default config path.\n\
   Add --json for the noninteractive agent protocol. Advanced commands:\n\
-  init, validate, capabilities, schema, serve, version (see COMMAND --help).\n\n\
+  init, validate, capabilities, schema, serve, share-loras, version (see COMMAND --help).\n\n\
   Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
   Use /start all and /stop all inside the console.\n\
   Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. LoRA tools: /loras, /add lora and /train lora for SA3 and Carey.\n\
@@ -129,6 +129,7 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
                     | "download-models"
                     | "install"
                     | "init"
+                    | "share-loras"
                     | "validate"
                     | "serve"
             )
@@ -171,7 +172,7 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
     Ok(command::run(args, true).await)
 }
 
-fn profile_path(base: &Path, service: Service) -> PathBuf {
+pub(crate) fn profile_path(base: &Path, service: Service) -> PathBuf {
     if service == Service::Sa3 {
         return base.to_owned();
     }
@@ -695,6 +696,12 @@ impl Console {
                 "--runtime-root".into(),
                 companion_root(&self.path, service)?.into_os_string(),
             ]);
+        }
+        if matches!(service, Service::Sa3 | Service::Carey) && self.path.is_file() {
+            let body: Value = serde_json::from_slice(&std::fs::read(&self.path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            if let Some(root) = body["library_root"].as_str() {
+                args.extend(["--library-root".into(), root.into()]);
+            }
         }
         let request = cli::Request::parse(&args).map_err(|e| e.message)?;
         cli::execute(&request, |_| Ok(()))

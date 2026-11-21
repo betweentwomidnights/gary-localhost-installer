@@ -266,6 +266,7 @@ pub fn save_runtime_root_config(
     progress: impl FnMut(crate::storage_transfer::Progress),
 ) -> Result<RuntimeStorageInfo, String> {
     let path = validate_runtime_root(raw_path)?;
+    let _libraries = shared_libraries_for_transfer(active_root, &path)?;
     crate::storage_transfer::run(active_root, &path, progress)?;
     seed_runtime_root_config_files(active_root, &path)?;
     write_storage_config(&StorageConfig {
@@ -277,10 +278,21 @@ pub fn save_runtime_root_config(
 pub fn reset_runtime_root_config(active_root: &Path, progress: impl FnMut(crate::storage_transfer::Progress)) -> Result<RuntimeStorageInfo, String> {
     let startup_root = automatic_default_runtime_root();
     std::fs::create_dir_all(&startup_root).map_err(|e| e.to_string())?;
+    let _libraries = shared_libraries_for_transfer(active_root, &startup_root)?;
     crate::storage_transfer::run(active_root, &startup_root, progress)?;
     seed_runtime_root_config_files(active_root, &startup_root)?;
     write_storage_config(&StorageConfig::default())?;
     Ok(storage_info(active_root))
+}
+
+fn shared_libraries_for_transfer(source: &Path, target: &Path) -> Result<Vec<Option<gary4local_core::lora_library::Lease>>, String> {
+    let mut leases = Vec::new();
+    for root in [source, target] {
+        for service in [gary4local_core::service::Service::Sa3, gary4local_core::service::Service::Carey] {
+            leases.push(gary4local_core::lora_library::lease(root, service)?);
+        }
+    }
+    Ok(leases)
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {

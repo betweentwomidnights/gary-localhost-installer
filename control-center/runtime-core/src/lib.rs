@@ -19,6 +19,7 @@ pub mod dataset;
 pub mod sa3_gguf;
 pub mod sa3_prompts;
 pub mod training;
+pub mod lora_library;
 
 mod training_job;
 mod lora_history;

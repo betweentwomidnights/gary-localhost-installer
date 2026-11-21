@@ -237,6 +237,7 @@ async fn copy_native(root: &Path, name: &str, source: &Path) -> Result<(PathBuf,
 }
 
 pub async fn register_trained(root: &Path, name: &str, source: &Path) -> Result<PathBuf, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "Native adapter preparation is already running")?;
@@ -284,6 +285,7 @@ pub async fn import_adapter(
     converter: Option<&Path>,
     runtime_path: Option<&std::ffi::OsStr>,
 ) -> Result<NativeLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "Native adapter preparation is already running")?;
@@ -404,6 +406,7 @@ pub async fn import_adapter(
 /// A native-only registry removal preserves every source, prepared revision,
 /// prompt pool and raw training checkpoint for later re-import or recovery.
 pub async fn remove_entry(root: &Path, name: &str) -> Result<NativeLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "Native adapter preparation is already running")?;
@@ -424,6 +427,7 @@ pub async fn set_strength(
     name: &str,
     strength: f64,
 ) -> Result<NativeLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "Native adapter preparation is already running")?;
@@ -457,6 +461,7 @@ pub async fn set_strength(
 }
 
 pub async fn build_prompts(root: &Path, name: &str) -> Result<NativeLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "Native adapter preparation is already running")?;
@@ -1207,6 +1212,7 @@ pub async fn prepare_decoder(
     converter: &Path,
     runtime_path: Option<&std::ffi::OsStr>,
 ) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "Native adapter preparation is already running")?;
@@ -1264,6 +1270,7 @@ pub async fn prepare(
     runtime_path: Option<&std::ffi::OsStr>,
     mut changed: impl FnMut(NativeLoraState) + Send,
 ) -> Result<NativeLoraState, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     let _reservation = PREPARATION
         .try_lock()
         .map_err(|_| "SA3 LoRA preparation is already in progress.")?;

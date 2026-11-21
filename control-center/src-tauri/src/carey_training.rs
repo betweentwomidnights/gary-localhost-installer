@@ -239,6 +239,7 @@ fn staged_prompts(dataset: &Path) -> Vec<String> {
 /// the adapters folder ace-server scans, holding the generation's weights and
 /// config. Links when the volume allows, since generations never change.
 pub fn publish_adapter(root: &Path, name: &str, generation: &Path) -> Result<PathBuf, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let adapters = crate::sa3_training::checked_folder(root, &["carey", "adapters"])?;
     let dest = adapters.join(name);
     let stage = adapters.join(format!(".{name}.{}.tmp", NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
@@ -260,6 +261,7 @@ pub fn publish_adapter(root: &Path, name: &str, generation: &Path) -> Result<Pat
 
 /// Take `name` out of the adapters folder ace-server scans, if it is there.
 pub fn unpublish_adapter(root: &Path, name: &str) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let dest = root.join("carey").join("adapters").join(name);
     match std::fs::remove_dir_all(&dest) {
         Ok(()) => Ok(()),
@@ -279,6 +281,7 @@ pub fn is_peft_adapter_dir(dir: &Path) -> bool {
 /// Python as well as C++-trained ones. One already published unchanged is
 /// left alone; one that cannot be published is skipped, not fatal.
 pub fn publish_catalog_adapters(root: &Path) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(root))?;
     let adapters = root.join("carey").join("adapters");
     for (name, entry) in catalog {
@@ -309,6 +312,7 @@ pub fn publish_catalog_adapters(root: &Path) -> Result<(), String> {
 /// plugin's dice button picks from. Folders the catalog does not know are left
 /// alone.
 pub fn write_adapter_info(root: &Path) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let adapters = root.join("carey").join("adapters");
     if !adapters.is_dir() {
         return Ok(());
@@ -371,6 +375,7 @@ pub fn register(
     cancelled: bool,
     earlier: &[crate::CareyTrainingCheckpoint],
 ) -> Result<PathBuf, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let final_label = if cancelled { "where training stopped" } else { "final epoch" };
     let mut checkpoints = earlier.to_vec();
     checkpoints.extend(run_checkpoints(run, final_label));
@@ -430,6 +435,7 @@ async fn probe(executable: &Path, runtime_path: Option<&std::ffi::OsStr>) -> Res
 }
 
 pub struct Job {
+    _library: Option<gary4local_core::lora_library::Lease>,
     child: tokio::process::Child,
     root: PathBuf,
     id: String,
@@ -493,6 +499,7 @@ pub async fn start(
     runtime_path: Option<&std::ffi::OsStr>,
     options: Options,
 ) -> Result<Job, String> {
+    let library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let (options, continuation) = continuation(root, options)?;
     validate(&options)?;
     probe(executable, runtime_path).await?;
@@ -631,6 +638,7 @@ pub async fn start(
     )
     .map_err(fail)?;
     Ok(Job {
+        _library: library,
         child,
         root: root.to_path_buf(),
         id,
