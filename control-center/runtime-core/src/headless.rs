@@ -1215,6 +1215,12 @@ fn lock(config: &Config) -> Result<Lease, String> {
     let library = config.library_root.as_ref()
         .map(|root| crate::lora_library::lease(root, config.service))
         .transpose()?.flatten();
+    if let Some(root) = config.library_root.as_ref().filter(|_| matches!(config.service, Service::Sa3 | Service::Carey)) {
+        let adapters = if config.service == Service::Sa3 { "native-loras" } else { "adapters" };
+        crate::lora_library::checked_dir(root, &[config.service.id(), adapters])?;
+        crate::lora_library::checked_dir(root, &[config.service.id(), "prompts"])?;
+        crate::lora_library::checked_dir(root, &[config.service.id(), "training", "jobs"])?;
+    }
     let mut lock = OpenOptions::new()
         .read(true)
         .write(true)
