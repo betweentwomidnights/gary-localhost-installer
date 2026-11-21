@@ -118,6 +118,9 @@ fn discovery_is_config_free_and_machine_options_are_discoverable() {
         .unwrap()
         .iter()
         .any(|option| option["flag"] == "--session"));
+    let sharing = commands.iter().find(|command| command["name"] == "share-loras").unwrap();
+    assert!(sharing["options"].as_array().unwrap().iter().any(|option|
+        option["flag"] == "--library-root" && option["required"] == true));
     assert_eq!(
         parsed(&command(&["version", "--json"]), 0)["data"]["version"],
         env!("CARGO_PKG_VERSION")

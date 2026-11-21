@@ -215,7 +215,7 @@ pub fn capabilities() -> Value {
             "effects":match *command {"share-loras"=>"migrates_loras_and_updates_profile","init"=>"writes_config","download-models"=>"downloads_and_verifies_weights","install"=>"installs_runtime_and_probes_gpu","serve"=>"loads_model_and_serves","stop"=>"stops_owned_session",_=>"read_only"},
             "json_stream":*command=="serve","supports_expected_session":*command=="stop",
             "options":command_flags(command).iter().map(|flag| json!({"flag":format!("--{flag}"),
-                "required":*flag=="config",
+                "required":*flag=="config" || (*command=="share-loras" && *flag=="library-root"),
                 "value":match *flag {"config"=>"FILE","models-dir"|"runtime-root"=>"DIR","port"=>"PORT","session"=>"SESSION_ID",_=>"TEXT"}})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "features":{"training":false,"interactive_training":["sa3","carey"],"model_downloads":true,"named_lora_registry":true,"desktop_profile_migration":false,"loopback_only":true},
         "published_backends":backends,"local_archive_backends":["cuda","vulkan"],
