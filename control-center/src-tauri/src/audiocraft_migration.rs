@@ -58,7 +58,7 @@ fn check_gary_continuation(wav: &[u8], what: &str) -> Result<(), String> {
 /// What generating needs beside a model's weights: a 30-second KV cache for
 /// each guidance stream, the graph, and what the driver keeps. A guided 30 s
 /// hoenn_lofi continuation peaked 2.4 GB above its Q8_0 weights.
-const GARY_HEADROOM_BYTES: u64 = 3 << 30;
+use gary4local_core::model_catalog::GARY_HEADROOM_BYTES;
 
 fn gary_component(variant: &str, tier: &str) -> String {
     format!("gary-native::{variant}::{tier}")
@@ -71,11 +71,10 @@ fn component_bytes(id: &str) -> u64 {
 /// The precision of `variant` to recommend for a GPU with `memory_bytes`:
 /// the most faithful one that fits beside the headroom, else the smallest.
 fn recommended_tier(variant: &str, memory_bytes: u64) -> &'static str {
-    GARY_TIERS
-        .iter()
-        .copied()
-        .find(|tier| component_bytes(&gary_component(variant, tier)) + GARY_HEADROOM_BYTES <= memory_bytes)
-        .unwrap_or(GARY_TIERS[GARY_TIERS.len() - 1])
+    let tier = gary4local_core::model_catalog::recommended_model_precision(
+        gary4local_core::service::Service::Gary, variant, memory_bytes,
+    );
+    if tier.is_empty() { GARY_TIERS[GARY_TIERS.len() - 1] } else { tier }
 }
 
 /// The component of `variant` musicgen-server runs: its most precise one on

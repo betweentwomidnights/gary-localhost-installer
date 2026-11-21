@@ -1,5 +1,6 @@
 //! Native training jobs share Gary's status contract and process ownership.
 //! The native CLI owns progress, cancellation boundaries and checkpoint pairs.
+pub use gary4local_core::training::sa3::{Options, read_progress, caption_prompt_config, trainer_args, validate};
 use crate::{sa3_models, Sa3LoraTrainingState};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -9,26 +10,6 @@ use tokio::sync::Mutex;
 
 pub static LAUNCH: Mutex<()> = Mutex::const_new(());
 static NEXT_JOB: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Options {
-    pub name: String,
-    pub dataset: PathBuf,
-    pub fixed_prompt: String,
-    pub steps: u32,
-    pub rank: u32,
-    pub batch_size: u32,
-    pub checkpoint_every: u32,
-    pub duration: f64,
-    pub learning_rate: f64,
-    pub target_latent_rms: f64,
-    pub layer_scope: String,
-    pub encoding: String,
-    pub resume: Option<PathBuf>,
-    #[serde(default)]
-    pub prompt_config: Option<PathBuf>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,92 +178,8 @@ pub fn resume_options(root: &Path, name: &str, requested: &Path) -> Result<Optio
         .ok_or_else(|| "Original native training settings are unavailable".into())
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Progress {
-    pub schema_version: u32,
-    pub status: String,
-    pub phase: String,
-    pub message: String,
-    pub error: String,
-    pub step: u32,
-    /// Written by ace-train, which counts epochs; sa3-train counts steps only.
-    #[serde(default)]
-    pub epoch: u32,
-    pub max_steps: u32,
-    pub final_adapter: String,
-    pub adapter_checkpoint: String,
-    #[serde(default)]
-    pub state_checkpoint: String,
-}
-
-pub fn read_progress(path: &Path) -> Result<Progress, String> {
-    let data = std::fs::read(path).map_err(|error| error.to_string())?;
-    let progress: Progress = serde_json::from_slice(&data).map_err(|error| error.to_string())?;
-    if progress.schema_version != 1 {
-        return Err("Unsupported native trainer progress schema".into());
-    }
-    Ok(progress)
-}
-
 pub(crate) fn save(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    save_with_policy(path, value, true)
-}
-
-pub(crate) fn save_with_policy(
-    path: &Path,
-    value: &impl Serialize,
-    overwrite: bool,
-) -> Result<(), String> {
-    use std::io::Write;
-    let stage = path.with_extension(format!(
-        "json-{}-{}.tmp",
-        std::process::id(),
-        NEXT_JOB.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&stage)
-        .map_err(|error| error.to_string())?;
-    let result = (|| {
-        file.write_all(&serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        drop(file);
-        if overwrite {
-            std::fs::rename(&stage, path).map_err(|error| error.to_string())
-        } else {
-            match publish_new(&stage, path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-                Err(error) => Err(error.to_string()),
-            }
-        }
-    })();
-    if stage.exists() {
-        let _ = std::fs::remove_file(stage);
-    }
-    result
-}
-
-#[cfg(windows)]
-fn publish_new(stage: &Path, dest: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-    let stage: Vec<u16> = stage.as_os_str().encode_wide().chain(Some(0)).collect();
-    let dest: Vec<u16> = dest.as_os_str().encode_wide().chain(Some(0)).collect();
-    // No REPLACE_EXISTING: preserve a curated pool created during caption scanning.
-    // A rename also works on custom FAT/exFAT storage without hard-link support.
-    if unsafe { MoveFileExW(stage.as_ptr(), dest.as_ptr(), MOVEFILE_WRITE_THROUGH) } != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(windows))]
-fn publish_new(stage: &Path, dest: &Path) -> std::io::Result<()> {
-    std::fs::hard_link(stage, dest)
+    gary4local_core::sa3_prompts::save_with_policy(path, value, true)
 }
 
 pub(crate) fn checked_folder(root: &Path, folders: &[&str]) -> Result<PathBuf, String> {
@@ -300,31 +197,6 @@ pub(crate) fn checked_folder(root: &Path, folders: &[&str]) -> Result<PathBuf, S
         }
     }
     Ok(path)
-}
-
-fn validate(options: &Options) -> Result<(), String> {
-    if ["none", "default", "defaults"].contains(&options.name.as_str())
-        || crate::sanitize_lora_name(&options.name).as_deref() != Some(options.name.as_str())
-        || !options.dataset.is_dir()
-        || options.steps == 0
-        || options.steps > i32::MAX as u32
-        || !(1..=256).contains(&options.rank)
-        || !(1..=64).contains(&options.batch_size)
-        || options.checkpoint_every == 0
-        || options.checkpoint_every > i32::MAX as u32
-        || !options.duration.is_finite()
-        || !(0.1..=380.0).contains(&options.duration)
-        || !options.learning_rate.is_finite()
-        || options.learning_rate <= 0.0
-        || options.learning_rate > 1.0
-        || !options.target_latent_rms.is_finite()
-        || (options.target_latent_rms != 0.0 && !(0.5..=1.3).contains(&options.target_latent_rms))
-        || !["F16", "Q4_K_M"].contains(&options.encoding.as_str())
-    {
-        return Err("Invalid native SA3 training settings or dataset folder".into());
-    }
-    crate::resolve_sa3_lora_layer_scope(&options.layer_scope)?;
-    Ok(())
 }
 
 pub async fn probe(
@@ -353,22 +225,13 @@ pub async fn probe(
 }
 
 pub struct Job {
+    _library: Option<gary4local_core::lora_library::Lease>,
     child: tokio::process::Child,
     root: PathBuf,
     status_path: PathBuf,
     progress_path: PathBuf,
     output: PathBuf,
     state: Sa3LoraTrainingState,
-}
-
-fn caption_prompt_config(trigger: &str) -> serde_json::Value {
-    let trigger = trigger.trim();
-    json!({"prompt_config": {
-        "use_tags": true, "use_paths": false, "use_fixed": false,
-        "fixed_text": "", "balance": {"tags": 40}, "tag_keys": ["prompt"],
-        "hide_tag_names": true, "shuffle": false,
-        "trigger": trigger, "trigger_pct": if trigger.is_empty() { 0 } else { 100 }
-    }})
 }
 
 pub async fn start(
@@ -378,6 +241,7 @@ pub async fn start(
     runtime_path: Option<&std::ffi::OsStr>,
     mut options: Options,
 ) -> Result<Job, String> {
+    let library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     validate(&options)?;
     probe(executable, runtime_path).await?;
     let models = sa3_models::checked_models_dir(root)?;
@@ -452,76 +316,7 @@ pub async fn start(
     );
     let cache = checked_folder(&cache, &[&leaf])?;
     let mut command = tokio::process::Command::new(executable);
-    command
-        .args([
-            "--model",
-            "medium",
-            "--device",
-            backend,
-            "--encoding",
-            &options.encoding,
-            "--t5-encoding",
-            "f16",
-            "--ae-encoding",
-            "f32",
-        ])
-        .arg("--dataset")
-        .arg(&options.dataset)
-        .arg("--models-dir")
-        .arg(&models)
-        .arg("--out")
-        .arg(&output)
-        .arg("--steps")
-        .arg(options.steps.to_string())
-        .arg("--rank")
-        .arg(options.rank.to_string())
-        .args(["--adapter-type", "dora-rows", "--alpha", "0"])
-        .arg("--batch-size")
-        .arg(options.batch_size.to_string())
-        .arg("--checkpoint-every")
-        .arg(options.checkpoint_every.to_string())
-        .arg("--duration")
-        .arg(options.duration.to_string())
-        .arg("--lr")
-        .arg(options.learning_rate.to_string())
-        .arg("--target-latent-rms")
-        .arg(options.target_latent_rms.to_string())
-        .arg("--latents-cache-dir")
-        .arg(cache)
-        .arg("--progress-file")
-        .arg(&progress_path)
-        .arg("--cancel-file")
-        .arg(&cancel_path);
-    let text = sa3_models::component("sa3-native::text").unwrap();
-    let decoder = sa3_models::component("sa3-native::medium-decoder").unwrap();
-    let base =
-        sa3_models::component(&format!("sa3-native::medium-base-{}", options.encoding)).unwrap();
-    for (flag, component, needle) in [
-        ("--tok", text, "vocab"),
-        ("--t5", text, "encoder"),
-        ("--same", decoder, "same-l"),
-        ("--cond", decoder, "conditioner"),
-        ("--dit", base, "dit"),
-    ] {
-        let file = component
-            .files
-            .iter()
-            .find(|file| file.filename.contains(needle))
-            .ok_or("Invalid native training model catalog")?;
-        command.arg(flag).arg(models.join(&file.filename));
-    }
-    match options.layer_scope.as_str() {
-        "transformer-core" => {
-            command.args(["--lora-scope", "core"]);
-        }
-        "full" => {
-            command.args(["--lora-scope", "full"]);
-        }
-        "full-no-seconds" => {
-            command.args(["--lora-scope", "full", "--lora-exclude", "seconds_total"]);
-        }
-        _ => unreachable!(),
-    }
+    trainer_args(&mut command, &options, backend, &models, &output, &cache, &progress_path, &cancel_path)?;
     {
         let config = options
             .prompt_config
@@ -583,6 +378,7 @@ pub async fn start(
         return Err(error);
     }
     Ok(Job {
+        _library: library,
         child,
         root: root.to_path_buf(),
         status_path,

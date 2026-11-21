@@ -36,6 +36,8 @@ hashes, so a new package of the same engine version still counts as an update.
 Linux is Vulkan only. there's no Linux CUDA package, and CPU generation isn't a
 distribution or validation target; CPU libraries are there to support GPU
 pipelines.
+The headless installer verifies the same manifest pins and probes before activation. Local archives can be used for development.
+
 
 - **each service repo** builds and publishes its own packages from a GitHub
   release: `ci/package-windows.ps1` does the building and

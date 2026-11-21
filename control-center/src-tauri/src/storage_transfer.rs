@@ -212,6 +212,7 @@ fn checked(root: &Path, relative: &Path) -> Result<PathBuf, String> {
 }
 
 fn visit(root: &Path, relative: &Path, entries: &mut Vec<Entry>) -> Result<(), String> {
+    if relative.file_name().is_some_and(|name| name == ".lora-library.lock") { return Ok(()); }
     let path = checked(root, relative)?;
     let meta = match fs::symlink_metadata(&path) {
         Ok(meta) => meta,
@@ -1142,7 +1143,12 @@ mod tests {
         rebase(&mut value, Path::new("C:/Gary"), Path::new("D:/New"));
         assert_eq!(
             path_key(Path::new(value["path"].as_str().unwrap())),
-            "d:/new/sa3/lora.gguf"
+            path_key(Path::new("D:/New/sa3/LoRA.gguf"))
+        );
+        // Windows matches the differently-cased source; Linux must retain it.
+        assert_eq!(
+            path_key(Path::new(value["dataset"].as_str().unwrap())),
+            if cfg!(windows) { "d:/new/dataset" } else { "c:/gary/dataset" }
         );
         assert_eq!(value["external"], "C:/Gary-other/song.wav");
         assert_eq!(value["prompt"], "music with C:/Gary in the middle");

@@ -65,6 +65,7 @@ struct RunningService {
     last_health_check_at: Option<Instant>,
     /// A migrated service's client adapter, stopped when this is dropped.
     _adapter: Option<Box<dyn std::any::Any + Send>>,
+    _library: Option<gary4local_core::lora_library::Lease>,
 }
 
 impl Drop for RunningService {
@@ -90,6 +91,7 @@ pub struct ServiceManager {
     /// Native tools such as training/conversion also hold bundle files open.
     /// Keep those users visible to installation and storage maintenance.
     native_workloads: HashMap<String, HashMap<String, String>>,
+    library_workloads: HashMap<(String, String), gary4local_core::lora_library::Lease>,
     /// Model preparation may replace weights. Keep launches and native tools
     /// from opening them between the preflight check and the final hash check.
     native_model_mutations: HashMap<String, String>,
@@ -179,6 +181,7 @@ impl ServiceManager {
             errors: HashMap::new(),
             build_statuses: HashMap::new(),
             native_workloads: HashMap::new(),
+            library_workloads: HashMap::new(),
             native_model_mutations: HashMap::new(),
             shared_runtime_mutations: HashMap::new(),
             migrations,
@@ -401,6 +404,11 @@ impl ServiceManager {
             }
         }
         let key = self.native_dir(svc).to_string_lossy().to_string();
+        if let Ok(service) = gary4local_core::service::Service::parse(service_id) {
+            if let Some(lease) = gary4local_core::lora_library::lease(&self.repo_root, service)? {
+                self.library_workloads.insert((service_id.into(), job.into()), lease);
+            }
+        }
         self.native_workloads
             .entry(key)
             .or_default()
@@ -409,6 +417,7 @@ impl ServiceManager {
     }
 
     pub fn end_native_workload(&mut self, service_id: &str, job: &str) {
+        self.library_workloads.remove(&(service_id.into(), job.into()));
         let Some(dir) = self.native_dir_for(service_id) else {
             return;
         };
@@ -1056,6 +1065,7 @@ impl ServiceManager {
                 started_at: Instant::now(),
                 last_health_check_at: None,
                 _adapter: None,
+                _library: None,
             },
         );
 
@@ -1186,6 +1196,10 @@ impl ServiceManager {
                 svc.display_name
             )
         })?;
+        let library = match gary4local_core::service::Service::parse(&svc.id) {
+            Ok(service) => gary4local_core::lora_library::lease(&self.repo_root, service)?,
+            Err(_) => None,
+        };
         if let Some(service) = crate::migration::service(&svc.id) {
             service.prepare_launch(&self.repo_root)?;
         }
@@ -1244,6 +1258,7 @@ impl ServiceManager {
                 started_at: Instant::now(),
                 last_health_check_at: None,
                 _adapter: adapter.map(|adapter| adapter.start()),
+                _library: library,
             },
         );
 
@@ -2209,6 +2224,7 @@ mod tests {
                     started_at: Instant::now(),
                     last_health_check_at: None,
                     _adapter: None,
+                    _library: None,
                 },
             );
         };
@@ -2234,6 +2250,7 @@ mod tests {
                 started_at: Instant::now(),
                 last_health_check_at: None,
                 _adapter: None,
+                _library: None,
             },
         );
         let error = manager

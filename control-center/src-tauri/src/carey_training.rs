@@ -5,8 +5,9 @@
 //! boundary and its checkpoint generations; Gary owns the job record, the LoRA
 //! catalog and the adapters folder ace-server loads.
 
+pub use gary4local_core::training::carey::{Options,Resume, ResumeMode, trainer_args, resolve_checkpoint, validate};
 use crate::carey_models;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,55 +17,6 @@ pub static LAUNCH: Mutex<()> = Mutex::const_new(());
 static NEXT_JOB: AtomicU64 = AtomicU64::new(0);
 
 /// What the training dialog chose, recorded beside each job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Options {
-    pub name: String,
-    pub dataset: PathBuf,
-    /// The base DiT to train on, as its catalog component.
-    pub dit: String,
-    /// "lora" or "dora" as the dialog names them.
-    pub adapter_type: String,
-    pub profile: String,
-    pub rank: u32,
-    pub epochs: u32,
-    pub checkpoint_every: u32,
-    pub batch_size: u32,
-    pub accumulation: u32,
-    pub learning_rate: f64,
-    pub cfg_dropout: f64,
-    pub timestep_mu: f64,
-    pub min_snr: Option<f64>,
-    pub genre_ratio: u32,
-    pub trigger: String,
-    pub window_min_seconds: f64,
-    pub window_max_seconds: f64,
-    /// The earlier checkpoint this run continues from, if any.
-    #[serde(default)]
-    pub resume: Option<Resume>,
-}
-
-/// How a run continues from an earlier run's checkpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ResumeMode {
-    /// From its full trainer state: the original settings and epoch budget,
-    /// continuing at the update where it stopped. ace-train refuses anything
-    /// else, since its cosine schedule spans the whole budget.
-    Exact,
-    /// From its weights alone, under new settings: the optimizer, warmup and
-    /// schedule start over.
-    Weights,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Resume {
-    /// An earlier run's checkpoint folder: its `run`, or a `checkpoint-epoch-N`.
-    pub checkpoint: PathBuf,
-    pub mode: ResumeMode,
-}
-
 /// A checkpoint a new run can continue from.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +36,7 @@ pub struct ResumePoint {
 
 /// The DiTs a LoRA can train on: lego, extract and complete need a base model,
 /// and turbo and sft adapters are not what Carey trains.
-pub const TRAINABLE_DITS: &[&str] = &["base", "xl-base"];
+pub use gary4local_core::training::carey::TRAINABLE_DITS;
 /// GPU memory a training run needs beside its frozen DiT's weights: adapter
 /// weights and AdamW moments, rotating-window activations and preprocessing.
 /// XL base Q4_K_M with 45-60 s windows peaked at 7.1 GB on an 8151 MiB RTX
@@ -107,279 +59,13 @@ pub fn recommended_training_tier(variant: &str, memory_bytes: u64) -> &'static s
         .unwrap_or(carey_models::TIERS[carey_models::TIERS.len() - 1])
 }
 
-fn validate(options: &Options) -> Result<(), String> {
-    let trainable = TRAINABLE_DITS.iter().any(|variant| {
-        carey_models::TIERS
-            .iter()
-            .any(|tier| carey_models::dit_component(variant, tier) == options.dit)
-    });
-    if ["none", "default", "defaults"].contains(&options.name.as_str())
-        || crate::sanitize_lora_name(&options.name).as_deref() != Some(options.name.as_str())
-    {
-        return Err("LoRA name must use lowercase letters, numbers, '-' or '_'".into());
-    }
-    if !trainable {
-        return Err("Train on the 2B or XL base model.".into());
-    }
-    if !["lora", "dora"].contains(&options.adapter_type.as_str())
-        || !["attention", "balanced"].contains(&options.profile.as_str())
-    {
-        return Err("Unknown adapter type or module profile.".into());
-    }
-    if !(1..=256).contains(&options.rank)
-        || !(1..=100_000).contains(&options.epochs)
-        || options.checkpoint_every == 0
-        || options.batch_size != 1
-        || !(1..=256).contains(&options.accumulation)
-        || options.genre_ratio > 100
-    {
-        return Err(
-            "Invalid training settings. Native training uses batch size 1: raise gradient accumulation instead.".into(),
-        );
-    }
-    if !options.learning_rate.is_finite() || options.learning_rate <= 0.0 || options.learning_rate > 1.0 {
-        return Err("learning rate must be greater than 0".into());
-    }
-    if !options.cfg_dropout.is_finite() || !(0.0..1.0).contains(&options.cfg_dropout) {
-        return Err("CFG ratio must be in [0, 1).".into());
-    }
-    if !options.timestep_mu.is_finite() || options.min_snr.is_some_and(|gamma| !gamma.is_finite() || gamma <= 0.0) {
-        return Err("timestep mu and SNR gamma must be finite, and gamma positive.".into());
-    }
-    if !options.window_min_seconds.is_finite()
-        || !options.window_max_seconds.is_finite()
-        || options.window_min_seconds < 1.0
-        || options.window_max_seconds < options.window_min_seconds
-        || options.window_max_seconds > 600.0
-    {
-        return Err("Training windows must be between 1 and 600 seconds, the minimum no longer than the maximum.".into());
-    }
-    Ok(())
-}
-
-/// One sidecar's value: trimmed, on one line, as ace-train's parser reads it.
-fn scalar(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// A beats-per-bar numerator from "4", "4/4" or "6/8"; ACE-Step's own default
-/// of four when the sidecar has none.
-fn signature(value: &str) -> Result<u32, String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(4);
-    }
-    value
-        .split('/')
-        .next()
-        .and_then(|numerator| numerator.trim().parse::<u32>().ok())
-        .filter(|beats| (1..=32).contains(beats))
-        .ok_or_else(|| format!("time signature \"{value}\" is not like 4/4"))
-}
-
-fn bpm(value: &str) -> Result<u32, String> {
-    let value = value.trim();
-    value
-        .parse::<f64>()
-        .ok()
-        .filter(|bpm| bpm.is_finite() && *bpm >= 1.0 && *bpm <= 1000.0)
-        .map(|bpm| bpm.round() as u32)
-        .ok_or_else(|| if value.is_empty() { "no BPM".into() } else { format!("BPM \"{value}\" is not a number") })
-}
-
-/// One Carey sidecar as ace-train metadata. ace-train requires every field
-/// to be present, lyrics last; Carey writes `keyscale` and `timesignature` and
-/// omits empty fields. The trigger, when set, is every example's custom tag,
-/// as the Python job writes it.
-pub fn metadata(fields: &crate::CareyAceSidecarFields, trigger: &str) -> Result<String, String> {
-    let caption = scalar(&fields.caption);
-    if caption.is_empty() {
-        return Err("no caption".into());
-    }
-    let bpm = bpm(&fields.bpm)?;
-    let beats = signature(&fields.timesignature)?;
-    // Empty lyrics on a vocal song train as empty lyric conditioning, as in
-    // PyTorch Carey; only an instrumental gets the [Instrumental] marker.
-    let mut lyrics = fields.lyrics.trim().replace("\r\n", "\n");
-    if lyrics.is_empty() && fields.is_instrumental {
-        lyrics = "[Instrumental]".into();
-    }
-    let tag = if trigger.trim().is_empty() { scalar(&fields.custom_tag) } else { scalar(trigger) };
-    Ok(format!(
-        "caption: {caption}\ngenre: {}\nbpm: {bpm}\nkey: {}\nsignature: {beats}\nis_instrumental: {}\ncustom_tag: {tag}\nlyrics: {lyrics}\n",
-        scalar(&fields.genre),
-        scalar(&fields.keyscale),
-        fields.is_instrumental,
-    ))
-}
-
-/// Whether ace-train reads this WAV as it is: 16-bit PCM or 32-bit float.
-fn readable_wav(path: &Path) -> bool {
-    hound::WavReader::open(path).is_ok_and(|reader| {
-        let spec = reader.spec();
-        matches!(
-            (spec.sample_format, spec.bits_per_sample),
-            (hound::SampleFormat::Int, 16) | (hound::SampleFormat::Float, 32)
-        )
-    })
-}
-
-async fn stage_audio(source: &Path, dest: &Path) -> Result<(), String> {
-    let wav = source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("wav"));
-    if wav && readable_wav(source) {
-        // Training reads its inputs without changing them, so a link is enough.
-        if std::fs::hard_link(source, dest).is_ok() {
-            return Ok(());
-        }
-        return std::fs::copy(source, dest).map(|_| ()).map_err(|error| error.to_string());
-    }
-    let mut command = tokio::process::Command::new("ffmpeg");
-    crate::hide_console_window(&mut command);
-    command
-        .args(["-nostdin", "-v", "error", "-y", "-i"])
-        .arg(source)
-        .args(["-map", "0:a:0", "-vn", "-c:a", "pcm_f32le", "-f", "wav"])
-        .arg(dest)
-        .kill_on_drop(true);
-    let output = command
-        .output()
-        .await
-        .map_err(|error| format!("FFmpeg is needed to train on {}: {error}", source.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Could not decode {}: {}",
-            source.display(),
-            String::from_utf8_lossy(&output.stderr).chars().take(500).collect::<String>()
-        ));
-    }
-    Ok(())
-}
-
-/// What staging produced: the flat dataset ace-train reads and the prompts
-/// Carey's caption pool takes from it.
-pub struct Staged {
-    pub count: usize,
-    pub captions: Vec<String>,
-}
-
-/// Add one song's prompts to the dice pool, as Python Carey's
-/// build_captions.py did: its caption, then its genre line with every 2- and
-/// 3-tag subset of that line. Training prompts with the genre at the genre
-/// ratio, so the short prompts are ones the LoRA learned too. Subsets never
-/// mix tags from different songs.
-fn add_prompts(pool: &mut Vec<String>, caption: &str, genre: &str) {
-    let tags: Vec<&str> = genre.split(',').map(str::trim).filter(|tag| !tag.is_empty()).collect();
-    let mut prompts = vec![caption.trim().to_string()];
-    if !tags.is_empty() {
-        prompts.push(tags.join(", "));
-    }
-    for size in [2, 3] {
-        if tags.len() < size {
-            continue;
-        }
-        // Every subset of `size` tags, in the line's order.
-        let mut picks: Vec<usize> = (0..size).collect();
-        loop {
-            prompts.push(picks.iter().map(|&index| tags[index]).collect::<Vec<_>>().join(", "));
-            let Some(slot) = (0..size).rev().find(|&slot| picks[slot] < tags.len() - size + slot) else {
-                break;
-            };
-            picks[slot] += 1;
-            for next in slot + 1..size {
-                picks[next] = picks[next - 1] + 1;
-            }
-        }
-    }
-    for prompt in prompts {
-        if !prompt.is_empty() && !pool.contains(&prompt) {
-            pool.push(prompt);
-        }
-    }
-}
-
-/// "no BPM: a.wav, b.wav and 3 more; no caption: c.wav"
-fn problem_summary(problems: &[(String, Vec<String>)]) -> String {
-    problems
-        .iter()
-        .map(|(kind, songs)| {
-            let shown = songs.iter().take(2).cloned().collect::<Vec<_>>().join(", ");
-            match songs.len() {
-                0..=2 => format!("{kind}: {shown}"),
-                more => format!("{kind}: {shown} and {} more", more - 2),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-/// Stage `dataset` into `dest` as numbered WAV and metadata pairs. Every
-/// sidecar problem is reported at once, before any audio is decoded.
-pub async fn stage(dataset: &Path, dest: &Path, trigger: &str) -> Result<Staged, String> {
-    let entries = crate::read_carey_ace_dataset_sidecars(&dataset.to_string_lossy())?;
-    if entries.is_empty() {
-        return Err(format!("{} has no audio files to train on.", dataset.display()));
-    }
-    // Problems grouped by kind, each naming a few songs: one short line.
-    let mut problems: Vec<(String, Vec<String>)> = Vec::new();
-    let mut staged = Vec::new();
-    for entry in &entries {
-        match metadata(&entry.fields, trigger) {
-            Ok(text) => staged.push((
-                PathBuf::from(&entry.audio_path),
-                text,
-                scalar(&entry.fields.caption),
-                scalar(&entry.fields.genre),
-            )),
-            Err(problem) => match problems.iter_mut().find(|(kind, _)| *kind == problem) {
-                Some((_, songs)) => songs.push(entry.relative_path.clone()),
-                None => problems.push((problem, vec![entry.relative_path.clone()])),
-            },
-        }
-    }
-    if !problems.is_empty() {
-        return Err(format!("Fix these sidecars in the editor first: {}.", problem_summary(&problems)));
-    }
-    std::fs::create_dir_all(dest).map_err(|error| error.to_string())?;
-    let mut manifest = Vec::new();
-    let mut captions = Vec::new();
-    for (index, (audio, text, caption, genre)) in staged.iter().enumerate() {
-        let stem = format!("{index:04}");
-        stage_audio(audio, &dest.join(format!("{stem}.wav"))).await?;
-        std::fs::write(dest.join(format!("{stem}.txt")), text).map_err(|error| error.to_string())?;
-        manifest.push(json!({"staged": stem, "source": audio}));
-        add_prompts(&mut captions, caption, genre);
-    }
-    crate::sa3_training::save(&dest.join("staging.json"), &manifest)?;
-    Ok(Staged { count: staged.len(), captions })
-}
+pub use gary4local_core::carey_dataset::{stage,Staged};
+use gary4local_core::carey_dataset::add_prompts;
+#[cfg(test)]
+pub use gary4local_core::carey_dataset::metadata;
 
 /// The generation folder a native checkpoint's `checkpoint.current` names:
 /// a text file or a link, relative and inside `.checkpoint-generations`.
-pub fn resolve_checkpoint(dir: &Path) -> Result<PathBuf, String> {
-    let pointer = dir.join("checkpoint.current");
-    let target = match std::fs::read_link(&pointer) {
-        Ok(target) => target,
-        Err(_) => PathBuf::from(
-            std::fs::read_to_string(&pointer)
-                .map_err(|error| format!("{} has no checkpoint pointer: {error}", dir.display()))?
-                .trim(),
-        ),
-    };
-    let mut parts = target.components();
-    let valid = !target.is_absolute()
-        && parts.next().is_some_and(|part| part.as_os_str() == ".checkpoint-generations")
-        && parts.next().is_some_and(|part| part.as_os_str().to_string_lossy().starts_with("generation-"))
-        && parts.next().is_none();
-    if !valid {
-        return Err(format!("{} points outside its checkpoint generations", dir.display()));
-    }
-    let generation = dir.join(target);
-    if !generation.join("adapter_model.safetensors").is_file() || !generation.join("adapter_config.json").is_file() {
-        return Err(format!("{} is not a complete adapter", generation.display()));
-    }
-    Ok(generation)
-}
-
 /// Every adapter a run saved, oldest first: periodic epochs, then its root
 /// (the final epoch, or where a cancelled run stopped).
 pub fn run_checkpoints(run: &Path, final_label: &str) -> Vec<crate::CareyTrainingCheckpoint> {
@@ -553,6 +239,7 @@ fn staged_prompts(dataset: &Path) -> Vec<String> {
 /// the adapters folder ace-server scans, holding the generation's weights and
 /// config. Links when the volume allows, since generations never change.
 pub fn publish_adapter(root: &Path, name: &str, generation: &Path) -> Result<PathBuf, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let adapters = crate::sa3_training::checked_folder(root, &["carey", "adapters"])?;
     let dest = adapters.join(name);
     let stage = adapters.join(format!(".{name}.{}.tmp", NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
@@ -574,6 +261,7 @@ pub fn publish_adapter(root: &Path, name: &str, generation: &Path) -> Result<Pat
 
 /// Take `name` out of the adapters folder ace-server scans, if it is there.
 pub fn unpublish_adapter(root: &Path, name: &str) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let dest = root.join("carey").join("adapters").join(name);
     match std::fs::remove_dir_all(&dest) {
         Ok(()) => Ok(()),
@@ -593,6 +281,7 @@ pub fn is_peft_adapter_dir(dir: &Path) -> bool {
 /// Python as well as C++-trained ones. One already published unchanged is
 /// left alone; one that cannot be published is skipped, not fatal.
 pub fn publish_catalog_adapters(root: &Path) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let catalog = crate::read_carey_lora_catalog_from(&crate::carey_lora_catalog_path_for(root))?;
     let adapters = root.join("carey").join("adapters");
     for (name, entry) in catalog {
@@ -623,6 +312,7 @@ pub fn publish_catalog_adapters(root: &Path) -> Result<(), String> {
 /// plugin's dice button picks from. Folders the catalog does not know are left
 /// alone.
 pub fn write_adapter_info(root: &Path) -> Result<(), String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let adapters = root.join("carey").join("adapters");
     if !adapters.is_dir() {
         return Ok(());
@@ -685,6 +375,7 @@ pub fn register(
     cancelled: bool,
     earlier: &[crate::CareyTrainingCheckpoint],
 ) -> Result<PathBuf, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let final_label = if cancelled { "where training stopped" } else { "final epoch" };
     let mut checkpoints = earlier.to_vec();
     checkpoints.extend(run_checkpoints(run, final_label));
@@ -720,60 +411,6 @@ pub fn register(
 }
 
 /// The ace-train arguments for `options`, before the job's own paths.
-pub fn trainer_args(options: &Options) -> Result<Vec<String>, String> {
-    let shared = carey_models::models()
-        .component(carey_models::SHARED)
-        .ok_or("Carey's catalog has no shared models")?;
-    let dit = carey_models::models().component(&options.dit).ok_or("Unknown training model")?;
-    let mut args: Vec<String> = vec![
-        "--dit".into(),
-        dit.files[0].filename.clone(),
-        "--text-encoder".into(),
-        shared.files[0].filename.clone(),
-        "--vae".into(),
-        shared.files[1].filename.clone(),
-        "--adapter-type".into(),
-        if options.adapter_type == "dora" { "dora-rows" } else { "lora" }.into(),
-        "--profile".into(),
-        options.profile.clone(),
-        "--rank".into(),
-        options.rank.to_string(),
-        "--alpha".into(),
-        (options.rank * 2).to_string(),
-        "--epochs".into(),
-        options.epochs.to_string(),
-        "--checkpoint-every".into(),
-        options.checkpoint_every.to_string(),
-        "--batch-size".into(),
-        options.batch_size.to_string(),
-        "--accumulation".into(),
-        options.accumulation.to_string(),
-        "--learning-rate".into(),
-        options.learning_rate.to_string(),
-        // The validated 8 GB profile: 100 warmup updates into a cosine decay.
-        "--warmup-steps".into(),
-        "100".into(),
-        "--schedule".into(),
-        "cosine".into(),
-        "--cfg-dropout".into(),
-        options.cfg_dropout.to_string(),
-        "--timestep-mu".into(),
-        options.timestep_mu.to_string(),
-        "--genre-ratio".into(),
-        options.genre_ratio.to_string(),
-        "--tag-position".into(),
-        "prepend".into(),
-        "--window-min-seconds".into(),
-        options.window_min_seconds.to_string(),
-        "--window-max-seconds".into(),
-        options.window_max_seconds.to_string(),
-    ];
-    if let Some(gamma) = options.min_snr {
-        args.extend(["--min-snr".into(), gamma.to_string()]);
-    }
-    Ok(args)
-}
-
 /// Whether the installed ace-train speaks the schema-1 file controls.
 async fn probe(executable: &Path, runtime_path: Option<&std::ffi::OsStr>) -> Result<(), String> {
     let mut command = tokio::process::Command::new(executable);
@@ -798,6 +435,7 @@ async fn probe(executable: &Path, runtime_path: Option<&std::ffi::OsStr>) -> Res
 }
 
 pub struct Job {
+    _library: Option<gary4local_core::lora_library::Lease>,
     child: tokio::process::Child,
     root: PathBuf,
     id: String,
@@ -861,6 +499,7 @@ pub async fn start(
     runtime_path: Option<&std::ffi::OsStr>,
     options: Options,
 ) -> Result<Job, String> {
+    let library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Carey)?;
     let (options, continuation) = continuation(root, options)?;
     validate(&options)?;
     probe(executable, runtime_path).await?;
@@ -999,6 +638,7 @@ pub async fn start(
     )
     .map_err(fail)?;
     Ok(Job {
+        _library: library,
         child,
         root: root.to_path_buf(),
         id,
@@ -1150,13 +790,8 @@ mod tests {
         assert_eq!(metadata(&fields("bpm: 120\n"), "").unwrap_err(), "no caption");
         assert_eq!(metadata(&fields("caption: x\n"), "").unwrap_err(), "no BPM");
         assert!(metadata(&fields("caption: x\nbpm: fast\n"), "").unwrap_err().contains("not a number"));
-        let summary = problem_summary(&[
-            ("no BPM".into(), vec!["a.wav".into(), "b.wav".into(), "c.wav".into(), "d.wav".into()]),
-            ("no caption".into(), vec!["e.wav".into()]),
-        ]);
-        assert_eq!(summary, "no BPM: a.wav, b.wav and 2 more; no caption: e.wav");
         assert!(metadata(&fields("caption: x\nbpm: 90\ntimesignature: waltz\nis_instrumental: true\n"), "").is_err());
-        assert_eq!(signature("6/8").unwrap(), 6);
+        assert!(metadata(&fields("caption: x\nbpm: 90\ntimesignature: 6/8"), "").unwrap().contains("signature: 6\n"));
     }
 
     #[test]
