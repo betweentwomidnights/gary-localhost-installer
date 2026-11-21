@@ -520,6 +520,7 @@ fn adapter_revision(file_name: &str) -> bool {
 /// record cannot be read nothing is removed. A file that will not delete is
 /// left for the next preparation.
 pub(crate) fn prune_unreferenced_revisions(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let _library = gary4local_core::lora_library::lease(root, gary4local_core::service::Service::Sa3)?;
     fn collect(value: &serde_json::Value, paths: &mut std::collections::BTreeSet<PathBuf>) {
         match value {
             serde_json::Value::String(text) => {

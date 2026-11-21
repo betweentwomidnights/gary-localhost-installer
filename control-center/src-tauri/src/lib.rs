@@ -3349,6 +3349,11 @@ fn migrate_sa3_loras_between_roots(
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> usize {
+    let _library = match gary4local_core::lora_library::lease(target_root, gary4local_core::service::Service::Sa3) {
+        Ok(lease) => lease,
+        Err(error) => { errors.push(error); return 0; }
+    };
+
     let source_catalog = match read_sa3_lora_catalog_from(&sa3_lora_catalog_path_for(source_root)) {
         Ok(catalog) => catalog,
         Err(error) => {
@@ -3414,6 +3419,11 @@ fn migrate_carey_loras_between_roots(
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> usize {
+    let _library = match gary4local_core::lora_library::lease(target_root, gary4local_core::service::Service::Carey) {
+        Ok(lease) => lease,
+        Err(error) => { errors.push(error); return 0; }
+    };
+
     let legacy_catalog =
         match read_carey_lora_catalog_from(&carey_lora_catalog_path_for(source_root)) {
             Ok(catalog) => catalog,
@@ -11788,6 +11798,13 @@ fn cleanup_legacy_storage(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<LegacyStorageMaintenanceResult, String> {
     storage::ensure_mutations_allowed(repo_root.inner())?;
+    let legacy = storage::legacy_runtime_root();
+    let mut libraries = Vec::new();
+    for service in [gary4local_core::service::Service::Sa3, gary4local_core::service::Service::Carey] {
+        if legacy.join(service.id()).exists() {
+            libraries.push(gary4local_core::lora_library::lease(&legacy, service)?);
+        }
+    }
     Ok(cleanup_legacy_storage_impl(repo_root.inner()))
 }
 
