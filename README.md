@@ -12,24 +12,28 @@ find the macOS version here:
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/17 - v0.7.4
+## update 11/21 - v0.7.5
 
-[download gary4local v0.7.4](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.4).
+[download gary4local v0.7.5](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.5).
 
-gary4local runs on Linux: a `.deb` for amd64 PCs and one for arm64 (DGX
-Spark), built for Ubuntu 24.04, with Vulkan generation on NVIDIA, AMD and
-Intel. it's the same app as on Windows, with the in-app updater. it's a
-preview for now: the arm64 build was tested end to end on a DGX Spark, the
-amd64 one only in CI. see [docs/linux-desktop.md](docs/linux-desktop.md).
+the Linux headless console is here. install the `gary` command and manage all
+seven GPU services from the terminal: runtime and model downloads, precision
+pickers, start/stop, logs, and LoRA import and training for SA3 and carey.
+headless archives are available for x64 PCs and arm64 (DGX Spark). installation
+and first-run steps are in the [headless guide](control-center/runtime-core/README.md).
 
-nothing changes on Windows in generation or runtime pins. the runtime
-install code moved into a shared crate the coming headless server will use.
+desktop and headless can share the same SA3/carey LoRA library, including
+training checkpoints and dice prompts. existing experimental profiles opt in
+with `share-loras`; their original files are preserved. Linux uses Vulkan and
+still listens on loopback, so a DAW on another machine needs SSH port forwarding
+for now. Windows generation and the native runtime pins are unchanged.
+
+the Linux desktop `.deb`s remain available for amd64 and arm64 on Ubuntu 24.04.
+see [docs/linux-desktop.md](docs/linux-desktop.md). macOS/Metal support is next.
 
 pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5),
 or [v5.0.5-linux-preview.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5-linux-preview.1)
-on Linux.
-
-older release notes now live in [CHANGELOG.md](CHANGELOG.md).
+on Linux. older release notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## update 8/23
 
@@ -53,7 +57,8 @@ build while we tried very hard to break it locally.
 how every native service is packaged and installed is in
 [native runtime packages](docs/native-runtime-packages.md).
 
-Linux/ARM64 findings and the proposed shared headless supervisor are tracked in
+Use the [headless guide](control-center/runtime-core/README.md) for the current
+terminal console. Earlier Linux/ARM64 findings are in
 [Linux and headless exploration](docs/linux-headless-exploration.md).
 
 ## preview

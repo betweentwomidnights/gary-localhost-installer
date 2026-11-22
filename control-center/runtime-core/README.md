@@ -67,6 +67,15 @@ pins a contained experiment config for every launch. `--bin-dir DIR` selects a
 different command directory. On Windows, build `gary.exe` with Cargo and place
 it in a directory already on PATH; no Windows command installer is supplied yet.
 
+For an update, finish training, stop services and quit the old console first.
+Extract the new archive into a different permanent folder. The installer refuses
+to overwrite a different existing `gary` command, so inspect `command -v gary`
+and the old launcher before changing it. Back up the generated launcher, remove
+only that launcher and run the new `install-gary.sh`. Configuration, downloaded
+models and LoRA libraries live outside the extracted archive. Retain the old
+archive folder until the new command has been validated, so the old launcher can
+still be restored. There is no automatic CLI updater yet.
+
 For scripts, `gary init`, `gary models --json` and `gary download-models --json`
 use the same model selection. Downloads resume partial files and verify each
 SHA-256. An external weights folder is read-only to these commands.

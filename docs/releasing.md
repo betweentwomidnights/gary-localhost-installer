@@ -137,6 +137,31 @@ the key's path from the Windows build, the signer fails. clear it for the
 signer, or use the helper in `LOCAL_SIGNING_NOTES.md`, which does that for
 you. each `.deb` should end up with a non-empty `.deb.sig` beside it.
 
+### headless archives
+
+also dispatch `headless.yml` on the exact release commit pushed to `main`.
+its two Linux artifacts are `gary4local-server-linux-x64-experimental` and
+`gary4local-server-linux-arm64-experimental`. each contains the corresponding
+`.tar.gz` and `SHA256SUMS-linux-*`. check the artifact ZIP digest, the tarball
+checksum, and the `BUILD-INFO.json` inside the tarball before uploading.
+`commit` must be the release SHA and `platform` must match the architecture.
+the headless binary's component version comes from `runtime-core/Cargo.toml`;
+it is independent of the desktop app's version.
+
+upload both tarballs on the main release. preserve their names, and upload
+copies of their checksum files named `SHA256SUMS-headless-linux-x64` and
+`SHA256SUMS-headless-linux-arm64`, so they don't collide with desktop's checksum
+assets. the checksum contents remain unchanged. keep the downloaded ZIPs and
+provenance in the untracked per-release folder.
+
+release notes should separate the desktop `.deb`s from the headless archives
+and show extraction into a permanent folder, `install-gary.sh`, PATH setup and
+`gary`. include the updater limitation: the installer refuses to overwrite an
+existing command. an update requires stopping services/finishing training,
+quitting Gary, inspecting and backing up the old generated launcher, then
+replacing that launcher with the new installer. don't remove model or library
+storage, and retain the old extracted folder until validation is complete.
+
 ### 5. create the GitHub release
 
 target the release commit by its full SHA, not a branch name: `gh release create
@@ -148,6 +173,7 @@ digests, then publish:
 - `gary4local_<version>_amd64.deb` and `.sig`
 - `gary4local_<version>_arm64.deb` and `.sig`
 - `SHA256SUMS-linux-x64` and `SHA256SUMS-linux-arm64`, straight from CI
+- both headless `.tar.gz` archives and their renamed `SHA256SUMS-headless-linux-*` copies
 
 after uploading, each asset's `digest` from
 `gh release view <tag> --json assets` should equal `sha256:` plus the local

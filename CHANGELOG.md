@@ -4,6 +4,50 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.5 - 2026-11-21
+
+gary4local can run from a Linux terminal now, without the desktop app or a
+display. the release includes headless archives for x64 PCs and arm64 machines
+such as the DGX Spark. extract one somewhere you want to keep it, run
+`install-gary.sh`, and type `gary`. the installer adds a launcher in
+`~/.local/bin`; the extracted binaries stay where you put them. the
+[headless guide](control-center/runtime-core/README.md) covers installation,
+updates and storage.
+
+the console manages all seven services, with arrow-key pickers for models and
+precision, GPU-based recommendations where available, model downloads and
+removal, logs, and `start all` / `stop all`. it uses the same default client
+ports as desktop. generation still comes from a client such as gary4juce or
+the service's HTTP API. explicit commands also have a noninteractive JSON
+interface for agents; guided training is in the human console for now.
+
+SA3 and carey can import and train LoRAs from the console. the training flow
+walks through a dataset, auto-labeling and sidecar review before the trainer
+settings, and reports pre-encoding progress rather than sitting silently on
+step zero. `cancel` requests a checkpoint-safe stop. completed runs register
+their adapter and dice prompts; `loras` lets you select an earlier inference
+checkpoint without changing the adapter's name.
+
+new standard SA3 and carey profiles share desktop's LoRA library: adapters,
+checkpoint choices, training history and dice prompts. runtime packages,
+model weights and service settings remain separate. existing experimental
+headless profiles stay isolated until you explicitly run `share-loras`;
+that migration backs up the config and retains the original files. a
+per-service process lock coordinates desktop and terminal access to a shared
+library, including training, registry edits and storage moves. stop a service
+in one interface before using its library from another.
+
+Linux generation uses Vulkan; a CPU-only machine isn't a target. headless
+service startup and LoRA training were tested on the DGX Spark, and Linux x64
+builds are checked by CI but still need hands-on testing. listeners stay on
+loopback: connecting a DAW on another machine currently needs SSH port
+forwarding. a remote URL setting in gary4juce and macOS/Metal packaging are
+still follow-up work. Windows desktop passed the automated checks and a
+manual generation regression test. runtime pins haven't changed from v0.7.4.
+
+compatible with gary4juce v5.0.5, and with gary4juce v5.0.5-linux-preview.1
+on Linux.
+
 ## v0.7.4 - 2026-11-17
 
 gary4local runs on Linux. there's a `.deb` for amd64 PCs and one for arm64
