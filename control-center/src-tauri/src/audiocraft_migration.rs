@@ -388,7 +388,7 @@ async fn gpu_memory(run: &Run<'_>) -> Option<u64> {
         .iter()
         .filter(|device| device["type"] != "cpu")
         .filter(|device| {
-            device["backend"].as_str().is_some_and(|name| name.to_ascii_lowercase().contains(&run.installed.backend))
+            device["backend"].as_str().is_some_and(|name| gary4local_core::runtime::backend_matches(name, &run.installed.backend))
         })
         .filter_map(|device| device["memory_total_bytes"].as_u64())
         .max()

@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": false,
+    "category": "Music",
+    "shortDescription": "Run gary4juce's music models on your Mac",
+    "icon": ["icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "13.3",
+      "hardenedRuntime": true,
+      "signingIdentity": "-"
+    }
+  }
+}

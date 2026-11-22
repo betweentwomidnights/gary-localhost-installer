@@ -112,9 +112,11 @@ impl NativeInstall {
 /// The service's env with `${NATIVE_BACKEND}` filled in. Anything still
 /// holding a template is dropped, as for Python services.
 pub fn launch_env(template: &[(String, String)], backend: &str) -> Vec<(String, String)> {
+    // Audiocraft's released device selector expects ggml's registry name.
+    let device_backend = if backend.eq_ignore_ascii_case("metal") { "MTL" } else { backend };
     template
         .iter()
-        .map(|(key, value)| (key.clone(), value.replace("${NATIVE_BACKEND}", backend)))
+        .map(|(key, value)| (key.clone(), value.replace("${NATIVE_BACKEND}", device_backend)))
         .filter(|(_, value)| !value.is_empty() && !value.contains("${"))
         .collect()
 }
@@ -200,6 +202,15 @@ pub fn is_generation_gpu(device: &serde_json::Value) -> bool {
         .iter().any(|name| description.contains(name))
 }
 
+/// ggml reports Metal's registry as `MTL`; package manifests call it `metal`.
+pub fn backend_matches(reported: &str, requested: &str) -> bool {
+    let normalized = |name: &str| match name.trim().to_ascii_lowercase().as_str() {
+        "metal" | "mtl" => "metal".to_string(),
+        other => other.to_string(),
+    };
+    normalized(reported).contains(&normalized(requested))
+}
+
 #[cfg(test)]
 mod executable_tests {
     use super::*;
@@ -223,6 +234,21 @@ mod executable_tests {
 
 #[cfg(test)]
 mod gpu_tests {
+    #[test]
+    fn metal_registry_alias_preserves_other_backend_choices() {
+        for name in ["MTL", "mtl", "Metal", "metal"] {
+            assert!(super::backend_matches(name, "metal"));
+            assert!(super::backend_matches(name, "MTL"));
+            assert!(!super::backend_matches(name, "cuda"));
+            assert!(!super::backend_matches(name, "vulkan"));
+        }
+        assert!(super::backend_matches("CUDA", "cuda"));
+        assert!(super::backend_matches("Vulkan", "vulkan"));
+        assert!(!super::backend_matches("CPU", "metal"));
+        let template = vec![("AC_DEVICE".into(), "${NATIVE_BACKEND}".into())];
+        assert_eq!(super::launch_env(&template, "metal"), vec![("AC_DEVICE".into(), "MTL".into())]);
+        assert_eq!(super::launch_env(&template, "cuda"), vec![("AC_DEVICE".into(), "cuda".into())]);
+    }
     use super::is_generation_gpu;
     use serde_json::json;
 

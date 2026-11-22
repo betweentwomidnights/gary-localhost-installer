@@ -18,6 +18,10 @@ const UPDATE_CHANNEL: &str = match option_env!("GARY4LOCAL_UPDATE_CHANNEL") {
 /// and the phase-1 feed one download.
 const PLATFORM_FEED_DIR: &str = if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
     "/linux-aarch64"
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    "/macos-aarch64"
+} else if cfg!(target_os = "macos") {
+    "/macos-x86_64"
 } else if cfg!(target_os = "linux") {
     "/linux-x86_64"
 } else {
@@ -277,6 +281,10 @@ mod tests {
         let channel = if super::UPDATE_CHANNEL == "preview" { "preview" } else { "stable" };
         let folder = if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
             "/linux-aarch64"
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            "/macos-aarch64"
+        } else if cfg!(target_os = "macos") {
+            "/macos-x86_64"
         } else if cfg!(target_os = "linux") {
             "/linux-x86_64"
         } else {

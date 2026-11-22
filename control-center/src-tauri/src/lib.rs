@@ -10514,7 +10514,7 @@ fn describe_runtime(info: &native_runtime::NativeRuntimeInfo) -> String {
         info.version.as_deref().unwrap_or("a development build")
     );
     if let Some(device) = info.devices.iter().find(|device| {
-        device.device_type != "cpu" && device.backend.to_ascii_lowercase().contains(backend)
+        device.device_type != "cpu" && gary4local_core::runtime::backend_matches(&device.backend, backend)
     }) {
         text += &format!(
             ", {} ({:.1} GB)",

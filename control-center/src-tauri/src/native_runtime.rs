@@ -553,7 +553,7 @@ fn props_has_backend(props: &serde_json::Value, backend: &str) -> bool {
         gary4local_core::runtime::is_generation_gpu(device) && device
             .get("backend")
             .and_then(|value| value.as_str())
-            .is_some_and(|name| name.to_ascii_lowercase().contains(backend))
+            .is_some_and(|name| gary4local_core::runtime::backend_matches(name, backend))
     })
 }
 
@@ -710,7 +710,7 @@ pub fn accelerator_memory(info: &NativeRuntimeInfo) -> Option<u64> {
         info.devices
             .iter()
             .filter(|device| {
-                device.backend.to_ascii_lowercase().contains(&backend)
+                gary4local_core::runtime::backend_matches(&device.backend, &backend)
                     && device.device_type.eq_ignore_ascii_case(kind)
             })
             .map(|device| device.memory_total_bytes)

@@ -20,6 +20,7 @@ pub mod sa3_gguf;
 pub mod sa3_prompts;
 pub mod training;
 pub mod lora_library;
+pub mod storage_paths;
 
 mod training_job;
 mod lora_history;

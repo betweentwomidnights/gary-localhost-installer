@@ -87,7 +87,12 @@ pub fn desktop_root() -> Result<PathBuf, String> {
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/share")))
         .ok_or("Cannot locate the desktop data folder")?
         .join("com.betweentwomidnights.gary4local");
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    let local = crate::storage_paths::macos_app_data(
+        &std::env::var_os("HOME").map(PathBuf::from).filter(|p| p.is_absolute())
+            .ok_or("Cannot locate macOS Application Support; HOME must be absolute")?
+    );
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let local = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok_or("Cannot locate desktop storage. Set --library-root explicitly.")?
@@ -139,7 +144,9 @@ pub fn desktop_root() -> Result<PathBuf, String> {
             .map(|p| p.join("data"))
             .unwrap_or_else(|| local.join("runtime")))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    { Ok(local.join("runtime")) }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         if let Some(base) = std::env::var_os("APPDATA") {
             let legacy = PathBuf::from(base).join("Gary4JUCE");

@@ -26,11 +26,15 @@ struct StorageConfig {
 }
 
 pub fn roaming_app_data_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        return gary4local_core::storage_paths::macos_application_support(&macos_home());
+    }
     #[cfg(target_os = "linux")]
     {
         return linux_xdg_dir("XDG_CONFIG_HOME", ".config");
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let appdata = std::env::var("APPDATA").unwrap_or_else(|_| {
             let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
@@ -41,12 +45,16 @@ pub fn roaming_app_data_dir() -> PathBuf {
 }
 
 pub fn local_data_root() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        return gary4local_core::storage_paths::macos_app_data(&macos_home());
+    }
     #[cfg(target_os = "linux")]
     {
         // The same identity as every other build: there is no separate preview app.
         return linux_xdg_dir("XDG_DATA_HOME", ".local/share").join("com.betweentwomidnights.gary4local");
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
             let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
@@ -54,6 +62,14 @@ pub fn local_data_root() -> PathBuf {
         });
         PathBuf::from(localappdata).join("com.betweentwomidnights.gary4local")
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_home() -> PathBuf {
+    // LaunchServices supplies HOME. An absent value must never send writes
+    // into the signed application bundle or the current working directory.
+    env_path("HOME").filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/var/empty"))
 }
 
 #[cfg(target_os = "linux")]
@@ -85,11 +101,15 @@ pub fn storage_config_path() -> PathBuf {
 }
 
 pub fn installed_default_runtime_root() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        return local_data_root().join("runtime");
+    }
     #[cfg(target_os = "linux")]
     {
         return linux_runtime_dir(env_path("GARY4LOCAL_HOME"));
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         std::env::current_exe()
             .ok()
@@ -230,11 +250,16 @@ pub fn resolve_startup_runtime_root() -> PathBuf {
 }
 
 fn automatic_default_runtime_root() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    { installed_default_runtime_root() }
+    #[cfg(not(target_os = "macos"))]
+    {
     let legacy = legacy_runtime_root();
     if legacy_runtime_root_is_populated(&legacy) {
         legacy
     } else {
         installed_default_runtime_root()
+    }
     }
 }
 
@@ -418,6 +443,15 @@ fn path_key(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_storage_is_writable_user_data_and_matches_the_shared_library() {
+        assert_eq!(super::installed_default_runtime_root(), super::local_data_root().join("runtime"));
+        assert!(super::local_data_root().is_absolute());
+        assert!(super::local_data_root().ends_with("Library/Application Support/com.betweentwomidnights.gary4local"));
+        assert_eq!(super::automatic_default_runtime_root(), super::installed_default_runtime_root());
+        assert_eq!(gary4local_core::lora_library::desktop_root().unwrap(), super::resolve_startup_runtime_root());
+    }
     use super::{legacy_runtime_root, runtime_env_vars};
     #[cfg(target_os = "linux")]
     use std::path::Path;
