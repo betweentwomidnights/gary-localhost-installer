@@ -4962,7 +4962,7 @@ async fn try_reload_sa3_admin() -> bool {
     }
 }
 
-async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
+async fn stop_application_workloads(manager: &ManagerState) {
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app quit: {error}");
     }
@@ -4972,8 +4972,11 @@ async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
     if let Err(error) = cancel_sa3_autolabel() {
         log::warn!("Could not cancel SA3 auto-label during app quit: {error}");
     }
-    let mut m = manager.lock().await;
-    m.stop_all();
+    manager.lock().await.stop_all();
+}
+
+async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
+    stop_application_workloads(manager).await;
     handle.exit(0);
 }
 
@@ -5471,7 +5474,7 @@ pub fn run() {
         builder
     };
 
-    if let Err(error) = builder
+    let app = builder
         .setup(move |app| {
             if let Some(folder) = webview2_user_data_folder.as_ref() {
                 log::info!("Using WebView2 user data folder: {}", folder.display());
@@ -5831,14 +5834,23 @@ pub fn run() {
             open_url,
             reveal_path,
         ])
-        .run(tauri::generate_context!())
-    {
-        let message = format!("error while running tauri application: {}", error);
-        log::error!("{}", message);
-        append_startup_diagnostic(&message);
-        eprintln!("{}", message);
-        std::process::exit(1);
-    }
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|error| {
+            let message = format!("error while running tauri application: {}", error);
+            log::error!("{}", message);
+            append_startup_diagnostic(&message);
+            eprintln!("{}", message);
+            std::process::exit(1);
+        });
+
+    app.run(|handle, event| {
+        // AppKit's Command-Q and native Quit menu go straight to Tauri's Exit event.
+        // Wait for cleanup here because the process exits when this handler returns.
+        if cfg!(target_os = "macos") && matches!(event, tauri::RunEvent::Exit) {
+            let manager = handle.state::<ManagerState>().inner().clone();
+            tauri::async_runtime::block_on(stop_application_workloads(&manager));
+        }
+    });
 }
 
 #[tauri::command]
