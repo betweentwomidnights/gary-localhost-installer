@@ -32,13 +32,10 @@ gary4local-server schema --target response --json
 Read `data.commands`, option requirements, effects and `data.features` from
 capabilities. The interactive console offers LoRA training and import for SA3
 and Carey. Agents can inspect the exposed adapters through the service APIs.
-New standard SA3/Carey profiles share desktop's LoRA library. Custom profiles
-can opt in with `init --library-root desktop` or an explicit absolute library
-path. Existing isolated profiles use the explicit `share-loras --library-root`
-command after stopping that service. It backs up the config and preserves
-original adapters/history. A per-service cross-process lock prevents desktop
-and headless from concurrently using that library. See the runtime-core README
-for migration and container storage details.
+Standard SA3/Carey profiles share desktop's LoRA library. For an explicit custom
+config, pass `init --library-root desktop` or an absolute persistent library
+path. Omitting it for a custom config keeps that library isolated. A per-service
+cross-process lock prevents desktop and headless from concurrently using it.
 
 Command discovery describes this binary and its platform's published packages. `--help` also works without a config, globally or per command.
 
@@ -78,7 +75,8 @@ their SHA256 checksums, validates build metadata and probes the selected GPU.
 Local archive pairs need both absolute paths and complete SHA256 values.
 Reinstalls reuse verified cached archives. A failed candidate preserves older
 installed directories. `serve` never downloads: it loads the selected model and
-holds ownership until shutdown. See the runtime-core README for package details.
+holds ownership until shutdown. See [native runtime packages](native-runtime-packages.md)
+for the package contract.
 
 Read stdout incrementally as NDJSON. Wait for `kind: "event", event: "ready"`,
 check `schema_version == 1` and `ok == true`, then capture `data.session` and
@@ -140,17 +138,32 @@ schema validates the envelope, not every command payload. Parse errors use
   on one root are refused. To run independent experiments, use distinct config,
   runtime root and client port, and account for shared GPU memory.
 
-## Storage and future training
+## Storage and training
 
-Each dedicated root contains runtime archives, immutable package-hash runtime
-directories, owner/state records, logs, temporary uploads and GPU caches. Models
-are read from the external directory. Stop the matching session and preserve
-wanted evidence before deleting an explicitly named experiment root. The CLI
-does not remove models, register services or migrate desktop data. The supplied
-systemd unit is an example and is never enabled automatically.
+`runtime_root` contains runtime packages, owner/state records, logs, temporary
+uploads and GPU caches. Models use managed storage by default; `--models-dir`
+selects an existing external folder. `library_root` controls LoRA catalogs and
+training history separately. For a container, mount persistent storage for the
+runtime/model data and library you want to retain.
 
-Training is the next layer after this foundation is validated. It should use
-the same training implementation as desktop, with explicit dataset/output paths,
-owned job IDs, discoverable schemas, progress, cancellation and checkpoint
-reporting. This release makes no training or resume guarantee; discover
-capabilities again when a future binary adds those operations.
+Each runtime root has an OS-held owner lock. Status and stop use a session nonce
+rather than trusting a saved PID. Keep the config outside its runtime root, and
+use an empty directory for a new root. The supplied systemd unit is an example;
+set its paths and enable it yourself if needed.
+
+The JSON command API covers service and model management. Training, labeling,
+LoRA import and checkpoint selection currently use the interactive `gary`
+console. Dedicated agent training commands are follow-up work; consult
+capabilities rather than assuming they exist.
+
+## building from source
+
+Use Rust 1.89 or newer (1.95 is tested) and a native C linker:
+
+```sh
+cargo build --locked --release --manifest-path control-center/runtime-core/Cargo.toml --bins
+```
+
+Build from the repository layout: the crate embeds the runtime manifest and
+model catalogs at compile time. The headless binaries build without desktop
+libraries or a display.
