@@ -535,6 +535,19 @@
           "ACE_ADAPTERS_DIR": "${GARY_RUNTIME}/carey/adapters"
         },
         "platforms": {
+          "macos-arm64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-macos-universal.zip",
+              "sha256": "29dcbde567afe86a859abdda76419e9d7d3b5d543aba0d558dac2a9f4614f148"
+            },
+            "backends": {
+              "metal": {
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-macos-universal.zip",
+                "sha256": "29dcbde567afe86a859abdda76419e9d7d3b5d543aba0d558dac2a9f4614f148"
+              }
+            },
+            "prefer": ["metal"]
+          },
           "windows-x64": {
             "core": {
               "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.5/acestep-v0.1.5-windows-x64-core.zip",

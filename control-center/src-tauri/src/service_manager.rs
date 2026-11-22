@@ -2368,14 +2368,7 @@ mod tests {
         for service in manager.services.iter_mut().filter(|service| ["gary", "melodyflow"].contains(&service.id.as_str())) {
             service.runtime = ServiceRuntime::Native;
         }
-        let mac = native_runtime::current_platform() == "macos-arm64";
-        let expected = |ids: &[&str]| ids.iter()
-            .filter(|&&id| id != "carey" || !mac)
-            .map(|id| (*id).to_string())
-            .collect::<Vec<_>>();
-        let carey = manager.get_service_info().into_iter().find(|info| info.id == "carey").unwrap();
-        assert_eq!(carey.native_runtime_unavailable.is_some(), mac);
-        assert_eq!(manager.outdated_native_runtimes(), expected(&["gary", "stable-audio", "carey", "yuey"]));
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "stable-audio", "carey", "yuey"]);
 
         let svc = manager.find_service("gary").unwrap();
         let native = svc.native.clone().unwrap();
@@ -2393,9 +2386,9 @@ mod tests {
             runtimes: vec![],
         };
         std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
-        assert_eq!(manager.outdated_native_runtimes(), expected(&["stable-audio", "carey", "yuey"]));
+        assert_eq!(manager.outdated_native_runtimes(), ["stable-audio", "carey", "yuey"]);
         std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp("v0.0.1")).unwrap()).unwrap();
-        assert_eq!(manager.outdated_native_runtimes(), expected(&["gary", "stable-audio", "carey", "yuey"]));
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "stable-audio", "carey", "yuey"]);
         let svc = manager.find_service("stable-audio").unwrap();
         let native = svc.native.as_ref().unwrap();
         let dir = manager.native_dir(svc);
@@ -2410,7 +2403,12 @@ mod tests {
             assert!(!info.migration_complete && manager.selection(id).is_none());
             assert!(!manager.is_native(id), "model activation is still a separate choice");
         }
-        assert_eq!(manager.outdated_native_runtimes(), expected(&["gary", "carey", "yuey"]));
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "carey", "yuey"]);
+        let carey = manager.services.iter_mut().find(|service| service.id == "carey").unwrap();
+        carey.native.as_mut().unwrap().platforms.remove(native_runtime::current_platform());
+        assert_eq!(manager.outdated_native_runtimes(), ["gary", "yuey"]);
+        let carey = manager.get_service_info().into_iter().find(|info| info.id == "carey").unwrap();
+        assert!(carey.native_runtime_unavailable.is_some());
         let _ = std::fs::remove_dir_all(&root);
     }
 

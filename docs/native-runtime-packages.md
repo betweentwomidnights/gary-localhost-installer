@@ -407,11 +407,11 @@ inventory and cleanup; `sa3_migration::Sa3` is the reference.
 
 ## macOS packages
 
-AudioCraft, SA3 and Yuey publish universal archives with both the core and
+AudioCraft, SA3, ACE-Step and Yuey publish universal archives with both the core and
 Metal plugin. The `macos-arm64` manifest lists the same verified archive as
 the core and Metal backend. The desktop installer downloads and unpacks it
 once. `pin_native_release.mjs` reads `SHA256SUMS-macos` for these archives.
-Apple Silicon is the supported desktop target. Carey awaits a macOS release.
+Apple Silicon is the supported desktop target.
 
 ## not yet
 

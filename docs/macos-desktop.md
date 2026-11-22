@@ -56,8 +56,8 @@ credentials are separate from the existing updater key.
 ## M4 check before sharing
 
 **Set up all runtimes** installs the published Metal packages for AudioCraft,
-Stable Audio, and Yuey. Download models separately from each service's Models
-panel. Carey is skipped until ACE-Step publishes its macOS runtime.
+Stable Audio, Carey, and Yuey. Download models separately from each service's
+Models panel.
 
 Check launch from Applications, the icon, model downloads, Metal runtime
 installation, generation, SA3/Carey training when their packages are available,
