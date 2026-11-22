@@ -16,6 +16,9 @@ PyInstaller/Inno Setup flow remains available in the older branch history.
 
 [download gary4local v0.7.5](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.5).
 
+this is a Linux-focused release. Windows desktop users can skip this one;
+generation and native runtime versions are unchanged from v0.7.4.
+
 the Linux headless console is here. install the `gary` command and manage all
 seven GPU services from the terminal: runtime and model downloads, precision
 pickers, start/stop, logs, and LoRA import and training for SA3 and carey.

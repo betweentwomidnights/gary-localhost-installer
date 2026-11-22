@@ -6,6 +6,9 @@ this file gets to remember how we got here.
 
 ## v0.7.5 - 2026-11-21
 
+this is a Linux-focused release. Windows desktop users can skip this one;
+generation and native runtime versions are unchanged from v0.7.4.
+
 gary4local can run from a Linux terminal now, without the desktop app or a
 display. the release includes headless archives for x64 PCs and arm64 machines
 such as the DGX Spark. extract one somewhere you want to keep it, run

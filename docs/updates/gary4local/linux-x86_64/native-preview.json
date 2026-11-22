@@ -1,11 +1,11 @@
 {
-  "version": "0.7.4",
-  "notes": "The first Linux release of gary4local: the same app as on Windows, with Vulkan generation.\nUpdates ask for your password once to install the package, then gary4local restarts.\nCompatible with gary4juce v5.0.5-linux-preview.1.",
-  "pub_date": "2026-11-17T22:48:22.0000000+00:00",
-  "platforms": {
-    "linux-x86_64-deb": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEhmZWQ5UFYwdWorK2o4bEhDdWRJS0kyOCtkOG9oYzNCN3VEelNkNWZpV2F6cmUwcFcvWmZ3SFFGUUg0NWJxdTJxeTVqR2NueVR2bDVQOWx3WEtxYkF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTU1MDc4CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNF9hbWQ2NC5kZWIKZzRvN3FaYzE3RHZsRVJITHBraTFwWHVBUFVNaitBVmh5alBkNXdrMTd2Smw1b1NOR0dJZTYyMVVFQW9JRmIvaElzaDUvNFE2UEd1VEJ2WkdxdmdKQmc9PQo=",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4/gary4local_0.7.4_amd64.deb"
-    }
-  }
+    "version":  "0.7.5",
+    "notes":  "Headless downloads now offer the gary console for services, models and SA3/Carey LoRA training.\nDesktop and terminal can share LoRA libraries. Existing experimental profiles opt in with share-loras; models and runtime profiles remain separate.\nServices use Vulkan and loopback ports. Compatible with gary4juce v5.0.5-linux-preview.1.",
+    "pub_date":  "2026-11-22T03:02:02.0000000+00:00",
+    "platforms":  {
+                      "linux-x86_64-deb":  {
+                                               "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMElpL0ttMkozWkdPNmFwWDJHK3hYVXRDSDNZVDEzTnZjbG0yUzk4cjVxS2ZRZEt6ZWJydFRocktFTzdFc3FUMzJmbVpoaHNPZVBIOFZldGdLMERFNEFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1MzE2NDk2CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNV9hbWQ2NC5kZWIKcG8rWGNWY2lOSkxlR3BhdHUxOVNnZ3JPTVhNUHhSdHkxTFFvYnhza3lpYjZLRERCUkxkOXZZbGNYUnRtV1ZlTElydldCNXFXZWZYV1JpbmhOMzJiRFE9PQo=",
+                                               "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.5/gary4local_0.7.5_amd64.deb"
+                                           }
+                  }
 }

@@ -1,11 +1,11 @@
 {
-  "version": "0.7.4",
-  "notes": "gary4local now runs on Linux too; Windows generation and runtime pins are unchanged from v0.7.3.\nThe runtime install code moved into a shared crate, and software Vulkan drivers no longer count as a GPU.\nCompatible with gary4juce v5.0.5.",
-  "pub_date": "2026-11-17T22:48:22.0000000+00:00",
-  "platforms": {
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEhjRVlJSDJ5elY5TDJyT1lITmdDdlVDdTFkQk85QnVGUFpSSHNxZkFiZXZlNDFjZXpCZEVTN0p3VDBIa3ZxMDhyYnlZcXluZWpRRnJsVWN6dll1VlFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTU0NDMwCWZpbGU6Z2FyeTRsb2NhbF8wLjcuNF94NjQtc2V0dXAuZXhlClVjRFBEQm93R0htbUlqckQ1dk9JeWpJNXlnSEtVUFFsN1dzVTI4U2MxRDBiS3NXSG1KNFp2Nmxwc0hmNXY5enhGNFZRNk1HK2RIWG5ZWTBSbzJmcENRPT0K",
-      "url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4/gary4local_0.7.4_x64-setup.exe"
-    }
-  }
+    "version":  "0.7.5",
+    "notes":  "Linux-focused release. Windows desktop users can skip this update.\nLinux headless downloads add the gary console for services, models and SA3/Carey LoRA training.\nWindows generation and runtime versions are unchanged from v0.7.4. Compatible with gary4juce v5.0.5.",
+    "pub_date":  "2026-11-22T03:02:02.0000000+00:00",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEdWUmdkdGM4ODZqT2VPWlJFL0xwd0ZpbVo5TDl6eTdHTTNZZFpPNWh5bzlOalQ3WUUxZDA3NnB3Y0ZDd2VyMG82UmFUcGhRUnpvQXZkTnRVUG8vZmdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1MzE1OTAzCWZpbGU6Z2FyeTRsb2NhbF8wLjcuNV94NjQtc2V0dXAuZXhlCksxV1dPdysrR2I1Q243UjhubG1IYS9UMFUwYk01Umc4NUhaNDNpSnNKWWhNSHBOYnd5NDl0ajFMc0lzUk5CVWFYU1hXeG4yVkpyMjQ3NUZpSXNVT0NBPT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.5/gary4local_0.7.5_x64-setup.exe"
+                                         }
+                  }
 }

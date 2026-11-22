@@ -1,12 +1,12 @@
 {
-  "channel": "preview",
-  "latest_version": "0.7.4",
-  "download_url": "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.4/gary4local_0.7.4_amd64.deb",
-  "sha256": "f500863b5feb74d18aabb032ff2b759d900fb1a28ad65dd27b61d168ab732905",
-  "published_at": "2026-11-17T22:48:22.0000000+00:00",
-  "notes": [
-    "The first Linux release of gary4local: the same app as on Windows, with Vulkan generation.",
-    "Updates ask for your password once to install the package, then gary4local restarts.",
-    "Compatible with gary4juce v5.0.5-linux-preview.1."
-  ]
+    "channel":  "preview",
+    "latest_version":  "0.7.5",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.5/gary4local_0.7.5_amd64.deb",
+    "sha256":  "bbbf18ce34877f0c5a54105582fec1ec0e4a97d278be475a21fa2220ebf567db",
+    "published_at":  "2026-11-22T03:02:02.0000000+00:00",
+    "notes":  [
+                  "Headless downloads now offer the gary console for services, models and SA3/Carey LoRA training.",
+                  "Desktop and terminal can share LoRA libraries. Existing experimental profiles opt in with share-loras; models and runtime profiles remain separate.",
+                  "Services use Vulkan and loopback ports. Compatible with gary4juce v5.0.5-linux-preview.1."
+              ]
 }

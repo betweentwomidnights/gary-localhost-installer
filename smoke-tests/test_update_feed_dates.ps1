@@ -16,7 +16,7 @@ try {
     # The second input reproduces a timestamp coerced to a local-format string
     # before binding to PublishedAt. Both must produce the same UTC instant.
     foreach ($inputDate in @('2026-10-06T07:13:17Z', '10/06/2026 07:13:17 +00:00')) {
-        & $generator -Version '0.4.0-rocm.2' -ArtifactUrl 'https://example.com/setup.exe' `
+        & $generator -Version '0.4.0-rocm.2' -ArtifactUrl 'https://example.com/gary4local-rocm_0.4.0-rocm.2_x64-setup.exe' `
             -InstallerPath $installer -SignaturePath "$installer.sig" -Channel preview `
             -OutputDir $output -PublishedAt $inputDate -NotesText 'Test update.'
 
@@ -62,7 +62,7 @@ try {
     Assert-Rejected { & $validator -FeedDirectory $output -Channel preview -ExpectedVersion '0.4.0-rocm.2' -InstallerPath $installer } `
         'Feed signature differs'
 
-    Assert-Rejected { & $generator -Version '0.4.0-rocm.2' -ArtifactUrl 'https://example.com/setup.exe' `
+    Assert-Rejected { & $generator -Version '0.4.0-rocm.2' -ArtifactUrl 'https://example.com/gary4local-rocm_0.4.0-rocm.2_x64-setup.exe' `
         -InstallerPath $installer -SignaturePath "$installer.sig" -Channel preview -OutputDir $output -PublishedAt 'not a date' } `
         'PublishedAt must be a timestamp'
     if ((Get-Content -LiteralPath $nativePath -Raw) -cne $goodNative) { throw 'Invalid date input changed the existing feed.' }
