@@ -14,7 +14,8 @@
 // release, so a shared runtime hosted elsewhere is left alone. Linux packages
 // ride on the same release (SHA256SUMS-linux-x64/-arm64); a Linux package still
 // on a linux-vX.Y.Z-preview.N release moves onto the new tag when the release
-// carries it, and keeps its preview pin when it doesn't. A runtime pin
+// carries it, and keeps its preview pin when it doesn't. macOS universal
+// archives use SHA256SUMS-macos. A runtime pin
 // rewrites that one nativeRuntimes entry to the single zip its release carries.
 // The file is edited in place rather than re-serialised, so the diff is only
 // the lines that changed.
@@ -66,19 +67,23 @@ async function releaseFile(name, optional) {
 
 let sumsText;
 let linuxSumsText = '';
+let macosSumsText = '';
 if (args.sums) {
   sumsText = fs.readFileSync(args.sums, 'utf8');
   if (args['linux-sums']) linuxSumsText = fs.readFileSync(args['linux-sums'], 'utf8');
+  if (args['macos-sums']) macosSumsText = fs.readFileSync(args['macos-sums'], 'utf8');
 } else {
   sumsText = await releaseFile('SHA256SUMS', false);
-  // A runtime release carries no Linux packages.
+  // Shared runtime releases only have the primary checksum file.
   if (!args.runtime) {
     for (const platform of ['linux-x64', 'linux-arm64']) linuxSumsText += `${await releaseFile(`SHA256SUMS-${platform}`, true)}\n`;
+    macosSumsText = await releaseFile('SHA256SUMS-macos', true);
   }
 }
 const sums = parseSums(sumsText);
 if (sums.size === 0) fail('SHA256SUMS has no entries');
 const linuxSums = parseSums(linuxSumsText);
+const macosSums = parseSums(macosSumsText);
 
 if (args.runtime) {
   // A runtime release carries exactly one zip, named for the exact toolkit it
@@ -168,7 +173,7 @@ let updated = definition.replace(
     }
     if (urlTag !== oldTag) return whole;
     const file = oldFile.split(oldTag).join(args.tag);
-    const sha = sums.get(file) ?? linuxSums.get(file);
+    const sha = sums.get(file) ?? linuxSums.get(file) ?? macosSums.get(file);
     if (!sha) {
       if (oldFile.includes(oldTag)) fail(`the ${args.tag} SHA256SUMS has no ${file}`);
       console.log(`[pin-native] ${file} is not in ${args.tag}; keeping its ${oldTag} pin`);

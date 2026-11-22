@@ -3,6 +3,19 @@
     "sa3": {
       "version": "v0.2.4",
       "platforms": {
+        "macos-arm64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-macos-universal.zip",
+            "sha256": "92ae9c7c50b9e83896167acbb165bf057bb96b5b5ea5264fc02e818a7ba5a1c0"
+          },
+          "backends": {
+            "metal": {
+              "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-macos-universal.zip",
+              "sha256": "92ae9c7c50b9e83896167acbb165bf057bb96b5b5ea5264fc02e818a7ba5a1c0"
+            }
+          },
+          "prefer": ["metal"]
+        },
         "windows-x64": {
           "core": {
             "url": "https://github.com/betweentwomidnights/sa3.cpp/releases/download/v0.2.4/sa3-v0.2.4-windows-x64-core.zip",
@@ -56,6 +69,19 @@
     "audiocraft": {
       "version": "v0.1.4",
       "platforms": {
+        "macos-arm64": {
+          "core": {
+            "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.4/audiocraft-v0.1.4-macos-universal.zip",
+            "sha256": "3c41652f93d4615aaa5ccb04446e0ef8e68bb1601b51debeee6a91e0840317b2"
+          },
+          "backends": {
+            "metal": {
+              "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.4/audiocraft-v0.1.4-macos-universal.zip",
+              "sha256": "3c41652f93d4615aaa5ccb04446e0ef8e68bb1601b51debeee6a91e0840317b2"
+            }
+          },
+          "prefer": ["metal"]
+        },
         "windows-x64": {
           "core": {
             "url": "https://github.com/betweentwomidnights/audiocraft.cpp/releases/download/v0.1.4/audiocraft-v0.1.4-windows-x64-core.zip",
@@ -686,6 +712,19 @@
         "modelsDir": "yuey",
         "version": "v0.3.1",
         "platforms": {
+          "macos-arm64": {
+            "core": {
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.1/yuey-v0.3.1-macos-universal.zip",
+              "sha256": "9f712ce7099771f5500dc5ccf9378c008ccc78f829711009de7f65035c2e170a"
+            },
+            "backends": {
+              "metal": {
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.1/yuey-v0.3.1-macos-universal.zip",
+                "sha256": "9f712ce7099771f5500dc5ccf9378c008ccc78f829711009de7f65035c2e170a"
+              }
+            },
+            "prefer": ["metal"]
+          },
           "windows-x64": {
             "core": {
               "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.1/yuey-v0.3.1-windows-x64-core.zip",

@@ -992,16 +992,16 @@ async fn ensure_runtime(
     Ok(())
 }
 
-/// Unpack core plus a backend into a fresh staging folder. The caller probes
-/// this candidate before replacing the installed runtime.
+/// Unpack the core and any separate backend into a fresh staging folder.
+/// The caller probes this candidate before replacing the installed runtime.
 async fn stage(
     core: &Path,
-    backend: &Path,
+    backend: Option<&Path>,
     stamp: &NativeStamp,
     native_dir: &Path,
 ) -> Result<PathBuf, String> {
     let core = core.to_path_buf();
-    let backend = backend.to_path_buf();
+    let backend = backend.map(Path::to_path_buf);
     let stamp = serde_json::to_string_pretty(stamp)
         .map_err(|error| format!("cannot write the runtime stamp: {error}"))?;
     let staging = native_dir.with_file_name(format!("{NATIVE_DIR}.staging"));
@@ -1013,7 +1013,9 @@ async fn stage(
         std::fs::create_dir_all(&staging)
             .map_err(|error| format!("cannot create {}: {error}", staging.display()))?;
         extract_zip(&core, &staging)?;
-        extract_zip(&backend, &staging)?;
+        if let Some(backend) = backend {
+            extract_zip(&backend, &staging)?;
+        }
         std::fs::write(staging.join(STAMP_FILE), stamp)
             .map_err(|error| format!("cannot write the runtime stamp: {error}"))?;
         Ok(staging)
@@ -1136,17 +1138,21 @@ async fn install_inner(
     for (index, choice) in candidates.iter().enumerate() {
         // resolve_backends only returns published backends.
         let package = &packages.backends[&choice.backend];
-        let source = package_source(package, None)?;
-        let backend_archive = fetch(
-            reporter,
-            &client,
-            &source,
-            &downloads,
-            2,
-            &format!("Downloading {}'s {} backend (engine-specific plugin)", info.service_id, choice.backend),
-            fetched,
-        )
-        .await?;
+        // The macOS universal archive already contains the Metal plugin.
+        let backend_archive = if package.url == packages.core.url && package.sha256 == packages.core.sha256 {
+            None
+        } else {
+            let source = package_source(package, None)?;
+            Some(fetch(
+                reporter,
+                &client,
+                &source,
+                &downloads,
+                2,
+                &format!("Downloading {}'s {} backend (engine-specific plugin)", info.service_id, choice.backend),
+                fetched,
+            ).await?)
+        };
         for name in &package.requires {
             let runtime = info.native_runtimes.get(name).ok_or_else(|| {
                 format!(
@@ -1180,7 +1186,7 @@ async fn install_inner(
             fallback_reason: (!failures.is_empty()).then(|| failures.join(" ")),
             runtimes,
         };
-        let staging = stage(&core, &backend_archive, &stamp, &info.env_dir).await?;
+        let staging = stage(&core, backend_archive.as_deref(), &stamp, &info.env_dir).await?;
         let exe = staging.join(gary4local_core::runtime::executable_name(&def.executable));
 
         reporter
@@ -1707,7 +1713,7 @@ mod tests {
                     fallback_reason: None,
                     runtimes: Vec::new(),
                 };
-                let staging = stage(&core, &backend, &stamp, &target).await.unwrap();
+                let staging = stage(&core, Some(&backend), &stamp, &target).await.unwrap();
                 assert_ne!(staging, target);
                 assert!(probe(&staging.join("broken.exe"), &[], None).await.is_err());
                 assert_eq!(

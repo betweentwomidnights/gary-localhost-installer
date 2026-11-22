@@ -22,6 +22,7 @@
     runtime: "python" | "native";
     native_backend: string | null;
     native_runtime_installed: boolean;
+    native_runtime_unavailable?: string | null;
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
@@ -160,7 +161,10 @@
     <div class="blocker">{activationOnStart} ready · Start completes model activation</div>
   {/if}
 
-  {#if service.start_blocker && (service.status === "stopped" || service.status === "failed")}
+  {#if service.native_runtime_unavailable}
+    <div class="blocker">{service.native_runtime_unavailable}</div>
+  {/if}
+  {#if service.start_blocker && !(service.native_runtime_unavailable && (isNative || fresh) && !service.native_runtime_installed) && (service.status === "stopped" || service.status === "failed")}
     <div class="blocker">{service.start_blocker}</div>
   {/if}
 
@@ -172,7 +176,7 @@
       <button onclick={(e) => { e.stopPropagation(); restartService(); }}>restart</button>
     {/if}
     {#if !(grouped && isNative) && !(service.python_retired && !isNative)}
-    <button class="accent" onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding}>
+    <button class="accent" onclick={(e) => { e.stopPropagation(); rebuildEnv(); }} disabled={isBuilding || (isNative && !!service.native_runtime_unavailable)}>
       {#if isBuilding}
         {isNative ? "installing..." : "building..."}
       {:else}
@@ -208,7 +212,7 @@
       </button>
     {/if}
     {#if hasMigration && !(fresh && service.native_runtime_installed)}
-      <button class="migration-btn" onclick={(e) => { e.stopPropagation(); onMigrateRuntime(); }} disabled={isBuilding}>
+      <button class="migration-btn" onclick={(e) => { e.stopPropagation(); onMigrateRuntime(); }} disabled={isBuilding || !!service.native_runtime_unavailable}>
         {service.python_retired && !isNative ? "set up runtime" : "migrate runtime"}
       </button>
     {/if}

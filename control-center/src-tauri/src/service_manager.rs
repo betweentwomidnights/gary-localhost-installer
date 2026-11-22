@@ -24,6 +24,8 @@ pub struct ServiceInfo {
     pub native_backend: Option<String>,
     /// The native candidate can be installed before models are selected.
     pub native_runtime_installed: bool,
+    /// Why this build has no installable native runtime for this platform.
+    pub native_runtime_unavailable: Option<String>,
     /// The installed native runtime is older than the one this build pins.
     pub native_update_available: bool,
     /// Why an automatic backend choice had to fall back, if it did.
@@ -833,6 +835,13 @@ impl ServiceManager {
                 let native_install = (svc.runtime == ServiceRuntime::Native || self.python_retired(svc))
                     .then(|| self.native_install(svc))
                     .flatten();
+                let native_runtime_unavailable = svc.native.as_ref()
+                    .filter(|native| !native.platforms.contains_key(native_runtime::current_platform()))
+                    .map(|_| {
+                        let platform = native_runtime::current_platform();
+                        let platform = if platform == "macos-arm64" { "Apple Silicon" } else { platform };
+                        format!("Runtime package pending for {platform}.")
+                    });
                 let env_exists = match svc.runtime {
                     ServiceRuntime::Python => self
                         .env_dir(svc)
@@ -841,7 +850,7 @@ impl ServiceManager {
                         .exists(),
                     ServiceRuntime::Native => native_install.is_some(),
                 };
-                let native_update_available = match (&native_install, &svc.native) {
+                let native_update_available = native_runtime_unavailable.is_none() && match (&native_install, &svc.native) {
                     (Some(install), Some(native)) => install
                         .version
                         .as_ref()
@@ -888,6 +897,7 @@ impl ServiceManager {
                         .as_ref()
                         .map(|install| install.backend.clone()),
                     native_runtime_installed: native_install.is_some(),
+                    native_runtime_unavailable,
                     native_update_available,
                     native_fallback_reason: native_install
                         .and_then(|install| install.fallback_reason),
@@ -1467,6 +1477,7 @@ impl ServiceManager {
         let mut outdated = Vec::new();
         for svc in &self.services {
             let Some(native) = svc.native.as_ref() else { continue };
+            if !native.platforms.contains_key(native_runtime::current_platform()) { continue; }
             if svc.runtime != ServiceRuntime::Native && !self.python_retired(svc) { continue; }
             let dir = self.native_dir(svc);
             if seen.contains(&dir) { continue; }
@@ -2357,7 +2368,14 @@ mod tests {
         for service in manager.services.iter_mut().filter(|service| ["gary", "melodyflow"].contains(&service.id.as_str())) {
             service.runtime = ServiceRuntime::Native;
         }
-        assert_eq!(manager.outdated_native_runtimes(), ["gary", "stable-audio", "carey", "yuey"]);
+        let mac = native_runtime::current_platform() == "macos-arm64";
+        let expected = |ids: &[&str]| ids.iter()
+            .filter(|&&id| id != "carey" || !mac)
+            .map(|id| (*id).to_string())
+            .collect::<Vec<_>>();
+        let carey = manager.get_service_info().into_iter().find(|info| info.id == "carey").unwrap();
+        assert_eq!(carey.native_runtime_unavailable.is_some(), mac);
+        assert_eq!(manager.outdated_native_runtimes(), expected(&["gary", "stable-audio", "carey", "yuey"]));
 
         let svc = manager.find_service("gary").unwrap();
         let native = svc.native.clone().unwrap();
@@ -2375,9 +2393,9 @@ mod tests {
             runtimes: vec![],
         };
         std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp(&native.version)).unwrap()).unwrap();
-        assert_eq!(manager.outdated_native_runtimes(), ["stable-audio", "carey", "yuey"]);
+        assert_eq!(manager.outdated_native_runtimes(), expected(&["stable-audio", "carey", "yuey"]));
         std::fs::write(native_dir.join("gary-native.json"), serde_json::to_vec(&stamp("v0.0.1")).unwrap()).unwrap();
-        assert_eq!(manager.outdated_native_runtimes(), ["gary", "stable-audio", "carey", "yuey"]);
+        assert_eq!(manager.outdated_native_runtimes(), expected(&["gary", "stable-audio", "carey", "yuey"]));
         let svc = manager.find_service("stable-audio").unwrap();
         let native = svc.native.as_ref().unwrap();
         let dir = manager.native_dir(svc);
@@ -2392,7 +2410,7 @@ mod tests {
             assert!(!info.migration_complete && manager.selection(id).is_none());
             assert!(!manager.is_native(id), "model activation is still a separate choice");
         }
-        assert_eq!(manager.outdated_native_runtimes(), ["gary", "carey", "yuey"]);
+        assert_eq!(manager.outdated_native_runtimes(), expected(&["gary", "carey", "yuey"]));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2458,6 +2476,7 @@ mod tests {
         let native = svc.native.as_ref().unwrap().clone();
         let directory = manager.native_dir(svc);
         let packages = &native.platforms[native_runtime::current_platform()];
+        let backend = &packages.prefer[0];
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(
             directory.join(gary4local_core::runtime::executable_name(
@@ -2469,12 +2488,12 @@ mod tests {
         let mut stamp = native_runtime::NativeStamp {
             version: native.version.clone(),
             platform: native_runtime::current_platform().into(),
-            backend: "vulkan".into(),
-            requested_backend: "vulkan".into(),
+            backend: backend.clone(),
+            requested_backend: backend.clone(),
             fallback_reason: None,
             runtimes: vec![],
             core_sha256: Some(packages.core.sha256.clone()),
-            backend_sha256: Some(packages.backends["vulkan"].sha256.clone()),
+            backend_sha256: Some(packages.backends[backend].sha256.clone()),
         };
         let write = |stamp: &native_runtime::NativeStamp| {
             std::fs::write(
