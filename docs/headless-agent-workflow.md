@@ -95,9 +95,10 @@ gary4local-server stop --config /absolute/path/to/sa3.json \
 ```
 
 Use the shared public HTTP adapter for generation and polling. Both its client
-listener and the private native server bind to 127.0.0.1. Forward only the client
-port over SSH for remote access. No LAN listener or authentication service is
-introduced. `status.data.state.session` identifies the current owned host and
+listener and the private native server bind to 127.0.0.1. For remote access,
+forward only the client port, over SSH or with `tailscale serve --tcp` (see
+[using Gary from another computer](https://github.com/betweentwomidnights/gary-localhost-installer/blob/main/control-center/runtime-core/README.md#using-gary-from-another-computer)).
+No LAN listener or authentication service is introduced yet. `status.data.state.session` identifies the current owned host and
 `status.data.health` contains its health response. Do not treat stale PID data
 as authority. Stop never signals an arbitrary PID from a state file.
 

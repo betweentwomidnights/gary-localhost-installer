@@ -71,8 +71,77 @@ you can name it or use the arrow-key picker. Enter selects; Esc goes back.
 while using the services it started.
 
 the client ports match desktop gary4local, including SA3 on port 8006 and carey
-on port 8003. for a DAW on another machine, use SSH port forwarding for now;
-the services listen on loopback.
+on port 8003. the services listen on loopback, so only this machine can reach
+them. for a DAW on another computer, see
+[using Gary from another computer](#using-gary-from-another-computer).
+
+## using Gary from another computer
+
+a lot of people running headless Gary will have their DAW on a different
+machine. the services only listen on loopback, so something has to bridge the
+two. right now the easiest bridge is [Tailscale](https://tailscale.com).
+
+put both machines on the same tailnet. then, on the machine running Gary,
+forward the port of each service you've started:
+
+```sh
+for p in 8003 8006 8007 8015; do
+  sudo tailscale serve --bg --tcp $p tcp://127.0.0.1:$p
+done
+```
+
+that example covers carey, SA3, yuey and foundation. swap in the ports for
+whatever you're running:
+
+| service | port |
+| --- | --- |
+| `gary` | 8000 |
+| `melodyflow` | 8002 |
+| `carey` | 8003 |
+| `stable-audio` | 8005 |
+| `sa3` | 8006 |
+| `yuey` | 8007 |
+| `foundation` | 8015 |
+
+`tailscale serve status` should list each forward as `(tailnet only)`.
+nothing gets exposed to the public internet; the ports are only reachable
+from your tailnet.
+
+then in gary4juce, open gary settings, choose `gary4local host...`, enter the
+Gary machine's tailnet name or IP, and switch the backend to local. services
+you haven't started just show as offline. the host setting needs a gary4juce
+build newer than v5.0.6.
+
+i've tested this with headless Gary on a DGX Spark and gary4juce on a Windows
+PC. health checks came back in about 15-30 ms over the tailnet.
+
+`--bg` keeps the forwards running, across reboots too, until you remove them:
+
+```sh
+sudo tailscale serve reset
+```
+
+`reset` clears every serve config on the machine, not just Gary's. if you use
+`tailscale serve` for anything else, check `tailscale serve status` first.
+
+### without Tailscale
+
+SSH forwarding still works. forward each port to the same port on the DAW
+machine and leave gary4juce's host empty, so it keeps using this computer:
+
+```sh
+ssh -N -L 8006:127.0.0.1:8006 -L 8003:127.0.0.1:8003 you@gary-machine
+```
+
+add one `-L` per service. stop any gary4local services on the DAW machine that
+use those ports first.
+
+### what's next
+
+we're going to explore a listener built into gary4local next: an opt-in setting
+that opens the client ports to your local network, with a pairing token so a
+random device on the same wifi can't use your GPU. until that exists, Tailscale
+or SSH keeps the services off the open network.
 
 ## choosing models
 
