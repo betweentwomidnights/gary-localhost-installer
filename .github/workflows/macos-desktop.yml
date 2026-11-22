@@ -52,24 +52,6 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: control-center/package-lock.json
-      - name: Toolchain and frontend
-        working-directory: control-center
-        run: |
-          rustup toolchain install 1.95.0 --profile minimal
-          rustup default 1.95.0
-          rustup target add aarch64-apple-darwin
-          npm ci
-          npm run check
-          npm run test:precision
-      - name: Check the desktop and platform boundaries
-        run: |
-          cargo check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
-          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
-          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib update::tests::
-          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
-          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib shared_lora_tests
-          cargo test --locked --manifest-path control-center/runtime-core/Cargo.toml --lib storage_paths::
-          cargo test --locked --manifest-path control-center/runtime-core/Cargo.toml --lib metal_registry_alias
       # PR jobs never receive signing credentials. Maintainer previews and releases
       # fail if signing credentials are missing; they cannot fall back to ad-hoc.
       - name: Import the Developer ID certificate
@@ -101,12 +83,36 @@ jobs:
           identity="$(security find-identity -v -p codesigning "$keychain" | grep 'Developer ID Application' | grep "($APPLE_TEAM_ID)" | head -1 | awk '{print $2}')"
           [ -n "$identity" ] || { echo 'No Developer ID Application identity for the configured team'; exit 1; }
           printf '%s' "$APPLE_NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/gary4local-notary.p8"
+          openssl pkey -in "$RUNNER_TEMP/gary4local-notary.p8" -noout
+          # Validate the matching key/ID/issuer before spending time compiling.
+          if ! xcrun notarytool history --key "$RUNNER_TEMP/gary4local-notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" --output-format json > /dev/null; then
+            echo '::error::Notary authentication failed. Check the matching APPLE_NOTARY_KEY_P8, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID secrets.'
+            exit 1
+          fi
           {
             echo "APPLE_SIGNING_IDENTITY=$identity"
             echo "APPLE_API_KEY=$APPLE_NOTARY_KEY_ID"
             echo "APPLE_API_ISSUER=$APPLE_NOTARY_ISSUER_ID"
             echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/gary4local-notary.p8"
           } >> "$GITHUB_ENV"
+      - name: Toolchain and frontend
+        working-directory: control-center
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          rustup target add aarch64-apple-darwin
+          npm ci
+          npm run check
+          npm run test:precision
+      - name: Check the desktop and platform boundaries
+        run: |
+          cargo check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib update::tests::
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib shared_lora_tests
+          cargo test --locked --manifest-path control-center/runtime-core/Cargo.toml --lib storage_paths::
+          cargo test --locked --manifest-path control-center/runtime-core/Cargo.toml --lib metal_registry_alias
       - name: Build the app and disk image
         working-directory: control-center
         run: npm run tauri -- build --ci --target aarch64-apple-darwin --config src-tauri/tauri.macos.conf.json

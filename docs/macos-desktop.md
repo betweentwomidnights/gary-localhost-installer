@@ -41,6 +41,8 @@ The repository uses the same six Actions secrets as the upstream runtime repos:
 - `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`: API key identifiers
 
 CI imports these into a temporary keychain and removes them after the build.
+It checks notarization authentication before compiling. An HTTP 401 here means
+the notary key, key ID and issuer must be checked together in Actions secrets.
 The M4 does not need the certificate, private keys or manual codesigning.
 The [Tauri signing guide](https://v2.tauri.app/distribute/sign/macos/) describes
 the Developer ID and API key setup.
