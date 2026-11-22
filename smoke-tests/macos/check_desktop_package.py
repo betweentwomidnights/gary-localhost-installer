@@ -21,6 +21,9 @@ def main():
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     assert info["CFBundleIdentifier"] == "com.betweentwomidnights.gary4local", info
     assert info["CFBundleShortVersionString"] == version, info
+    icon = app / "Contents/Resources" / info["CFBundleIconFile"]
+    expected_icon = TAURI / "icons/icon.icns"
+    assert icon.read_bytes() == expected_icon.read_bytes(), f"Unexpected Dock icon: {icon}"
     binary = app / "Contents/MacOS" / info["CFBundleExecutable"]
     assert run("lipo", "-archs", str(binary)).split() == ["arm64"]
     dependencies = run("otool", "-L", str(binary))
