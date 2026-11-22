@@ -1214,10 +1214,14 @@ mod bundle_root_tests {
         std::fs::write(installed.join("stale.txt"), "from an older bundle").unwrap();
         std::fs::create_dir_all(installed.join(".venv/Scripts")).unwrap();
         std::fs::write(installed.join(".venv/Scripts/python.exe"), b"alternate Python environment").unwrap();
+        let shared_runtime = runtime.join("services/audiocraft/native");
+        std::fs::create_dir_all(&shared_runtime).unwrap();
+        std::fs::write(shared_runtime.join("musicgen-server.exe"), b"shared exe").unwrap();
 
         super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
 
         assert!(installed.join("native").join("yue2-server.exe").is_file());
+        assert!(shared_runtime.join("musicgen-server.exe").is_file());
         assert!(installed.join("README.md").is_file());
         assert_eq!(std::fs::read(installed.join(".venv/Scripts/python.exe")).unwrap(), b"alternate Python environment");
         assert!(!installed.join("stale.txt").exists());
@@ -1438,13 +1442,15 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
         })
         .collect();
 
+    let native_bundles = &manifest::bundled().native_bundles;
     for existing in read_dir_sorted(&runtime_services)? {
         let name = existing
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if !bundle_names.contains(&name) && !retired.contains(&name) {
+        // A shared install can have a runtime directory with no bundled source.
+        if !bundle_names.contains(&name) && !retired.contains(&name) && !native_bundles.contains_key(&name) {
             remove_path(&existing)?;
         }
     }
