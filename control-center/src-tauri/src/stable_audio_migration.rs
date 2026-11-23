@@ -7,6 +7,11 @@
 use crate::migration::{Proof, Run, Selection, Service, Target};
 use crate::migration_inventory::Extras;
 use std::path::Path;
+use std::time::{Duration, Instant};
+
+const AUDIO_CHECK_TIMEOUT: Duration = Duration::from_secs(300);
+const COLD_METAL_CHECK_TIMEOUT: Duration = Duration::from_secs(600);
+const METAL_PROGRESS_INTERVAL: Duration = Duration::from_secs(15);
 
 fn stable_audio() -> &'static crate::manifest::ServiceDef {
     crate::manifest::bundled()
@@ -152,14 +157,30 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
         body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
         body
     };
-    (run.progress)("Testing native generation...");
-    let (generated, _) = run_sync_audio(
-        &server,
-        "/generate",
-        &with(json!({"prompt": "warm synth pad 120bpm", "seconds_total": 4})),
-        "jerry generation",
-    )
-    .await?;
+    let metal = run.installed.backend.eq_ignore_ascii_case("metal");
+    let (message, timeout) = if metal {
+        (
+            "Testing native generation on Metal. Shader compilation can take several minutes.",
+            COLD_METAL_CHECK_TIMEOUT,
+        )
+    } else {
+        ("Testing native generation...", AUDIO_CHECK_TIMEOUT)
+    };
+    (run.progress)(message);
+    let (generated, _) = {
+        let body = with(json!({"prompt": "warm synth pad 120bpm", "seconds_total": 4}));
+        let generation = run_sync_audio(&server, "/generate", &body, "jerry generation", timeout);
+        tokio::pin!(generation);
+        let started = Instant::now();
+        loop {
+            tokio::select! {
+                result = &mut generation => break result?,
+                () = tokio::time::sleep(METAL_PROGRESS_INTERVAL), if metal => {
+                    (run.progress)(&format!("{message} {}s elapsed.", started.elapsed().as_secs()));
+                }
+            }
+        }
+    };
     check_wav(&generated, 4 * 44_100, "jerry generation")?;
 
     (run.progress)("Testing a smart loop...");
@@ -168,6 +189,7 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
         "/generate/loop",
         &with(json!({"prompt": "funk drum loop 120bpm", "loop_type": "drums"})),
         "jerry loop",
+        AUDIO_CHECK_TIMEOUT,
     )
     .await?;
     // Four bars at 120 BPM: the longest loop that leaves a second of the canvas spare.
@@ -197,6 +219,7 @@ async fn verify_native(run: Run<'_>) -> Result<Selection, String> {
                 "sampler_type": "euler", "steps": 8, "cfg_scale": 4.0,
             })),
             &what,
+            AUDIO_CHECK_TIMEOUT,
         )
         .await?;
         check_wav(&audio, 4 * 44_100, &what)?;

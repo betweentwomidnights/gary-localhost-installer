@@ -39,6 +39,16 @@ test('pending activation prevents duplicate starts and failures remain visible',
   await expect(page.getByRole('button', { name: 'stop', exact: true })).toHaveCount(0);
 });
 
+test('Jerry shows the active Metal check instead of a generic wait message', async ({ page }) => {
+  await page.goto('/tests/ui/?service=stable-audio&fresh&row&hold&slow-metal-start');
+  await page.getByRole('button', { name: 'start', exact: true }).click();
+  const row = page.locator('.service-row');
+  await expect(row.getByRole('status')).toContainText('Shader compilation can take several minutes. 15s elapsed.');
+  await expect(row).not.toContainText('is waiting for jerry model and runtime checks');
+  await page.evaluate(() => window.finishStart());
+  await expect(row.getByRole('button', { name: 'stop', exact: true })).toBeVisible();
+});
+
 test('an existing Python environment keeps its usual Start action', async ({ page }) => {
   await page.goto('/tests/ui/?service=sa3&legacy&row');
   await expect(page.getByRole('button', { name: 'start', exact: true })).toBeEnabled();

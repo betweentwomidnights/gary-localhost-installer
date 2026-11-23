@@ -149,7 +149,7 @@
       <div class="progress-bar">
         <div class="progress-fill" style="width: {buildProgress}%"></div>
       </div>
-      <span class="build-label">{service.build_status?.step_label}</span>
+      <span class="build-label" role="status">{service.build_status?.step_label}</span>
     </div>
   {:else if service.build_status?.error}
     <div class="error">{isNative || fresh ? "runtime setup failed" : "build failed"}: {service.build_status.error}</div>
@@ -164,7 +164,7 @@
   {#if service.native_runtime_unavailable}
     <div class="blocker">{service.native_runtime_unavailable}</div>
   {/if}
-  {#if service.start_blocker && !(service.native_runtime_unavailable && (isNative || fresh) && !service.native_runtime_installed) && (service.status === "stopped" || service.status === "failed")}
+  {#if !isBuilding && service.start_blocker && !(service.native_runtime_unavailable && (isNative || fresh) && !service.native_runtime_installed) && (service.status === "stopped" || service.status === "failed")}
     <div class="blocker">{service.start_blocker}</div>
   {/if}
 
