@@ -402,7 +402,11 @@ built from shared pieces: `NativeLaunch` for the exact process the service
 will run, and `migration_verify::PrivateServer`, which starts it on a private
 port, waits for `/health` with every required capability, and kills it when
 dropped. sa3 adds its offline probes, model hashes, adapter checks, a
-generation smoke test and a two-step training run on top. a service with a block and no implementation still gets the shared
+generation smoke test and a two-step training run on top. the proof only
+runs for a real migration, while a Python environment or legacy weights are on
+disk (`migration::proof_needed`). a fresh install has nothing to fall back to,
+so it records an unproved selection and starts; its downloads were already
+hash-checked, and the runtime releases' CI runs the functional checks. a service with a block and no implementation still gets the shared
 inventory and cleanup; `sa3_migration::Sa3` is the reference.
 
 ## macOS packages

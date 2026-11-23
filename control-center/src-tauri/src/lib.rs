@@ -5877,8 +5877,9 @@ async fn start_service(
 }
 
 /// A fresh native install with one complete model choice needs no separate
-/// Use click. Reuse the explicit activation's verification and workload guards;
-/// failure returns before a public service is launched. Never remove user data.
+/// Use click. Reuse the explicit activation's workload guards, and its proof
+/// when there is Python to migrate from; failure returns before a public
+/// service is launched. Never remove user data.
 async fn start_service_ready(service_id: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     let manager = app_handle.state::<ManagerState>();
     let (encoding, native) = {
@@ -10314,8 +10315,9 @@ async fn select_native_model(
     Ok(selection)
 }
 
-/// Prove the native runtime privately, then switch the service to it. No
-/// Python environment, original model or user file changes here.
+/// Switch the service to its native runtime, proving the runtime privately
+/// first when a Python installation is there to migrate from. No Python
+/// environment, original model or user file changes here.
 #[tauri::command]
 async fn activate_native_runtime(
     service_id: String,
@@ -10351,16 +10353,26 @@ async fn activate_native_runtime(
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     let progress = |message: &str| migration_progress(&app_handle, &service_id, message);
-    let checked = service
-        .verify(migration::Run {
-            root: repo_root.inner(),
-            native: &native,
-            installed: &installed,
-            launch: &launch,
-            encoding: &encoding,
-            progress: &progress,
-        })
-        .await;
+    let hub = storage::effective_hf_hub_cache_dir(repo_root.inner());
+    let proved = migration::proof_needed(service.target(), repo_root.inner(), &hub);
+    let checked = if proved {
+        service
+            .verify(migration::Run {
+                root: repo_root.inner(),
+                native: &native,
+                installed: &installed,
+                launch: &launch,
+                encoding: &encoding,
+                progress: &progress,
+            })
+            .await
+    } else {
+        // Nothing to migrate from: only confirm the tier's models are on disk.
+        match service.native_start_blocker_for_encoding(repo_root.inner(), Some(&encoding)) {
+            Some(blocker) => Err(format!("{label} {blocker}")),
+            None => Ok(migration::Selection::unproved(&installed, &encoding)),
+        }
+    };
     let result = {
         let mut services = manager.lock().await;
         let result = checked.and_then(|selection| services.activate_native(&service_id, selection));
@@ -10372,8 +10384,12 @@ async fn activate_native_runtime(
         repo_root.inner(),
         &native_backend_key(&service_id),
         &match &result {
-            Ok(selection) => format!(
+            Ok(selection) if proved => format!(
                 "{label} switched to C++: {} on {}, checked with {}",
+                selection.encoding, selection.backend, selection.verified_release
+            ),
+            Ok(selection) => format!(
+                "{label} set up on C++: {} on {} with {}",
                 selection.encoding, selection.backend, selection.verified_release
             ),
             Err(error) => format!("{label}'s switch to C++ failed: {error}"),
@@ -10433,29 +10449,35 @@ async fn cleanup_legacy_installation(
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     let progress = |message: &str| migration_progress(&app_handle, &service_id, message);
-    let verified = service
-        .reverify(
-            migration::Run {
-                root: repo_root.inner(),
-                native: &native,
-                installed: &installed,
-                launch: &launch,
-                encoding: &selection.encoding,
-                progress: &progress,
-            },
-            &selection,
-        )
-        .await
-        .and_then(|fingerprint| match fingerprint {
-            // Record what was proved, so a retry after a locked file skips it.
-            Some(fingerprint) => {
-                let mut current = migration::read(repo_root.inner(), def, check)?
-                    .ok_or_else(|| format!("Native {label} selection is missing"))?;
-                current.runtime_fingerprint = Some(fingerprint);
-                migration::save(repo_root.inner(), def, &current, check)
-            }
-            None => Ok(()),
-        });
+    // With no Python environment or legacy weights, cleanup removes only bundled
+    // source, which is no way back to Python, so there is nothing to prove first.
+    let verified = if !migration::proof_needed(service.target(), repo_root.inner(), &hub) {
+        Ok(())
+    } else {
+        service
+            .reverify(
+                migration::Run {
+                    root: repo_root.inner(),
+                    native: &native,
+                    installed: &installed,
+                    launch: &launch,
+                    encoding: &selection.encoding,
+                    progress: &progress,
+                },
+                &selection,
+            )
+            .await
+            .and_then(|fingerprint| match fingerprint {
+                // Record what was proved, so a retry after a locked file skips it.
+                Some(fingerprint) => {
+                    let mut current = migration::read(repo_root.inner(), def, check)?
+                        .ok_or_else(|| format!("Native {label} selection is missing"))?;
+                    current.runtime_fingerprint = Some(fingerprint);
+                    migration::save(repo_root.inner(), def, &current, check)
+                }
+                None => Ok(()),
+            })
+    };
     let result = match verified {
         Err(error) => Err(error),
         Ok(()) => {
