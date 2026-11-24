@@ -1,11 +1,11 @@
 {
-    "version":  "0.7.5",
-    "notes":  "Linux-focused release. Windows desktop users can skip this update.\nLinux headless downloads add the gary console for services, models and SA3/Carey LoRA training.\nWindows generation and runtime versions are unchanged from v0.7.4. Compatible with gary4juce v5.0.5.",
-    "pub_date":  "2026-11-22T03:02:02.0000000+00:00",
+    "version":  "0.7.6",
+    "notes":  "gary4local now also runs on Apple Silicon Macs.\nStart launches a fresh native setup right away, without test generations first.\nApp updates keep the shared audiocraft and sa3 runtimes. Each engine shows update runtime for its new version.\nJerry decodes only the audio you asked for, with the same output. Compatible with gary4juce v5.0.7.",
+    "pub_date":  "2026-11-24T14:57:45.0000000+00:00",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEdWUmdkdGM4ODZqT2VPWlJFL0xwd0ZpbVo5TDl6eTdHTTNZZFpPNWh5bzlOalQ3WUUxZDA3NnB3Y0ZDd2VyMG82UmFUcGhRUnpvQXZkTnRVUG8vZmdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1MzE1OTAzCWZpbGU6Z2FyeTRsb2NhbF8wLjcuNV94NjQtc2V0dXAuZXhlCksxV1dPdysrR2I1Q243UjhubG1IYS9UMFUwYk01Umc4NUhaNDNpSnNKWWhNSHBOYnd5NDl0ajFMc0lzUk5CVWFYU1hXeG4yVkpyMjQ3NUZpSXNVT0NBPT0K",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.5/gary4local_0.7.5_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDME9lYWdvM1gwZDBnVU9PS0Zwa2NNV203UFJJSS9FOGU0eDJZZVpNRUtZeHN1NGhWcHhzNUJIVUYwMlNtQlppQ2IvR3ZSS3ArSy9qOVZQeVZhZ0phY2dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTMxMTQ2CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNl94NjQtc2V0dXAuZXhlCjU1Vjc1ejdBbEQyYmZOS0JYenhvczN1OW0zcFo4R0c1VTJRVDdIeUJCTXVuOFFBbnJOYXZZNWVwd2dOcHllWmNCYmx4STZtOVBsaEM1MFhwVGtpaEN3PT0K",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_x64-setup.exe"
                                          }
                   }
 }

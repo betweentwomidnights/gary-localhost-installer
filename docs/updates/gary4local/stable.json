@@ -1,12 +1,13 @@
 {
     "channel":  "stable",
-    "latest_version":  "0.7.5",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.5/gary4local_0.7.5_x64-setup.exe",
-    "sha256":  "e0dfc3eeb7d05d3369546d562ca52850f381816626dd11d591018dd012635839",
-    "published_at":  "2026-11-22T03:02:02.0000000+00:00",
+    "latest_version":  "0.7.6",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_x64-setup.exe",
+    "sha256":  "7738c1f0b26c98afa9ae865fba69bb5179973fcd39ec62900c60c201019414f0",
+    "published_at":  "2026-11-24T14:57:45.0000000+00:00",
     "notes":  [
-                  "Linux-focused release. Windows desktop users can skip this update.",
-                  "Linux headless downloads add the gary console for services, models and SA3/Carey LoRA training.",
-                  "Windows generation and runtime versions are unchanged from v0.7.4. Compatible with gary4juce v5.0.5."
+                  "gary4local now also runs on Apple Silicon Macs.",
+                  "Start launches a fresh native setup right away, without test generations first.",
+                  "App updates keep the shared audiocraft and sa3 runtimes. Each engine shows update runtime for its new version.",
+                  "Jerry decodes only the audio you asked for, with the same output. Compatible with gary4juce v5.0.7."
               ]
 }
