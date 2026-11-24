@@ -1,42 +1,40 @@
 # gary4local
 
 this is a control center for running 7 music models directly on your
-computer, on Windows and Linux.
+computer, on Windows, macOS (Apple Silicon) and Linux.
 
 use it with [gary4juce](https://github.com/betweentwomidnights/gary4juce)
 to run the models inside your DAW, or from the standalone app.
 
-find the macOS version here:
-[gary-localhost-installer-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac).
-
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/21 - v0.7.5
+## update 11/23 - v0.7.6
 
-[download gary4local v0.7.5](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.5).
+[download gary4local v0.7.6](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.6).
 
-this is a Linux-focused release. Windows desktop users can skip this one;
-generation and native runtime versions are unchanged from v0.7.4.
+gary4local runs on Apple Silicon Macs now. it's the same app as on Windows and
+Linux, and it replaces
+[gary-localhost-installer-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac)
+and its Python services. it needs an M-series Mac on macOS 13.3 or newer, and
+the disk image is signed and notarized. every service runs on the C++ runtimes
+with Metal, and the runtimes ship precompiled shaders, so a service doesn't
+compile them every time it starts. there's no migration from gary4local-mac,
+so models download again. the Mac app doesn't update itself yet: grab new
+versions from the releases page. more in [docs/macos-desktop.md](docs/macos-desktop.md).
 
-the Linux headless console is here. install the `gary` command and manage all
-seven GPU services from the terminal: runtime and model downloads, precision
-pickers, start/stop, logs, and LoRA import and training for SA3 and carey.
-headless archives are available for x64 PCs and arm64 (DGX Spark). installation
-and first-run steps are in the [headless guide](control-center/runtime-core/README.md).
+on every platform, pressing `start` on a fresh native setup launches the
+service right away instead of running test generations first. migrating an
+existing Python installation still runs them. app updates also no longer
+delete the shared audiocraft and sa3 runtime folders.
 
-desktop and headless can share the same SA3/carey LoRA library, including
-training checkpoints and dice prompts. existing experimental profiles opt in
-with `share-loras`; their original files are preserved. Linux uses Vulkan and
-still listens on loopback, so a DAW on another machine needs SSH port forwarding
-for now. Windows generation and the native runtime pins are unchanged.
+jerry decodes only the audio you asked for (sa3.cpp v0.2.5), with the same
+output. the other runtime updates only change macOS.
 
-the Linux desktop `.deb`s remain available for amd64 and arm64 on Ubuntu 24.04.
-see [docs/linux-desktop.md](docs/linux-desktop.md). macOS/Metal support is next.
-
-pair it with [gary4juce v5.0.5](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5),
-or [v5.0.5-linux-preview.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.5-linux-preview.1)
-on Linux. older release notes live in [CHANGELOG.md](CHANGELOG.md).
+pair it with [gary4juce v5.0.7](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.7),
+or [v5.0.7-linux-preview.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.7-linux-preview.1)
+on Linux. on macOS, use v5.0.7 or newer. older release notes live in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## update 8/23
 
@@ -53,7 +51,7 @@ build while we tried very hard to break it locally.
 - [x] replace carey with [acestep.cpp](https://github.com/betweentwomidnights/acestep.cpp), including the LoRA workflow
 - [x] replace melodyflow and musicgen with [audiocraft.cpp](https://github.com/betweentwomidnights/audiocraft.cpp) (LoRA training? might actually be doable)
 - [ ] dig into a LoRA training UI for YuE2
-- [ ] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac) once the native migration is ready
+- [x] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac)
 - [x] produce a Linux build (Vulkan, amd64 and arm64)
 - [ ] launch the web UIs for sa3.cpp, acestep.cpp and yuey.cpp directly from gary4local
 - [ ] an opt-in network listener with a pairing token, so gary4juce on another computer can reach headless Gary without Tailscale or SSH ([current workaround](control-center/runtime-core/README.md#using-gary-from-another-computer))

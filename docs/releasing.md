@@ -51,8 +51,8 @@ version it can't install.
 ## per release
 
 macOS Developer ID signing and notarization run in GitHub CI using the upstream
-Apple signing secrets. See [macOS desktop preview](macos-desktop.md) for the
-local M4 validation and CI artifact steps. This does not use the updater key.
+Apple signing secrets. See [macOS desktop](macos-desktop.md) for the local M4
+validation and CI artifact steps. This does not use the updater key.
 
 ### 1. bump the version
 
@@ -187,6 +187,14 @@ meant it to:
 ```powershell
 git ls-remote --tags origin v<version>   # must equal the release commit
 ```
+
+publishing also starts the `macOS desktop preview` workflow on the tag. it
+refuses a tag that doesn't match `package.json`, then builds, signs and
+notarizes the Mac app and attaches `gary4local_<version>_aarch64.dmg`,
+`gary4local_<version>_macos-arm64.app.zip`, `SHA256SUMS-macos-arm64` and
+`BUILD-INFO-macos-arm64.json` to the release about 15 minutes later. check
+that run went green and the four assets are there before announcing the Mac
+build. there's no Mac update feed yet, so step 6 has nothing to do for macOS.
 
 it helps to keep a per-release folder, `artifacts\release-v<version>\`
 (untracked), with the three sets of notes and a publish script that checks all

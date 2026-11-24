@@ -1,19 +1,17 @@
-# macOS desktop preview
+# macOS desktop
 
-The first preview targets Apple Silicon on macOS 13.3 or newer. Validate it on
-the M4 before sharing a build. Intel Macs and macOS headless mode are not yet
-validated.
+gary4local ships for Apple Silicon on macOS 13.3 or newer, starting with v0.7.6.
+Validate each release on the M4 before sharing it. Intel Macs and macOS headless
+mode are not yet validated.
 
 ## Build locally
 
 Install Xcode Command Line Tools (`xcode-select --install`), Rust and Node.js 24,
-then build from the source branch:
+then build from `main`:
 
 ```sh
 git clone https://github.com/betweentwomidnights/gary-localhost-installer.git
-cd gary-localhost-installer
-git switch feature/macos-native-desktop
-cd control-center
+cd gary-localhost-installer/control-center
 npm ci
 VITE_ENABLE_APP_UPDATER=0 npm run tauri -- build --target aarch64-apple-darwin
 ```
@@ -26,8 +24,8 @@ Runtime storage defaults to
 ## Signed builds in GitHub
 
 The **macOS desktop preview** workflow builds the app and disk image on GitHub's
-Apple Silicon runner. PR builds use ad-hoc signing. Pushes to the preview branch
-and manual runs with **sign** enabled use Developer ID signing and notarization.
+Apple Silicon runner. PR builds use ad-hoc signing. Releases and manual runs
+with **sign** enabled use Developer ID signing and notarization.
 Download `gary4local-desktop-macos-arm64` from the completed run. CI verifies
 the app signature, Gatekeeper assessment and stapled notarization tickets for
 both the app and disk image.
@@ -47,11 +45,11 @@ The M4 does not need the certificate, private keys or manual codesigning.
 The [Tauri signing guide](https://v2.tauri.app/distribute/sign/macos/) describes
 the Developer ID and API key setup.
 
-After this workflow is merged, publishing a matching `v<app-version>` GitHub
-release automatically builds, signs, notarizes and attaches the Mac assets.
-Manual preview runs only retain Actions artifacts. Mac in-app updates remain
-disabled until their feeds and updater signatures are prepared; Apple's signing
-credentials are separate from the existing updater key.
+Publishing a matching `v<app-version>` GitHub release automatically builds,
+signs, notarizes and attaches the Mac assets. Manual runs only retain Actions
+artifacts. Mac in-app updates remain disabled until their feeds and updater
+signatures are prepared; Apple's signing credentials are separate from the
+existing updater key.
 
 ## M4 check before sharing
 

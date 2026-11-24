@@ -4,6 +4,66 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.6 - 2026-11-23
+
+gary4local runs on Apple Silicon Macs. it's the same app as on Windows and
+Linux, with the same name and identity, and it replaces
+[gary-localhost-installer-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac)
+and its Python services. it needs an M-series Mac on macOS 13.3 or newer. the
+disk image is signed with our Developer ID and notarized by Apple, so it opens
+from Applications without a Gatekeeper warning. Intel Macs and the headless
+console on macOS haven't been validated.
+
+every service runs on the C++ runtimes with Metal: gary and melodyflow from
+audiocraft.cpp, jerry, SA3 and foundation-1 from sa3.cpp, carey from
+acestep.cpp, and yuey from yuey.cpp. `set up all runtimes` installs the
+published Metal packages, and models download from each service's Models panel,
+the same as on Windows. there's no migration from gary4local-mac: the C++
+runtimes use their own model files, so models download again.
+
+the Metal runtimes ship precompiled shader libraries. before, the Metal backend
+embedded its shader source and compiled it again every time a service started,
+and on an M4 MacBook Air that compile was most of a cold start. each package
+now carries `default.metallib`, a BF16 variant for macOS 14 and newer, and the
+tensor library for newer GPUs, and loads them from beside the backend.
+
+the Mac app doesn't update itself yet, and it won't tell you about a new
+version. until the Mac update feed is ready, new versions come as a new disk
+image from the releases page.
+
+pressing `start` on a fresh native setup launches the service right away, on
+every platform. before, start ran a private test server first: it rehashed the
+model files and ran test generations, which for carey meant a generation, a
+continuation and a lego stem before it would accept a single request. that was
+tolerable on NVIDIA and painfully slow on a MacBook Air. downloads are already
+hash-checked as they arrive and the runtimes are tested in CI, so a fresh
+install doesn't need it. migrating an existing Python installation still proves
+the C++ runtime with test generations before switching, because that's when the
+old installation gets cleaned up.
+
+app updates no longer delete the shared runtime folders. gary and melodyflow
+share the audiocraft runtime, and jerry, SA3 and foundation-1 share the sa3
+runtime. the first launch after an update could remove those folders, and the
+services would need their runtime set up again.
+
+the runtime pins move to sa3.cpp v0.2.5, audiocraft.cpp v0.1.5, yuey.cpp
+v0.3.2 and acestep.cpp v0.1.6. on Windows and Linux the only behavior change is
+jerry's: the decoder now works on just the latent frames the requested audio
+depends on, instead of the whole 256-frame canvas, so a four-second render
+decodes 96 frames. the output is bit-identical to v0.2.4 in our Windows CUDA
+tests. the other packages only changed on macOS. the Windows app and tray icon
+also match the new Mac Dock artwork now.
+
+Windows passed a generation regression test in the DAW with a production
+installer build. the signed Mac build passed install, runtime setup, a fresh
+start, and generation with gary, melodyflow, yuey, carey, jerry and SA3 on an
+M4 MacBook Air. Linux passed
+CI, without a hands-on test this round.
+
+compatible with gary4juce v5.0.7, and with gary4juce v5.0.7-linux-preview.1 on
+Linux. on macOS, use v5.0.7 or newer: the older Mac builds of gary4juce were
+made for gary4local-mac.
+
 ## v0.7.5 - 2026-11-21
 
 this is a Linux-focused release. Windows desktop users can skip this one;
