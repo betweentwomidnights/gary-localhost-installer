@@ -1269,7 +1269,7 @@ fn owner_session(config: &Config) -> Option<String> {
     let body: Value = serde_json::from_slice(&raw).ok()?;
     body["session"].as_str().map(str::to_owned)
 }
-fn active(config: &Config) -> Result<bool, String> {
+pub(crate) fn active(config: &Config) -> Result<bool, String> {
     let path = config.runtime_root.join("manager.lock");
     if !path.exists() {
         return Ok(false);

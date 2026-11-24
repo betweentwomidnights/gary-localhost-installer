@@ -22,12 +22,13 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   gary doctor                  Inspect setup without running GPU work\n\
   gary models                  Show the selected weights, size and storage folder\n\
   gary download-models         Download and verify the selected managed weights\n\
-  gary install                 Explicitly install the pinned GPU runtime\n\n\
+  gary install                 Explicitly install the pinned GPU runtime\n\
+  gary update                  Check for a new Gary and install it after you confirm\n\n\
   Add --config FILE to any service command. Otherwise use the saved default.\n\
   GARY4LOCAL_HEADLESS_CONFIG overrides the default config path.\n\
   Add --json for the noninteractive agent protocol. Advanced commands:\n\
   init, validate, capabilities, schema, serve, share-loras, version (see COMMAND --help).\n\n\
-  Console: /setup /models /install /start /stop /status /doctor /logs /help /quit\n\
+  Console: /setup /models /install /start /stop /status /doctor /logs /update /help /quit\n\
   Use /start all and /stop all inside the console.\n\
   Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. LoRA tools: /loras, /add lora and /train lora for SA3 and Carey.\n\
   Leaving a console stops only services started by that console.\n\
@@ -99,6 +100,9 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
     {
         say(HELP)?;
         return Ok(0);
+    }
+    if args.first().is_some_and(|arg| arg == "update") {
+        return Ok(crate::self_update::run(&args[1..]).await);
     }
     if args == [OsString::from("status")] {
         let (events, _) = mpsc::unbounded_channel();
@@ -212,6 +216,7 @@ enum Action {
     TrainLora,
     Training,
     CancelTraining,
+    Update,
 }
 fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
     let words: Vec<_> = line.split_whitespace().collect();
@@ -272,6 +277,7 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
             "loras" => Action::Loras,
             "training" => Action::Training,
             "cancel" => Action::CancelTraining,
+            "update" => Action::Update,
             "help" | "?" => Action::Help,
             "quit" | "exit" => Action::Quit,
             _ => {
@@ -539,6 +545,57 @@ impl Drop for Running {
 enum Event {
     Ready(Service, u64, Value),
     Finished(Service, u64, Result<Value, String>),
+    UpdateAvailable(crate::self_update::Version),
+}
+
+/// The console's `update`: the same check and install as `gary update`, with
+/// the picker for the yes. This console keeps running its own version until
+/// it's reopened.
+async fn update(input: &mut Input) -> Result<(), String> {
+    use crate::self_update::{self, AppDir, Source, Version};
+    let Some(platform) = self_update::platform() else {
+        return say("gary update installs the Linux x64 and arm64 headless archives.");
+    };
+    let source = Source::for_platform(platform);
+    let release = self_update::fetch(&source, platform).await?;
+    let current = Version::current();
+    if release.version <= current {
+        return say(format!("Gary {current} is up to date."));
+    }
+    say(self_update::summary(&release, current))?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let Some(app) = AppDir::of_executable(&exe) else {
+        return say(self_update::unmanaged_message());
+    };
+    self_update::ensure_idle()?;
+    let question = format!("Install Gary {}?", release.version);
+    #[cfg(target_os = "linux")]
+    let install = input.select(&question, &["Install", "Not now"]).await? == 0;
+    #[cfg(not(target_os = "linux"))]
+    let install = matches!(
+        answer(input, &format!("{question} [y/N]: "))
+            .await?
+            .to_ascii_lowercase()
+            .as_str(),
+        "y" | "yes"
+    );
+    if !install {
+        return say("Nothing was installed.");
+    }
+    let previous = self_update::download_and_install(&app, platform, &release, &source, |line| {
+        let _ = say(line);
+    })
+    .await?;
+    say(format!(
+        "Installed Gary {}. Quit and run gary again to use it; this console stays on {current} until then.",
+        release.version
+    ))?;
+    if let Some(previous) = previous {
+        say(format!(
+            "Gary {previous} is kept; gary update --rollback switches back to it."
+        ))?;
+    }
+    Ok(())
 }
 
 struct Console {
@@ -1010,7 +1067,7 @@ impl Console {
         match action {
             Action::Quit => return Ok(true),
             Action::Help => {
-                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/loras [sa3|carey] — Browse LoRAs and switch checkpoints\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/quit — Stop services started here and leave")?;
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/loras [sa3|carey] — Browse LoRAs and switch checkpoints\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/update — Check for a new Gary and install it after you confirm\n/quit — Stop services started here and leave")?;
                 return Ok(false);
             }
             Action::StartAll | Action::StopAll => {
@@ -1030,6 +1087,10 @@ impl Console {
                 } else {
                     say("No training job is running in this console.")?;
                 }
+                return Ok(false);
+            }
+            Action::Update => {
+                update(input).await?;
                 return Ok(false);
             }
             Action::CancelTraining => {
@@ -1130,6 +1191,15 @@ async fn termination() {
 }
 async fn shell(path: PathBuf) -> Result<i32, String> {
     let (tx, mut ready) = mpsc::unbounded_channel();
+    // One quiet look at the update feed; a slow or failed check says nothing.
+    if crate::self_update::notice_enabled() {
+        let notices = tx.clone();
+        tokio::spawn(async move {
+            if let Some(version) = crate::self_update::newer_version().await {
+                let _ = notices.send(Event::UpdateAvailable(version));
+            }
+        });
+    }
     let mut console = Console::new(path, tx);
     let mut input = Input::new();
     let shutdown = termination();
@@ -1184,6 +1254,9 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
                             say(format!("\n{label} ready at {}",value["public_url"].as_str().unwrap_or("")))?;
                             console.status(None).await?;
                         }
+                    }
+                    Event::UpdateAvailable(version)=>{
+                        say(format!("\nGary {version} is available. Type update to see what's new."))?;
                     }
                     Event::Finished(service,id,result)=>{
                         if console.owned.get(&service).is_some_and(|h|h.id==id) {
@@ -1240,6 +1313,9 @@ mod tests {
         );
         assert!(action("/stop sa3 --force").is_err());
         assert!(action("/train").is_err());
+        assert_eq!(action("/update"), Ok(Some((Action::Update, None))));
+        assert_eq!(action("update"), Ok(Some((Action::Update, None))));
+        assert!(action("update sa3").is_err());
         assert_eq!(action("/cancel"), Ok(Some((Action::CancelTraining, None))));
         assert_eq!(action("cancel"), Ok(Some((Action::CancelTraining, None))));
         assert_eq!(

@@ -50,6 +50,10 @@ $resolvedInstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
 # and the rocm branch and a rocm release silently overwrote the cuda feed.
 $installerLeaf = Split-Path -Leaf $resolvedInstallerPath
 $product = ($installerLeaf -split '_', 2)[0]
+# The headless archive carries no version or underscore in its name; it is the
+# same gary4local product, fed from its own per-architecture folder.
+$headlessArchive = [regex]::Match($installerLeaf, '^gary4local-server-linux-(x64|arm64)-experimental\.tar\.gz$')
+if ($headlessArchive.Success) { $product = 'gary4local' }
 if ([string]::IsNullOrWhiteSpace($product)) {
     throw "Could not read a product name from installer filename '$installerLeaf'."
 }
@@ -60,7 +64,13 @@ if ([string]::IsNullOrWhiteSpace($product)) {
 # so Linux test builds can move without offering Windows a version it can't
 # install. The native key is the one tauri-plugin-updater looks up first for a
 # .deb install ({os}-{arch}-deb). Same app, separate channel files.
-if ($installerLeaf -like '*_x64-setup.exe') {
+# The headless console reads its own folders; only `gary update` reads them.
+if ($headlessArchive.Success) {
+    $headlessArch = @{ 'x64' = 'x86_64'; 'arm64' = 'aarch64' }[$headlessArchive.Groups[1].Value]
+    $platformKey = "linux-$headlessArch-headless"
+    $platformDir = "headless-linux-$headlessArch"
+}
+elseif ($installerLeaf -like '*_x64-setup.exe') {
     $platformKey = 'windows-x86_64'
     $platformDir = ''
 }
@@ -78,7 +88,7 @@ elseif ($installerLeaf -like '*_aarch64.app.tar.gz') {
     $platformDir = 'macos-aarch64'
 }
 else {
-    throw "Unrecognized installer '$installerLeaf': expected a Windows *_x64-setup.exe, a Linux *_amd64.deb / *_arm64.deb, or a macOS *_aarch64.app.tar.gz."
+    throw "Unrecognized installer '$installerLeaf': expected a Windows *_x64-setup.exe, a Linux *_amd64.deb / *_arm64.deb, a macOS *_aarch64.app.tar.gz, or a headless gary4local-server-linux-<x64|arm64>-experimental.tar.gz."
 }
 
 $defaultOutputDir = Join-Path "docs\updates" $product
@@ -154,6 +164,21 @@ if ([string]::IsNullOrWhiteSpace($signature)) {
 }
 
 $sha256 = (Get-FileHash -LiteralPath $resolvedInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+# The headless version is runtime-core's own, bumped by hand. `gary update`
+# offers only a newer version, so a different archive published under the
+# version already in the feed would never reach anyone who has that version.
+# Regenerating from the same archive (to fix notes or a date) stays allowed.
+if ($headlessArchive.Success -and $Version -cnotmatch '^\d+\.\d+\.\d+$') {
+    throw "A headless feed version must be MAJOR.MINOR.PATCH; found '$Version'."
+}
+if ($headlessArchive.Success -and (Test-Path -LiteralPath $phase1OutputPath)) {
+    $existing = Get-Content -LiteralPath $phase1OutputPath -Raw | ConvertFrom-Json
+    if ($existing.latest_version -ceq $Version -and $existing.sha256 -cne $sha256) {
+        throw ("The $platformDir feed already publishes $Version for a different archive. " +
+            "Bump the version in control-center/runtime-core/Cargo.toml and rebuild.")
+    }
+}
 
 $phase1Payload = [ordered]@{
     channel = $Channel
