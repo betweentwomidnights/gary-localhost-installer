@@ -2152,11 +2152,16 @@ fn load_carey_lora_metadata(
             })
             .map(sanitize_backend_list)
             .unwrap_or_else(default_lora_backends);
-        let model_family = value
-            .get("model_family")
-            .or_else(|| value.get("family"))
-            .and_then(|value| value.as_str())
-            .map(normalize_lora_model_family)
+        // The adapter's own shapes win over a sidecar that disagrees with them.
+        let model_family = gary4local_core::carey_adapter::detect_model_family(checkpoint_dir)
+            .map(str::to_string)
+            .or_else(|| {
+                value
+                    .get("model_family")
+                    .or_else(|| value.get("family"))
+                    .and_then(|value| value.as_str())
+                    .map(normalize_lora_model_family)
+            })
             .unwrap_or_else(|| infer_lora_model_family_from_path(checkpoint_dir));
         return (scale, backends, model_family);
     }
@@ -2172,8 +2177,16 @@ fn load_carey_lora_metadata(
     (
         default_lora_scale(),
         default_lora_backends(),
-        infer_lora_model_family_from_path(checkpoint_dir),
+        infer_carey_lora_model_family(checkpoint_dir),
     )
+}
+
+/// The family an adapter folder was trained for: its shapes or a trainer's
+/// sidecar, else a guess from the folder name.
+fn infer_carey_lora_model_family(checkpoint_dir: &Path) -> String {
+    gary4local_core::carey_adapter::detect_model_family(checkpoint_dir)
+        .map(str::to_string)
+        .unwrap_or_else(|| infer_lora_model_family_from_path(checkpoint_dir))
 }
 
 fn build_carey_lora_entries(
@@ -5763,6 +5776,7 @@ pub fn run() {
             get_download_progress,
             fetch_jerry_checkpoints,
             get_carey_lora_state,
+            detect_carey_lora_model_family,
             upsert_carey_lora,
             activate_carey_lora_checkpoint,
             remove_carey_lora,
@@ -7008,6 +7022,12 @@ fn get_carey_lora_state(
     repo_root: tauri::State<'_, std::path::PathBuf>,
 ) -> Result<CareyLoraState, String> {
     build_carey_lora_state(repo_root.inner())
+}
+
+/// Preset the add-LoRA form's model family from the folder the user picked.
+#[tauri::command]
+fn detect_carey_lora_model_family(checkpoint_path: String) -> Option<String> {
+    gary4local_core::carey_adapter::detect_model_family(Path::new(checkpoint_path.trim())).map(str::to_string)
 }
 
 #[tauri::command]

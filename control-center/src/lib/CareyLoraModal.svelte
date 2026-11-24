@@ -130,7 +130,14 @@
     if (!formName.trim()) {
       formName = suggestName(selected);
     }
-    if (selected.toLowerCase().includes("xl")) {
+    // The adapter's shapes (or its trainer's metadata) say which model it was
+    // trained on; the folder name is only a guess.
+    const detected = await invoke<string | null>("detect_carey_lora_model_family", {
+      checkpointPath: selected,
+    }).catch(() => null);
+    if (detected === "standard" || detected === "xl") {
+      modelFamily = detected;
+    } else if (selected.toLowerCase().includes("xl")) {
       modelFamily = "xl";
     }
   }
