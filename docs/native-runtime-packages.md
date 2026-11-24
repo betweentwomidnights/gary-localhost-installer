@@ -402,17 +402,23 @@ built from shared pieces: `NativeLaunch` for the exact process the service
 will run, and `migration_verify::PrivateServer`, which starts it on a private
 port, waits for `/health` with every required capability, and kills it when
 dropped. sa3 adds its offline probes, model hashes, adapter checks, a
-generation smoke test and a two-step training run on top. a service with a block and no implementation still gets the shared
+generation smoke test and a two-step training run on top. the proof only
+runs for a real migration, while a Python environment or legacy weights are on
+disk (`migration::proof_needed`). a fresh install has nothing to fall back to,
+so it records an unproved selection and starts; its downloads were already
+hash-checked, and the runtime releases' CI runs the functional checks. a service with a block and no implementation still gets the shared
 inventory and cleanup; `sa3_migration::Sa3` is the reference.
+
+## macOS packages
+
+AudioCraft, SA3, ACE-Step and Yuey publish universal archives with both the core and
+Metal plugin. The `macos-arm64` manifest lists the same verified archive as
+the core and Metal backend. The desktop installer downloads and unpacks it
+once. `pin_native_release.mjs` reads `SHA256SUMS-macos` for these archives.
+Apple Silicon is the supported desktop target.
 
 ## not yet
 
-- **macOS.** the platform key leaves room for `macos-arm64` with a Metal
-  backend, but gary4local doesn't install one yet. one thing to fix first: ggml
-  calls Metal `MTL`, as both the backend and the device (`MTL0`). a device of
-  `metal` doesn't match it in yuey's device selection or in gary4local's
-  `--props` check, so both need `metal` as an alias before a Mac package can
-  install.
 - **native code for older NVIDIA cards.** the CUDA build carries native code
   for RTX 30, 40 and 50 cards. older ones (RTX 20, GTX 10) run through code
   the driver compiles on first use, which needs a driver new enough for CUDA

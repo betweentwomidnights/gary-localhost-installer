@@ -183,23 +183,29 @@ pub async fn run_session_job(
 
 /// Generate on a private server that answers synchronously with
 /// `{success, audio_base64, metadata}`, as jerry's contract does. Returns the
-/// WAV and the metadata. The wait is per request, so a slow backend has as
-/// long as a polled job would.
+/// WAV and the metadata. The caller sets the deadline for the check.
 pub async fn run_sync_audio(
     server: &PrivateServer,
     path: &str,
     body: &serde_json::Value,
     what: &str,
+    timeout: Duration,
 ) -> Result<(Vec<u8>, serde_json::Value), String> {
     use base64::Engine;
     let response = server
         .client
         .post(format!("{}{path}", server.base))
-        .timeout(Duration::from_secs(300))
+        .timeout(timeout)
         .json(body)
         .send()
         .await
-        .map_err(|error| format!("{what} failed: {error}"))?;
+        .map_err(|error| {
+            if error.is_timeout() {
+                format!("{what} timed out after {} seconds. See the migration-checks log.", timeout.as_secs())
+            } else {
+                format!("{what} failed: {error}")
+            }
+        })?;
     let status = response.status();
     let reply: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
     if !status.is_success() || reply["success"] != true {

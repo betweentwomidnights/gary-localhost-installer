@@ -14,9 +14,10 @@ export function runtimeDevice(info: NativeDeviceInfo | null): { name: string; me
   if (info.selectedDeviceName && info.selectedMemoryBytes) {
     return { name: info.selectedDeviceName, memoryTotalBytes: info.selectedMemoryBytes };
   }
-  const backend = (info.backend ?? "").toLowerCase();
+  const normalize = (value: string) => ["metal", "mtl"].includes(value.toLowerCase()) ? "metal" : value.toLowerCase();
+  const backend = normalize(info.backend ?? "");
   const largest = (kind: string) => info.devices
-    .filter((device) => device.deviceType.toLowerCase() === kind && device.backend.toLowerCase().includes(backend))
+    .filter((device) => device.deviceType.toLowerCase() === kind && normalize(device.backend).includes(backend))
     .sort((left, right) => right.memoryTotalBytes - left.memoryTotalBytes)[0];
   return largest("gpu") ?? largest("igpu");
 }

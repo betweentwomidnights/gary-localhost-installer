@@ -1214,10 +1214,14 @@ mod bundle_root_tests {
         std::fs::write(installed.join("stale.txt"), "from an older bundle").unwrap();
         std::fs::create_dir_all(installed.join(".venv/Scripts")).unwrap();
         std::fs::write(installed.join(".venv/Scripts/python.exe"), b"alternate Python environment").unwrap();
+        let shared_runtime = runtime.join("services/audiocraft/native");
+        std::fs::create_dir_all(&shared_runtime).unwrap();
+        std::fs::write(shared_runtime.join("musicgen-server.exe"), b"shared exe").unwrap();
 
         super::sync_bundled_services_to_runtime(&bundle, &runtime).unwrap();
 
         assert!(installed.join("native").join("yue2-server.exe").is_file());
+        assert!(shared_runtime.join("musicgen-server.exe").is_file());
         assert!(installed.join("README.md").is_file());
         assert_eq!(std::fs::read(installed.join(".venv/Scripts/python.exe")).unwrap(), b"alternate Python environment");
         assert!(!installed.join("stale.txt").exists());
@@ -1438,13 +1442,15 @@ fn sync_bundled_services_to_runtime(bundle_root: &Path, runtime_root: &Path) -> 
         })
         .collect();
 
+    let native_bundles = &manifest::bundled().native_bundles;
     for existing in read_dir_sorted(&runtime_services)? {
         let name = existing
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if !bundle_names.contains(&name) && !retired.contains(&name) {
+        // A shared install can have a runtime directory with no bundled source.
+        if !bundle_names.contains(&name) && !retired.contains(&name) && !native_bundles.contains_key(&name) {
             remove_path(&existing)?;
         }
     }
@@ -4962,7 +4968,7 @@ async fn try_reload_sa3_admin() -> bool {
     }
 }
 
-async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
+async fn stop_application_workloads(manager: &ManagerState) {
     if let Err(error) = cancel_carey_ace_lora_training() {
         log::warn!("Could not cancel ACE-Step training during app quit: {error}");
     }
@@ -4972,8 +4978,11 @@ async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
     if let Err(error) = cancel_sa3_autolabel() {
         log::warn!("Could not cancel SA3 auto-label during app quit: {error}");
     }
-    let mut m = manager.lock().await;
-    m.stop_all();
+    manager.lock().await.stop_all();
+}
+
+async fn quit_application(handle: &tauri::AppHandle, manager: &ManagerState) {
+    stop_application_workloads(manager).await;
     handle.exit(0);
 }
 
@@ -5471,7 +5480,7 @@ pub fn run() {
         builder
     };
 
-    if let Err(error) = builder
+    let app = builder
         .setup(move |app| {
             if let Some(folder) = webview2_user_data_folder.as_ref() {
                 log::info!("Using WebView2 user data folder: {}", folder.display());
@@ -5831,14 +5840,23 @@ pub fn run() {
             open_url,
             reveal_path,
         ])
-        .run(tauri::generate_context!())
-    {
-        let message = format!("error while running tauri application: {}", error);
-        log::error!("{}", message);
-        append_startup_diagnostic(&message);
-        eprintln!("{}", message);
-        std::process::exit(1);
-    }
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|error| {
+            let message = format!("error while running tauri application: {}", error);
+            log::error!("{}", message);
+            append_startup_diagnostic(&message);
+            eprintln!("{}", message);
+            std::process::exit(1);
+        });
+
+    app.run(|handle, event| {
+        // AppKit's Command-Q and native Quit menu go straight to Tauri's Exit event.
+        // Wait for cleanup here because the process exits when this handler returns.
+        if cfg!(target_os = "macos") && matches!(event, tauri::RunEvent::Exit) {
+            let manager = handle.state::<ManagerState>().inner().clone();
+            tauri::async_runtime::block_on(stop_application_workloads(&manager));
+        }
+    });
 }
 
 #[tauri::command]
@@ -5859,8 +5877,9 @@ async fn start_service(
 }
 
 /// A fresh native install with one complete model choice needs no separate
-/// Use click. Reuse the explicit activation's verification and workload guards;
-/// failure returns before a public service is launched. Never remove user data.
+/// Use click. Reuse the explicit activation's workload guards, and its proof
+/// when there is Python to migrate from; failure returns before a public
+/// service is launched. Never remove user data.
 async fn start_service_ready(service_id: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     let manager = app_handle.state::<ManagerState>();
     let (encoding, native) = {
@@ -10296,8 +10315,9 @@ async fn select_native_model(
     Ok(selection)
 }
 
-/// Prove the native runtime privately, then switch the service to it. No
-/// Python environment, original model or user file changes here.
+/// Switch the service to its native runtime, proving the runtime privately
+/// first when a Python installation is there to migrate from. No Python
+/// environment, original model or user file changes here.
 #[tauri::command]
 async fn activate_native_runtime(
     service_id: String,
@@ -10333,16 +10353,26 @@ async fn activate_native_runtime(
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     let progress = |message: &str| migration_progress(&app_handle, &service_id, message);
-    let checked = service
-        .verify(migration::Run {
-            root: repo_root.inner(),
-            native: &native,
-            installed: &installed,
-            launch: &launch,
-            encoding: &encoding,
-            progress: &progress,
-        })
-        .await;
+    let hub = storage::effective_hf_hub_cache_dir(repo_root.inner());
+    let proved = migration::proof_needed(service.target(), repo_root.inner(), &hub);
+    let checked = if proved {
+        service
+            .verify(migration::Run {
+                root: repo_root.inner(),
+                native: &native,
+                installed: &installed,
+                launch: &launch,
+                encoding: &encoding,
+                progress: &progress,
+            })
+            .await
+    } else {
+        // Nothing to migrate from: only confirm the tier's models are on disk.
+        match service.native_start_blocker_for_encoding(repo_root.inner(), Some(&encoding)) {
+            Some(blocker) => Err(format!("{label} {blocker}")),
+            None => Ok(migration::Selection::unproved(&installed, &encoding)),
+        }
+    };
     let result = {
         let mut services = manager.lock().await;
         let result = checked.and_then(|selection| services.activate_native(&service_id, selection));
@@ -10354,8 +10384,12 @@ async fn activate_native_runtime(
         repo_root.inner(),
         &native_backend_key(&service_id),
         &match &result {
-            Ok(selection) => format!(
+            Ok(selection) if proved => format!(
                 "{label} switched to C++: {} on {}, checked with {}",
+                selection.encoding, selection.backend, selection.verified_release
+            ),
+            Ok(selection) => format!(
+                "{label} set up on C++: {} on {} with {}",
                 selection.encoding, selection.backend, selection.verified_release
             ),
             Err(error) => format!("{label}'s switch to C++ failed: {error}"),
@@ -10415,29 +10449,35 @@ async fn cleanup_legacy_installation(
     };
     let _ = app_handle.emit("services-updated", manager.lock().await.get_service_info());
     let progress = |message: &str| migration_progress(&app_handle, &service_id, message);
-    let verified = service
-        .reverify(
-            migration::Run {
-                root: repo_root.inner(),
-                native: &native,
-                installed: &installed,
-                launch: &launch,
-                encoding: &selection.encoding,
-                progress: &progress,
-            },
-            &selection,
-        )
-        .await
-        .and_then(|fingerprint| match fingerprint {
-            // Record what was proved, so a retry after a locked file skips it.
-            Some(fingerprint) => {
-                let mut current = migration::read(repo_root.inner(), def, check)?
-                    .ok_or_else(|| format!("Native {label} selection is missing"))?;
-                current.runtime_fingerprint = Some(fingerprint);
-                migration::save(repo_root.inner(), def, &current, check)
-            }
-            None => Ok(()),
-        });
+    // With no Python environment or legacy weights, cleanup removes only bundled
+    // source, which is no way back to Python, so there is nothing to prove first.
+    let verified = if !migration::proof_needed(service.target(), repo_root.inner(), &hub) {
+        Ok(())
+    } else {
+        service
+            .reverify(
+                migration::Run {
+                    root: repo_root.inner(),
+                    native: &native,
+                    installed: &installed,
+                    launch: &launch,
+                    encoding: &selection.encoding,
+                    progress: &progress,
+                },
+                &selection,
+            )
+            .await
+            .and_then(|fingerprint| match fingerprint {
+                // Record what was proved, so a retry after a locked file skips it.
+                Some(fingerprint) => {
+                    let mut current = migration::read(repo_root.inner(), def, check)?
+                        .ok_or_else(|| format!("Native {label} selection is missing"))?;
+                    current.runtime_fingerprint = Some(fingerprint);
+                    migration::save(repo_root.inner(), def, &current, check)
+                }
+                None => Ok(()),
+            })
+    };
     let result = match verified {
         Err(error) => Err(error),
         Ok(()) => {
@@ -10514,7 +10554,7 @@ fn describe_runtime(info: &native_runtime::NativeRuntimeInfo) -> String {
         info.version.as_deref().unwrap_or("a development build")
     );
     if let Some(device) = info.devices.iter().find(|device| {
-        device.device_type != "cpu" && device.backend.to_ascii_lowercase().contains(backend)
+        device.device_type != "cpu" && gary4local_core::runtime::backend_matches(&device.backend, backend)
     }) {
         text += &format!(
             ", {} ({:.1} GB)",

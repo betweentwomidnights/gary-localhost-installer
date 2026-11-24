@@ -68,10 +68,12 @@ terminal console. Earlier Linux/ARM64 findings are in
 ## preview
 
 on a fresh native setup, download the shared components and one generation
-precision, then press **start**. start verifies and activates that precision
-before launching; downloading alone does not run a GPU check. when more than
-one generation precision is downloaded, choose one with **use** in Models.
-existing Python installations keep their explicit migration flow.
+precision, then press **start**. start activates that precision and launches
+right away: downloads are hash-checked as they arrive, and there is no Python
+installation to protect, so no test generation runs first. when more than one
+generation precision is downloaded, choose one with **use** in Models.
+existing Python installations keep their explicit migration flow, which proves
+the C++ runtime with test generations before switching.
 
 install and startup flow:
 

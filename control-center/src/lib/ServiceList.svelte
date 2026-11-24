@@ -26,6 +26,7 @@
     runtime: "python" | "native";
     native_backend: string | null;
     native_runtime_installed: boolean;
+    native_runtime_unavailable?: string | null;
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;
@@ -53,8 +54,9 @@
 
   // Services never set up (no Python to migrate), and C++ runtimes that are
   // missing or behind; services sharing a runtime update it once.
-  const toSetUp = $derived(services.filter((service) => service.has_migration && service.runtime === "python" && service.python_retired && !service.native_runtime_installed));
-  const toUpdate = $derived(services.filter((service) => (service.runtime === "native" || service.python_retired) && (service.native_update_available || (service.runtime === "native" && !service.env_exists))));
+  const available = $derived(services.filter((service) => !service.native_runtime_unavailable));
+  const toSetUp = $derived(available.filter((service) => service.has_migration && service.runtime === "python" && service.python_retired && !service.native_runtime_installed));
+  const toUpdate = $derived(available.filter((service) => (service.runtime === "native" || service.python_retired) && (service.native_update_available || (service.runtime === "native" && !service.env_exists))));
   let runningAll = $state(false);
   let choosing = $state(false);
   let loadingChoices = $state(false);
@@ -93,6 +95,7 @@
     runningAll ? "working…"
     : toSetUp.length ? "set up all runtimes"
     : toUpdate.length ? "update all runtimes"
+    : available.length < services.length ? "available runtimes up to date"
     : "runtimes up to date"
   );
 

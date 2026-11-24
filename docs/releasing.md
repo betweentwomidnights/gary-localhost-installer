@@ -50,6 +50,10 @@ version it can't install.
 
 ## per release
 
+macOS Developer ID signing and notarization run in GitHub CI using the upstream
+Apple signing secrets. See [macOS desktop preview](macos-desktop.md) for the
+local M4 validation and CI artifact steps. This does not use the updater key.
+
 ### 1. bump the version
 
 bump it in all five spots. they have to match or the build fails:

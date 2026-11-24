@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:ui": "playwright test",
-    "test:precision": "node --test tests/modelPrecision.test.mjs",
+    "test:precision": "node --test tests/modelPrecision.test.mjs tests/nativeDevice.test.mjs",
     "tauri": "tauri"
   },
   "devDependencies": {

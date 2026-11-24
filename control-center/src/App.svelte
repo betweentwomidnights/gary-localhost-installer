@@ -51,6 +51,7 @@
     runtime: "python" | "native";
     native_backend: string | null;
     native_runtime_installed: boolean;
+    native_runtime_unavailable?: string | null;
     native_update_available: boolean;
     native_fallback_reason: string | null;
     start_blocker: string | null;

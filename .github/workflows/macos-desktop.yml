@@ -1,0 +1,161 @@
+name: macOS desktop preview
+on:
+  push:
+    branches: [feature/macos-native-desktop]
+    paths:
+      - control-center/**
+      - services/manifests/**
+      - .github/workflows/macos-desktop.yml
+      - smoke-tests/macos/**
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - control-center/**
+      - services/manifests/**
+      - .github/workflows/macos-desktop.yml
+      - smoke-tests/macos/**
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize this preview with the existing Developer ID credentials
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: macos-desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  apple-silicon:
+    if: github.event_name != 'release' || (startsWith(github.event.release.tag_name, 'v') && !contains(github.event.release.tag_name, 'rocm'))
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 3
+      MACOSX_DEPLOYMENT_TARGET: '13.3'
+      GARY4LOCAL_UPDATE_CHANNEL: preview
+      # Enable macOS updates only once macOS assets and feeds are validated.
+      VITE_ENABLE_APP_UPDATER: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - name: Check release version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 -c 'import json,os; assert os.environ["TAG"] == "v" + json.load(open("control-center/package.json"))["version"], "Release tag must match the app version"'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: control-center/package-lock.json
+      # PR jobs never receive signing credentials. Maintainer previews and releases
+      # fail if signing credentials are missing; they cannot fall back to ad-hoc.
+      - name: Import the Developer ID certificate
+        if: github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.sign)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERT_P12 MACOS_CERT_PASSWORD APPLE_TEAM_ID APPLE_NOTARY_KEY_P8 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID; do
+            [ -n "${!name}" ] || { echo "Missing signing secret: $name"; exit 1; }
+          done
+          umask 077
+          keychain="$RUNNER_TEMP/gary4local-signing.keychain-db"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          password="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/gary4local-cert.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/gary4local-cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/gary4local-cert.p12"
+          identity="$(security find-identity -v -p codesigning "$keychain" | grep 'Developer ID Application' | grep "($APPLE_TEAM_ID)" | head -1 | awk '{print $2}')"
+          [ -n "$identity" ] || { echo 'No Developer ID Application identity for the configured team'; exit 1; }
+          printf '%s' "$APPLE_NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/gary4local-notary.p8"
+          openssl pkey -in "$RUNNER_TEMP/gary4local-notary.p8" -noout
+          # Validate the matching key/ID/issuer before spending time compiling.
+          if ! xcrun notarytool history --key "$RUNNER_TEMP/gary4local-notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" --output-format json > /dev/null; then
+            echo '::error::Notary authentication failed. Check the matching APPLE_NOTARY_KEY_P8, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID secrets.'
+            exit 1
+          fi
+          {
+            echo "APPLE_SIGNING_IDENTITY=$identity"
+            echo "APPLE_API_KEY=$APPLE_NOTARY_KEY_ID"
+            echo "APPLE_API_ISSUER=$APPLE_NOTARY_ISSUER_ID"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/gary4local-notary.p8"
+          } >> "$GITHUB_ENV"
+      - name: Toolchain and frontend
+        working-directory: control-center
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          rustup target add aarch64-apple-darwin
+          npm ci
+          npm run check
+          npm run test:precision
+      - name: Check the desktop and platform boundaries
+        run: |
+          cargo check --locked --manifest-path control-center/src-tauri/Cargo.toml --all-targets
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib storage::tests::
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib update::tests::
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib native_tool_paths_
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib each_missing_or_outdated_runtime_is_updated_once
+          cargo test --locked --manifest-path control-center/src-tauri/Cargo.toml --lib shared_lora_tests
+          cargo test --locked --manifest-path control-center/runtime-core/Cargo.toml --lib storage_paths::
+          cargo test --locked --manifest-path control-center/runtime-core/Cargo.toml --lib metal_registry_alias
+      - name: Build the app and disk image
+        working-directory: control-center
+        run: npm run tauri -- build --ci --target aarch64-apple-darwin --config src-tauri/tauri.macos.conf.json
+      - name: Verify and retain the preview
+        env:
+          SIGNED: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.sign) }}
+        run: python3 smoke-tests/macos/check_desktop_package.py
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then security delete-keychain "$SIGNING_KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP/gary4local-cert.p12" "$RUNNER_TEMP/gary4local-notary.p8"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gary4local-desktop-macos-arm64
+          path: control-center/src-tauri/target/desktop-macos/
+          retention-days: 14
+  publish:
+    if: github.event_name == 'release'
+    needs: apple-silicon
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: gary4local-desktop-macos-arm64
+          path: dist
+      - name: Publish verified macOS assets
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS-macos-arm64
+          python3 - <<'PY'
+          import json, os
+          info = json.load(open('BUILD-INFO.json'))
+          assert info['signed'] and info['notarized'], info
+          assert info['commit'] == os.environ['GITHUB_SHA'], info
+          assert 'v' + info['version'] == os.environ['TAG'], info
+          PY
+          cp BUILD-INFO.json BUILD-INFO-macos-arm64.json
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" ./*.dmg ./*.app.zip SHA256SUMS-macos-arm64 BUILD-INFO-macos-arm64.json

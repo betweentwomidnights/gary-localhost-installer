@@ -84,6 +84,29 @@ test('a release without Linux packages keeps the Linux preview pins', () => {
   } finally { fs.rmSync(f.root, { recursive: true }); }
 });
 
+test('macOS checksums pin both references to the universal archive', () => {
+  const f = fixture();
+  try {
+    const source = JSON.parse(fs.readFileSync(f.manifest, 'utf8'));
+    const archive = {
+      url: 'https://github.com/owner/sa3.cpp/releases/download/v0.1.1/sa3-v0.1.1-macos-universal.zip',
+      sha256: 'f'.repeat(64),
+    };
+    source.nativeBundles.sa3.platforms['macos-arm64'] = {
+      core: archive, backends: { metal: archive }, prefer: ['metal'],
+    };
+    fs.writeFileSync(f.manifest, JSON.stringify(source, null, 2));
+    const macosSums = path.join(f.root, 'SHA256SUMS-macos');
+    fs.writeFileSync(macosSums, `${'9'.repeat(64)}  sa3-v0.1.2-macos-universal.zip\n`);
+    const result = f.run('--bundle', 'sa3', '--macos-sums', macosSums);
+    assert.equal(result.status, 0, result.stderr);
+    const platform = JSON.parse(fs.readFileSync(f.manifest, 'utf8')).nativeBundles.sa3.platforms['macos-arm64'];
+    assert.equal(platform.core.sha256, '9'.repeat(64));
+    assert.match(platform.core.url, /download\/v0\.1\.2\/sa3-v0\.1\.2-macos-universal\.zip$/);
+    assert.deepEqual(platform.backends.metal, platform.core);
+  } finally { fs.rmSync(f.root, { recursive: true }); }
+});
+
 test('consumer service pin directs the caller to the bundle without writing', () => {
   const f = fixture();
   try {

@@ -74,6 +74,16 @@ mockIPC(async (command, args) => {
     case 'get_migration_preview': return { legacyRuntimePresent: false, warnings: [], pythonStillNeeded: null, cleanupCandidates: [], cleanupToken: 'fixture' };
     case 'cleanup_legacy_installation': return { selection: { encoding: selected }, errors: [] };
     case 'start_service':
+      if (query.has('slow-metal-start')) {
+        await emit('services-updated', [{
+          ...serviceInfo(),
+          start_blocker: "is waiting for jerry model and runtime checks to finish",
+          build_status: {
+            building: true, current_step: 0, total_steps: 1, error: null, log: '',
+            step_label: 'Testing native generation on Metal. Shader compilation can take several minutes. 15s elapsed.',
+          },
+        }]);
+      }
       if (query.has('hold')) await new Promise((resolve) => window.finishStart = resolve);
       if (query.has('fail-start')) throw 'Native model verification failed';
       selected ??= reference;

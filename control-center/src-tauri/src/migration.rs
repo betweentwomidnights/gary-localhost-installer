@@ -375,6 +375,36 @@ impl Selection {
         }
         Ok(())
     }
+
+    /// What a fresh install records without a private proof. It carries no
+    /// fingerprint, so if Python ever turns up to clean up, cleanup proves the
+    /// runtime in full first.
+    pub fn unproved(installed: &NativeInstall, encoding: &str) -> Self {
+        Self {
+            schema_version: 1,
+            encoding: encoding.into(),
+            verified_release: installed.version.clone().unwrap_or_else(|| "development".into()),
+            backend: installed.backend.clone(),
+            activated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            cleanup_complete: false,
+            cleanup_errors: Vec::new(),
+            runtime_fingerprint: None,
+        }
+    }
+}
+
+/// Whether switching `target` to C++ needs the private proof: the service's
+/// own generation, continuation and model checks on a private server. They
+/// protect a Python environment or legacy weights on disk, the user's way
+/// back. A fresh install has neither. Its models were hash-checked as they
+/// downloaded, and Start already waits for the server to report ready, so
+/// the proof would only delay first use. The runtime releases' own CI runs
+/// the functional checks.
+pub fn proof_needed(target: Target, root: &Path, hub: &Path) -> bool {
+    crate::migration_inventory::legacy_present(target, root, hub)
 }
 
 /// A service's migration as this session knows it: its selection, or why it
@@ -478,4 +508,60 @@ pub fn save(
         return Err("Native runtime selection points outside the active storage profile".into());
     }
     crate::sa3_training::save(&path, selection)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_python_on_disk_calls_for_the_private_proof() {
+        let root = std::env::temp_dir().join(format!(
+            "gary-proof-needed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let hub = root.join("models/huggingface/hub");
+        let def: MigrationDef = serde_json::from_value(serde_json::json!({
+            "dataDir": "carey",
+            "label": "Carey",
+            "legacy": {
+                "envDirs": ["env"],
+                "hfRepos": [{"repo": "org/carey", "label": "PyTorch weights"}]
+            }
+        }))
+        .unwrap();
+        let target = Target { id: "carey", def: &def, models_dir: Some("carey") };
+        let put = |path: PathBuf| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"fixture").unwrap();
+            path
+        };
+
+        // A fresh install: bundled source and native models, no Python.
+        put(root.join("services/carey/app.py"));
+        put(root.join("models/carey/dit-q4_k_m.gguf"));
+        assert!(!proof_needed(target, &root, &hub));
+        let weights = put(hub.join("models--org--carey/snapshots/abc/model.safetensors"));
+        assert!(proof_needed(target, &root, &hub), "legacy weights are a way back");
+        std::fs::remove_dir_all(hub.join("models--org--carey")).unwrap();
+        assert!(!weights.exists());
+        put(root.join("services/carey/env/Scripts/python.exe"));
+        assert!(proof_needed(target, &root, &hub), "a Python environment is a way back");
+
+        let installed = NativeInstall {
+            dir: root.join("runtime"),
+            backend: "metal".into(),
+            runtimes: Vec::new(),
+            version: Some("v0.1.6".into()),
+            fallback_reason: None,
+        };
+        let selection = Selection::unproved(&installed, "Q4_K_M");
+        assert!(selection.runtime_fingerprint.is_none(), "cleanup must prove an unproved runtime");
+        std::fs::create_dir_all(root.join("carey")).unwrap();
+        save(&root, &def, &selection, |_| Ok(())).unwrap();
+        let read = read(&root, &def, |_| Ok(())).unwrap().unwrap();
+        assert_eq!((read.encoding.as_str(), read.backend.as_str()), ("Q4_K_M", "metal"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
