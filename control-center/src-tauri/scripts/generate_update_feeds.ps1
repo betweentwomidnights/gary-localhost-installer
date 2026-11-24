@@ -72,8 +72,13 @@ elseif ($installerLeaf -like '*_arm64.deb') {
     $platformKey = 'linux-aarch64-deb'
     $platformDir = 'linux-aarch64'
 }
+elseif ($installerLeaf -like '*_aarch64.app.tar.gz') {
+    # tauri-plugin-updater tries darwin-aarch64-app first, then darwin-aarch64.
+    $platformKey = 'darwin-aarch64'
+    $platformDir = 'macos-aarch64'
+}
 else {
-    throw "Unrecognized installer '$installerLeaf': expected a Windows *_x64-setup.exe or a Linux *_amd64.deb / *_arm64.deb."
+    throw "Unrecognized installer '$installerLeaf': expected a Windows *_x64-setup.exe, a Linux *_amd64.deb / *_arm64.deb, or a macOS *_aarch64.app.tar.gz."
 }
 
 $defaultOutputDir = Join-Path "docs\updates" $product

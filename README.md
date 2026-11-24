@@ -20,8 +20,8 @@ and its Python services. it needs an M-series Mac on macOS 13.3 or newer, and
 the disk image is signed and notarized. every service runs on the C++ runtimes
 with Metal, and the runtimes ship precompiled shaders, so a service doesn't
 compile them every time it starts. there's no migration from gary4local-mac,
-so models download again. the Mac app doesn't update itself yet: grab new
-versions from the releases page. more in [docs/macos-desktop.md](docs/macos-desktop.md).
+so models download again. from here on the Mac app updates itself. more in
+[docs/macos-desktop.md](docs/macos-desktop.md).
 
 on every platform, pressing `start` on a fresh native setup launches the
 service right away instead of running test generations first. migrating an

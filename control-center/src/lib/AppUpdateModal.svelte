@@ -110,7 +110,7 @@
 
         {#if result.inAppInstallAvailable}
           <div class="note">
-            in-app install is configured for this build. on Windows, gary4local will close to hand off to the installer. on Linux, your system asks for your password to install the package, then gary4local restarts.
+            in-app install is configured for this build. on Windows, gary4local will close to hand off to the installer. on Linux, your system asks for your password to install the package, then gary4local restarts. on macOS, gary4local replaces itself in Applications and restarts; it asks for your password only if it can't write there.
           </div>
         {/if}
       {:else if result}

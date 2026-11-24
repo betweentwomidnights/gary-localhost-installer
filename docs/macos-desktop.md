@@ -47,9 +47,18 @@ the Developer ID and API key setup.
 
 Publishing a matching `v<app-version>` GitHub release automatically builds,
 signs, notarizes and attaches the Mac assets. Manual runs only retain Actions
-artifacts. Mac in-app updates remain disabled until their feeds and updater
-signatures are prepared; Apple's signing credentials are separate from the
-existing updater key.
+artifacts.
+
+The Mac app updates itself from the `preview` feed in
+`docs/updates/gary4local/macos-aarch64/`. CI also packs the stapled app as
+`gary4local_<version>_aarch64.app.tar.gz`, the archive `tauri-plugin-updater`
+installs. The updater key never goes to GitHub, so the release machine signs that
+archive after download, as it does the Linux `.deb`s; see
+[releasing](releasing.md). Apple's signing credentials are separate from the
+updater key, and no Mac needs the updater key.
+
+The update replaces `gary4local.app` where it's installed and restarts. It asks
+for an administrator password only if the app's folder isn't writable.
 
 ## M4 check before sharing
 

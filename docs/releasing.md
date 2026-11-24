@@ -30,13 +30,14 @@ GitHub Pages serves `main:/docs`, so a feed is only live once it's committed to
 | `docs/updates/gary4local/` | `stable`, `preview` | Windows builds |
 | `docs/updates/gary4local/linux-x86_64/` | `preview` | Linux amd64 builds |
 | `docs/updates/gary4local/linux-aarch64/` | `preview` | Linux arm64 builds (DGX Spark) |
+| `docs/updates/gary4local/macos-aarch64/` | `preview` | Apple Silicon Mac builds |
 | `docs/updates/gary4local-rocm/` | `preview` | the `gary4local-rocm` tester build |
 
 a build's channel is fixed when it's built: `stable` by default, `preview` when
-`GARY4LOCAL_UPDATE_CHANNEL=preview` is set, which the Linux CI build does. each
-Linux architecture gets its own folder because a feed carries one version and
-one download, so Linux can move on its own schedule without offering Windows a
-version it can't install.
+`GARY4LOCAL_UPDATE_CHANNEL=preview` is set, which the Linux and macOS CI builds
+do. each platform and architecture gets its own folder because a feed carries
+one version and one download, so Linux and macOS can move on their own schedule
+without offering Windows a version it can't install.
 
 ## one-time setup
 
@@ -188,13 +189,36 @@ meant it to:
 git ls-remote --tags origin v<version>   # must equal the release commit
 ```
 
+### 5b. sign the Mac update archive
+
 publishing also starts the `macOS desktop preview` workflow on the tag. it
 refuses a tag that doesn't match `package.json`, then builds, signs and
-notarizes the Mac app and attaches `gary4local_<version>_aarch64.dmg`,
-`gary4local_<version>_macos-arm64.app.zip`, `SHA256SUMS-macos-arm64` and
-`BUILD-INFO-macos-arm64.json` to the release about 15 minutes later. check
-that run went green and the four assets are there before announcing the Mac
-build. there's no Mac update feed yet, so step 6 has nothing to do for macOS.
+notarizes the Mac app and attaches five assets to the release about 15 minutes
+later: `gary4local_<version>_aarch64.dmg`,
+`gary4local_<version>_macos-arm64.app.zip`,
+`gary4local_<version>_aarch64.app.tar.gz`, `SHA256SUMS-macos-arm64` and
+`BUILD-INFO-macos-arm64.json`. check that run went green before announcing the
+Mac build.
+
+the `.app.tar.gz` is the in-app update: the stapled app, packed the way
+`tauri-plugin-updater` unpacks it. CI never has the updater key, so like the
+`.deb`s it's signed here after download:
+
+- the downloaded files match their `digest` in `gh release view <tag> --json assets`
+  and their `SHA256SUMS-macos-arm64` lines.
+- `BUILD-INFO-macos-arm64.json` says the release version and commit,
+  `signed` and `notarized` true, `updater_enabled: true` and
+  `update_channel: preview`.
+
+then sign the archive from `control-center`, the same way as a `.deb`, and
+upload the `.sig` to the release:
+
+```powershell
+npx tauri signer sign -f C:\path\to\gary4local-updater.key -p "your real passphrase" path\to\gary4local_<version>_aarch64.app.tar.gz
+gh release upload v<version> path\to\gary4local_<version>_aarch64.app.tar.gz.sig
+```
+
+the same `TAURI_SIGNING_PRIVATE_KEY` trap applies as for the `.deb`s.
 
 it helps to keep a per-release folder, `artifacts\release-v<version>\`
 (untracked), with the three sets of notes and a publish script that checks all
@@ -214,13 +238,17 @@ prints:
 | `gary4local_<v>_x64-setup.exe` | `docs/updates/gary4local/` | `windows-x86_64` |
 | `gary4local_<v>_amd64.deb` | `docs/updates/gary4local/linux-x86_64/` | `linux-x86_64-deb` |
 | `gary4local_<v>_arm64.deb` | `docs/updates/gary4local/linux-aarch64/` | `linux-aarch64-deb` |
+| `gary4local_<v>_aarch64.app.tar.gz` | `docs/updates/gary4local/macos-aarch64/` | `darwin-aarch64` |
 | `gary4local-rocm_<v>_x64-setup.exe` | `docs/updates/gary4local-rocm/` | `windows-x86_64` |
 
 `linux-<arch>-deb` is the first key `tauri-plugin-updater` looks up for a
-`.deb` install. passing an `-OutputDir` that disagrees with the installer is an
+`.deb` install. on a Mac it tries `darwin-aarch64-app`, then `darwin-aarch64`;
+the feed uses the second, which matches either way. the Mac feeds point both
+the browser fallback and the in-app install at the `.app.tar.gz`. passing an
+`-OutputDir` that disagrees with the installer is an
 error rather than a silent overwrite.
 
-Windows gets both channels; Linux gets `preview`:
+Windows gets both channels; Linux and macOS get `preview`:
 
 ```powershell
 $publishedAt = gh release view v0.7.4 --json publishedAt --jq '.publishedAt'

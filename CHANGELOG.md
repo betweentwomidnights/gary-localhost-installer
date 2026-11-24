@@ -27,9 +27,10 @@ and on an M4 MacBook Air that compile was most of a cold start. each package
 now carries `default.metallib`, a BF16 variant for macOS 14 and newer, and the
 tensor library for newer GPUs, and loads them from beside the backend.
 
-the Mac app doesn't update itself yet, and it won't tell you about a new
-version. until the Mac update feed is ready, new versions come as a new disk
-image from the releases page.
+the Mac app updates itself like the Linux one, from the preview update
+channel: it offers `install update`, replaces itself in Applications and
+restarts. v0.7.6 is the first Mac release, so the first in-app update you'll
+see is the next one.
 
 pressing `start` on a fresh native setup launches the service right away, on
 every platform. before, start ran a private test server first: it rehashed the
