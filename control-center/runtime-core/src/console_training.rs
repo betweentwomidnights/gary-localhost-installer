@@ -497,7 +497,11 @@ impl Console {
         let mut meta = None;
         let mut family = String::new();
         if service == Service::Carey {
-            family = setting(input, "Model family (2b or xl)", "2b".to_owned()).await?;
+            let detected = match crate::carey_adapter::detect_model_family(&source) {
+                Some("xl") => "xl",
+                _ => "2b",
+            };
+            family = setting(input, "Model family (2b or xl)", detected.to_owned()).await?;
             family = match family.as_str() {
                 "2b" => "standard".into(),
                 "xl" => "xl".into(),

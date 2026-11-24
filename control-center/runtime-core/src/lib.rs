@@ -13,6 +13,7 @@ pub mod workload_job;
 pub mod service;
 
 pub mod ace_client;
+pub mod carey_adapter;
 pub mod carey_caption;
 pub mod carey_dataset;
 pub mod dataset;
