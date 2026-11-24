@@ -1,0 +1,11 @@
+{
+    "version":  "0.7.6",
+    "notes":  "First release of gary4local for Apple Silicon Macs. It replaces gary-localhost-installer-mac.\nEvery service runs on the C++ runtimes with Metal. Compatible with gary4juce v5.0.7.",
+    "pub_date":  "2026-11-24T14:57:45.0000000+00:00",
+    "platforms":  {
+                      "darwin-aarch64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFBJZk9sREE1S3J1R0l2NEpLVk1raFNnazdOZDFuQmVDekhOdWxEVjZKUENuMVN3S1lOQjluNFc0SkJBVkNYTlo3Wm5jR2w2Q0ZJNzBZY0d1ck9WTlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTM0NTE2CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNl9hYXJjaDY0LmFwcC50YXIuZ3oKYUQwSm5BREt2U3NkSU1nZFlqa1hsOS94RGJuREJCa1ZzcFBLaDVWc0ljRmIxaWltSlJOUk5SVG5OdnpLL041NmNORWJ6THRSNXRBYVliTlNyNGhGRFE9PQo=",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_aarch64.app.tar.gz"
+                                         }
+                  }
+}
