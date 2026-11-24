@@ -4,6 +4,7 @@ pub mod cli;
 pub mod command;
 pub mod console;
 pub mod headless;
+pub mod listener;
 pub mod manifest;
 pub mod model_catalog;
 pub mod runtime;

@@ -1158,7 +1158,10 @@ version = "0.3.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "getrandom 0.3.4",
  "hound",
+ "hyper",
+ "hyper-util",
  "libc",
  "log",
  "regex",
