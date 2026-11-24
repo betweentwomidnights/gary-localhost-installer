@@ -66,6 +66,23 @@ try {
         -InstallerPath $installer -SignaturePath "$installer.sig" -Channel preview -OutputDir $output -PublishedAt 'not a date' } `
         'PublishedAt must be a timestamp'
     if ((Get-Content -LiteralPath $nativePath -Raw) -cne $goodNative) { throw 'Invalid date input changed the existing feed.' }
+
+    # The Mac update archive gets its own folder and the darwin-aarch64 key.
+    $macArchive = Join-Path $testRoot 'gary4local_0.7.6_aarch64.app.tar.gz'
+    [IO.File]::WriteAllText($macArchive, 'test mac archive')
+    [IO.File]::WriteAllText("$macArchive.sig", $signature)
+    $macOutput = Join-Path $testRoot 'gary4local\macos-aarch64'
+    & $generator -Version '0.7.6' -ArtifactUrl 'https://example.com/gary4local_0.7.6_aarch64.app.tar.gz' `
+        -InstallerPath $macArchive -SignaturePath "$macArchive.sig" -Channel preview `
+        -OutputDir $macOutput -PublishedAt '2026-11-24T07:00:00Z' -NotesText 'Mac test update.'
+    $macNative = Get-Content -LiteralPath (Join-Path $macOutput 'native-preview.json') -Raw | ConvertFrom-Json
+    if (@($macNative.platforms.PSObject.Properties.Name) -join ',' -cne 'darwin-aarch64') {
+        throw 'The Mac feed must carry only darwin-aarch64.'
+    }
+    Write-Output 'PASS: the Mac update archive writes a darwin-aarch64 feed in macos-aarch64.'
+    Assert-Rejected { & $generator -Version '0.7.6' -ArtifactUrl 'https://example.com/gary4local_0.7.6_aarch64.app.tar.gz' `
+        -InstallerPath $macArchive -SignaturePath "$macArchive.sig" -Channel preview -OutputDir $output } `
+        'does not match installer'
 }
 finally {
     $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)

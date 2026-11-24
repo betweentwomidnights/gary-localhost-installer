@@ -34,9 +34,10 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 3
       MACOSX_DEPLOYMENT_TARGET: '13.3'
+      # The Mac app follows the preview feed in docs/updates/gary4local/macos-aarch64.
+      # CI never sees the updater key: the release machine signs the .app.tar.gz.
       GARY4LOCAL_UPDATE_CHANNEL: preview
-      # Enable macOS updates only once macOS assets and feeds are validated.
-      VITE_ENABLE_APP_UPDATER: '0'
+      VITE_ENABLE_APP_UPDATER: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -158,4 +159,4 @@ jobs:
           assert 'v' + info['version'] == os.environ['TAG'], info
           PY
           cp BUILD-INFO.json BUILD-INFO-macos-arm64.json
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" ./*.dmg ./*.app.zip SHA256SUMS-macos-arm64 BUILD-INFO-macos-arm64.json
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" ./*.dmg ./*.app.zip ./*.app.tar.gz SHA256SUMS-macos-arm64 BUILD-INFO-macos-arm64.json
