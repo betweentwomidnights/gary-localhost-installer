@@ -20,8 +20,12 @@ and its Python services. it needs an M-series Mac on macOS 13.3 or newer, and
 the disk image is signed and notarized. every service runs on the C++ runtimes
 with Metal, and the runtimes ship precompiled shaders, so a service doesn't
 compile them every time it starts. there's no migration from gary4local-mac,
-so models download again. from here on the Mac app updates itself. more in
-[docs/macos-desktop.md](docs/macos-desktop.md).
+so models download again, and the old app's files stay until you remove them:
+its README has [the steps and a cleanup script](https://github.com/betweentwomidnights/gary-localhost-installer-mac#this-app-is-retired).
+not ready to switch? gary4local-mac's last update,
+[v0.4.2](https://github.com/betweentwomidnights/gary-localhost-installer-mac/releases/tag/v0.4.2),
+keeps local jerry working with gary4juce v5.0.7. from here on the Mac app
+updates itself. more in [docs/macos-desktop.md](docs/macos-desktop.md).
 
 on every platform, pressing `start` on a fresh native setup launches the
 service right away instead of running test generations first. migrating an
