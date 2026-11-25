@@ -526,7 +526,7 @@
       "native": {
         "executable": "ace-server.exe",
         "modelsDir": "carey",
-        "version": "v0.1.6",
+        "version": "v0.1.7",
         "env": {
           "ACE_MODELS_DIR": "${MODELS_DIR}/carey",
           "ACE_PORT": "8003",
@@ -537,44 +537,44 @@
         "platforms": {
           "macos-arm64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-macos-universal.zip",
-              "sha256": "91e239f46676cbfcab22d91a9b36d600cae86d76aeab208381350662265797b6"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-macos-universal.zip",
+              "sha256": "b9fd6f5b5836c020ef19db02253f7f86a87af64b2a0ba5a205a3f44884777a30"
             },
             "backends": {
               "metal": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-macos-universal.zip",
-                "sha256": "91e239f46676cbfcab22d91a9b36d600cae86d76aeab208381350662265797b6"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-macos-universal.zip",
+                "sha256": "b9fd6f5b5836c020ef19db02253f7f86a87af64b2a0ba5a205a3f44884777a30"
               }
             },
             "prefer": ["metal"]
           },
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-windows-x64-core.zip",
-              "sha256": "64777a91fdf75c65b5de41baba129c9037abbc1c229b07387e43d13d1855c9e8"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-windows-x64-core.zip",
+              "sha256": "4f5b385c4daf2325d5946a6da957def58c690782caebfc731a2f055f34446a2c"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-windows-x64-cuda.zip",
-                "sha256": "1bf948812ad385570f62181678583b7604699ebe51bd922b7fcd35678c19fbd9",
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-windows-x64-cuda.zip",
+                "sha256": "b8da616f6b102260e616c285e0b0eff3cc446b31c06bdb073093ae8c808c2a78",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-windows-x64-vulkan.zip",
-                "sha256": "af83856041717754ce7f113f5f0d09bac238a8236eaf74e4b4503f993bf747ca"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-windows-x64-vulkan.zip",
+                "sha256": "96790d58a1b08bca9814bdab4e320ec0cacb8cc0d9889412eb0553804398f806"
               }
             },
             "prefer": ["cuda", "vulkan"]
           },
           "linux-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-linux-x64-core.zip",
-              "sha256": "d4b5964d12192333c0729c6e41c6aa3c72a84525d20ec80c2182f6f427c2c890"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-linux-x64-core.zip",
+              "sha256": "20e8944ca0927d71e33bb5a3f4d21c2d9f43664f58f8c17781bf17eb90009780"
             },
             "backends": {
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-linux-x64-vulkan.zip",
-                "sha256": "39f52cdcd4334b11d3820f5a168e426a1cfdf8d879cc5596d09bee757fda62e3"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-linux-x64-vulkan.zip",
+                "sha256": "dddc539b3e53ef34d33bb20b154ff745221300018f7584535455ed74e9ca079d"
               }
             },
             "prefer": [
@@ -583,13 +583,13 @@
           },
           "linux-arm64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-linux-arm64-core.zip",
-              "sha256": "d97c03775d492064fe21cbafe4579b0f82d1f2810f6f19a94010af1701dfb4f5"
+              "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-linux-arm64-core.zip",
+              "sha256": "38adfcb84890ec9648ba3790af48216828b5e2d392028af4c62e6fda63d799cc"
             },
             "backends": {
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.6/acestep-v0.1.6-linux-arm64-vulkan.zip",
-                "sha256": "fef551937796d5a118137dfbfe9153ef8f9bbd2b9f1763201dd25c32b83b6e2f"
+                "url": "https://github.com/betweentwomidnights/acestep.cpp/releases/download/v0.1.7/acestep-v0.1.7-linux-arm64-vulkan.zip",
+                "sha256": "614406755fd60356d06edf5ce3dffa8a944b53bf622edb582a8704cc4c1a2d72"
               }
             },
             "prefer": [
