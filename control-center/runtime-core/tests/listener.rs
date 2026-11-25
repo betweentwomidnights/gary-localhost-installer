@@ -45,9 +45,12 @@ async fn spawn_echo() -> u16 {
     port
 }
 
-fn closed_port() -> u16 {
-    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    socket.local_addr().unwrap().port()
+/// A port nothing listens on, held bound so the OS can't hand it to another
+/// test's connection while this one is still dialing it.
+fn closed_port() -> (u16, tokio::net::TcpSocket) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    (socket.local_addr().unwrap().port(), socket)
 }
 
 struct Harness {
@@ -65,13 +68,17 @@ impl Drop for Harness {
 }
 
 async fn harness(ports: HashMap<Service, u16>) -> Harness {
+    // The counter matters: tests start together, and Windows can give two of
+    // them the same timestamp, which would make them share a token file.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "gary-listener-test-{}-{}",
+        "gary-listener-test-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let settings_path = listener::settings_path(&dir.join("sa3.json"));
     let mut settings = Settings {
@@ -225,7 +232,8 @@ async fn rotating_or_revoking_the_token_takes_effect_immediately() {
 
 #[tokio::test]
 async fn unknown_and_offline_services_get_clear_errors() {
-    let h = harness(HashMap::from([(Service::Sa3, closed_port())])).await;
+    let (port, _held) = closed_port();
+    let h = harness(HashMap::from([(Service::Sa3, port)])).await;
     let (status, body) = h.get("/sa3/health", Some(&h.token)).await;
     assert_eq!(status, 502);
     assert_eq!(body["error"], "service_offline");
