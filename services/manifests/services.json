@@ -723,48 +723,48 @@
       "native": {
         "executable": "yue2-server.exe",
         "modelsDir": "yuey",
-        "version": "v0.3.2",
+        "version": "v0.3.3",
         "platforms": {
           "macos-arm64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-macos-universal.zip",
-              "sha256": "122bd43f8c24ed9abfa65039a3f738eb20830c4696f6e7efdaa865da62d43468"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-macos-universal.zip",
+              "sha256": "fd0177bd1254f89edbe3a0da1141d7dfe05a1e3555695bdd99913a51d5d343a5"
             },
             "backends": {
               "metal": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-macos-universal.zip",
-                "sha256": "122bd43f8c24ed9abfa65039a3f738eb20830c4696f6e7efdaa865da62d43468"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-macos-universal.zip",
+                "sha256": "fd0177bd1254f89edbe3a0da1141d7dfe05a1e3555695bdd99913a51d5d343a5"
               }
             },
             "prefer": ["metal"]
           },
           "windows-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-windows-x64-core.zip",
-              "sha256": "e4da34f5aab81d2a4ff1559da835a66780fb927ab9cf1328e3ee47c284e0565e"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-windows-x64-core.zip",
+              "sha256": "9dda85ec3b5e7c6f53b133906457bced58d0a0d6d821494a9962e7c3d0c57907"
             },
             "backends": {
               "cuda": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-windows-x64-cuda.zip",
-                "sha256": "14c1029c16fda45e9ff7a59ff493fadda97c75b1d400f967f4a1826fb57afd24",
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-windows-x64-cuda.zip",
+                "sha256": "bc42caee9fbfc941d9ebd470f822c664750d57ca3a7bbfea05ced73482d14b06",
                 "requires": ["cudart-12.8"]
               },
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-windows-x64-vulkan.zip",
-                "sha256": "7330d6d5ce020cc342241d814e3fbdedb9c6d37447e012cef6ebab3d5522609f"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-windows-x64-vulkan.zip",
+                "sha256": "b345fa257ce20e4612d1cbb3a2ff562610e8d5010db370158f3f88d6213d32cf"
               }
             },
             "prefer": ["cuda", "vulkan"]
           },
           "linux-x64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-linux-x64-core.zip",
-              "sha256": "76ccce6fa2950adb4e658408219e93bf89ce1dff240b6ebc7c4263a10504f00b"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-linux-x64-core.zip",
+              "sha256": "5350f9631ec089087493bd32e6d93fb3287e68641a2e411526401ec758db09d7"
             },
             "backends": {
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-linux-x64-vulkan.zip",
-                "sha256": "f64ff8996a9cd56cc70edd46f0720025044db7c187bfa315c06c4843db12a9a6"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-linux-x64-vulkan.zip",
+                "sha256": "75c41369a8da707a597265a5a5e4ad66188eecb87a06f6d3692d916214f20e4b"
               }
             },
             "prefer": [
@@ -773,13 +773,13 @@
           },
           "linux-arm64": {
             "core": {
-              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-linux-arm64-core.zip",
-              "sha256": "464acd4e35e63596810e9cbd587e86d931570cd96f067bdb4d189fa5291911ee"
+              "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-linux-arm64-core.zip",
+              "sha256": "a5bea81ac881d993d46f3017b711287cedb701e9441aca5a61c1f2ee8d498072"
             },
             "backends": {
               "vulkan": {
-                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.2/yuey-v0.3.2-linux-arm64-vulkan.zip",
-                "sha256": "8bd32f57daacca3135209d1885b5cad42a2e626fbe1c2aed84df27558305feb3"
+                "url": "https://github.com/betweentwomidnights/yuey.cpp/releases/download/v0.3.3/yuey-v0.3.3-linux-arm64-vulkan.zip",
+                "sha256": "1202181e0d874754fecda2cd86516f35f57cf8d5aa3c295bda4180340d13b0db"
               }
             },
             "prefer": [
