@@ -747,14 +747,18 @@ mod tests {
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
+/// A name no other call in any running process has used. The clock alone isn't enough:
+/// Windows can hand two threads the same timestamp, so a counter separates them.
 pub(crate) fn serial() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     format!(
-        "{}-{}",
+        "{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
 }
 
@@ -1323,7 +1327,7 @@ fn owner_session(config: &Config) -> Option<String> {
     let body: Value = serde_json::from_slice(&raw).ok()?;
     body["session"].as_str().map(str::to_owned)
 }
-fn active(config: &Config) -> Result<bool, String> {
+pub(crate) fn active(config: &Config) -> Result<bool, String> {
     let path = config.runtime_root.join("manager.lock");
     if !path.exists() {
         return Ok(false);

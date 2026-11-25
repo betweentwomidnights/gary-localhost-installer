@@ -83,6 +83,39 @@ try {
     Assert-Rejected { & $generator -Version '0.7.6' -ArtifactUrl 'https://example.com/gary4local_0.7.6_aarch64.app.tar.gz' `
         -InstallerPath $macArchive -SignaturePath "$macArchive.sig" -Channel preview -OutputDir $output } `
         'does not match installer'
+
+    # Each headless architecture gets its own folder and key. Its version is
+    # runtime-core's own, so a changed archive can't reuse a published version.
+    $headlessDir = Join-Path $testRoot 'headless'
+    New-Item -ItemType Directory -Path $headlessDir | Out-Null
+    $headless = Join-Path $headlessDir 'gary4local-server-linux-arm64-experimental.tar.gz'
+    [IO.File]::WriteAllText($headless, 'test headless archive')
+    [IO.File]::WriteAllText("$headless.sig", $signature)
+    $headlessOutput = Join-Path $testRoot 'gary4local\headless-linux-aarch64'
+    $headlessUrl = 'https://example.com/v0.7.7/gary4local-server-linux-arm64-experimental.tar.gz'
+    & $generator -Version '0.3.1' -ArtifactUrl $headlessUrl -InstallerPath $headless -SignaturePath "$headless.sig" `
+        -Channel preview -OutputDir $headlessOutput -PublishedAt '2026-11-24T07:00:00Z' -NotesText 'Headless test update.'
+    $headlessNative = Get-Content -LiteralPath (Join-Path $headlessOutput 'native-preview.json') -Raw | ConvertFrom-Json
+    if (@($headlessNative.platforms.PSObject.Properties.Name) -join ',' -cne 'linux-aarch64-headless') {
+        throw 'The headless arm64 feed must carry only linux-aarch64-headless.'
+    }
+    Write-Output 'PASS: the arm64 headless archive writes a linux-aarch64-headless feed in headless-linux-aarch64.'
+    # Regenerating from the same archive (a notes fix) is fine.
+    & $generator -Version '0.3.1' -ArtifactUrl $headlessUrl -InstallerPath $headless -SignaturePath "$headless.sig" `
+        -Channel preview -OutputDir $headlessOutput -NotesText 'Headless test update, reworded.' | Out-Null
+    [IO.File]::WriteAllText($headless, 'rebuilt headless archive')
+    Assert-Rejected { & $generator -Version '0.3.1' -ArtifactUrl $headlessUrl -InstallerPath $headless `
+        -SignaturePath "$headless.sig" -Channel preview -OutputDir $headlessOutput } `
+        'already publishes 0.3.1 for a different archive'
+    Assert-Rejected { & $generator -Version '0.3.2-beta' -ArtifactUrl $headlessUrl -InstallerPath $headless `
+        -SignaturePath "$headless.sig" -Channel preview -OutputDir $headlessOutput } `
+        'must be MAJOR.MINOR.PATCH'
+    if ((Get-Content -LiteralPath (Join-Path $headlessOutput 'preview.json') -Raw | ConvertFrom-Json).latest_version -cne '0.3.1') {
+        throw 'A refused headless version changed the existing feed.'
+    }
+    Assert-Rejected { & $generator -Version '0.3.2' -ArtifactUrl $headlessUrl -InstallerPath $headless `
+        -SignaturePath "$headless.sig" -Channel preview -OutputDir (Join-Path $testRoot 'gary4local\headless-linux-x86_64') } `
+        'does not match installer'
 }
 finally {
     $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)

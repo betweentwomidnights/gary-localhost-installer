@@ -11,21 +11,24 @@ download a headless archive from the [latest release](https://github.com/between
 - `linux-x64` for an x64 PC.
 - `linux-arm64` for a DGX Spark or another arm64 machine.
 
-from the folder containing your download, extract it somewhere permanent:
+from the folder containing your download, extract it and run its installer:
 
 ```sh
-mkdir -p ~/apps/gary4local/headless
-tar -xzf gary4local-server-linux-x64-experimental.tar.gz -C ~/apps/gary4local/headless
-sh ~/apps/gary4local/headless/install-gary.sh
+mkdir gary-install
+tar -xzf gary4local-server-linux-x64-experimental.tar.gz -C gary-install
+sh gary-install/install-gary.sh
 export PATH="$HOME/.local/bin:$PATH"
 gary
 ```
 
 for arm64, use the `linux-arm64` filename in the extraction command.
 
-the installer creates `~/.local/bin/gary`, pointing to the extracted binary.
-keep that folder. if `~/.local/bin` isn't already on your PATH, add the export
-line to your shell's startup file once.
+the installer copies Gary into `~/.local/share/gary4local/headless-app/` and
+creates `~/.local/bin/gary`, which always runs the current version. after that
+you can delete the `gary-install` folder. if `~/.local/bin` isn't already on
+your PATH, add the export line to your shell's startup file once.
+
+later versions install themselves with `gary update`. see [updating](#updating).
 
 ## start your first service
 
@@ -276,14 +279,56 @@ with its own `models_dir` keeps using it.
 
 ## updating
 
-finish training, stop services and quit Gary. extract the new archive into a
-new permanent folder. the installer refuses to overwrite an existing `gary`
-command, so inspect `command -v gary` and back up the old generated launcher
-before removing it and running the new `install-gary.sh`.
+inside Gary, type `update`. from a shell, run:
 
-remove only the launcher, not your model or library storage. keep the old
-extracted folder until you've checked the update, so its launcher can still
-be restored. there isn't an automatic CLI updater yet.
+```sh
+gary update
+```
+
+Gary checks its update feed, shows the new version and its notes, and asks
+before installing anything. the console also prints a line when it opens if a
+newer version is out. `gary update --check` only reports, and
+`gary update --check --json` gives scripts the same answer.
+
+an update downloads the new archive, checks its signature and checksum,
+installs it beside the version you have, and switches over in one step. quit
+Gary and open it again to use the new version.
+
+it won't run while a service, a runtime or model install, or training is
+running, so stop services and let training finish (or cancel it) first. it
+never changes your config, runtimes, models or LoRA library. if the new
+version pins a newer runtime, `start` tells you to run `install` for that
+service, as usual.
+
+to go back to the version you had before:
+
+```sh
+gary update --rollback
+```
+
+Gary keeps the current version and the one before it. running `gary update`
+again later reinstalls the newest.
+
+to stop the console checking when it opens, set
+`GARY4LOCAL_HEADLESS_UPDATE_CHECK=0`.
+
+### from an archive without `gary update`
+
+the headless archives released with gary4local v0.7.6 and earlier can't update
+themselves, so update those by hand once. finish training, stop services and
+quit Gary, then install the new archive with `--replace`:
+
+```sh
+mkdir gary-install
+tar -xzf gary4local-server-linux-x64-experimental.tar.gz -C gary-install
+sh gary-install/install-gary.sh --replace
+```
+
+`--replace` moves your old launcher aside to `~/.local/bin/gary.previous`
+instead of refusing to touch it. if you installed with `--config FILE`, pass it
+again. your model and library storage stay where they are. once the new version
+runs, you can delete `gary.previous`, the old extracted folder and
+`gary-install`.
 
 ## automation
 

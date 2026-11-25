@@ -31,6 +31,8 @@ GitHub Pages serves `main:/docs`, so a feed is only live once it's committed to
 | `docs/updates/gary4local/linux-x86_64/` | `preview` | Linux amd64 builds |
 | `docs/updates/gary4local/linux-aarch64/` | `preview` | Linux arm64 builds (DGX Spark) |
 | `docs/updates/gary4local/macos-aarch64/` | `preview` | Apple Silicon Mac builds |
+| `docs/updates/gary4local/headless-linux-x86_64/` | `preview` | `gary update` in the x64 headless archive |
+| `docs/updates/gary4local/headless-linux-aarch64/` | `preview` | `gary update` in the arm64 headless archive (DGX Spark) |
 | `docs/updates/gary4local-rocm/` | `preview` | the `gary4local-rocm` tester build |
 
 a build's channel is fixed when it's built: `stable` by default, `preview` when
@@ -150,22 +152,32 @@ its two Linux artifacts are `gary4local-server-linux-x64-experimental` and
 `.tar.gz` and `SHA256SUMS-linux-*`. check the artifact ZIP digest, the tarball
 checksum, and the `BUILD-INFO.json` inside the tarball before uploading.
 `commit` must be the release SHA and `platform` must match the architecture.
-the headless binary's component version comes from `runtime-core/Cargo.toml`;
-it is independent of the desktop app's version.
 
-upload both tarballs on the main release. preserve their names, and upload
-copies of their checksum files named `SHA256SUMS-headless-linux-x64` and
-`SHA256SUMS-headless-linux-arm64`, so they don't collide with desktop's checksum
-assets. the checksum contents remain unchanged. keep the downloaded ZIPs and
-provenance in the untracked per-release folder.
+the headless version comes from `runtime-core/Cargo.toml`, independent of the
+desktop app's version, and it's what `gary update` compares. when a release
+changes anything in the headless archive, bump it in step 1 too, as plain
+`MAJOR.MINOR.PATCH`: `runtime-core/Cargo.toml`, its `Cargo.lock`, and the
+`gary4local-core` block in `src-tauri/Cargo.lock`. an unbumped archive would
+never reach anyone, so the feed generator refuses a different archive under the
+version its feed already carries. if the headless archive didn't change, skip
+its feeds for that release.
 
-release notes should separate the desktop `.deb`s from the headless archives
-and show extraction into a permanent folder, `install-gary.sh`, PATH setup and
-`gary`. include the updater limitation: the installer refuses to overwrite an
-existing command. an update requires stopping services/finishing training,
-quitting Gary, inspecting and backing up the old generated launcher, then
-replacing that launcher with the new installer. don't remove model or library
-storage, and retain the old extracted folder until validation is complete.
+then sign both tarballs with the updater key, exactly like the `.deb`s in
+step 4 (same `tauri signer sign` command, same `TAURI_SIGNING_PRIVATE_KEY`
+trap). each should get a non-empty `.tar.gz.sig` beside it.
+
+upload both tarballs and their `.sig`s on the main release. preserve their
+names, and upload copies of their checksum files named
+`SHA256SUMS-headless-linux-x64` and `SHA256SUMS-headless-linux-arm64`, so they
+don't collide with desktop's checksum assets. the checksum contents remain
+unchanged. keep the downloaded ZIPs and provenance in the untracked per-release
+folder.
+
+release notes should separate the desktop `.deb`s from the headless archives.
+for a new install, show extraction, `install-gary.sh`, PATH setup and `gary`.
+for an existing one, say `gary update`. while people may still have an archive
+from v0.7.6 or earlier, which can't update itself, also show the one-time
+`install-gary.sh --replace` from the runtime-core README's updating section.
 
 ### 5. create the GitHub release
 
@@ -178,7 +190,7 @@ digests, then publish:
 - `gary4local_<version>_amd64.deb` and `.sig`
 - `gary4local_<version>_arm64.deb` and `.sig`
 - `SHA256SUMS-linux-x64` and `SHA256SUMS-linux-arm64`, straight from CI
-- both headless `.tar.gz` archives and their renamed `SHA256SUMS-headless-linux-*` copies
+- both headless `.tar.gz` archives, their `.sig`s, and their renamed `SHA256SUMS-headless-linux-*` copies
 
 after uploading, each asset's `digest` from
 `gh release view <tag> --json assets` should equal `sha256:` plus the local
@@ -240,6 +252,13 @@ prints:
 | `gary4local_<v>_arm64.deb` | `docs/updates/gary4local/linux-aarch64/` | `linux-aarch64-deb` |
 | `gary4local_<v>_aarch64.app.tar.gz` | `docs/updates/gary4local/macos-aarch64/` | `darwin-aarch64` |
 | `gary4local-rocm_<v>_x64-setup.exe` | `docs/updates/gary4local-rocm/` | `windows-x86_64` |
+| `gary4local-server-linux-x64-experimental.tar.gz` | `docs/updates/gary4local/headless-linux-x86_64/` | `linux-x86_64-headless` |
+| `gary4local-server-linux-arm64-experimental.tar.gz` | `docs/updates/gary4local/headless-linux-aarch64/` | `linux-aarch64-headless` |
+
+the headless archives carry no version in their names, so `-Version` is the
+headless version from `runtime-core/Cargo.toml`, not the desktop one, while the
+download URL uses the release tag. `gary update` checks `BUILD-INFO.json` inside
+the archive against that version and platform before installing.
 
 `linux-<arch>-deb` is the first key `tauri-plugin-updater` looks up for a
 `.deb` install. on a Mac it tries `darwin-aarch64-app`, then `darwin-aarch64`;
@@ -308,6 +327,16 @@ foreach ($feed in @("gary4local stable", "gary4local preview", "gary4local/linux
 }
 ```
 
+the headless feeds carry the headless version, so validate them separately:
+
+```powershell
+foreach ($folder in "gary4local/headless-linux-x86_64", "gary4local/headless-linux-aarch64") {
+    powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\validate_update_feeds.ps1 `
+      -BaseUrl "$base/$folder" -Channel preview -ExpectedVersion "0.4.0"
+    if ($LASTEXITCODE -ne 0) { throw "Live feed validation failed: $folder" }
+}
+```
+
 ### 9. update an installed app
 
 launch an older installed app on that channel and check it offers
@@ -316,6 +345,49 @@ fallback works, and the validator checks feed metadata; it doesn't replace the
 signature check during a real install. on Linux, installing asks for the
 password once (`pkexec dpkg -i`), then gary4local restarts. if you can't test
 the UI, write that down instead of claiming the in-app update was verified.
+
+for headless, run `gary update --check` on an installed older version (the
+DGX Spark is the usual one), then `gary update` and say yes. `gary --version`
+should print the new version afterwards, and `gary update --rollback` should
+switch back and forth. the check alone only proves the feed parses; the
+signature is verified during the install.
+
+## publishing the first headless feed
+
+the archives released with v0.7.6 and earlier have no `gary update` and run
+from wherever they were extracted, so the first release with the updater
+starts the managed installs. once, for that release:
+
+1. bump `runtime-core` to `0.4.0` in step 1. `0.3.0` was already shipped
+   without an updater, and the feed should never offer a version number two
+   different archives have used.
+2. build, sign and upload both headless archives and their `.sig`s as above.
+3. generate both headless feeds. there are no existing files in
+   `docs/updates/gary4local/headless-linux-*/` yet, so the generator creates the
+   folders. each run must print `Product: gary4local (linux-<arch>-headless)` and
+   `PASS`:
+
+   ```powershell
+   $tag = "v0.7.7"
+   $publishedAt = gh release view $tag --json publishedAt --jq '.publishedAt'
+   foreach ($arch in "x64", "arm64") {
+       $name = "gary4local-server-linux-$arch-experimental.tar.gz"
+       powershell -NoProfile -ExecutionPolicy Bypass -File control-center\src-tauri\scripts\generate_update_feeds.ps1 `
+         -Version "0.4.0" `
+         -ArtifactUrl "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/$tag/$name" `
+         -InstallerPath "path\to\$name" -SignaturePath "path\to\$name.sig" `
+         -Channel preview -PublishedAt $publishedAt `
+         -NotesText "Headless note one.||Headless note two."
+   }
+   ```
+
+4. commit and push the two feed folders, then validate them live as in step 8.
+5. install the new archive with `install-gary.sh --replace` on the Spark, then
+   check that `gary update --check` says it's up to date. nobody can test an
+   actual headless update until the next headless release, so step 9 starts
+   then. write that down rather than claiming it was verified.
+6. in the release notes, give existing headless users the one-time
+   `--replace` steps. after this release, `gary update` handles it.
 
 ## timestamps and the download-only fallback
 
