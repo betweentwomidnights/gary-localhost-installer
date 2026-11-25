@@ -100,7 +100,9 @@
       <input bind:value={seconds} inputmode="numeric" placeholder="96" />
       <small>
         The longest song yuey picks for itself when no bar count is set,
-        {minSeconds} to {maxSeconds}. A remix keeps its source's length.
+        {minSeconds} to {maxSeconds}. A continuation counts its source toward
+        this, leaving at least 10 seconds for new music, and a remix source
+        can't be longer than this.
       </small>
     </label>
     <label class="check-field wide">
