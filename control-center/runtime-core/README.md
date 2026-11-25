@@ -64,6 +64,7 @@ you can name it or use the arrow-key picker. Enter selects; Esc goes back.
 | `models sa3` | download, select or remove model variants |
 | `logs sa3` | show the service's log-file path |
 | `doctor sa3` | check setup when a service won't start |
+| `listen on` / `listen off` | open or close the [LAN listener](#the-lan-listener) for gary4juce on another computer |
 | `help` | show the available commands |
 | `quit` | leave Gary and stop services started by this console |
 
@@ -72,14 +73,104 @@ while using the services it started.
 
 the client ports match desktop gary4local, including SA3 on port 8006 and carey
 on port 8003. the services listen on loopback, so only this machine can reach
-them. for a DAW on another computer, see
-[using Gary from another computer](#using-gary-from-another-computer).
+them. for a DAW on another computer, turn on the
+[LAN listener](#the-lan-listener).
 
 ## using Gary from another computer
 
 a lot of people running headless Gary will have their DAW on a different
 machine. the services only listen on loopback, so something has to bridge the
-two. right now the easiest bridge is [Tailscale](https://tailscale.com).
+two. Gary has a LAN listener for that, built in and off until you turn it on.
+[Tailscale](#with-tailscale) and [SSH](#with-ssh) still work too.
+
+### the LAN listener
+
+inside Gary, type:
+
+```text
+listen on
+```
+
+Gary opens port 8020 on your local network and prints what gary4juce needs.
+the pairing token is shown this once:
+
+```text
+In gary4juce, open gary settings > gary4local host and enter:
+  host:           192.168.1.50
+  pairing token:  gary-7k3mq-xe9wd-2hb4r-tn6vz
+```
+
+enter those two in gary4juce's `gary4local host...` dialog, save, and switch the
+backend to local. the host is just the address, without `http://` or the port.
+the token field needs a gary4juce build newer than v5.0.7.
+
+the services themselves stay on loopback. the listener forwards each request to
+the service named by the first part of its path, so
+`http://gary-machine:8020/sa3/health` reaches SA3 on port 8006. every request
+has to carry the token, and anything without it gets a `401` before it reaches
+a service. generation, uploads and downloads stream straight through.
+
+| command | what it does |
+| --- | --- |
+| `listen` | show whether it's on, its address, and how many requests it refused |
+| `listen on` | open port 8020 now and every time Gary starts; creates a token if there isn't one |
+| `listen off` | close the port and keep the token for next time |
+| `listen rotate` | print a new token; the old one stops working straight away |
+| `listen revoke` | delete the token and close the port; no computer can connect |
+
+lost the token? use `listen rotate` and paste the new one into gary4juce. Gary
+only stores a hash of it, so it can't show you the old one.
+
+the listener runs while the console is open. if you start services with
+`gary start` or a systemd unit instead, run it on its own:
+
+```sh
+gary listen
+```
+
+`gary listen status`, `on`, `off`, `rotate` and `revoke` work from scripts too.
+add `--json` for the [agent protocol](../../docs/headless-agent-workflow.md).
+rotating or revoking from another terminal applies immediately to a listener
+that's already running.
+
+if the machine has a firewall, allow the port, for example
+`sudo ufw allow 8020/tcp`. to change the port, or to listen on one interface
+only, edit `port` or `bind` in `~/.config/gary4local/headless/listener.json`
+while the listener is off.
+
+#### what the token does and doesn't protect
+
+there's no TLS yet. the token and your audio cross the network unencrypted,
+so anyone who can watch traffic on that network can read both, and could reuse
+the token. use the listener on a home or studio network you trust, not on
+public or shared wifi. on networks you don't trust, use Tailscale or SSH, which
+encrypt everything.
+
+what the token does stop is a random device on the same network using your GPU,
+or reading what you've generated. tokens carry 100 random bits and are compared
+in constant time, so they can't be guessed. browsers on the network can't reach
+the services either, because they'd need the token too.
+
+other clients can use the listener the same way:
+
+```sh
+curl -H "Authorization: Bearer gary-7k3mq-xe9wd-2hb4r-tn6vz" http://gary-machine:8020/sa3/health
+```
+
+| path prefix | service | loopback port |
+| --- | --- | --- |
+| `/gary` | `gary` | 8000 |
+| `/terry` or `/melodyflow` | `melodyflow` | 8002 |
+| `/carey` | `carey` | 8003 |
+| `/jerry` or `/stable-audio` | `stable-audio` | 8005 |
+| `/sa3` | `sa3` | 8006 |
+| `/yuey` | `yuey` | 8007 |
+| `/foundation` | `foundation` | 8015 |
+
+a stopped service answers `502` with `service_offline`, so gary4juce shows it
+as offline.
+
+### with Tailscale
 
 put both machines on the same tailnet. then, on the machine running Gary,
 forward the port of each service you've started:
@@ -90,27 +181,17 @@ for p in 8003 8006 8007 8015; do
 done
 ```
 
-that example covers carey, SA3, yuey and foundation. swap in the ports for
-whatever you're running:
-
-| service | port |
-| --- | --- |
-| `gary` | 8000 |
-| `melodyflow` | 8002 |
-| `carey` | 8003 |
-| `stable-audio` | 8005 |
-| `sa3` | 8006 |
-| `yuey` | 8007 |
-| `foundation` | 8015 |
+that example covers carey, SA3, yuey and foundation. swap in the loopback ports
+from the table above for whatever you're running.
 
 `tailscale serve status` should list each forward as `(tailnet only)`.
 nothing gets exposed to the public internet; the ports are only reachable
 from your tailnet.
 
 then in gary4juce, open gary settings, choose `gary4local host...`, enter the
-Gary machine's tailnet name or IP, and switch the backend to local. services
-you haven't started just show as offline. the host setting needs a gary4juce
-build newer than v5.0.6.
+Gary machine's tailnet name or IP, leave the token empty, and switch the
+backend to local. services you haven't started just show as offline. the host
+setting needs a gary4juce build newer than v5.0.6.
 
 i've tested this with headless Gary on a DGX Spark and gary4juce on a Windows
 PC. health checks came back in about 15-30 ms over the tailnet.
@@ -124,10 +205,10 @@ sudo tailscale serve reset
 `reset` clears every serve config on the machine, not just Gary's. if you use
 `tailscale serve` for anything else, check `tailscale serve status` first.
 
-### without Tailscale
+### with SSH
 
-SSH forwarding still works. forward each port to the same port on the DAW
-machine and leave gary4juce's host empty, so it keeps using this computer:
+forward each port to the same port on the DAW machine and leave gary4juce's
+host empty, so it keeps using this computer:
 
 ```sh
 ssh -N -L 8006:127.0.0.1:8006 -L 8003:127.0.0.1:8003 you@gary-machine
@@ -135,13 +216,6 @@ ssh -N -L 8006:127.0.0.1:8006 -L 8003:127.0.0.1:8003 you@gary-machine
 
 add one `-L` per service. stop any gary4local services on the DAW machine that
 use those ports first.
-
-### what's next
-
-we're going to explore a listener built into gary4local next: an opt-in setting
-that opens the client ports to your local network, with a pairing token so a
-random device on the same wifi can't use your GPU. until that exists, Tailscale
-or SSH keeps the services off the open network.
 
 ## choosing models
 

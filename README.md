@@ -58,7 +58,7 @@ build while we tried very hard to break it locally.
 - [x] produce a macOS build of this project and retire [gary4local-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac)
 - [x] produce a Linux build (Vulkan, amd64 and arm64)
 - [ ] launch the web UIs for sa3.cpp, acestep.cpp and yuey.cpp directly from gary4local
-- [ ] an opt-in network listener with a pairing token, so gary4juce on another computer can reach headless Gary without Tailscale or SSH ([current workaround](control-center/runtime-core/README.md#using-gary-from-another-computer))
+- [x] an opt-in network listener with a pairing token, so gary4juce on another computer can reach headless Gary without Tailscale or SSH ([LAN listener](control-center/runtime-core/README.md#the-lan-listener))
 
 how every native service is packaged and installed is in
 [native runtime packages](docs/native-runtime-packages.md).
