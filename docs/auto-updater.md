@@ -27,6 +27,26 @@ AMD tester build, `gary4local-rocm`, follows its own preview feed:
 - `docs/updates/gary4local/linux-aarch64/preview.json` and `native-preview.json`
 - `docs/updates/gary4local-rocm/preview.json` and `native-preview.json`
 
+## headless
+
+the headless console has no UI updater, but `gary update` reads the same kind
+of feed, one per architecture:
+
+- `docs/updates/gary4local/headless-linux-x86_64/preview.json` and `native-preview.json`
+- `docs/updates/gary4local/headless-linux-aarch64/preview.json` and `native-preview.json`
+
+it shows the new version and notes and installs only after you say yes. it
+checks the archive's SHA-256 and its signature against the same updater key as
+desktop, installs it into a new version folder, and switches over in one step,
+keeping the previous version for `gary update --rollback`. the console checks
+the feed once each time it opens; `GARY4LOCAL_HEADLESS_UPDATE_CHECK=0` turns
+that off.
+
+for testing a feed before it's published, `GARY4LOCAL_HEADLESS_UPDATE_FEED`
+(the feed folder's URL) and `GARY4LOCAL_HEADLESS_UPDATER_PUBKEY` override the
+defaults at runtime. a feed served from `127.0.0.1` or `localhost` may link a
+plain-HTTP archive on the same machine; the signature check still applies.
+
 ## building without the updater
 
 `VITE_ENABLE_APP_UPDATER` is a build-time flag, not a runtime toggle. set it to

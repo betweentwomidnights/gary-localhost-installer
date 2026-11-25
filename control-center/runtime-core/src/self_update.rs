@@ -568,7 +568,7 @@ pub fn ensure_idle() -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "Gary can't update while {} {} running a service, an install or training. Stop {}, and let training finish or cancel it, then try again. An update never interrupts running work.",
+        "Gary can't change versions while {} {} running a service, an install or training. Stop {}, and let training finish or cancel it, then try again. Updates and rollbacks never interrupt running work.",
         busy.join(", "),
         if busy.len() == 1 { "is" } else { "are" },
         if busy.len() == 1 { "it" } else { "them" }
