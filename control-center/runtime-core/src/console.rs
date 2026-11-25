@@ -1098,9 +1098,12 @@ impl Console {
                 settings.enabled = true;
                 settings.save(&path)?;
                 if let Some(token) = token {
-                    say(listener::token_notice(&token))?;
+                    say(listener::token_notice(&token, &settings))?;
                 } else {
-                    say("Using the existing pairing token. listen rotate replaces it.")?;
+                    say(format!(
+                        "Using the existing pairing token; listen rotate replaces it. gary4juce's host: {}",
+                        listener::gary4juce_host(&settings)
+                    ))?;
                 }
                 self.start_listener(settings).await?;
                 say(listener::NO_TLS_NOTICE)?;
@@ -1118,7 +1121,7 @@ impl Console {
             Listen::Rotate => {
                 let token = settings.rotate()?;
                 settings.save(&path)?;
-                say(listener::token_notice(&token))?;
+                say(listener::token_notice(&token, &settings))?;
                 say("The previous token stopped working immediately.")?;
             }
             Listen::Revoke => {
@@ -1334,7 +1337,7 @@ Add --config FILE or --json.")?;
             say(cli::envelope("listen", "result", None, data, None, 0))
         } else {
             if let Some(token) = token {
-                say(listener::token_notice(token))?;
+                say(listener::token_notice(token, &settings))?;
             }
             say(format!(
                 "LAN listener {} with Gary on port {}. Pairing token {}.",
@@ -1366,7 +1369,7 @@ Add --config FILE or --json.")?;
                 say(cli::envelope("listen", "event", Some("ready"), data, None, 0))?;
             } else {
                 if let Some(token) = &token {
-                    say(listener::token_notice(token))?;
+                    say(listener::token_notice(token, &settings))?;
                 }
                 say(format!(
                     "LAN listener on at {}. Press Ctrl+C to stop.",

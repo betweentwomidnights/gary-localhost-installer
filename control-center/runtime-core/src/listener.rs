@@ -443,22 +443,33 @@ pub fn lan_address(bind: IpAddr) -> Option<IpAddr> {
     (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
 }
 
+/// The address as people type it: no scheme, so nobody pastes a URL where
+/// gary4juce asks for a host.
 pub fn address_line(settings: &Settings) -> String {
     match lan_address(settings.bind) {
-        Some(ip) => format!("http://{ip}:{}", settings.port),
+        Some(ip) => format!("{ip}, port {}", settings.port),
         None => format!("port {} on this machine's LAN address", settings.port),
     }
+}
+
+/// What goes in gary4juce's host field: the bare address.
+pub fn gary4juce_host(settings: &Settings) -> String {
+    lan_address(settings.bind)
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| "this machine's LAN IP address".into())
 }
 
 pub const NO_TLS_NOTICE: &str =
     "No TLS: the token and audio cross your network unencrypted. Use it only on networks you trust.";
 
 /// Lines shown when a token is created. This is the only time it's visible.
-pub fn token_notice(token: &str) -> String {
+pub fn token_notice(token: &str, settings: &Settings) -> String {
     format!(
-        "Pairing token (shown once): {token}\n\
-         In gary4juce: gary settings > gary4local host, then paste it into the token field.\n\
-         Lost it? Use listen rotate for a new one; the old token stops working."
+        "In gary4juce, open gary settings > gary4local host and enter:\n  \
+         host:           {}\n  \
+         pairing token:  {token}\n\
+         The token is shown only this once. Lost it? listen rotate makes a new one; the old one stops working.",
+        gary4juce_host(settings)
     )
 }
 

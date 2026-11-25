@@ -91,15 +91,18 @@ inside Gary, type:
 listen on
 ```
 
-Gary opens port 8020 on your local network and prints a pairing token, once:
+Gary opens port 8020 on your local network and prints what gary4juce needs.
+the pairing token is shown this once:
 
 ```text
-Pairing token (shown once): gary-7k3mq-xe9wd-2hb4r-tn6vz
+In gary4juce, open gary settings > gary4local host and enter:
+  host:           192.168.1.50
+  pairing token:  gary-7k3mq-xe9wd-2hb4r-tn6vz
 ```
 
-in gary4juce, open gary settings, choose `gary4local host...`, enter the Gary
-machine's IP or hostname, paste the token into the token field, and switch the
-backend to local. the token field needs a gary4juce build newer than v5.0.7.
+enter those two in gary4juce's `gary4local host...` dialog, save, and switch the
+backend to local. the host is just the address, without `http://` or the port.
+the token field needs a gary4juce build newer than v5.0.7.
 
 the services themselves stay on loopback. the listener forwards each request to
 the service named by the first part of its path, so
