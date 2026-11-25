@@ -142,9 +142,14 @@ schema validates the envelope, not every command payload. Parse errors use
 ## Storage and training
 
 `runtime_root` contains runtime packages, owner/state records, logs, temporary
-uploads and GPU caches. Models use managed storage by default; `--models-dir`
-selects an existing external folder. `library_root` controls LoRA catalogs and
-training history separately. For a container, mount persistent storage for the
+uploads and GPU caches. Models use managed storage by default, under
+`runtime_root/models/<service>`. `--models-root desktop` (which `init` writes
+for the standard profiles) shares desktop's `models/<service>` instead, and
+`--models-root DIR` shares another absolute folder. `--models-dir` selects an
+existing external folder that Gary never writes to. Shared downloads are locked
+per file across processes, and removing a shared model removes it for every
+profile and for desktop. `library_root` controls LoRA catalogs and training
+history separately. For a container, mount persistent storage for the
 runtime/model data and library you want to retain.
 
 Each runtime root has an OS-held owner lock. Status and stop use a session nonce

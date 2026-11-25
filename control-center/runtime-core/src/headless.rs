@@ -31,6 +31,10 @@ pub struct Config {
     pub runtime_root: PathBuf,
     #[serde(default)]
     pub models_dir: PathBuf,
+    /// Managed model storage shared with desktop: absolute, or desktop to follow desktop's selected
+    /// storage. None keeps the profile's own runtime_root/models.
+    #[serde(default)]
+    pub models_root: Option<PathBuf>,
     /// Desktop-compatible LoRA and training storage. None preserves an isolated legacy profile.
     #[serde(default)]
     pub library_root: Option<PathBuf>,
@@ -116,6 +120,19 @@ impl Config {
                 hint: "Check desktop storage settings or set an absolute library_root.",
             })?);
         }
+        if config.models_root.as_deref() == Some(Path::new("desktop")) {
+            config.models_root = Some(crate::model_store::desktop_models_root().map_err(|message| ConfigError {
+                code: "models_unavailable", message,
+                hint: "Check desktop storage settings or set an absolute models_root.",
+            })?);
+        }
+        if config.models_root.is_some() && !config.models_dir.as_os_str().is_empty() {
+            return Err(ConfigError {
+                code: "config_invalid",
+                message: "Use either models_dir for external weights or models_root for shared managed storage, not both.".into(),
+                hint: "Omit models_dir to share desktop's models.",
+            });
+        }
         if config.models_dir.as_os_str().is_empty() {
             config.models_dir = config.managed_models_dir();
         }
@@ -135,7 +152,18 @@ impl Config {
             .join(format!("{}-native.log", self.service.id()))
     }
     pub fn managed_models_dir(&self) -> PathBuf {
+        self.models_root.as_ref().map_or_else(
+            || self.private_models_dir(),
+            |root| root.join(self.service.id()),
+        )
+    }
+    /// Where this profile kept its own models before it shared desktop's.
+    pub fn private_models_dir(&self) -> PathBuf {
         self.runtime_root.join("models").join(self.service.id())
+    }
+    /// True when managed weights live in storage other profiles and desktop also use.
+    pub fn shares_models(&self) -> bool {
+        self.models_root.is_some() && self.models_dir == self.managed_models_dir()
     }
     pub fn adapters_dir(&self) -> PathBuf {
         self.library_root.as_ref().map_or_else(
@@ -223,7 +251,7 @@ impl Config {
     }
     pub fn summary(&self) -> Value {
         json!({"service":self.service, "platform":runtime::current_platform(), "runtime_root":self.runtime_root,
-            "models_dir":self.models_dir, "model":self.model, "encoding":self.encoding, "selected_models":self.selected_models,
+            "models_dir":self.models_dir, "models_root":self.models_root, "model":self.model, "encoding":self.encoding, "selected_models":self.selected_models,
             "t5_encoding":self.t5_encoding, "ae_encoding":self.ae_encoding,
             "device":self.device, "library_root":self.library_root, "public_port":self.public_port,"expected_version":self.expected_version,
             "public_url":format!("http://127.0.0.1:{}",self.public_port),
@@ -333,6 +361,14 @@ impl Config {
         if let Some(root) = &self.library_root {
             if !root.is_absolute() || root.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
                 return Err("Use an absolute normalized library_root".into());
+            }
+        }
+        if let Some(root) = &self.models_root {
+            if !root.is_absolute() || root.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                return Err("Use an absolute normalized models_root".into());
+            }
+            if root.starts_with(&self.runtime_root) || self.runtime_root.starts_with(root) {
+                return Err("Use a models_root outside the runtime root".into());
             }
         }
         if self.public_port == 0 {
@@ -510,6 +546,7 @@ mod tests {
         Config {
             service: Service::Sa3,
             library_root: None,
+            models_root: None,
             runtime_root: root,
             models_dir: absolute.join("existing-models"),
             core: Package {
@@ -1044,10 +1081,24 @@ pub fn remove_model(
     } else {
         body["selected_models"] = json!(updated.selected_models);
     }
-    // Keep originals recoverable until every move and the config update succeed.
-    let staged = config
-        .runtime_root
-        .join(format!(".remove-model-{}", serial()));
+    // Shared weights may be downloading in desktop; refuse rather than pull them out from under it.
+    let mut claims = Vec::new();
+    for (file, _) in &plan.files {
+        let weight = if file.extension().is_some_and(|ext| ext == "partial") {
+            file.with_extension("")
+        } else {
+            file.clone()
+        };
+        if !claims.iter().any(|(path, _)| path == &weight) {
+            let claim = crate::download::DestinationLock::try_acquire(&weight)?;
+            claims.push((weight, claim));
+        }
+    }
+    // Keep originals recoverable until every move and the config update succeed. Staging sits
+    // beside the weights so each move is a rename, even when desktop's storage is another disk.
+    let scratch = crate::model_store::scratch_dir(config);
+    std::fs::create_dir_all(&scratch).map_err(err)?;
+    let staged = scratch.join(format!(".remove-model-{}", serial()));
     std::fs::create_dir(&staged).map_err(err)?;
     let mut moved = Vec::new();
     let result = (|| -> Result<(), String> {
@@ -1077,6 +1128,9 @@ pub fn remove_model(
             "{error}\nCould not restore all model files:\n{}",
             failures.join("\n")
         ));
+    }
+    for (_, claim) in claims {
+        claim.finish();
     }
     std::fs::remove_dir_all(&staged).map_err(|e| {
         format!(
@@ -1211,7 +1265,7 @@ impl Drop for Lease {
         let _ = self._file.unlock();
     }
 }
-fn lock(config: &Config) -> Result<Lease, String> {
+pub(crate) fn lock(config: &Config) -> Result<Lease, String> {
     let library = config.library_root.as_ref()
         .map(|root| crate::lora_library::lease(root, config.service))
         .transpose()?.flatten();
@@ -1577,10 +1631,13 @@ fn selected_model_directory(config: &Config) -> Result<Option<ModelDirectory>, S
     if config.selected_models.is_empty() {
         return Ok(None);
     }
-    let path = config
-        .runtime_root
-        .join("tmp")
-        .join(format!("selected-models-{}", serial()));
+    // Hard links need the weights' file system, which is desktop's when models are shared.
+    // Each profile owns one folder there; its lease makes any view left in it stale.
+    let profile = format!("{:x}", Sha256::digest(config.runtime_root.to_string_lossy().as_bytes()));
+    let views = crate::model_store::scratch_dir(config).join(format!("views-{}-{}", config.service.id(), &profile[..16]));
+    let _ = std::fs::remove_dir_all(&views);
+    std::fs::create_dir_all(&views).map_err(err)?;
+    let path = views.join(format!("selected-models-{}", serial()));
     std::fs::create_dir(&path).map_err(err)?;
     let view = ModelDirectory(path);
     let mut files = config.model_files()?;

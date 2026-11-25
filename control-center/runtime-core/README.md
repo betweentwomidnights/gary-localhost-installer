@@ -178,13 +178,27 @@ to make the adapter available to clients.
 
 Gary manages its configuration and model storage automatically. the normal
 Linux locations are `~/.config/gary4local/headless/` for configuration and
-`~/.local/share/gary4local/headless/` for runtimes and models.
+`~/.local/share/gary4local/headless/` for runtimes.
 
-standard installations share desktop's SA3/carey LoRA library, including
-training history, checkpoint selections and dice prompts. it follows the
-storage location selected in desktop. model downloads and runtime settings
-remain separate. stop a service in one interface before using its library
-from the other.
+standard installations share desktop's models and its SA3/carey LoRA library,
+including training history, checkpoint selections and dice prompts. both follow
+the storage location selected in desktop, so a machine keeps one copy of each
+model. on a machine without desktop, Gary uses desktop's default location, and
+installing desktop later finds the models already there. runtimes and runtime
+settings stay separate, because each app pins its own versions.
+
+a download that the other app is already making waits for it instead of
+starting over. removing a model removes it for both apps; a service that's
+already running keeps working until it restarts. stop a service in one
+interface before using its LoRA library from the other.
+
+installations from before models were shared merge their own models into
+desktop's folder the first time Gary starts, or the first time `serve`,
+`download-models` or `install` runs. copies desktop already has are deleted,
+the rest are moved, and Gary says how much it moved and freed. a file that
+differs from desktop's and from the published one is set aside under
+`models-unmerged` in the runtime folder instead of being deleted. a profile
+with its own `models_dir` keeps using it.
 
 ## updating
 
