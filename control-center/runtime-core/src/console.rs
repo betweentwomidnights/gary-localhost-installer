@@ -890,10 +890,15 @@ impl Console {
                     let confirm = answer(
                         input,
                         &format!(
-                            "Remove {label} {} {} files totaling {}? [y/N] ",
+                            "Remove {label} {} {} files totaling {}?{} [y/N] ",
                             checkpoint_label(service, checkpoint),
                             candidate.encoding.to_ascii_uppercase(),
-                            model_size(plan.bytes())
+                            model_size(plan.bytes()),
+                            if current.shares_models() {
+                                " Desktop gary4local uses the same files and loses them too."
+                            } else {
+                                ""
+                            }
                         ),
                     )
                     .await?;
@@ -906,7 +911,7 @@ impl Console {
                             &candidate.encoding,
                             &plan,
                         )?;
-                        say("Model weights removed. Shared files are kept.")?;
+                        say("Model weights removed. Files other models need are kept.")?;
                     } else {
                         say("Model removal cancelled.")?;
                     }
@@ -1415,6 +1420,22 @@ Add --config FILE or --json.")?;
     }
 }
 
+/// Standard profiles made before models were shared merge theirs into desktop's folder once.
+async fn adopt_desktop_models(base: &Path) -> Result<(), String> {
+    for service in Service::ALL {
+        let path = profile_path(base, service);
+        if !cli::is_standard_profile(&path) {
+            continue;
+        }
+        match crate::model_store::adopt_desktop_models(&path).await {
+            Ok(Some(summary)) => say(summary)?,
+            Ok(None) => {}
+            Err(e) => say(format!("{} models stay in their own folder for now: {e}", service.id()))?,
+        }
+    }
+    Ok(())
+}
+
 async fn shell(path: PathBuf) -> Result<i32, String> {
     let (tx, mut ready) = mpsc::unbounded_channel();
     let mut console = Console::new(path, tx);
@@ -1425,6 +1446,7 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
     // prompt. Keep the same future alive through setup and startup.
     tokio::select! { biased; _=&mut shutdown=>return Ok(0), _=std::future::ready(())=>{} }
     say(format!("Gary {} — local GPU services\nConfig: {}\n\nType /help for commands. /quit or Ctrl+C stops services started here.\n",env!("CARGO_PKG_VERSION"),console.path.display()))?;
+    adopt_desktop_models(&console.path).await?;
     if let Err(e) = console.status(None).await {
         say(format!("{e}\nType /help for commands."))?;
     }

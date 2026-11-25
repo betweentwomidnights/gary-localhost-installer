@@ -71,6 +71,7 @@ const COMMANDS: &[&str] = &[
 const INIT_OPTIONS: &[&str] = &[
     "config",
     "models-dir",
+    "models-root",
     "runtime-root",
     "library-root",
     "device",
@@ -171,7 +172,7 @@ impl Request {
 
 pub fn help() -> &'static str {
     "gary4local-server COMMAND [OPTIONS]\n\n\
-     init --config FILE [--service ID] [--model NAME] [--models-dir DIR] [--runtime-root DIR] [--library-root desktop|DIR] [--device Vulkan0] [--port PORT] [--encoding f16]\n\
+     init --config FILE [--service ID] [--model NAME] [--models-dir DIR | --models-root desktop|DIR] [--runtime-root DIR] [--library-root desktop|DIR] [--device Vulkan0] [--port PORT] [--encoding f16]\n\
      share-loras --config FILE --library-root DIR  Share existing LoRAs with desktop storage\n\
      validate --config FILE      Check configuration and resolve pinned packages; no downloads\n\
      models --config FILE       List pinned weights for this configuration\n\
@@ -231,7 +232,8 @@ pub fn config_schema() -> Value {
         "properties":{
             "service":{"enum":crate::service::Service::ALL,"default":"sa3"},
             "runtime_root":{"type":"string","minLength":1,"description":"Absolute normalized dedicated runtime directory. Defaults to platform data storage."},
-            "models_dir":{"type":"string","minLength":1,"description":"Optional external model directory. Omit to manage models under runtime_root/models/<service>."},
+            "models_dir":{"type":"string","minLength":1,"description":"Optional external model directory, never written to. Omit for managed storage."},
+            "models_root":{"type":["string","null"],"description":"Managed model storage: absolute, or desktop to share desktop's selected storage (models/<service>). Omit both to manage models under runtime_root/models/<service>."},
             "library_root":{"type":["string","null"],"description":"Absolute desktop-compatible LoRA library, or desktop to follow desktop's selected storage."},
             "core":{"$ref":"#/$defs/package"},"backend":{"$ref":"#/$defs/package"},
             "manifest":{"type":["string","null"],"description":"Optional absolute path to a local package manifest; otherwise use bundled pins."},
@@ -356,6 +358,15 @@ fn comparable(path: &Path) -> Result<PathBuf, Error> {
         }
     }
 }
+/// The standard SA3 profile or one of its companion service profiles.
+pub(crate) fn is_standard_profile(path: &Path) -> bool {
+    crate::console::standard_config().is_ok_and(|standard| {
+        crate::service::Service::ALL
+            .into_iter()
+            .any(|service| crate::console::profile_path(&standard, service) == path)
+    })
+}
+
 pub(crate) fn init_root(config_path: &Path) -> PathBuf {
     if crate::console::standard_config().as_deref() == Ok(config_path) {
         return headless::default_root().join("sa3");
@@ -446,6 +457,11 @@ fn init(request: &Request) -> Result<Value, Error> {
     }
     if let Some(models) = models {
         body["models_dir"] = json!(models);
+    } else if let Some(path) = request.path("models-root") {
+        body["models_root"] = if path == Path::new("desktop") { json!("desktop") } else { json!(absolute(&path)?) };
+    } else if is_standard_profile(&config_path) {
+        // One copy per machine: standard profiles download into desktop's models folder.
+        body["models_root"] = json!("desktop");
     }
     let raw = serde_json::to_vec_pretty(&body).expect("JSON config");
     let config = Config::from_bytes(&raw)?;
@@ -522,6 +538,16 @@ pub async fn execute(
         _ => {}
     }
     let path = request.path("config").unwrap();
+    // Merging can move gigabytes and rewrites the profile, so only commands that already change
+    // storage do it; validate, doctor, models, status and stop stay read-only.
+    if matches!(request.command.as_str(), "serve" | "download-models" | "install") && is_standard_profile(&path) {
+        if let Some(summary) = crate::model_store::adopt_desktop_models(&path)
+            .await
+            .map_err(|message| Error::new("models_merge_failed", message, "Check both model folders, then run the command again.", 1))?
+        {
+            eprintln!("{summary}");
+        }
+    }
     let config = Config::read_checked(&path)?;
     if let Some(id) = request.text("service")? {
         if crate::service::Service::parse(id).map_err(Error::usage)? != config.service {

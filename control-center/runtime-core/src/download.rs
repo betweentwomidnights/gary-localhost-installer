@@ -51,10 +51,92 @@ pub fn partial_path(dest: &Path) -> PathBuf {
     dest.with_file_name(format!("{name}.partial"))
 }
 
+fn lock_path(dest: &Path) -> PathBuf {
+    let partial = partial_path(dest);
+    let mut name = partial.file_name().unwrap_or_default().to_os_string();
+    name.push(".lock");
+    partial.with_file_name(name)
+}
+
+/// Exclusive claim on one destination file, across processes. Desktop and
+/// headless gary4local can share a models folder, and two writers appending
+/// to the same `.partial` would corrupt it.
+pub struct DestinationLock {
+    file: std::fs::File,
+    path: PathBuf,
+}
+
+impl DestinationLock {
+    /// Waits while another process holds the claim.
+    pub async fn acquire(dest: &Path) -> Result<Self, String> {
+        let path = lock_path(dest);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+            file.lock()
+                .map_err(|error| format!("cannot lock {}: {error}", path.display()))?;
+            Ok(Self { file, path })
+        })
+        .await
+        .map_err(|error| format!("download lock task failed: {error}"))?
+    }
+
+    /// Claim without waiting, for callers that should refuse instead.
+    pub fn try_acquire(dest: &Path) -> Result<Self, String> {
+        let path = lock_path(dest);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+        file.try_lock().map_err(|_| {
+            format!(
+                "{} is being downloaded by another gary4local process. Wait for it to finish.",
+                dest.file_name().unwrap_or_default().to_string_lossy()
+            )
+        })?;
+        Ok(Self { file, path })
+    }
+
+    /// Retire the lock file once the destination is complete. A process that
+    /// was waiting on it rechecks the destination first and finds it done.
+    pub fn finish(self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = self.file.unlock();
+    }
+}
+
 /// Download `url` to `dest`, resuming a `.partial` left by an interrupted
 /// attempt, and keep it only if its SHA-256 is the expected one. A file
-/// already at `dest` with the right hash is kept without a request.
+/// already at `dest` with the right hash is kept without a request. Another
+/// process downloading the same file is waited for, not raced.
 pub async fn download_verified(
+    client: &reqwest::Client,
+    url: &str,
+    headers: reqwest::header::HeaderMap,
+    expected_sha256: &str,
+    dest: &Path,
+    on_progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+) -> Result<(), String> {
+    let claim = DestinationLock::acquire(dest).await?;
+    download_claimed(client, url, headers, expected_sha256, dest, on_progress).await?;
+    claim.finish();
+    Ok(())
+}
+
+async fn download_claimed(
     client: &reqwest::Client,
     url: &str,
     headers: reqwest::header::HeaderMap,

@@ -7,6 +7,7 @@ pub mod headless;
 pub mod listener;
 pub mod manifest;
 pub mod model_catalog;
+pub mod model_store;
 pub mod runtime;
 pub mod sa3_adapter;
 pub mod workload_job;
