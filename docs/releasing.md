@@ -382,10 +382,14 @@ starts the managed installs. once, for that release:
    ```
 
 4. commit and push the two feed folders, then validate them live as in step 8.
-5. install the new archive with `install-gary.sh --replace` on the Spark, then
-   check that `gary update --check` says it's up to date. nobody can test an
-   actual headless update until the next headless release, so step 9 starts
-   then. write that down rather than claiming it was verified.
+5. test a real update on the Spark. it already has a managed install of a
+   0.3.0 test build from the `test/headless-spark` branch (made with
+   `install-gary.sh --replace` while v0.4.0 was being tested), so step 9 works
+   there as written: `gary update --check` should offer 0.4.0, `gary update`
+   should install it, and `gary update --rollback` should switch back and
+   forth. a machine that only ever had a v0.7.6 archive can't update itself;
+   install the new archive there with `install-gary.sh --replace`, then check
+   that `gary update --check` says it's up to date.
 6. in the release notes, give existing headless users the one-time
    `--replace` steps. after this release, `gary update` handles it.
 
