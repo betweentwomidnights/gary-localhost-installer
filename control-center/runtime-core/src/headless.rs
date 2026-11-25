@@ -449,24 +449,33 @@ impl Config {
                 ]),
                 Service::Sa3 => unreachable!(),
             }
+            let mut env = vec![
+                (
+                    "TMPDIR".into(),
+                    self.runtime_root.join("tmp").to_string_lossy().into_owned(),
+                ),
+                (
+                    "XDG_CACHE_HOME".into(),
+                    self.runtime_root
+                        .join("cache")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+            ];
+            if self.service == Service::Yuey {
+                // Desktop's default ceiling. Without it the server used its own
+                // 180, which also lets a continuation source run to 170 s.
+                env.push((
+                    "YUE2_NATURAL_MAX_SECONDS".into(),
+                    YUEY_NATURAL_MAX_SECONDS.into(),
+                ));
+            }
             return NativeLaunch::new(
                 &self.runtime_root,
                 self.service.executable(),
                 &install,
                 args,
-                vec![
-                    (
-                        "TMPDIR".into(),
-                        self.runtime_root.join("tmp").to_string_lossy().into_owned(),
-                    ),
-                    (
-                        "XDG_CACHE_HOME".into(),
-                        self.runtime_root
-                            .join("cache")
-                            .to_string_lossy()
-                            .into_owned(),
-                    ),
-                ],
+                env,
                 &[],
             );
         }
@@ -571,6 +580,27 @@ mod tests {
             manifest: None,
             expected_version: None,
         }
+    }
+    #[test]
+    fn yuey_launches_with_desktops_natural_length_ceiling() {
+        let root = std::env::temp_dir().join(format!("gary-headless-{}", serial()));
+        let mut config = config(root.clone());
+        config.service = Service::Yuey;
+        let launch = config.launch(root.join("runtime"), 28102);
+        let ceiling: Vec<_> = launch
+            .env
+            .iter()
+            .filter(|(key, _)| key == "YUE2_NATURAL_MAX_SECONDS")
+            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(ceiling, ["96"]);
+
+        config.service = Service::Carey;
+        let launch = config.launch(root.join("runtime"), 28102);
+        assert!(!launch
+            .env
+            .iter()
+            .any(|(key, _)| key == "YUE2_NATURAL_MAX_SECONDS"));
     }
     #[test]
     fn refuses_unowned_data_and_prevents_concurrent_owners() {
@@ -1387,6 +1417,10 @@ fn verify_archive(package: &Package) -> Result<(), String> {
     }
     Ok(())
 }
+/// yuey's natural-length ceiling, the same 96 s desktop gary4local defaults to.
+/// It also bounds a continuation as a whole, source included.
+const YUEY_NATURAL_MAX_SECONDS: &str = "96";
+
 pub(crate) fn clean_command_env(command: &mut std::process::Command, launch: &NativeLaunch) {
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
