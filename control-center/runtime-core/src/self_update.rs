@@ -418,6 +418,10 @@ impl AppDir {
         self.root.join("versions").join(version.to_string())
     }
     /// One update or rollback at a time; the OS drops the lock with the file.
+    ///
+    /// A thread that forks to run a program shares every open file until the program
+    /// starts, so a lock released a moment ago can still look held. Retrying for a second
+    /// rides that out; a real update or rollback holds the lock far longer.
     fn lock(&self) -> Result<File, String> {
         let file = OpenOptions::new()
             .read(true)
@@ -426,9 +430,16 @@ impl AppDir {
             .truncate(false)
             .open(self.root.join("update.lock"))
             .map_err(|e| format!("Can't open the update lock: {e}"))?;
-        file.try_lock()
-            .map_err(|_| "Another gary update or rollback is running.".to_string())?;
-        Ok(file)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(file),
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(25))
+                }
+                Err(_) => return Err("Another gary update or rollback is running.".to_string()),
+            }
+        }
     }
 }
 
