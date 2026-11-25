@@ -360,13 +360,33 @@ fn check_package(dir: &Path, release: &Release, platform: &Platform) -> Result<(
     runs_as(&dir.join("gary"), release.version)
 }
 
+/// Run a program that was written moments ago. Linux won't execute a file any
+/// process still has open for writing, and a child that another thread has just
+/// forked holds a copy of this process's descriptors until it execs. That copy
+/// goes away within moments, so retry for up to a second.
+fn output_of(command: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match command.output() {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(25))
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Run `gary --version` from a version folder before pointing anything at it.
 fn runs_as(gary: &Path, version: Version) -> Result<(), String> {
-    let output = std::process::Command::new(gary)
-        .arg("--version")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("{} doesn't run on this machine: {e}", gary.display()))?;
+    let output = output_of(
+        std::process::Command::new(gary)
+            .arg("--version")
+            .stdin(std::process::Stdio::null()),
+    )
+    .map_err(|e| format!("{} doesn't run on this machine: {e}", gary.display()))?;
     let reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if !output.status.success() || reported != version.to_string() {
         return Err(format!(
@@ -1293,7 +1313,7 @@ mod unix_tests {
             fs::read_link(app.root().join("current")).unwrap(),
             Path::new("versions/0.3.1")
         );
-        let ran = std::process::Command::new(app.root().join("current/gary")).output().unwrap();
+        let ran = output_of(&mut std::process::Command::new(app.root().join("current/gary"))).unwrap();
         assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "0.3.1");
         // The running executable finds the app from its real path.
         let found = AppDir::of_executable(&app.root().join("current/gary")).unwrap();
@@ -1350,9 +1370,8 @@ mod unix_tests {
         unchanged(&app);
         // An archive whose gary doesn't run as the version it claims.
         let (path, release) = stage(&dir, "0.3.1", "linux-arm64", "0.2.9", &signer);
-        assert!(install(&app, &LINUX_ARM64, &release, &path, &signer.pubkey(), idle)
-            .unwrap_err()
-            .contains("reported '0.2.9'"));
+        let err = install(&app, &LINUX_ARM64, &release, &path, &signer.pubkey(), idle).unwrap_err();
+        assert!(err.contains("reported '0.2.9'"), "{err}");
         unchanged(&app);
         // One update at a time.
         let _held = app.lock().unwrap();
@@ -1379,14 +1398,14 @@ mod unix_tests {
         assert_eq!(rollback(&app, idle).unwrap(), (Version(0, 3, 1), Version(0, 3, 0)));
         assert_eq!(app.linked("current"), Some(Version(0, 3, 0)));
         assert_eq!(app.linked("previous"), Some(Version(0, 3, 1)));
-        let ran = std::process::Command::new(app.root().join("current/gary")).output().unwrap();
+        let ran = output_of(&mut std::process::Command::new(app.root().join("current/gary"))).unwrap();
         assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "0.3.0");
         // Updating again replaces the rolled-back copy with a fresh verified one.
         fs::write(app.version_dir(Version(0, 3, 1)).join("gary"), "#!/bin/sh\nexit 1\n").unwrap();
         install(&app, &LINUX_ARM64, &release, &path, &signer.pubkey(), idle).unwrap();
         assert_eq!(app.linked("current"), Some(Version(0, 3, 1)));
         assert_eq!(app.linked("previous"), Some(Version(0, 3, 0)));
-        let ran = std::process::Command::new(app.root().join("current/gary")).output().unwrap();
+        let ran = output_of(&mut std::process::Command::new(app.root().join("current/gary"))).unwrap();
         assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "0.3.1");
         // A previous version that no longer runs isn't switched to.
         fs::write(app.version_dir(Version(0, 3, 0)).join("gary"), "#!/bin/sh\nexit 1\n").unwrap();
