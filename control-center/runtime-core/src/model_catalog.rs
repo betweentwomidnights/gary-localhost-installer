@@ -288,6 +288,11 @@ pub fn recommended_model_precision(
         .map_or("", |(_, tier)| *tier)
 }
 
+/// Every file this service publishes, for matching a file on disk by name.
+pub fn all_files(service: Service) -> impl Iterator<Item = &'static PinnedHfFile> {
+    catalog(service).iter().flat_map(|component| &component.files)
+}
+
 pub fn installed_carey_lms(
     dir: &std::path::Path,
 ) -> impl Iterator<Item = &'static PinnedHfFile> + '_ {

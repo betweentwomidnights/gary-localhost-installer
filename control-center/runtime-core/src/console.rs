@@ -4,6 +4,7 @@ use crate::service::Service;
 use crate::{
     cli, command,
     headless::{self, Config},
+    listener,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -23,12 +24,13 @@ pub const HELP: &str = "Gary — local GPU services\n\n\
   gary models                  Show the selected weights, size and storage folder\n\
   gary download-models         Download and verify the selected managed weights\n\
   gary install                 Explicitly install the pinned GPU runtime\n\
+  gary listen [status|on|off|rotate|revoke]  LAN listener for gary4juce on another computer\n\
   gary update                  Check for a new Gary and install it after you confirm\n\n\
   Add --config FILE to any service command. Otherwise use the saved default.\n\
   GARY4LOCAL_HEADLESS_CONFIG overrides the default config path.\n\
   Add --json for the noninteractive agent protocol. Advanced commands:\n\
   init, validate, capabilities, schema, serve, share-loras, version (see COMMAND --help).\n\n\
-  Console: /setup /models /install /start /stop /status /doctor /logs /update /help /quit\n\
+  Console: /setup /models /install /start /stop /status /doctor /logs /listen /update /help /quit\n\
   Use /start all and /stop all inside the console.\n\
   Services: sa3, gary, melodyflow, stable-audio, carey, foundation, yuey. LoRA tools: /loras, /add lora and /train lora for SA3 and Carey.\n\
   Leaving a console stops only services started by that console.\n\
@@ -108,6 +110,9 @@ pub async fn entry(mut args: Vec<OsString>) -> Result<i32, String> {
         let (events, _) = mpsc::unbounded_channel();
         Console::new(default_config()?, events).status(None).await?;
         return Ok(0);
+    }
+    if args.first().is_some_and(|arg| arg == "listen") {
+        return listen_command(&args[1..]).await;
     }
     if let Some(config) = session_args(&args) {
         let config = config?;
@@ -216,7 +221,28 @@ enum Action {
     TrainLora,
     Training,
     CancelTraining,
+    Listen(Listen),
     Update,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Listen {
+    Status,
+    On,
+    Off,
+    Rotate,
+    Revoke,
+}
+fn listen_word(word: Option<&str>) -> Result<Listen, String> {
+    match word.map(str::to_ascii_lowercase).as_deref() {
+        None | Some("status") => Ok(Listen::Status),
+        Some("on") => Ok(Listen::On),
+        Some("off") => Ok(Listen::Off),
+        Some("rotate") => Ok(Listen::Rotate),
+        Some("revoke") => Ok(Listen::Revoke),
+        Some(other) => Err(format!(
+            "Unknown listen command '{other}'. Use listen, listen on, listen off, listen rotate or listen revoke."
+        )),
+    }
 }
 fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
     let words: Vec<_> = line.split_whitespace().collect();
@@ -224,6 +250,12 @@ fn action(line: &str) -> Result<Option<(Action, Option<Service>)>, String> {
         return Ok(None);
     }
     let name = words[0].trim_start_matches('/').to_ascii_lowercase();
+    if name == "listen" {
+        if words.len() > 2 {
+            return Err("Use listen, listen on, listen off, listen rotate or listen revoke.".into());
+        }
+        return Ok(Some((Action::Listen(listen_word(words.get(1).copied())?), None)));
+    }
     if name == "cancel" && words.len() == 2 && words[1].eq_ignore_ascii_case("training") {
         return Ok(Some((Action::CancelTraining, None)));
     }
@@ -598,12 +630,24 @@ async fn update(input: &mut Input) -> Result<(), String> {
     Ok(())
 }
 
+struct LanListener {
+    shared: std::sync::Arc<listener::Shared>,
+    settings: listener::Settings,
+    task: JoinHandle<std::io::Result<()>>,
+}
+impl Drop for LanListener {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 struct Console {
     path: PathBuf,
     owned: HashMap<Service, Running>,
     serial: u64,
     events: mpsc::UnboundedSender<Event>,
     training: Option<crate::training_job::Job>,
+    listener: Option<LanListener>,
 }
 impl Console {
     fn new(path: PathBuf, events: mpsc::UnboundedSender<Event>) -> Self {
@@ -613,6 +657,7 @@ impl Console {
             serial: 0,
             events,
             training: None,
+            listener: None,
         }
     }
     fn config(&self, service: Service) -> Result<Config, String> {
@@ -902,10 +947,15 @@ impl Console {
                     let confirm = answer(
                         input,
                         &format!(
-                            "Remove {label} {} {} files totaling {}? [y/N] ",
+                            "Remove {label} {} {} files totaling {}?{} [y/N] ",
                             checkpoint_label(service, checkpoint),
                             candidate.encoding.to_ascii_uppercase(),
-                            model_size(plan.bytes())
+                            model_size(plan.bytes()),
+                            if current.shares_models() {
+                                " Desktop gary4local uses the same files and loses them too."
+                            } else {
+                                ""
+                            }
                         ),
                     )
                     .await?;
@@ -918,7 +968,7 @@ impl Console {
                             &candidate.encoding,
                             &plan,
                         )?;
-                        say("Model weights removed. Shared files are kept.")?;
+                        say("Model weights removed. Files other models need are kept.")?;
                     } else {
                         say("Model removal cancelled.")?;
                     }
@@ -1037,6 +1087,116 @@ impl Console {
         Ok(true)
     }
 
+    fn listener_path(&self) -> PathBuf {
+        listener::settings_path(&self.path)
+    }
+
+    /// Wait for the old task so its port is free before anything rebinds it.
+    async fn stop_listener(&mut self) -> bool {
+        let Some(mut running) = self.listener.take() else {
+            return false;
+        };
+        running.task.abort();
+        let _ = (&mut running.task).await;
+        true
+    }
+
+    async fn start_listener(&mut self, settings: listener::Settings) -> Result<(), String> {
+        self.stop_listener().await;
+        let socket = listener::bind(&settings).await?;
+        let shared = listener::Shared::new(self.listener_path(), listener::service_ports(&self.path));
+        let task = tokio::spawn(listener::serve(socket, shared.clone()));
+        say(format!(
+            "LAN listener on at {}. Requests without the pairing token are refused.",
+            listener::address_line(&settings)
+        ))?;
+        self.listener = Some(LanListener {
+            shared,
+            settings,
+            task,
+        });
+        Ok(())
+    }
+
+    async fn listen(&mut self, command: Listen) -> Result<(), String> {
+        let path = self.listener_path();
+        let mut settings = listener::Settings::load(&path)?;
+        match command {
+            Listen::Status => {
+                match &self.listener {
+                    Some(running) if !running.task.is_finished() => {
+                        let stats = running.shared.stats();
+                        say(format!(
+                            "LAN listener on at {}.",
+                            listener::address_line(&running.settings)
+                        ))?;
+                        let mut line = format!(
+                            "{} requests forwarded, {} refused",
+                            stats.forwarded, stats.rejected
+                        );
+                        if let Some(ip) = stats.last_rejected_from {
+                            line.push_str(&format!(" (last refused from {ip})"));
+                        }
+                        say(line)?;
+                    }
+                    Some(_) => say("LAN listener stopped unexpectedly. Use listen on to restart it.")?,
+                    None => say(format!(
+                        "LAN listener off. listen on opens port {} to your local network.",
+                        settings.port
+                    ))?,
+                }
+                say(if settings.paired() {
+                    "A pairing token is set. listen rotate replaces it; listen revoke removes it."
+                } else {
+                    "No pairing token yet. listen on creates one."
+                })?;
+            }
+            Listen::On => {
+                let token = if settings.paired() {
+                    None
+                } else {
+                    Some(settings.rotate()?)
+                };
+                settings.enabled = true;
+                settings.save(&path)?;
+                if let Some(token) = token {
+                    say(listener::token_notice(&token, &settings))?;
+                } else {
+                    say(format!(
+                        "Using the existing pairing token; listen rotate replaces it. gary4juce's host: {}",
+                        listener::gary4juce_host(&settings)
+                    ))?;
+                }
+                self.start_listener(settings).await?;
+                say(listener::NO_TLS_NOTICE)?;
+            }
+            Listen::Off => {
+                settings.enabled = false;
+                settings.save(&path)?;
+                let was_on = self.stop_listener().await;
+                say(if was_on {
+                    "LAN listener off. The pairing token is kept for next time."
+                } else {
+                    "LAN listener is off and won't start with Gary."
+                })?;
+            }
+            Listen::Rotate => {
+                let token = settings.rotate()?;
+                settings.save(&path)?;
+                say(listener::token_notice(&token, &settings))?;
+                say("The previous token stopped working immediately.")?;
+            }
+            Listen::Revoke => {
+                settings.revoke();
+                settings.enabled = false;
+                settings.save(&path)?;
+                self.stop_listener().await;
+                say("Pairing token removed and LAN listener off. Paired computers can no longer connect.")?;
+            }
+        }
+        Ok(())
+    }
+
     async fn handle_all(&mut self, action: Action) -> Result<(), String> {
         for service in Service::ALL {
             if !self.owned.contains_key(&service) && !profile_path(&self.path, service).exists() {
@@ -1067,7 +1227,7 @@ impl Console {
         match action {
             Action::Quit => return Ok(true),
             Action::Help => {
-                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/loras [sa3|carey] — Browse LoRAs and switch checkpoints\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/update — Check for a new Gary and install it after you confirm\n/quit — Stop services started here and leave")?;
+                say("/setup — Set up SA3\n/install [service] — Prepare a service and install its GPU runtime\n/models [service] — Inspect and download the selected weights\n/start [service|all] — Start one service or all configured services\n/stop [service|all] — Stop services or cancel startup\n/status — Show all services and addresses\n/doctor [service] — Inspect prerequisites\n/logs [service] — Show the native log path\n/loras [sa3|carey] — Browse LoRAs and switch checkpoints\n/add lora [sa3|carey] — Import an adapter\n/train lora [sa3|carey] — Prepare a dataset and train\n/training — Show training progress and log paths\n/cancel — Request a safe stop for training in this console\n/listen [on|off|rotate|revoke] — LAN listener for gary4juce on another computer\n/update — Check for a new Gary and install it after you confirm\n/quit — Stop services started here and leave")?;
                 return Ok(false);
             }
             Action::StartAll | Action::StopAll => {
@@ -1108,6 +1268,10 @@ impl Console {
             }
             Action::Status => {
                 self.status(explicit).await?;
+                return Ok(false);
+            }
+            Action::Listen(command) => {
+                self.listen(command).await?;
                 return Ok(false);
             }
             _ => {}
@@ -1189,6 +1353,150 @@ async fn termination() {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
+/// Standard profiles made before models were shared merge theirs into desktop's folder once.
+async fn adopt_desktop_models(base: &Path) -> Result<(), String> {
+    for service in Service::ALL {
+        let path = profile_path(base, service);
+        if !cli::is_standard_profile(&path) {
+            continue;
+        }
+        match crate::model_store::adopt_desktop_models(&path).await {
+            Ok(Some(summary)) => say(summary)?,
+            Ok(None) => {}
+            Err(e) => say(format!("{} models stay in their own folder for now: {e}", service.id()))?,
+        }
+    }
+    Ok(())
+}
+
+/// `gary listen [run|status|on|off|rotate|revoke] [--config FILE] [--json]`.
+/// With no subcommand the listener runs in the foreground until Ctrl+C, for
+/// services started with `gary start` or a systemd unit.
+async fn listen_command(args: &[OsString]) -> Result<i32, String> {
+    let mut json_out = false;
+    let mut config = None;
+    let mut word = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.to_str() {
+            Some("--json") => json_out = true,
+            Some("--config") => {
+                config = Some(PathBuf::from(
+                    iter.next().ok_or("--config needs a FILE.")?,
+                ))
+            }
+            Some("--help" | "-h") => {
+                say("gary listen            Run the LAN listener in the foreground; Ctrl+C stops it\n\
+gary listen status     Show whether the listener starts with Gary, and its port\n\
+gary listen on|off     Start the listener with the interactive console, or not\n\
+gary listen rotate     Replace the pairing token; the old one stops working\n\
+gary listen revoke     Remove the pairing token and turn the listener off\n\
+Add --config FILE or --json.")?;
+                return Ok(0);
+            }
+            Some(other) if word.is_none() && !other.starts_with('-') => word = Some(other.to_owned()),
+            _ => return Err(format!("Unexpected argument {}. See gary listen --help.", arg.to_string_lossy())),
+        }
+    }
+    let config = match config {
+        Some(path) => std::path::absolute(path).map_err(|e| e.to_string())?,
+        None => default_config()?,
+    };
+    let path = listener::settings_path(&config);
+    let mut settings = listener::Settings::load(&path)?;
+    let report = |settings: &listener::Settings, token: Option<&str>| -> Result<(), String> {
+        if json_out {
+            let data = json!({
+                "enabled": settings.enabled,
+                "port": settings.port,
+                "bind": settings.bind,
+                "paired": settings.paired(),
+                "token_created_unix": settings.token_created_unix,
+                "address": listener::lan_address(settings.bind).map(|ip| format!("http://{ip}:{}", settings.port)),
+                "settings_path": path,
+                "token": token,
+            });
+            say(cli::envelope("listen", "result", None, data, None, 0))
+        } else {
+            if let Some(token) = token {
+                say(listener::token_notice(token, &settings))?;
+            }
+            say(format!(
+                "LAN listener {} with Gary on port {}. Pairing token {}.",
+                if settings.enabled { "starts" } else { "doesn't start" },
+                settings.port,
+                if settings.paired() { "set" } else { "not set" }
+            ))
+        }
+    };
+    match word.as_deref() {
+        None | Some("run") => {
+            let token = if settings.paired() {
+                None
+            } else {
+                let token = settings.rotate()?;
+                settings.save(&path)?;
+                Some(token)
+            };
+            let socket = listener::bind(&settings).await?;
+            let shared = listener::Shared::new(path.clone(), listener::service_ports(&config));
+            if json_out {
+                let data = json!({
+                    "status": "listening",
+                    "port": settings.port,
+                    "bind": settings.bind,
+                    "address": listener::lan_address(settings.bind).map(|ip| format!("http://{ip}:{}", settings.port)),
+                    "token": token,
+                });
+                say(cli::envelope("listen", "event", Some("ready"), data, None, 0))?;
+            } else {
+                if let Some(token) = &token {
+                    say(listener::token_notice(token, &settings))?;
+                }
+                say(format!(
+                    "LAN listener on at {}. Press Ctrl+C to stop.",
+                    listener::address_line(&settings)
+                ))?;
+                say(listener::NO_TLS_NOTICE)?;
+            }
+            tokio::select! {
+                result = listener::serve(socket, shared) => result.map_err(|e| e.to_string())?,
+                _ = termination() => {}
+            }
+            Ok(0)
+        }
+        Some("status") => {
+            report(&settings, None)?;
+            Ok(0)
+        }
+        Some("on") | Some("off") => {
+            let token = if word.as_deref() == Some("on") && !settings.paired() {
+                Some(settings.rotate()?)
+            } else {
+                None
+            };
+            settings.enabled = word.as_deref() == Some("on");
+            settings.save(&path)?;
+            report(&settings, token.as_deref())?;
+            Ok(0)
+        }
+        Some("rotate") => {
+            let token = settings.rotate()?;
+            settings.save(&path)?;
+            report(&settings, Some(&token))?;
+            Ok(0)
+        }
+        Some("revoke") => {
+            settings.revoke();
+            settings.enabled = false;
+            settings.save(&path)?;
+            report(&settings, None)?;
+            Ok(0)
+        }
+        Some(other) => Err(format!("Unknown listen command '{other}'. See gary listen --help.")),
+    }
+}
+
 async fn shell(path: PathBuf) -> Result<i32, String> {
     let (tx, mut ready) = mpsc::unbounded_channel();
     // One quiet look at the update feed; a slow or failed check says nothing.
@@ -1208,8 +1516,18 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
     // prompt. Keep the same future alive through setup and startup.
     tokio::select! { biased; _=&mut shutdown=>return Ok(0), _=std::future::ready(())=>{} }
     say(format!("Gary {} — local GPU services\nConfig: {}\n\nType /help for commands. /quit or Ctrl+C stops services started here.\n",env!("CARGO_PKG_VERSION"),console.path.display()))?;
+    adopt_desktop_models(&console.path).await?;
     if let Err(e) = console.status(None).await {
         say(format!("{e}\nType /help for commands."))?;
+    }
+    match listener::Settings::load(&console.listener_path()) {
+        Ok(settings) if settings.enabled && settings.paired() => {
+            if let Err(e) = console.start_listener(settings).await {
+                say(e)?;
+            }
+        }
+        Ok(_) => {}
+        Err(e) => say(e)?,
     }
     let mut training_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut show_prompt = true;
@@ -1270,6 +1588,7 @@ async fn shell(path: PathBuf) -> Result<i32, String> {
         }
     }
     say("\nLeaving Gary; stopping any service started in this console...")?;
+    console.stop_listener().await;
     // The captured owner config/nonce is used, even if the file was edited.
     // Never stop a service that was running before this console opened.
     let mut errors = Vec::new();
@@ -1322,6 +1641,12 @@ mod tests {
             action("/cancel training"),
             Ok(Some((Action::CancelTraining, None)))
         );
+        assert_eq!(action("listen"), Ok(Some((Action::Listen(Listen::Status), None))));
+        assert_eq!(action("/listen ON"), Ok(Some((Action::Listen(Listen::On), None))));
+        assert_eq!(action("listen rotate"), Ok(Some((Action::Listen(Listen::Rotate), None))));
+        assert_eq!(action("listen revoke"), Ok(Some((Action::Listen(Listen::Revoke), None))));
+        assert!(action("listen sa3").is_err());
+        assert!(action("listen on now").is_err());
     }
     #[test]
     fn model_folders_can_contain_spaces_and_are_never_shell_evaluated() {

@@ -27,6 +27,9 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 base64 = "0.22"
 hound = "3.5"
 socket2 = "0.6"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+getrandom = "0.3"
 minisign-verify = "0.2"
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
