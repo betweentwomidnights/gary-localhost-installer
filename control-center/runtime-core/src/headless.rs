@@ -1693,6 +1693,18 @@ pub async fn serve(
                 }
                 break;
             }
+            // A server that is up but cannot find its weights says so at
+            // once; waiting out the grace period would only hide why.
+            if let Ok(health) = response.json::<Value>().await {
+                if health["status"] == "model_missing" {
+                    // sat-server appends a models.sh hint in parentheses; the
+                    // console's /models is the way to fetch them here.
+                    let detail = health["error"].as_str().unwrap_or("model files are missing");
+                    let detail = detail.split(" (").next().unwrap_or(detail);
+                    let id = config.service.id();
+                    return Err(format!("{id} cannot start: {detail}. Download its models with /models {id}."));
+                }
+            }
         }
         if tokio::time::Instant::now() >= deadline {
             return Err("Native health check timed out; inspect the service log".into());

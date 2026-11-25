@@ -168,7 +168,12 @@ pub fn service_files(
         StableAudio if model == "saos" || model == "arc" => {
             vec![format!("stable-audio-native::{tier}")]
         }
-        StableAudio => vec![format!("stable-audio-native::{model}::{tier}")],
+        // A finetune is only its DiT; sat-server runs it with the tier's text
+        // encoder and decoder, so it needs the tier's base bundle too.
+        StableAudio => vec![
+            format!("stable-audio-native::{tier}"),
+            format!("stable-audio-native::{model}::{tier}"),
+        ],
         Foundation => vec![
             format!("foundation-native::{tier}"),
             "foundation-native::encoder".into(),
@@ -328,5 +333,25 @@ mod recommendation_tests {
             recommended_model_precision(Service::Carey, "xl-base", 91 << 30),
             "BF16"
         );
+    }
+
+    /// sat-server loads a finetune's DiT with its tier's text encoder and
+    /// decoder, so installing jerry-grunge alone left it unable to start.
+    #[test]
+    fn a_saos_finetune_brings_its_tier_base_bundle() {
+        let names = |model: &str| -> Vec<String> {
+            service_files(Service::StableAudio, model, "f16")
+                .unwrap()
+                .iter()
+                .map(|file| file.filename.clone())
+                .collect()
+        };
+        let base = names("saos");
+        assert!(base.contains(&"t5-base-encoder-0.1B-v1.0-F16.gguf".to_string()));
+        for finetune in ["jerry-grunge", "kickbass"] {
+            let files = names(finetune);
+            assert!(base.iter().all(|file| files.contains(file)), "{finetune}: {files:?}");
+            assert!(files.iter().any(|file| file.starts_with(&format!("finetunes/{finetune}/"))));
+        }
     }
 }
