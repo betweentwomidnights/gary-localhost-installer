@@ -1,11 +1,11 @@
 {
-    "version":  "0.7.6",
-    "notes":  "gary4local now also runs on Apple Silicon Macs.\nStart launches a fresh native setup right away, without test generations first.\nApp updates keep the shared audiocraft and sa3 runtimes. Each engine shows update runtime for its new version.\nJerry decodes only the audio you asked for, with the same output. Compatible with gary4juce v5.0.7-linux-preview.1.",
-    "pub_date":  "2026-11-24T14:57:45.0000000+00:00",
+    "version":  "0.7.7",
+    "notes":  "Headless gary on another computer can pair with gary4juce over your network.\nYuey refuses a continuation source too long for its natural length instead of rendering for ten minutes.\nCarey LoRAs from the retired Mac app pick XL from the adapter itself.\nNew sa3, carey and yuey runtimes work under Windows user folders with non-ASCII names. Compatible with gary4juce v5.0.8.",
+    "pub_date":  "2026-11-26T06:34:24.0000000+00:00",
     "platforms":  {
                       "linux-x86_64-deb":  {
-                                               "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEtSeUdwY0h2ZmJVRUtNNGFla0FXelhlVlMxRlJySlBobXNra2Z4eEZTSlg4ZS9OQ3J0R0JrQXhHc1R5eWkvNTNrRzZ5WW1GdWdQeUcyOGk5d2psSnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTMxNTM3CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNl9hbWQ2NC5kZWIKb01JRCtFMG56SzAveHpEWE9ZVnBKdDFaV3VQQ3p3bDJLeEJQdFNyMFB5UHFSaGJyZ0tudnF4Q1JBenl0Wkp1NkRYT3hHS1VjY1VHcUFrK09jV2pRREE9PQo=",
-                                               "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_amd64.deb"
+                                               "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEJTcXMzbEZsK3hWb0RJbkRYcmpRTFFhc2JVeWtEQU1HQ0MxVFNUb0JSVmJPWEtzUCtZeVlnckFaS3h3d3hHRmxMQVJ6bDQwU285ODRhNjFTaHpCV2dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NjczNzY5CWZpbGU6Z2FyeTRsb2NhbF8wLjcuN19hbWQ2NC5kZWIKNHBxYUlZMVRKWTdCNWZnYUtBRWNWUjJ1RHdpY2ozVFFxK2FXSG5pZG5RSmsxQlA0a2p6enpsMEJSZGVlUkFhSXUxaDhKRzBWUFUyUnVMMkxQL1dqRGc9PQo=",
+                                               "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.7/gary4local_0.7.7_amd64.deb"
                                            }
                   }
 }

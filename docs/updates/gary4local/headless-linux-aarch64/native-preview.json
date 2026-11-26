@@ -1,0 +1,11 @@
+{
+    "version":  "0.4.0",
+    "notes":  "Listen on lets gary4juce on another computer pair with this machine over your network.\nGary update installs new versions from a signed feed, and gary update --rollback goes back.\nHeadless and desktop share one models folder. Existing headless models merge in once.\nYuey refuses a continuation source too long for its natural length, now 96 seconds by default. Compatible with gary4juce v5.0.8.",
+    "pub_date":  "2026-11-26T06:34:24.0000000+00:00",
+    "platforms":  {
+                      "linux-aarch64-headless":  {
+                                                     "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMEdFd0JmZ2NWZ0Y3amErU2pIdWw3L2UzdGcrdUc2OTUyVGswcGhMZCt4aHB0VTZiRE42QWJ1d08yTmxtYmxSeWgvMjFiQkVTRmpoYlUrUndSdGY4SHdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NjczNzcyCWZpbGU6Z2FyeTRsb2NhbC1zZXJ2ZXItbGludXgtYXJtNjQtZXhwZXJpbWVudGFsLnRhci5negowd1B2UnY3aUhCZC9nNzdqMEVPZCtHaFFlVzVNMXRsNWVVOUQ4amlwWkJvdCt4eU9yRWNFb1B3VEdzYmMyQVZwRFdRZjd0WHNtTHVRc3Z4Q2VUYnVEZz09Cg==",
+                                                     "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.7/gary4local-server-linux-arm64-experimental.tar.gz"
+                                                 }
+                  }
+}

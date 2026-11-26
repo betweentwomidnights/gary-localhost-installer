@@ -1,0 +1,13 @@
+{
+    "channel":  "preview",
+    "latest_version":  "0.4.0",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.7/gary4local-server-linux-x64-experimental.tar.gz",
+    "sha256":  "f831521d4387d700999b7ce15473db1835629232d76559d956fa077c06bb2408",
+    "published_at":  "2026-11-26T06:34:24.0000000+00:00",
+    "notes":  [
+                  "Listen on lets gary4juce on another computer pair with this machine over your network.",
+                  "Gary update installs new versions from a signed feed, and gary update --rollback goes back.",
+                  "Headless and desktop share one models folder. Existing headless models merge in once.",
+                  "Yuey refuses a continuation source too long for its natural length, now 96 seconds by default. Compatible with gary4juce v5.0.8."
+              ]
+}

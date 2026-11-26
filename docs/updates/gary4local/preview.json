@@ -1,13 +1,13 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.7.6",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_x64-setup.exe",
-    "sha256":  "7738c1f0b26c98afa9ae865fba69bb5179973fcd39ec62900c60c201019414f0",
-    "published_at":  "2026-11-24T14:57:45.0000000+00:00",
+    "latest_version":  "0.7.7",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.7/gary4local_0.7.7_x64-setup.exe",
+    "sha256":  "e87e796f76d3bb3cf5beebfd5e040bbfd2151bbb148568cc0e4d704aa217d943",
+    "published_at":  "2026-11-26T06:34:24.0000000+00:00",
     "notes":  [
-                  "gary4local now also runs on Apple Silicon Macs.",
-                  "Start launches a fresh native setup right away, without test generations first.",
-                  "App updates keep the shared audiocraft and sa3 runtimes. Each engine shows update runtime for its new version.",
-                  "Jerry decodes only the audio you asked for, with the same output. Compatible with gary4juce v5.0.7."
+                  "Headless gary on another computer can pair with gary4juce over your network.",
+                  "Yuey refuses a continuation source too long for its natural length instead of rendering for ten minutes.",
+                  "Carey LoRAs from the retired Mac app pick XL from the adapter itself.",
+                  "New sa3, carey and yuey runtimes work under Windows user folders with non-ASCII names. Compatible with gary4juce v5.0.8."
               ]
 }
