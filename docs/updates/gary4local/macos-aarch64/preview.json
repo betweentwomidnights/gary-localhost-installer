@@ -1,11 +1,13 @@
 {
     "channel":  "preview",
-    "latest_version":  "0.7.6",
-    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_aarch64.app.tar.gz",
-    "sha256":  "a430a7acfc51c6011b5038a3f4973929cb5efbb65bda3278323fdf8cb22ad51f",
-    "published_at":  "2026-11-24T14:57:45.0000000+00:00",
+    "latest_version":  "0.7.7",
+    "download_url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.7/gary4local_0.7.7_aarch64.app.tar.gz",
+    "sha256":  "09afd3f67b48b5f889554e1f032863c4f91e3007c42b014d7e60d5b7a55dc37f",
+    "published_at":  "2026-11-26T06:34:24.0000000+00:00",
     "notes":  [
-                  "First release of gary4local for Apple Silicon Macs. It replaces gary-localhost-installer-mac.",
-                  "Every service runs on the C++ runtimes with Metal. Compatible with gary4juce v5.0.7."
+                  "Headless gary on another computer can pair with gary4juce over your network.",
+                  "Yuey refuses a continuation source too long for its natural length instead of rendering for ten minutes.",
+                  "Carey LoRAs from the retired Mac app pick XL from the adapter itself.",
+                  "New sa3, carey and yuey runtimes work under Windows user folders with non-ASCII names. Compatible with gary4juce v5.0.8."
               ]
 }

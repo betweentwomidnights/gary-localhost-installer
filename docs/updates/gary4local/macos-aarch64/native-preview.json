@@ -1,11 +1,11 @@
 {
-    "version":  "0.7.6",
-    "notes":  "First release of gary4local for Apple Silicon Macs. It replaces gary-localhost-installer-mac.\nEvery service runs on the C++ runtimes with Metal. Compatible with gary4juce v5.0.7.",
-    "pub_date":  "2026-11-24T14:57:45.0000000+00:00",
+    "version":  "0.7.7",
+    "notes":  "Headless gary on another computer can pair with gary4juce over your network.\nYuey refuses a continuation source too long for its natural length instead of rendering for ten minutes.\nCarey LoRAs from the retired Mac app pick XL from the adapter itself.\nNew sa3, carey and yuey runtimes work under Windows user folders with non-ASCII names. Compatible with gary4juce v5.0.8.",
+    "pub_date":  "2026-11-26T06:34:24.0000000+00:00",
     "platforms":  {
                       "darwin-aarch64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMFBJZk9sREE1S3J1R0l2NEpLVk1raFNnazdOZDFuQmVDekhOdWxEVjZKUENuMVN3S1lOQjluNFc0SkJBVkNYTlo3Wm5jR2w2Q0ZJNzBZY0d1ck9WTlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTM0NTE2CWZpbGU6Z2FyeTRsb2NhbF8wLjcuNl9hYXJjaDY0LmFwcC50YXIuZ3oKYUQwSm5BREt2U3NkSU1nZFlqa1hsOS94RGJuREJCa1ZzcFBLaDVWc0ljRmIxaWltSlJOUk5SVG5OdnpLL041NmNORWJ6THRSNXRBYVliTlNyNGhGRFE9PQo=",
-                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.6/gary4local_0.7.6_aarch64.app.tar.gz"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUL1JicFpCRFBDMERWbkw5eFBCNnlTTFg3QTFyMzNzVGwxNTkrMnp2eFJnZEZzRWxkODlSM2U4aGJhZGFTbzBGZ0lrNEh5aGdGeGpBVk1nTUY5VVgvbGlSWWIvcmVHaXd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1Njc2MDU5CWZpbGU6Z2FyeTRsb2NhbF8wLjcuN19hYXJjaDY0LmFwcC50YXIuZ3oKNSt4ZXpJb0wwSll4Mk1tV3ppL0pNK0hNQmYxcktROGJMMHJPa0FvRG5hYTlNWVpNamVCeENPcmtYZkFQOUo0N2RyaXNUZ1B4bXdwZkhLM0FMOEw0Q3c9PQo=",
+                                             "url":  "https://github.com/betweentwomidnights/gary-localhost-installer/releases/download/v0.7.7/gary4local_0.7.7_aarch64.app.tar.gz"
                                          }
                   }
 }
