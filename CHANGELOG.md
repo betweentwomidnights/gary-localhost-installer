@@ -4,6 +4,73 @@ this is where we're keeping the version history that used to live at the top
 of the main README. the README should stay focused on what gary4local is now;
 this file gets to remember how we got here.
 
+## v0.7.7 - 2026-11-25
+
+headless gary can be reached from another computer now. `listen on` in the
+console starts an opt-in LAN listener on port 8020 and prints the two things
+gary4juce asks for in gary settings > gary4local host: the machine's address
+and a pairing token. every request needs that token; without it the listener
+answers 401, so other machines on the network can't use your GPU just by
+finding the port. the token is shown once. `listen rotate` makes a new one and
+the old one stops working. there's no TLS, so keep it to networks you trust.
+gary4juce v5.0.8 is the first version that can pair, and it shows `paired`
+while the listener answers but no service is running yet, instead of
+`disconnected`. more in the
+[headless guide](control-center/runtime-core/README.md#the-lan-listener).
+
+headless gary updates itself. `gary update` (or `update` in the console) reads
+its own signed feed, shows the new version and its notes, and installs only
+after you say yes. it checks the archive's SHA-256 and its signature against
+the same key the desktop app trusts, installs it beside the old version, and
+switches over in one step, so `gary update --rollback` can go back. the
+console checks once when it opens; `GARY4LOCAL_HEADLESS_UPDATE_CHECK=0` turns
+that off. headless gary is v0.4.0 in this release, and its version is separate
+from the desktop app's. archives from v0.7.6 and earlier can't update
+themselves, so those take a one-time `install-gary.sh --replace` with the new
+archive. after that, `gary update` handles it.
+
+headless and desktop share models. headless used to keep its own copy of every
+model, so a machine running both held them twice. the standard headless
+profiles now use desktop's models folder, follow desktop's storage setting the
+way the LoRA library already did, and use desktop's default location on a
+machine without desktop. an existing headless install merges its models into
+that folder once: identical copies are removed, and a copy that differs from
+the catalog's is set aside under `models-unmerged` instead of deleted. removing
+a model removes it for both apps, and the console says so. downloads lock each
+file, so the two apps wait for each other instead of writing the same file.
+
+installing a jerry finetune in headless gary now downloads the base model files
+it runs with. a finetune is only its DiT; the text encoder and decoder come
+from the base model at the same precision. headless downloaded just the DiT, so
+`start stable-audio` with jerry-grunge waited out a 30 second health check and
+then only said it timed out. a service that reports missing model files now
+stops the start straight away and says which file is missing.
+
+yuey keeps continuations to its natural length ceiling as a whole. the ceiling
+used to cover only the bars a continuation added, so continuing an output that
+was already a couple of minutes long kept every source bar, took around ten
+minutes, and sounded worse the further it ran past where the song wanted to
+end. now the source plus the new bars has to fit, with at least 10 seconds
+left for new music, and a source that's too long is refused straight away. a
+remix source longer than the ceiling is refused the same way. gary4juce v5.0.8
+checks the length before uploading. the ceiling is still the natural length
+setting in yuey's panel, 96 seconds by default, and headless yuey now uses the
+same default instead of the server's own 180.
+
+adding a carey LoRA reads its model family from the adapter's own weights, so
+XL adapters from the retired gary4local for Mac load without picking XL by
+hand. before, the add LoRA modal guessed from the folder name and sent that
+guess, and an XL run in a folder without "xl" in its path failed to load.
+
+the runtime pins move to sa3.cpp v0.2.6, acestep.cpp v0.1.7 and yuey.cpp
+v0.3.4. all three run their Windows tools with UTF-8 as the process code page,
+so models, LoRAs and audio under a Windows user folder with non-ASCII
+characters in its name load. sa3.cpp also converts LoRAs trained in the retired
+gary4local for Mac and keeps their adapter config in the converted file.
+audiocraft.cpp stays at v0.1.5.
+
+compatible with gary4juce v5.0.8.
+
 ## v0.7.6 - 2026-11-23
 
 gary4local runs on Apple Silicon Macs. it's the same app as on Windows and

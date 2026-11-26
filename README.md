@@ -9,35 +9,27 @@ to run the models inside your DAW, or from the standalone app.
 gary4local is built with Tauri, Rust, and Svelte. the old
 PyInstaller/Inno Setup flow remains available in the older branch history.
 
-## update 11/23 - v0.7.6
+## update 11/25 - v0.7.7
 
-[download gary4local v0.7.6](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.6).
+[download gary4local v0.7.7](https://github.com/betweentwomidnights/gary-localhost-installer/releases/tag/v0.7.7).
 
-gary4local runs on Apple Silicon Macs now. it's the same app as on Windows and
-Linux, and it replaces
-[gary-localhost-installer-mac](https://github.com/betweentwomidnights/gary-localhost-installer-mac)
-and its Python services. it needs an M-series Mac on macOS 13.3 or newer, and
-the disk image is signed and notarized. every service runs on the C++ runtimes
-with Metal, and the runtimes ship precompiled shaders, so a service doesn't
-compile them every time it starts. there's no migration from gary4local-mac,
-so models download again, and the old app's files stay until you remove them:
-its README has [the steps and a cleanup script](https://github.com/betweentwomidnights/gary-localhost-installer-mac#this-app-is-retired).
-not ready to switch? gary4local-mac's last update,
-[v0.4.2](https://github.com/betweentwomidnights/gary-localhost-installer-mac/releases/tag/v0.4.2),
-keeps local jerry working with gary4juce v5.0.7. from here on the Mac app
-updates itself. more in [docs/macos-desktop.md](docs/macos-desktop.md).
+headless gary can be reached from another computer. type `listen on` in the
+console and it prints the address and pairing token to enter in gary4juce's
+gary4local host setting. requests without the token are refused. headless gary
+also updates itself now with `gary update`, from a signed feed, and keeps the
+previous version for `gary update --rollback`. it shares desktop's models
+folder, so a machine running both apps keeps one copy of each model. more in
+the [headless guide](control-center/runtime-core/README.md).
 
-on every platform, pressing `start` on a fresh native setup launches the
-service right away instead of running test generations first. migrating an
-existing Python installation still runs them. app updates also no longer
-delete the shared audiocraft and sa3 runtime folders.
+yuey's natural length setting now limits a continuation as a whole, source
+included, so continuing an output that's already long is refused instead of
+rendering for ten minutes. carey LoRAs from the retired Mac app pick their
+model family from the adapter itself, and sa3.cpp converts the Mac app's SA3
+LoRAs. jerry, SA3, foundation-1, carey and yuey work under Windows user
+folders with non-ASCII names.
 
-jerry decodes only the audio you asked for (sa3.cpp v0.2.5), with the same
-output. the other runtime updates only change macOS.
-
-pair it with [gary4juce v5.0.7](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.7),
-or [v5.0.7-linux-preview.1](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.7-linux-preview.1)
-on Linux. on macOS, use v5.0.7 or newer. older release notes live in
+pair it with [gary4juce v5.0.8](https://github.com/betweentwomidnights/gary4juce/releases/tag/v5.0.8),
+which adds pairing with headless gary. older release notes live in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## update 8/23
