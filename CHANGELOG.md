@@ -648,6 +648,9 @@ it lists exactly which old environments, managed models, and rebuildable caches
 it found before anything is removed. it doesn't quietly delete the LoRAs left
 behind in the old profile.
 
+big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
+build while we tried very hard to break it locally.
+
 ### storage maintenance
 
 the storage panel can clear uv's package cache and remove individual service

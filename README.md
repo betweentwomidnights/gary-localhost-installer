@@ -32,15 +32,6 @@ pair it with [gary4juce v5.0.8](https://github.com/betweentwomidnights/gary4juce
 which adds pairing with headless gary. older release notes live in
 [CHANGELOG.md](CHANGELOG.md).
 
-## update 8/23
-
-custom runtime storage is now supported. everything should work the same for
-existing users, but now you can move the runtime to an external drive or
-wherever you please, and clean up the legacy storage afterward if you like.
-
-big thanks to Kostas for helping us validate all of this on the Radeon/ROCm
-build while we tried very hard to break it locally.
-
 ## roadmap
 
 - [x] replace jerry, foundation-1 and SA3 with [sa3.cpp](https://github.com/betweentwomidnights/sa3.cpp), which already supports LoRA training in native C++
@@ -140,6 +131,10 @@ that flag removes the updater UI and manifest checks from the build.
 
 ## development
 
+these steps are for Windows. Linux packages are built in CI (see
+[Linux desktop](docs/linux-desktop.md)), and building on a Mac is in
+[macOS desktop](docs/macos-desktop.md).
+
 prerequisites:
 
 - Windows 10 or 11
@@ -191,9 +186,11 @@ artifacts land in:
 
 the current preferred Windows artifact is the NSIS setup executable.
 
-## unsigned builds
+## signing
 
-the installers aren't Authenticode-signed. in-app updates use a separate
+the Windows installer and the Linux packages aren't code-signed by an OS
+vendor. the macOS app is: it's signed with our Developer ID and notarized by
+Apple. on every platform, in-app updates and `gary update` use a separate
 updater signature checked against the public key built into the app.
 for a manual download, compare the file's SHA-256 with the release asset digest.
 rebuilding locally isn't expected to produce an identical installer hash.
